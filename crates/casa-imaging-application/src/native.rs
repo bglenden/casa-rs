@@ -33,6 +33,7 @@ pub(crate) struct NativeInput {
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    pub(crate) start_model: Option<crate::compile::StartModel>,
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -121,6 +122,7 @@ pub(crate) struct NativeRun {
     /// The source's charge, held while it is open.
     source: Reservation,
     masks: ImageDomainReconstructionMaskPlans,
+    start_model: Option<crate::compile::StartModel>,
     image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -169,6 +171,7 @@ pub(crate) fn prepare(
         access,
         source,
         masks: input.masks,
+        start_model: input.start_model,
         image_response: input.minor_cycle_image_response,
     })
 }
@@ -190,6 +193,7 @@ pub(crate) fn run(
         access,
         source,
         masks,
+        start_model,
         image_response,
     } = run;
     let teams = OnceCell::new();
@@ -198,6 +202,7 @@ pub(crate) fn run(
             problem,
             access,
             masks,
+            start_model,
             image_response,
             visibility_write,
             host: runtime.host,

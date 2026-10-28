@@ -791,6 +791,70 @@ fn a_visibility_write_stays_within_its_admission() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// A start model (#841 Phase 6b) is read, zeroed where masked and
+/// regridded under its own admission before the initial pass, which then
+/// grids its residual with the model: on its own grid, regridded from
+/// 256² onto 1024² (where seeding holds about 45 MB, which the law
+/// resolves), and with no minor cycle while `MODEL_DATA` is written.
+#[test]
+fn a_start_model_stays_within_its_admission() {
+    if !alone("a_start_model_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    casa_imaging_application::execute(
+        &request(
+            &measurement_set,
+            &root.path().join("start"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("the run whose model starts the others");
+    let start_model = root.path().join("start.model");
+    let mut breaches = Vec::new();
+    for (label, imsize, workers, controls) in [
+        ("start model", 256, 1, json!({ "deconvolver": "hogbom" })),
+        (
+            "start model regridded",
+            1024,
+            4,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        (
+            "start model savemodel",
+            256,
+            1,
+            json!({ "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls["startmodel"] = json!(start_model);
+        check(
+            &mut breaches,
+            &format!("{label} {imsize} px {workers} workers"),
+            &request(
+                &measurement_set,
+                &root.path().join(label.replace(' ', "-")),
+                imsize,
+                controls,
+            ),
+            workers,
+            AMPLE,
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// The shapes IF-10's closeout rows added stay within their admission
 /// (#722): a 2048² image in 2×2 facets, whose pass also holds the stitched
 /// full-size residual and PSF, and an eight-channel mosaic cube, whose paged

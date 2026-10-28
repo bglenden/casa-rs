@@ -15,6 +15,8 @@ pub mod geometry_law;
 mod imaging;
 mod native;
 mod request;
+#[doc(hidden)]
+pub mod start_model_law;
 
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
@@ -415,6 +417,7 @@ fn compile_run(
         write_model_column: prepared.write_model_column,
         write_corrected_data: prepared.write_corrected_data,
         masks: prepared.masks,
+        start_model: prepared.start_model,
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
     Ok((problem, input, native, resident))

@@ -44,6 +44,7 @@ use super::setup::{self, RefreshDemand, SetupDemand, WorkerChoice};
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
+use crate::compile::StartModel;
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
 /// What one native imaging run needs besides the compiled problem.
@@ -51,6 +52,9 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
     pub(crate) access: ResolvedSelectedObservationAccess,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    /// The main domain's start model, which the initial pass seeds the
+    /// model from.
+    pub(crate) start_model: Option<StartModel>,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
     pub(crate) host: HostResources,
@@ -110,6 +114,9 @@ struct Run<'a> {
     /// The run's model lifecycle: its generations are paged with the cube
     /// state, or resident.
     lifecycle: ModelLifecycle,
+    /// The start model the initial generation is seeded from; with one,
+    /// the initial pass grids the residual of its prediction.
+    start_model: Option<StartModel>,
     native_spacing_hz: f64,
     backend: BackendChoice,
     /// Whether each Metal backend logs its timing.
@@ -556,8 +563,10 @@ impl<'a> Run<'a> {
                 ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
                     .resident_bytes()
             },
+            start_model: inputs.start_model.as_ref().map(StartModel::seeding_bytes),
             write: inputs.visibility_write.as_ref().map(|_| {
-                let (modes, with_model) = write_pass(problem, initial);
+                let (modes, with_model) =
+                    write_pass(problem, initial, inputs.start_model.is_some());
                 (modes, with_model, visibility_write_bytes)
             }),
             spill_directory: inputs.spill_directory,
@@ -643,6 +652,7 @@ impl<'a> Run<'a> {
             policy,
             cube,
             lifecycle,
+            start_model: inputs.start_model,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             metal_stage_timing: inputs.diagnostics.metal_stage_timing,
@@ -657,7 +667,7 @@ impl<'a> Run<'a> {
         if run.visibility_write.is_some() {
             // The pass that writes must hold every plane, and is refused now
             // rather than after the cycles that precede it.
-            let (modes, with_model) = write_pass(problem, initial);
+            let (modes, with_model) = write_pass(problem, initial, run.start_model.is_some());
             if run
                 .admit_pass(modes, with_model, run.visibility_write_bytes, true)?
                 .value
@@ -670,7 +680,8 @@ impl<'a> Run<'a> {
         Ok(run)
     }
 
-    /// The initial major cycle: data and PSF, from an empty model; it writes
+    /// The initial major cycle: data and PSF, from the start model when there
+    /// is one (its residual) and from an empty model otherwise; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         self.measure_row_work()?;
@@ -680,17 +691,34 @@ impl<'a> Run<'a> {
             reservation: pass,
         } = self.admit_pass(
             self.initial_modes(),
-            false,
+            self.start_model.is_some(),
             self.lifecycle.resident_bytes() + self.write_bytes(last),
             self.writes(last),
         )?;
-        let model = self
-            .lifecycle
-            .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
+        let generation = match &self.start_model {
+            Some(start) => self.seed(start)?,
+            None => self.lifecycle.initial_empty()?,
+        };
+        let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         let major = self.reconcile(cycle, true, last, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
+    }
+
+    /// The initial generation from `start`: read and regridded under its
+    /// own admission, which is released once the generation holds it.
+    fn seed(&self, start: &StartModel) -> Result<ModelGeneration, ImagingError> {
+        let _seeding = admit(
+            &self.host,
+            &self.policy,
+            &Demand {
+                phase: "start model",
+                memory: start.seeding_bytes(),
+            },
+        )?;
+        let samples = start.main_samples().map_err(ImagingError::StartModel)?;
+        Ok(self.lifecycle.initial_from_start_model(&samples)?)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -809,7 +837,7 @@ impl<'a> Run<'a> {
         let (model, state) = cycle.parts();
         let summary = self.pass(
             modes,
-            (!initial).then_some(model),
+            (!initial || self.start_model.is_some()).then_some(model),
             plan,
             state,
             initial,
@@ -1165,13 +1193,14 @@ const fn initial_modes(weight_image: bool) -> ModeSet {
 }
 
 /// The modes of the pass that writes visibilities, and whether it has a
-/// model: the initial pass, of modes `initial`, without cleaning, and a
-/// residual refresh otherwise.
-fn write_pass(problem: &CompiledProblem, initial: ModeSet) -> (ModeSet, bool) {
+/// model: the initial pass, of modes `initial`, without cleaning, with the
+/// model when it was `seeded` from a start model, and a residual refresh
+/// otherwise.
+fn write_pass(problem: &CompiledProblem, initial: ModeSet, seeded: bool) -> (ModeSet, bool) {
     if problem.reconstruction().controls().max_minor_iterations() > 0 {
         (ModeSet::DATA, true)
     } else {
-        (initial, false)
+        (initial, seeded)
     }
 }
 

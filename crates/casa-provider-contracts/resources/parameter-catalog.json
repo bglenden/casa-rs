@@ -6403,6 +6403,29 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.startmodel",
+      "semantic_revision": 2,
+      "casa_name": "startmodel",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "image"
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA image in Jy/pixel that the model starts from",
+        "details": "Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept. Its Stokes and spectral axes must be the image's. The first major cycle subtracts its prediction, and the restored image includes it.",
+        "examples": [
+          "deep.model"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.starttime",
       "semantic_revision": 1,
       "casa_name": "starttime",

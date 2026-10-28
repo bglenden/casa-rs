@@ -166,6 +166,10 @@ pub struct ImagingRequest {
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
+    /// CASA's `startmodel`: an image in Jy/pixel that the model starts from
+    /// (`SIImageStore::setModelImageOne`).
+    #[serde(deserialize_with = "optional")]
+    pub startmodel: Option<PathBuf>,
     /// Visibility weighting.
     pub weighting: Weighting,
     /// Briggs robustness.
@@ -433,6 +437,19 @@ impl ImagingRequest {
         if self.nsigma < 0.0 || self.scales.iter().any(|scale| *scale < 0.0) {
             return invalid("nsigma, scales", "must not be negative");
         }
+        if self.startmodel.is_some() && self.deconvolver == Deconvolver::Mtmfs {
+            return invalid(
+                "startmodel, deconvolver",
+                "an mtmfs start model is one image per Taylor term, which is not supported yet",
+            );
+        }
+        if self.startmodel.is_some() && self.outlierfile.is_some() {
+            return invalid(
+                "startmodel, outlierfile",
+                "a start model with outlier fields is not supported yet: an outlier would own the \
+                 main field's overlap with no start model of its own",
+            );
+        }
         if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
             return invalid(
                 "nterms, deconvolver",
@@ -448,8 +465,11 @@ impl ImagingRequest {
                 "a solving run needs minor-cycle iterations and a major cycle",
             );
         }
-        if self.savemodel && !self.solves() {
-            return invalid("savemodel, niter", "MODEL_DATA needs a solved model");
+        if self.savemodel && !self.solves() && self.startmodel.is_none() {
+            return invalid(
+                "savemodel, niter",
+                "MODEL_DATA needs a solved model or a start model",
+            );
         }
         if (self.mask_image.is_some() && !self.mask_box.is_empty())
             || (self.usemask == UseMask::AutoMultithresh
@@ -1148,6 +1168,10 @@ pub(crate) mod tests {
                 "usemask, mask_image, mask_box",
             ),
             (json!({ "pblimit": 1.0 }), "psfcutoff, pblimit"),
+            (
+                json!({ "deconvolver": "mtmfs", "nterms": 2, "startmodel": "deep.model" }),
+                "startmodel, deconvolver",
+            ),
         ] {
             assert_eq!(refusal(overrides), parameters);
         }

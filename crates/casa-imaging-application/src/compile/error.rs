@@ -398,6 +398,14 @@ pub enum PrepareError {
         /// The mask's frame.
         frame: DirectionRef,
     },
+    /// A `startmodel` casa-rs cannot start from.
+    #[error("startmodel {}: {reason}", path.display())]
+    StartModel {
+        /// The start model.
+        path: PathBuf,
+        /// Why it is refused.
+        reason: String,
+    },
     /// The outlier file could not be read or describes no valid domain.
     #[error("outlier file {}: {problem}", path.display())]
     OutlierFile {

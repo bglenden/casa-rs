@@ -12155,6 +12155,56 @@
           },
           "aliases": [],
           "reviewed_homonym": null
+        },
+        {
+          "name": "startmodel",
+          "concept": {
+            "id": "parameter.startmodel",
+            "semantic_revision": 2
+          },
+          "order": 108,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--startmodel"
+              ],
+              "false_flags": [],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "startmodel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "startmodel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Start Model",
+              "group": "Stage Parameters",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
       "migrations": []

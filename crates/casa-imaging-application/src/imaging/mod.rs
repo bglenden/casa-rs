@@ -69,4 +69,7 @@ pub(crate) enum ImagingError {
     /// The paged cube state could not be created.
     #[error("cube state: {0}")]
     CubeState(#[from] std::io::Error),
+    /// The start model could not be read or regridded.
+    #[error("startmodel: {0}")]
+    StartModel(#[source] casa_images::ImageError),
 }
