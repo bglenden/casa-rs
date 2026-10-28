@@ -12,9 +12,16 @@ use crate::{ParameterSession, semantic_eq};
 
 /// The provider families whose binaries run on the shared task front end
 /// (#931). They take one `--json-run -` request; the list grows as the
-/// MeasurementSet and calibration families move (PRs 2c and 2d) and goes
-/// once every binary has.
-pub const FRONT_END_FAMILIES: &[&str] = &["image_analysis"];
+/// calibration family, the imager and simobserve move (PR 2d) and goes once
+/// every binary has.
+pub const FRONT_END_FAMILIES: &[&str] = &[
+    "image_analysis",
+    "msexplore",
+    "mstransform",
+    "flagdata",
+    "flagmanager",
+    "importvla",
+];
 
 /// Whether `bundle`'s binary runs on the shared task front end.
 pub fn runs_on_front_end(bundle: &SurfaceContractBundle) -> bool {
@@ -412,7 +419,13 @@ mod tests {
     /// The feather surface, as a family whose binary still parses its own
     /// command line, so it is projected to flags rather than `--json-run`.
     fn direct_feather_bundle() -> casa_provider_contracts::SurfaceContractBundle {
-        let mut bundle = builtin_surface_bundle("feather").unwrap();
+        direct_bundle("feather")
+    }
+
+    /// The builtin `surface` in a family whose binary takes direct CLI
+    /// arguments, as the families not yet on the front end do.
+    fn direct_bundle(surface: &str) -> casa_provider_contracts::SurfaceContractBundle {
+        let mut bundle = builtin_surface_bundle(surface).unwrap();
         let casa_provider_contracts::SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.provider_family = "direct_cli_fixture".to_string();
         bundle
@@ -661,22 +674,35 @@ mod tests {
 
     #[test]
     fn importvla_archivefiles_round_trip_as_a_list_and_project_as_csv() {
-        let bundle = builtin_surface_bundle("importvla").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-        session
-            .set(
-                "archivefiles",
-                ParameterValue::Array(vec![
-                    ParameterValue::String("raw/one.exp".into()),
-                    ParameterValue::String("raw/two.xp1".into()),
-                ]),
-            )
-            .unwrap();
+        let archivefiles = ParameterValue::Array(vec![
+            ParameterValue::String("raw/one.exp".into()),
+            ParameterValue::String("raw/two.xp1".into()),
+        ]);
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("importvla").unwrap()).unwrap();
+        session.set("archivefiles", archivefiles.clone()).unwrap();
 
         let sparse = session.render_sparse().unwrap();
         assert!(sparse.contains("archivefiles = [\"raw/one.exp\", \"raw/two.xp1\"]"));
 
-        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
+        // importvla's binary takes the list itself in one request.
+        let request: TaskRunRequest = serde_json::from_str(
+            project_front_end_invocation(&session)
+                .unwrap()
+                .stdin
+                .as_deref()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            request.values["archivefiles"],
+            serde_json::json!(["raw/one.exp", "raw/two.xp1"])
+        );
+
+        // A direct command line carries a list as CSV.
+        let mut direct = ParameterSession::defaults(direct_bundle("importvla")).unwrap();
+        direct.set("archivefiles", archivefiles).unwrap();
+        let invocation = project_provider_invocation(&direct, |_family, _values, direct| {
             Ok(ProviderInvocationAdaptation::direct(direct))
         })
         .unwrap();

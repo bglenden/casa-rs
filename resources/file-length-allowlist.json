@@ -23,7 +23,6 @@
     "crates/casa-ms/src/listobs.rs",
     "crates/casa-ms/src/ms.rs",
     "crates/casa-ms/src/msexplore.rs",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-ms/src/plot.rs",
     "crates/casa-ms/src/selected_observation/tests.rs",
     "crates/casa-ms/src/selection.rs",

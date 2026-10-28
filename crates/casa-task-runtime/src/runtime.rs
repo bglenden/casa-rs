@@ -179,9 +179,14 @@ fn parse_parameter_text_inner(
                     .map(ParameterValue::Array);
             }
             if value.contains(',') {
+                // A blank item names no path, as when a path list's string
+                // is split during normalization.
+                let is_path = matches!(**element, ParameterType::Path { .. });
                 return value
                     .split(',')
-                    .map(|value| parse_parameter_text_inner(value.trim(), element))
+                    .map(str::trim)
+                    .filter(|value| !(is_path && value.is_empty()))
+                    .map(|value| parse_parameter_text_inner(value, element))
                     .collect::<Result<Vec<_>, _>>()
                     .map(ParameterValue::Array);
             }

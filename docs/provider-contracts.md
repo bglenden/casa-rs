@@ -260,18 +260,26 @@ function.
 ## The shared task front end and typed replies
 
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
-is to call. The image binaries and `imexplore` run on it; the MeasurementSet
-and calibration families, the imager and simobserve move next (#931, PRs 2c
-and 2d) and use `TaskCliHost` until then. The front end is generic over the
+is to call. The image binaries, `imexplore`, and the MeasurementSet binaries
+(`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
+`flagmanager` and `importvla`) run on it; the calibration family, the imager
+and simobserve move next (#931, PR 2d) and use `TaskCliHost` until then. A
+surface's choices take their canonical names (`--preset amplitude_vs_time`),
+and every flag it declares, short ones such as msexplore's `-o` included,
+reaches its parameter. The front end is generic over the
 binary's execution callback and owns the surface's declared flags, the base
 sources, `--workspace`, `--unset`, `--save-params`, `--no-save-last`, the
 non-executing `--show`, `--template` (also `--profile-template`), `--describe`
 and `--validate`, and the machine actions. A spelling the surface declares is
 always its parameter, so imregrid's `--template` names its template image and
 `--profile-template` gives its profile. A family binary's first word names the
-surface it runs, such as `imexplore imstat`; the first hosted surface runs
-otherwise. The callback reads the resolved values into the binary's typed
-request through `TaskInvocation`'s typed reads.
+surface it runs, such as `imexplore imstat` or `mstransform split`; the
+first hosted surface runs otherwise. The callback reads the resolved values
+into the binary's typed request through `TaskInvocation`'s typed reads, and
+`TaskInvocation::is_set` tells a value the run sets from a default. What a
+command line prints is the callback's text (msexplore's summary in the
+user's `format`), with notes such as msexplore's flag-edit line on stderr;
+`--json-run` carries the value and result instead.
 
 The binary's `main` owns the process. It reads the logging configuration from
 the environment (`CasaLoggingConfig::from_env`) and passes it, with its

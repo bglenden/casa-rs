@@ -77,6 +77,7 @@ pub struct TaskSuccess {
     value: Value,
     result: Value,
     text: Option<String>,
+    notes: Vec<String>,
 }
 
 impl TaskSuccess {
@@ -87,6 +88,7 @@ impl TaskSuccess {
             value: to_json(value)?,
             result: to_json(result)?,
             text: None,
+            notes: Vec::new(),
         })
     }
 
@@ -94,6 +96,14 @@ impl TaskSuccess {
     #[must_use]
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
         self.text = Some(text.into());
+        self
+    }
+
+    /// A line a command line writes to stderr, apart from its output; a
+    /// `--json-run` reply carries the result instead.
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
         self
     }
 }
@@ -142,7 +152,13 @@ pub struct TaskInvocation<'a> {
     workspace: &'a Path,
 }
 
-impl TaskInvocation<'_> {
+impl<'a> TaskInvocation<'a> {
+    /// A run of `session` in `workspace`, as the front end hands its
+    /// callback one; a binary's tests build one to drive the callback.
+    pub fn new(session: &'a ParameterSession, workspace: &'a Path) -> Self {
+        Self { session, workspace }
+    }
+
     /// The surface to run.
     pub fn surface(&self) -> &str {
         self.session.bundle().surface.id()
@@ -557,6 +573,7 @@ where
         }));
         match outcome {
             Ok(success) => {
+                stderr.extend(success.notes);
                 let stdout = match success.text {
                     Some(text) => text,
                     None if success.value.is_null() => String::new(),
@@ -569,7 +586,7 @@ where
                 }
             }
             Err(failure) => {
-                stderr.push(format!("Error: {}", failure.message));
+                stderr.push(format!("Error: {}", command_line_message(&failure)));
                 FrontEndOutput {
                     stdout: String::new(),
                     stderr,
@@ -822,6 +839,17 @@ fn save_sparse(session: &ParameterSession, path: &Path) -> Result<(), String> {
 }
 
 /// `reply` on stdout, with the exit status that agrees with it.
+/// `failure`'s message as a command line prints it: naming the parameter at
+/// fault when the message does not, as a reply's `parameter` field does.
+fn command_line_message(failure: &TaskFailure) -> String {
+    match &failure.parameter {
+        Some(name) if !failure.message.contains(name.as_str()) => {
+            format!("parameter {name:?}: {}", failure.message)
+        }
+        _ => failure.message.clone(),
+    }
+}
+
 fn reply_output(reply: &TaskReply) -> FrontEndOutput {
     match serde_json::to_string(reply) {
         Ok(text) => FrontEndOutput {

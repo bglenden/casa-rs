@@ -176,7 +176,11 @@ pub fn parse_parameter_cli_overrides(
             index += 2;
             continue;
         }
-        if raw.starts_with("--") {
+        // A surface may declare a short spelling too, such as msexplore's `-o`.
+        let declared_short = !raw.starts_with("--")
+            && raw.starts_with('-')
+            && cli_flag_binding(bundle, raw).is_some();
+        if raw.starts_with("--") || declared_short {
             let (flag, inline) = raw
                 .split_once('=')
                 .map_or((raw, None), |(flag, value)| (flag, Some(value)));
@@ -209,6 +213,18 @@ pub fn parse_parameter_cli_overrides(
                     validated_cli_value(bundle, binding, text)?,
                     if inline.is_some() { 1 } else { 2 },
                 )
+            };
+            // A list without a fixed size gathers what each occurrence
+            // names, as `--archivefile a.exp --archivefile b.exp` names two
+            // archives; any other value takes its last occurrence.
+            let value = match (patch.values.remove(&binding.name), value) {
+                (Some(ParameterValue::Array(mut earlier)), ParameterValue::Array(more))
+                    if is_open_list_domain(&concept.value_domain) =>
+                {
+                    earlier.extend(more);
+                    checked_value(bundle, binding, &ParameterValue::Array(earlier))?
+                }
+                (_, value) => value,
             };
             patch.unset.remove(&binding.name);
             patch.values.insert(binding.name.clone(), value);
@@ -328,6 +344,16 @@ fn is_bool_domain(domain: &ParameterType) -> bool {
     match domain {
         ParameterType::Bool => true,
         ParameterType::Optional { value, .. } => is_bool_domain(value),
+        _ => false,
+    }
+}
+
+/// Whether `domain` is a list with no fixed size, which a repeated flag
+/// extends.
+fn is_open_list_domain(domain: &ParameterType) -> bool {
+    match domain {
+        ParameterType::Array { max_items, .. } => max_items.is_none(),
+        ParameterType::Optional { value, .. } => is_open_list_domain(value),
         _ => false,
     }
 }
@@ -511,6 +537,46 @@ mod tests {
             parse_parameter_cli_overrides(&bundle, &["--ms".into(), "target.ms".into()]).unwrap();
         assert_eq!(declared.values["vis"], patch.values["vis"]);
         assert_eq!(patch.values["flagbackup"], ParameterValue::Bool(false));
+    }
+
+    #[test]
+    fn every_declared_spelling_reaches_its_parameter_short_ones_included() {
+        // msexplore's `-o` was read as a positional before.
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let mut short = 0;
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let Some(cli) = binding.projections.cli.as_ref() else {
+                    continue;
+                };
+                for flag in cli.flags.iter().chain(&cli.false_flags) {
+                    let Some((found, _)) = cli_flag_binding(&bundle, flag) else {
+                        panic!("{}: {flag} names nothing", surface.id());
+                    };
+                    assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+                    if !flag.starts_with("--") {
+                        short += 1;
+                    }
+                }
+            }
+        }
+        assert!(short > 0, "the catalog declares no short spelling to test");
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["-o".into(), "summary.txt".into(), "in.ms".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["output"],
+            ParameterValue::String("summary.txt".into())
+        );
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("in.ms".into())])
+        );
     }
 
     #[test]

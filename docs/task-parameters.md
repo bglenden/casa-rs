@@ -173,6 +173,15 @@ commented defaults are not active overrides. Overrides use the generated CLI
 flag spellings listed in the generated parameter reference, or the parameter's
 own name, such as `--vis` or `--threshold`.
 
+A list's command-line form is comma-separated (`--archivefiles a.exp,b.exp`).
+A flag repeated for a list without a fixed size adds to it, so
+`--archivefile a.exp --archivefile b.exp` names both archives; any other
+repeated flag takes its last value. A path list given as one string, on the
+command line, in a profile or in a `--json-run` request, is split at its
+commas before each path is normalized, so every route names the same paths.
+A refused value names its parameter, on the command line as in a reply's
+`parameter`.
+
 There are no run-time confirmations. CASA's own parameters are the consent:
 `overwrite=true` replaces a product, and a task that changes data in place
 does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
@@ -185,8 +194,10 @@ Direct provider binaries continue to expose their idiomatic execution
 transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
 and profile lifecycle are owned by `casars run` and `casars params`, and by a
 front-end binary's own command line. The
-image binaries and `imexplore` run on the shared task front end in
-`casa-task-runtime`, which gives each binary those same sources and controls,
+image binaries, `imexplore` and the MeasurementSet binaries (`msexplore`,
+`mstransform`, `flagdata`, `flagmanager`, `importvla`) run on the shared task
+front end in `casa-task-runtime`, which gives each binary those same sources
+and controls,
 `--show`, `--template` (`--profile-template` on imregrid, whose `--template`
 is its template image), `--describe` and `--validate`, and a typed
 `--json-run` reply. A run started from a front-end binary's command line

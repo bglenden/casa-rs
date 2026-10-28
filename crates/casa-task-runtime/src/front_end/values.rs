@@ -20,12 +20,10 @@ impl TaskInvocation<'_> {
         state.value.as_ref().filter(|_| state.active)
     }
 
-    /// `name` as text, or `None` when it is unset, inactive, or holds the
-    /// explicit absence its provider adapter omits (`"none"`).
-    pub fn text(&self, name: &str) -> Result<Option<String>, TaskFailure> {
-        let Some(value) = self.value(name) else {
-            return Ok(None);
-        };
+    /// The active value of `name`, or `None` when it is unset, inactive, or
+    /// holds the explicit absence its provider adapter omits (`"none"`).
+    fn present(&self, name: &str) -> Option<&ParameterValue> {
+        let value = self.value(name)?;
         let adapter = self
             .session
             .bundle()
@@ -35,13 +33,38 @@ impl TaskInvocation<'_> {
             .find(|binding| binding.name == name)
             .and_then(|binding| binding.projections.provider.as_ref())
             .map(|projection| &projection.adapter);
-        if parameter_value_is_omitted(value, adapter) {
-            return Ok(None);
+        (!parameter_value_is_omitted(value, adapter)).then_some(value)
+    }
+
+    /// `name` as text, or `None` when it is unset, inactive, or holds the
+    /// explicit absence its provider adapter omits (`"none"`).
+    pub fn text(&self, name: &str) -> Result<Option<String>, TaskFailure> {
+        match self.present(name) {
+            None => Ok(None),
+            Some(ParameterValue::String(text)) => Ok(Some(text.clone())),
+            Some(other) => Err(mismatch(name, "text", other)),
         }
-        match value {
-            ParameterValue::String(text) => Ok(Some(text.clone())),
-            other => Err(mismatch(name, "text", other)),
+    }
+
+    /// `name` as an optional number, such as flagdata's `timedev`: `None`
+    /// when it is unset, inactive, or holds the explicit absence its
+    /// provider adapter omits (`"none"`); an integer value is read as one.
+    pub fn optional_number(&self, name: &str) -> Result<Option<f64>, TaskFailure> {
+        match self.present(name) {
+            None => Ok(None),
+            Some(ParameterValue::Float(value)) => Ok(Some(*value)),
+            Some(ParameterValue::Integer(value)) => Ok(Some(*value as f64)),
+            Some(other) => Err(mismatch(name, "a number", other)),
         }
+    }
+
+    /// Whether the run sets `name`, from its base profile or an override,
+    /// rather than taking the default.
+    pub fn is_set(&self, name: &str) -> bool {
+        self.session
+            .states()
+            .get(name)
+            .is_some_and(|state| state.active && state.explicit)
     }
 
     /// `name` as text, which must be set.
