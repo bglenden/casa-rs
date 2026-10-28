@@ -358,8 +358,7 @@ impl Feeds {
     /// and window differ, `FEED` stating receptors per time, the last row
     /// in table order is taken, as casacore's `MSIter` takes it (with a
     /// warning); XRADIO's converter refuses such rows, and a conversion
-    /// reports them as a loss ([`Self::vary_in_time`]). `None` without a
-    /// row.
+    /// reports them as a loss ([`Self::varying`]). `None` without a row.
     pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
         let window = if self.window_dependent { window } else { -1 };
         self.rows
@@ -367,13 +366,16 @@ impl Feeds {
             .and_then(|rows| rows.last())
     }
 
-    /// Whether rows of one antenna, feed and window differ: `FEED` states
-    /// receptors that vary in time, of which [`Self::receptors`] keeps the
-    /// last.
-    pub(crate) fn vary_in_time(&self) -> bool {
+    /// The first (antenna, feed, window) whose rows differ, among the rows
+    /// [`Self::receptors`] reads: `FEED` states receptors that vary in
+    /// time, of which it keeps the last. Rows for every window (-1) beside
+    /// window rows are never read, and do not count.
+    pub(crate) fn varying(&self) -> Option<(i32, i32, i32)> {
         self.rows
-            .values()
-            .any(|rows| rows.iter().any(|row| row != &rows[0]))
+            .iter()
+            .filter(|((_, _, window), _)| !self.window_dependent || *window != -1)
+            .find(|(_, rows)| rows.iter().any(|row| row != &rows[0]))
+            .map(|(key, _)| *key)
     }
 }
 

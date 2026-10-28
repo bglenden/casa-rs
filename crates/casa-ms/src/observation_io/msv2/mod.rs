@@ -125,10 +125,11 @@ impl Msv2Observation {
     ) -> Result<Self, ObservationError> {
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
-        if feeds.vary_in_time() {
+        if let Some((antenna, feed, window)) = feeds.varying() {
             tracing::warn!(
-                "FEED states receptors that vary in time; the last row of each antenna, feed \
-                 and window is used, as casacore's MSIter uses it"
+                "FEED states receptors that vary in time (first for antenna {antenna}, feed \
+                 {feed}, window {window}); the last row of each antenna, feed and window is \
+                 used, as casacore's MSIter uses it"
             );
         }
         let catalogue::Fields {
