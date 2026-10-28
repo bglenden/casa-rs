@@ -8,8 +8,8 @@
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::ops::Range;
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#11 id=11 data-nosnippet>11</a>    InstrumentModel, MissingPointingPolicy, ObservationPointingLaw, PointingCentreLaw,
-<a href=#12 id=12 data-nosnippet>12</a>    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+<a href=#11 id=11 data-nosnippet>11</a>    AntennaResponseClass, InstrumentModel, MissingPointingPolicy, ObservationPointingLaw,
+<a href=#12 id=12 data-nosnippet>12</a>    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
 <a href=#13 id=13 data-nosnippet>13</a>    PointingInterpolation, PointingTimeSampling,
 <a href=#14 id=14 data-nosnippet>14</a>};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_imaging_products::AnalyticPrimaryBeamModel;
@@ -96,7 +96,7 @@
 <a href=#96 id=96 data-nosnippet>96</a>        </span>}),
 <a href=#97 id=97 data-nosnippet>97</a>        Gridder::Mosaic { .. } =&gt; (
 <a href=#98 id=98 data-nosnippet>98</a>            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-<a href=#99 id=99 data-nosnippet>99</a>            |diameter| (diameter - <span class="number">12.0</span>).abs() &lt; <span class="number">0.5 </span>|| (diameter - <span class="number">7.0</span>).abs() &lt; <span class="number">1.0</span>,
+<a href=#99 id=99 data-nosnippet>99</a>            |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
 <a href=#100 id=100 data-nosnippet>100</a>        ),
 <a href=#101 id=101 data-nosnippet>101</a>        Gridder::Standard { .. } | Gridder::Wproject { .. } =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
 <a href=#102 id=102 data-nosnippet>102</a>    };
@@ -104,7 +104,7 @@
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span>supported = !telescopes.is_empty()
 <a href=#105 id=105 data-nosnippet>105</a>        &amp;&amp; telescopes.iter().all(|name| <span class="kw">match </span>gridder {
 <a href=#106 id=106 data-nosnippet>106</a>            Gridder::Awproject(<span class="kw">_</span>) =&gt; <span class="macro">matches!</span>(name.as_str(), <span class="string">"VLA" </span>| <span class="string">"EVLA"</span>),
-<a href=#107 id=107 data-nosnippet>107</a>            <span class="kw">_ </span>=&gt; <span class="macro">matches!</span>(name.as_str(), <span class="string">"ALMA" </span>| <span class="string">"ACA"</span>),
+<a href=#107 id=107 data-nosnippet>107</a>            <span class="kw">_ </span>=&gt; AntennaResponseClass::casa_alma_aca_telescope(name),
 <a href=#108 id=108 data-nosnippet>108</a>        });
 <a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">if </span>!supported {
 <a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::UnsupportedInstrument {

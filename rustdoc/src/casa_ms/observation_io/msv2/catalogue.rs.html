@@ -164,7 +164,7 @@
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>phase_dir = DirectionColumn::phase_dir(field_table);
 <a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>fields = (<span class="number">0</span>..field.row_count())
 <a href=#166 id=166 data-nosnippet>166</a>        .map(|row| {
-<a href=#167 id=167 data-nosnippet>167</a>            <span class="kw">let </span>(longitude, latitude) = phase_dir.get_direction(row).map_err(storage)<span class="question-mark">?</span>.as_angles();
+<a href=#167 id=167 data-nosnippet>167</a>            <span class="kw">let </span>(longitude, latitude) = phase_dir.get_angles(row).map_err(storage)<span class="question-mark">?</span>;
 <a href=#168 id=168 data-nosnippet>168</a>            <span class="kw">let </span>source = field.source_id(row).map_err(storage)<span class="question-mark">?</span>;
 <a href=#169 id=169 data-nosnippet>169</a>            <span class="kw">let </span>time_s = field.time(row).map_err(storage)<span class="question-mark">?</span>;
 <a href=#170 id=170 data-nosnippet>170</a>            <span class="prelude-val">Ok</span>(FieldEntry {

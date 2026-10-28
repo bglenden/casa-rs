@@ -594,69 +594,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Decision
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consequences
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternatives considered
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#enforcement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Enforcement
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -680,7 +617,9 @@ Supersedes: 0010; the "Migration" section and the attestation wording of 0009;
 the joint continuum-plus-line decision of 0011
 Superseded by:</p>
 <p>Amended: 2026-10-25, on owner direction: every imaging crate may depend on the
-definitional crates (decision 10).</p>
+definitional crates (decision 10). 2026-10-28, on owner approval: the model
+may also depend on <code>casa-observation</code> (decision 10; imaging port decision 1,</p>
+<h1 id="932">932).<a class="headerlink" href="#932" title="Permanent link">&para;</a></h1>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
 several parallel routes: four CPU gridding drivers, two Metal drivers, closed
@@ -754,7 +693,10 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
     file, network, process or environment I/O, start no threads, use no
     device, and depend on no workspace crate but one another. They are
     <code>casa-values</code>, <code>casa-types</code> and <code>casa-coordinates</code>; beyond them the model
-    has no workspace dependencies. The policy names the definitional crates
+    depends only on <code>casa-observation</code>, the observation boundary, whose
+    catalogue, batches and pointing samples its batch geometry reads
+    (amended 2026-10-28 on owner approval; imaging port decision 1 of
+    2026-10-27, #932). The policy names the definitional crates
     and lists each crate's other workspace dependencies exactly. Adding a
     crate to the definitional set widens what every layer may use, so it is
     the owner's decision, recorded on its pull request; the checks above

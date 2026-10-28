@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["gridft_uvw_between_j2000_directions"],"mod":["columns","engine"],"struct":["GridFtProjection"]};
+window.SIDEBAR_ITEMS = {"mod":["columns","engine"]};

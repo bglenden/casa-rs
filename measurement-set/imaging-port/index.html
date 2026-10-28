@@ -909,6 +909,40 @@ Measures as the plan requires, with no translation layer left behind.</p>
 <p><strong>Law:</strong> for every T1 and T1.5 workload, the batch geometry must equal today's
 per-row geometry to 1e-12 relative, sample for sample. Only summation order
 may differ.</p>
+<p><em>As landed in step 3b</em> (#932): <code>casa_imaging_model::GeometryPlan</code> compiles
+once from the problem and the catalogue and evaluates each batch; the shared
+arithmetic (casacore's <code>UVWMachine</code>, the prepared frequency conversion and
+the position angle in <code>casa-types</code>; <code>GridFtProjection</code>, the pointing law and
+the AW pointing groups in <code>casa-imaging-model</code>) moved out of <code>casa-ms</code>, whose
+route now calls it. <code>casa_imaging_application::geometry_law</code> runs both
+routes on one MeasurementSet for one request and compares every row, matched
+by MAIN row number; a row matched twice, a row not matched and a NaN on
+either side fail it. The T1 fixture checks it after every T1 run and two T1
+laws add <code>usepointing</code> (AW over two windows, the mosaic gridder). On all 27
+T1 runs (1.05 M rows) and 55 T1.5 runs on the Mac mini (5.59 M rows: 18
+refim and 34 kernels cases; the two <code>mawproject</code> cases with <code>usepointing</code>;
+CAS-7841; the four native-AW variants, which need the EVLA surface from
+<code>~/.casa/data</code>, did not run), every quantity of the two routes on the same MeasurementSet is
+bit-identical, inside the law's 1e-12 bound: projections, pointing,
+parallactic angles, AW pointing pixels, aperture classes and output-frame
+frequencies. An MSv4 conversion of the
+same data is not bit-identical; 2.2.1 records what it changes. Receipts:
+NAS <code>casa-rs/issue-932/step3b/</code>.</p>
+<p><code>GeometryPlan::apply</code> computes geometry for the samples its row mask names.
+Today's route computes it for every selected row, <code>FLAG_ROW</code> rows included,
+so step 4's mask keeps flagged rows and drops only padding (a NaN weight on
+both stores) and the samples the selection excludes.</p>
+<p>A moving phase centre follows a body or source Measures names. The two
+others today's route takes, a field's own ephemeris (<code>TRACKFIELD</code>) and an
+external ephemeris table, are refused when the plan compiles. A batch whose
+frequencies convert into or out of the rest frame is refused too: that
+needs the radial velocity only an ephemeris gives. <code>TRACKFIELD</code> comes with
+the field ephemerides of #942; the external table is a request input, which
+<code>GeometryPlan</code> must take before step 4 images through it. The compiled law
+(<code>PhaseCentreLaw::Ephemeris</code>) names a body and a table alike, a table being
+a directory of that name, so it must also say which it is by then: a table
+directory named like a body (<code>Mars</code>) would otherwise be followed as the
+body.</p>
 <h3 id="221-what-geometry-needs-from-the-boundary">2.2.1 What geometry needs from the boundary<a class="headerlink" href="#221-what-geometry-needs-from-the-boundary" title="Permanent link">&para;</a></h3>
 <p>Added 2026-10-27, when step 3 began. Section 2.2 assumed that the catalogue
 holds everything today's per-row geometry reads, and 2.4 relies on "the
@@ -986,12 +1020,36 @@ cutover (#942); until then the converter refuses them, as it did.</p>
   intervals recovered. The converter reports <code>INTERVAL</code>, <code>TARGET</code>, <code>NAME</code>
   and <code>TRACKING</code> as a table loss. Today's covering rule is casa-rs's, not
   casacore's (#948), and the batch route keeps it (#958).
+  <em>Measured in step 3b</em> (the batch geometry of an MSv2 against its MSv4
+  conversion, <code>geometry_law::compare_stores</code>): on ALMA CAS-7841, whose
+  <code>POINTING</code> is sampled every 48 ms, imaged with the mosaic gridder and
+  <code>usepointing</code>, the MSv4 route's pointing differs from the MSv2's by at
+  most 1.4e-10 rad (0.03 mas) and its UVW and phase shift by under 1e-15
+  relative; on the EVLA <code>mawproject</code> pair under AW projection with
+  <code>usepointing</code>, not at all. The native AW workloads need the EVLA surface
+  from <code>~/.casa/data</code>, which the Mac mini lacks. The owner kept the
+  boundary's tie rule for the cutover (2026-10-28, #946).
 - <strong>AW pointing epochs.</strong> Today's epochs follow MAIN order, which interleaves
   windows; batches are partition-major. Refresh decisions carry state across
   consecutive epochs, so the order can change which epochs refresh. CASA's
   imager iterates by field, then window, then time. Step 3b instruments both
   orders against CASA before choosing, and the equality law runs on the
-  native AW workloads.</p>
+  native AW workloads.
+  <em>As landed in step 3b</em>: the batch route carries the refresh state in
+  delivery order, partition by partition and each in time order
+  (<code>GeometryTraversal</code>). On every workload measured (T1's two-window AW with
+  <code>usepointing</code>, the EVLA <code>mawproject</code> pair with <code>usepointing</code>) its pixels
+  equal today's MAIN-order plan bit for bit. That is not so in general:
+  today's plan forms an epoch per (data description, field, time) in MAIN
+  order and counts its rows before channel windows skip any block, where
+  the batch route counts each (partition, time)'s row mask. Where those
+  counts differ (windows at one time holding different numbers of rows, or
+  a window a run's channels skip), refresh decisions can diverge. Both
+  casa-rs orders refresh at
+  every field change; CASA's field-major order does not, so a multi-field AW
+  mosaic with <code>usepointing</code> can group differently from CASA on either route.
+  No acceptance workload images AW with <code>usepointing</code> over several fields
+  (native-aw-evla runs without it); instrumenting CASA's epochs is #957.</p>
 <h3 id="23-selection">2.3 Selection<a class="headerlink" href="#23-selection" title="Permanent link">&para;</a></h3>
 <p>The imager's selection is resolved once (<code>RowSelection</code>,
 <code>casa-imaging-model/src/observation.rs:188</code>): fields, a UV-distance
@@ -1062,7 +1120,9 @@ batches.</p>
 - the selected-observation access, buffer, content plan and walk modules;
 - <code>SelectedRows</code> and the row-based model types;
 - <code>SelectedVisibilityWrite</code> (once nothing else uses it);
-- the <code>casa-ms → casa-imaging-model</code> edge.</p>
+- the <code>casa-ms → casa-imaging-model</code> edge. Step 3b deepened it: today's
+  route in <code>casa-ms</code> now calls <code>GridFtProjection</code>, the pointing law and the
+  AW pointing groups from the model, and those callers go with the route.</p>
 <p>The imaging dependency checker's grandfathered lists shrink accordingly.</p>
 <h2 id="3-owner-decisions">3. Owner decisions<a class="headerlink" href="#3-owner-decisions" title="Permanent link">&para;</a></h2>
 <p>All five were decided on 2026-10-27, each as proposed below: imaging takes
@@ -1110,7 +1170,9 @@ stated; and MSv4 imaging is part of the cutover's acceptance.</p>
 <li><strong>3b. Geometry</strong> in <code>casa-imaging-model</code>. The equality law of 2.2 runs
      both routes on every T1 workload.</li>
 <li><strong><code>ObservationSource</code></strong> beside <code>MeasurementSetSource</code>, behind a run
-   option. T0, T1 and T1.5 run on both.</li>
+   option. T0, T1 and T1.5 run on both. Field ephemerides (#942) land first,
+   or the source refuses a field with <code>EPHEMERIS_ID</code> until they do: batch
+   geometry would read its <code>PHASE_DIR</code> offset as a direction.</li>
 <li><strong>Write-back</strong> through update sessions. The model-column T1 tests and the
    counting law run on both routes.</li>
 <li><strong>Cutover.</strong></li>

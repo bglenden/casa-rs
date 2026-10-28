@@ -33,13 +33,13 @@
 <a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">use </span>std::collections::HashMap;
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>std::time::Duration;
 <a href=#35 id=35 data-nosnippet>35</a>
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_imaging_operator::{RowContext, RowSpectrum};
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_imaging_runtime::pass::{
-<a href=#38 id=38 data-nosnippet>38</a>    BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainModel, DomainProjection,
-<a href=#39 id=39 data-nosnippet>39</a>    MetalNoiseRow, MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress,
-<a href=#40 id=40 data-nosnippet>40</a>    WorkerTeam,
-<a href=#41 id=41 data-nosnippet>41</a>};
-<a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>casa_ms::derived::GridFtProjection;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_imaging_model::GridFtProjection;
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_imaging_operator::{RowContext, RowSpectrum};
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_imaging_runtime::pass::{
+<a href=#39 id=39 data-nosnippet>39</a>    BackendChoice, BlockPredictor, BlockShape, DeviceNoise, DomainModel, DomainProjection,
+<a href=#40 id=40 data-nosnippet>40</a>    MetalNoiseRow, MetalNoiseTerm, NativeBlock, NativeRowHeader, PredictionDomain, RowAddress,
+<a href=#41 id=41 data-nosnippet>41</a>    WorkerTeam,
+<a href=#42 id=42 data-nosnippet>42</a>};
 <a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span>casa_numerics::cell_noise::metal_draws_exactly;
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>casa_types::Complex32;
 <a href=#45 id=45 data-nosnippet>45</a>
