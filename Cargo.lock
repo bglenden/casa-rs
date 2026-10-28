@@ -440,6 +440,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-singledish"
+version = "0.27.0"
+dependencies = [
+ "base64",
+ "casa-imaging-operator",
+ "casa-imaging-runtime",
+ "casa-numerics",
+ "flate2",
+ "libm",
+ "ndarray",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "casa-lattices"
 version = "0.27.0"
 dependencies = [
@@ -571,6 +586,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-lattices",
  "casa-ms",
  "casa-numerics",

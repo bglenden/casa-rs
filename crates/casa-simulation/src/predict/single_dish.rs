@@ -4,24 +4,14 @@
 //! model in the image plane.
 //!
 //! For a row pointed at pixel `(x, y)` of the model, `SDGrid::get` calls
-//! `dgridsd` (`fgridsd.f`):
-//! - the pointing's nearest pixel is `loc = nint(x + 1)` (one-based) and its
-//!   offset from it, in hundredths of a pixel, `off = nint((loc − x − 1) ·
-//!   100)`; a pointing whose nearest pixel is off the image predicts zero;
-//! - each pixel within `support` pixels of `loc` along both axes adds the
-//!   model's value times the radial kernel at `floor(√(rx² + ry²))`
-//!   hundredths, with `r = 100 i + off`, summed in single precision;
-//! - the visibility is the sum's conjugate.
-//!
-//! The kernels (`SDGrid::init`, `findPBAsConvFunction`) are tabulated at a
-//! hundredth of a pixel:
-//! - `BOX`: 1 out to half a pixel, support 0;
+//! `dgridsd` (`fgridsd.f`), the model summed through the kernel around the
+//! pointing's nearest pixel; the visibility is the sum's conjugate.
+//! `casa-imaging-singledish` owns the kernels and that sum, which the
+//! single-dish gridder shares ([`KernelTable::degrid`]):
+//! - `BOX`: 1 out to a pixel, reaching the nearest pixel only;
 //! - `SF`: CASA's spheroid `(1 − ν²) grdsf(ν)` over 3 pixels;
 //! - `PB`: the telescope's power pattern along the x axis, at the frequency
-//!   of model plane 0 for every channel, tabulated over `max(128, support)`
-//!   pixels (`PBMath1D::support`), cut at its first value below 1e-3, of
-//!   which CASA keeps one fewer (`Slice(0, cfLen − 1)`); the support is the
-//!   kept length in whole pixels.
+//!   of model plane 0 for every channel ([`KernelTable::primary_beam`]).
 //!
 //! The model is a Stokes I image: the parallel hands take its value and the
 //! cross hands none. A channel takes the model plane `matchChannel` gives
@@ -33,22 +23,12 @@
 //! correlation with no positive component predicted as if it were one dish;
 //! casa-rs predicts autocorrelations only (`docs/CASA (C++) bugs.md`).
 
-use casa_imaging_operator::{SpectralAxis, grdsf};
+use casa_imaging_operator::SpectralAxis;
 use casa_imaging_runtime::Reservation;
+use casa_imaging_singledish::{GridFunction, KernelTable};
 use num_complex::Complex32;
 
 use super::{BeamPattern, PredictError, SkyModel};
-
-/// Samples per pixel of every `SDGrid` kernel (`convSampling`).
-const SAMPLING: usize = 100;
-
-/// `findPBAsConvFunction`: the PB kernel ends before its first sample
-/// below this.
-const PB_CUT: f32 = 1.0e-3;
-
-/// `findPBAsConvFunction`: the PB kernel is tabulated over at least this
-/// many pixels.
-const PB_MINIMUM_PIXELS: usize = 128;
 
 /// The `SDGrid` kernel `setoptions(gridfunction=…)` names (`SDGrid::init`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,60 +53,26 @@ impl SingleDishKernel {
             _ => None,
         }
     }
-}
 
-/// A radial kernel at a hundredth of a pixel (`convFunc`) and its support
-/// in pixels.
-#[derive(Debug)]
-struct Kernel {
-    table: Vec<f32>,
-    support: usize,
-}
-
-impl Kernel {
-    fn new(kind: SingleDishKernel, model: &SkyModel, beam: Option<&BeamPattern>) -> Self {
-        let tabulated = |support: usize, values: Vec<f32>| {
-            let mut table = vec![0.0; SAMPLING * (2 * support + 2)];
-            table[..values.len()].copy_from_slice(&values);
-            Self { table, support }
-        };
-        match kind {
-            SingleDishKernel::Box => tabulated(0, vec![1.0; SAMPLING]),
-            SingleDishKernel::Spheroidal => {
-                let support = 3;
-                let samples = SAMPLING * support;
-                tabulated(
-                    support,
-                    (0..samples)
-                        .map(|i| {
-                            let nu = i as f64 / samples as f64;
-                            ((1.0 - nu * nu) * grdsf(nu)) as f32
-                        })
-                        .collect(),
-                )
-            }
-            SingleDishKernel::Pb => {
-                let beam = beam.expect("a PB kernel has a beam");
-                let frequency_hz = model.plane_frequency_hz(0);
-                let increment = model.increment_rad[0] * (1.0 / SAMPLING as f64);
-                let pixels = PB_MINIMUM_PIXELS
-                    .max(beam.support_pixels(model.increment_rad[0], frequency_hz));
-                let mut values: Vec<f32> = (0..SAMPLING * pixels)
-                    .map(|i| beam.power_on_axis(i as f64 * increment, frequency_hz))
-                    .take_while(|&power| power >= PB_CUT)
-                    .collect();
-                // CASA keeps `Slice(0, cfLen − 1)` of the `cfLen` samples
-                // before the cut, at least one counted, but takes the
-                // support from all `cfLen` (`convSupport = cfLen/convSampling`).
-                let counted = values.len().max(1);
-                values.truncate(counted - 1);
-                tabulated(counted / SAMPLING, values)
-            }
+    /// The kernel with the simulator's support, CASA's default.
+    const fn grid_function(self) -> GridFunction {
+        match self {
+            Self::Pb => GridFunction::PrimaryBeam,
+            Self::Box => GridFunction::BOX,
+            Self::Spheroidal => GridFunction::SPHEROIDAL,
         }
     }
 
-    fn bytes(&self) -> u64 {
-        (self.table.len() * size_of::<f32>()) as u64
+    /// The kernel's table on `model`'s pixels; `beam` is the `PB` kernel's
+    /// pattern.
+    fn table(self, model: &SkyModel, beam: Option<&BeamPattern>) -> KernelTable {
+        match (self.grid_function(), beam) {
+            (GridFunction::PrimaryBeam, Some(beam)) => {
+                KernelTable::primary_beam(beam, model.increment_rad[0], model.plane_frequency_hz(0))
+            }
+            (GridFunction::PrimaryBeam, None) => unreachable!("a PB kernel has a beam"),
+            (function, _) => KernelTable::new(function).expect("a kernel of fixed support"),
+        }
     }
 }
 
@@ -214,17 +160,19 @@ impl SingleDishPrediction {
         beam: Option<&BeamPattern>,
         (windows, pointings): (&[SingleDishWindow], &SingleDishPointings),
     ) -> u64 {
-        let pixels = beam.map_or(3, |beam| {
-            PB_MINIMUM_PIXELS
-                .max(beam.support_pixels(model.increment_rad[0], model.plane_frequency_hz(0)))
-        });
-        let kernel = SAMPLING * pixels + SAMPLING * (2 * pixels + 2);
+        // The PB kernel's, or the larger of BOX's and SF's.
+        let kernel = match beam {
+            Some(beam) => GridFunction::PrimaryBeam.forming_bytes(
+                beam.support_pixels(model.increment_rad[0], model.plane_frequency_hz(0)),
+            ),
+            None => GridFunction::SPHEROIDAL.forming_bytes(0),
+        };
         let channels: usize = windows.iter().map(|w| w.frequencies_hz.len()).sum();
         let planes_of =
             windows.len() * size_of::<Vec<Option<usize>>>() + channels * size_of::<Option<usize>>();
         let per_pointing = 2 * size_of::<[f64; 2]>() + size_of::<f32>();
-        (kernel * size_of::<f32>() + planes_of + pointings.directions_rad.len() * per_pointing)
-            as u64
+        kernel
+            + (planes_of + pointings.directions_rad.len() * per_pointing) as u64
             + 2 * model.plane_bytes()
             + model.cache_bytes()
     }
@@ -251,7 +199,7 @@ impl SingleDishPrediction {
             directions_rad,
             of_scan,
         } = pointings;
-        let kernel = Kernel::new(kernel, model, beam);
+        let kernel = kernel.table(model, beam);
         let axis = SpectralAxis::new(
             model.first_frequency_hz,
             model.frequency_increment_hz,
@@ -305,10 +253,11 @@ impl SingleDishPrediction {
             for (value, pixel) in by_pointing.iter_mut().zip(&pixels) {
                 *value = match voltage_pattern {
                     Some(pattern) => {
-                        let apparent = &values * &pattern.power_plane(model, plane, *pixel);
-                        sample(&apparent, *pixel, &kernel)
+                        let apparent =
+                            &values * &super::beam::power_plane(pattern, model, plane, *pixel);
+                        kernel.degrid(apparent.view(), *pixel)
                     }
-                    None => sample(&values, *pixel, &kernel),
+                    None => kernel.degrid(values.view(), *pixel),
                 };
             }
             for (pointing_windows, &value) in samples.iter_mut().zip(&by_pointing) {
@@ -333,7 +282,7 @@ impl SingleDishPrediction {
             }
         }
         tracing::debug!(
-            support = kernel.support,
+            support = kernel.support(),
             bytes = kernel.bytes(),
             "single-dish kernel"
         );
@@ -351,42 +300,6 @@ impl SingleDishPrediction {
             .get(scan)
             .map_or(&[], |&pointing| self.samples[pointing][window].as_slice())
     }
-}
-
-/// `dgridsd` for one pointing at fractional pixel `pixel` of `plane`
-/// (`[y][x]`): the real part of its conjugated sum.
-fn sample(plane: &ndarray::Array2<f32>, pixel: [f64; 2], kernel: &Kernel) -> f32 {
-    let (ny, nx) = plane.dim();
-    // `sgridsd`, in single precision and one-based.
-    let position = pixel.map(|value| (value + 1.0) as f32);
-    let location = position.map(|value| value.round() as i64);
-    let offset = [0, 1]
-        .map(|axis| ((location[axis] as f32 - position[axis]) * SAMPLING as f32).round() as i64);
-    // `ogridsd` with no support: the nearest pixel is on the image.
-    let on_image = |value: i64, size: usize| value >= 1 && value <= size as i64;
-    if !on_image(location[0], nx) || !on_image(location[1], ny) {
-        return 0.0;
-    }
-    let support = kernel.support as i64;
-    let mut sum = 0.0_f32;
-    for iy in -support..=support {
-        let y = location[1] + iy;
-        if !on_image(y, ny) {
-            continue;
-        }
-        let ry = (SAMPLING as i64 * iy + offset[1]) as f32;
-        for ix in -support..=support {
-            let x = location[0] + ix;
-            if !on_image(x, nx) {
-                continue;
-            }
-            let rx = (SAMPLING as i64 * ix + offset[0]) as f32;
-            let radius = (rx * rx + ry * ry).sqrt() as usize;
-            let weight = kernel.table.get(radius).copied().unwrap_or(0.0);
-            sum += weight * plane[[(y - 1) as usize, (x - 1) as usize]];
-        }
-    }
-    sum
 }
 
 #[cfg(test)]
