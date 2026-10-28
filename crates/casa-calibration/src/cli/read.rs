@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use casa_ms::MsSelection;
-use casa_provider_contracts::{DefaultSpec, ParameterValue};
+use casa_provider_contracts::DefaultSpec;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use crate::{
@@ -190,11 +190,7 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
                 .at("reference_fields"),
         );
     }
-    let gainthreshold = match task.value("gainthreshold") {
-        None => None,
-        Some(ParameterValue::String(state)) if state == "none" => None,
-        Some(_) => Some(task.number("gainthreshold")?),
-    };
+    let gainthreshold = task.optional_number("gainthreshold")?;
     Ok(FluxScaleRequest {
         input_table: PathBuf::from(task.required_text("fluxscale_input")?),
         output_table: PathBuf::from(task.required_text("out_table")?),
