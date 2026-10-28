@@ -70,10 +70,11 @@ scans its samples visit, and its antennas' receptors (polarization types and
 angles): an MSv4 dataset's `antenna_xds` holds them, and an MSv2's `FEED`
 rows as casacore's `MSIter` and XRADIO's converter select them, the
 partition's window's own rows once any row names a window, else the rows
-for every window (-1). `FEED` rows of one antenna, feed and window that
-differ (receptors that vary in time) are refused, as XRADIO's converter
-refuses them; casacore warns and takes the last (an owner decision on
-#946).
+for every window (-1). Of `FEED` rows of one antenna, feed and window that
+differ (receptors that vary in time), the last in table order is read, as
+casacore's `MSIter` reads it (with a warning); XRADIO's converter refuses
+them, and casa-rs's reports them as a loss (owner decision on #946,
+2026-10-28).
 
 A field's phase centre is stored in one frame for the whole catalogue (a
 data group has one UVW frame, MSv4 one phase-centre frame). The MSv2 adapter
@@ -97,7 +98,9 @@ a time it covers with the earlier where that reader takes the lower row
 (the same wherever an antenna's rows are in time order). That reader is
 casa-rs's, not casacore's: `MSPointingColumns::pointingIndex` covers with
 the first row in table order, gives a row of `INTERVAL` 0 half the gap to
-the antenna's next row and a negative interval every time (#948). MSv4
+the antenna's next row and a negative interval every time (#948). The
+cutover keeps the boundary's tie rule (owner decision on #946, 2026-10-28).
+MSv4
 reads `POINTING_BEAM`, whose samples state no interval, so nothing covers
 and a consumer's law chooses between the samples either side; XRADIO keeps
 one polynomial term and defines no origin for more, so more are refused.
