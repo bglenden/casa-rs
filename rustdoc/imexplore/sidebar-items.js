@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["image_operation_error","imhead_usage","imstat_usage","main","parse_imhead_args","parse_imstat_args","run","usage"],"struct":["ImheadArgs","ImstatArgs"]};
+window.SIDEBAR_ITEMS = {"fn":["header_text","image_error","main","run","run_imhead","run_imstat","statistics_text"]};

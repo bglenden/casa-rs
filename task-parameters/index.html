@@ -973,11 +973,15 @@ does so, as in CASA. Where CASA guards a change, casa-rs does too, for example
 launcher is retired (#931).</p>
 <p>Direct provider binaries continue to expose their idiomatic execution
 transports (<code>--protocol-info</code>, <code>--json-schema</code>, <code>--json-run</code>); source selection
-and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>. The
-shared task front end in <code>casa-task-runtime</code>, which the binaries move onto
-next, gives each binary those same sources and controls, <code>--show</code>,
-<code>--template</code> (<code>--profile-template</code> on imregrid, whose <code>--template</code> is its
-template image), <code>--describe</code> and <code>--validate</code>, and a typed <code>--json-run</code> reply
+and profile lifecycle are owned by <code>casars run</code> and <code>casars params</code>, and by a
+front-end binary's own command line. The
+image binaries and <code>imexplore</code> run on the shared task front end in
+<code>casa-task-runtime</code>, which gives each binary those same sources and controls,
+<code>--show</code>, <code>--template</code> (<code>--profile-template</code> on imregrid, whose <code>--template</code>
+is its template image), <code>--describe</code> and <code>--validate</code>, and a typed
+<code>--json-run</code> reply. A run started from a front-end binary's command line
+enters its <code>--workspace</code> first, so its relative paths resolve there as they
+do under <code>casars run</code>; the other binaries move onto it next
 (<a href="../provider-contracts/#the-shared-task-front-end-and-typed-replies">provider contracts</a>).</p>
 <h2 id="python-contract">Python contract<a class="headerlink" href="#python-contract" title="Permanent link">&para;</a></h2>
 <p>The Python API exposes the same profile model:</p>

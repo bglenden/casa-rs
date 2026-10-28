@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main","parse_request","print_json","run","usage"]};
+window.SIDEBAR_ITEMS = {"fn":["main","run"]};
