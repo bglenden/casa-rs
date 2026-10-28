@@ -29,7 +29,10 @@
 //! A field that follows an ephemeris (`FIELD::EPHEMERIS_ID`) is not yet
 //! visible in the catalogue (#942): its `PHASE_DIR` is then an offset, not
 //! a direction, and the caller must not image it through batch geometry
-//! until #942 lands.
+//! until #942 lands. A moving phase centre follows a body or source
+//! Measures names; one that follows the fields' ephemerides (`TRACKFIELD`)
+//! or an ephemeris table, and a rest-frame output, which needs the
+//! velocity only an ephemeris gives, are refused at compile.
 
 mod frames;
 mod pointing;
@@ -70,6 +73,14 @@ pub enum BatchGeometryError {
     /// A faceted domain under the mosaic UVW law.
     #[error("a faceted image domain under the mosaic UVW law")]
     FacetedMosaic,
+    /// A problem without an image domain.
+    #[error("the problem has no image domain to project to")]
+    NoImageDomain,
+    /// A moving phase centre that is not a body or source Measures names:
+    /// a field's own ephemeris (`TRACKFIELD`, #942) or an ephemeris table,
+    /// which batch geometry does not yet take.
+    #[error("the moving phase centre {0:?} is not a body or source Measures names")]
+    UnsupportedEphemeris(String),
     /// A domain whose PSF is centred elsewhere than its model, which no
     /// consumer reads.
     #[error("an image domain with a PSF phase centre of its own")]
@@ -79,7 +90,8 @@ pub enum BatchGeometryError {
     /// pointing law.
     #[error("the batch carries no {0}")]
     MissingInput(&'static str),
-    /// A rest-frame output frequency without a source velocity.
+    /// A rest-frame output frequency: it needs a source velocity, which
+    /// only an ephemeris gives and batch geometry does not yet take.
     #[error("rest-frame frequencies need a source velocity")]
     RestFrameWithoutVelocity,
     /// An antenna the instrument model gives no aperture class.
@@ -235,7 +247,9 @@ impl GeometryPlan {
     /// # Errors
     ///
     /// [`BatchGeometryError`] for a catalogue without what geometry needs,
-    /// a centre law or domain it does not take, or a failed conversion.
+    /// a centre law or domain it does not take (among them a moving centre
+    /// Measures does not name, and a rest-frame output), or a failed
+    /// conversion. What it refuses here it never meets in [`Self::apply`].
     pub fn compile(
         problem: &CompiledProblem,
         catalogue: &Arc<Catalogue>,
@@ -269,10 +283,17 @@ impl GeometryPlan {
         }
         let anchor = domains
             .first()
-            .ok_or(BatchGeometryError::Catalogue(
-                "has no image domain to project to",
-            ))?
+            .ok_or(BatchGeometryError::NoImageDomain)?
             .model_phase_centre();
+        if let PhaseCentreLaw::Ephemeris(name) = centres.phase_tracking() {
+            frames
+                .check_named(name)
+                .map_err(|_| BatchGeometryError::UnsupportedEphemeris(name.clone()))?;
+        }
+        let output_frame = problem.geometry().spectral().output_frame().frequency_ref();
+        if output_frame == FrequencyRef::REST {
+            return Err(BatchGeometryError::RestFrameWithoutVelocity);
+        }
         let (charts, mosaic) = projection::charts(problem)?;
         let responses = match problem.science().instrument_model() {
             None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
@@ -291,7 +312,7 @@ impl GeometryPlan {
             pointing: centres.pointing().clone(),
             charts,
             mosaic,
-            output_frame: problem.geometry().spectral().output_frame().frequency_ref(),
+            output_frame,
             parallactic: problem.requires_parallactic_angles(),
             responses,
             aw: AwPointingGrouping::new(problem)?,
@@ -623,9 +644,6 @@ impl GeometryPlan {
             return Ok(PreparedFrequencyConversion::new(
                 source, source, None, None,
             )?);
-        }
-        if self.output_frame == FrequencyRef::REST {
-            return Err(BatchGeometryError::RestFrameWithoutVelocity);
         }
         let frame = self
             .frames

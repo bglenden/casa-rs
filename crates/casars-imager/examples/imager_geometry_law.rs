@@ -87,12 +87,12 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
         "rows": comparison.rows,
         "unmatched": comparison.unmatched,
         "duplicates": comparison.duplicates,
-        "largest": comparison.largest(),
+        "largest": number(comparison.largest()),
         "differences": comparison
             .differences
             .iter()
             .map(|(quantity, (difference, row))| {
-                (quantity.to_string(), json!({"relative": difference, "physical_row": row}))
+                (quantity.to_string(), json!({"relative": number(*difference), "physical_row": row}))
             })
             .collect::<serde_json::Map<_, _>>(),
         "compared": comparison.compared,
@@ -113,12 +113,12 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
             "rows": stores.rows,
             "unmatched": stores.unmatched,
             "duplicates": stores.duplicates,
-            "largest": stores.largest(),
+            "largest": number(stores.largest()),
             "differences": stores
                 .differences
                 .iter()
                 .map(|(quantity, (difference, row))| {
-                    (quantity.to_string(), json!({"relative": difference, "physical_row": row}))
+                    (quantity.to_string(), json!({"relative": number(*difference), "physical_row": row}))
                 })
                 .collect::<serde_json::Map<_, _>>(),
             "compared": stores.compared,
@@ -130,4 +130,14 @@ fn geometry_law(args: &[OsString]) -> Result<bool, String> {
         eprintln!("geometry stores: {receipt}");
     }
     Ok(comparison.holds())
+}
+
+/// `value` as JSON: a number, or for an infinite or NaN one (a failed law),
+/// its name, where JSON would write `null`.
+fn number(value: f64) -> serde_json::Value {
+    if value.is_finite() {
+        json!(value)
+    } else {
+        json!(value.to_string())
+    }
 }

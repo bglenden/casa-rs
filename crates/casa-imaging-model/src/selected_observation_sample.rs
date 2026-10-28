@@ -306,6 +306,13 @@ pub enum AntennaResponseClass {
 }
 
 impl AntennaResponseClass {
+    /// Whether CASA treats `telescope` as ALMA or ACA, whose dishes it
+    /// classes by [`Self::casa_alma_aca`].
+    #[must_use]
+    pub fn casa_alma_aca_telescope(telescope: &str) -> bool {
+        matches!(telescope.trim(), "ALMA" | "ACA")
+    }
+
     /// CASA's class of an ALMA or ACA dish `diameter_m` across: 12 m
     /// within 0.5 m, 7 m within 1 m; `None` for another dish.
     #[must_use]

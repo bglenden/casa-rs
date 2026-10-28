@@ -5,182 +5,28 @@
 use std::sync::Arc;
 
 use casa_imaging_model::{
-    AxisOrder, BatchGeometry, BatchGeometryError, CentreLaws, CompiledProblem,
-    DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, GeometryPlan, GeometryTraversal,
-    GridFtProjection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
-    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout, GeometryPlan,
+    GeometryTraversal, GridFtProjection, PhaseCentreLaw, PsfPhaseCentreLaw, SkyDirection,
 };
-use casa_observation::{
-    AntennaEntry, AntennaId, BatchBuffers, BatchHeader, Catalogue, CorrelationAxis, DataGroupEntry,
-    FieldEntry, FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry,
-    PartitionId, Roles, ScanEntry, ScanId, Sharing, UvwFrame, VisibilityUnits, WeightRule,
-};
-use casa_types::Correlation;
+use casa_observation::{BatchBuffers, Catalogue};
+use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EopValues, MPosition, MeasFrame, MeasuresProvider, MjdHighPrec};
-use casa_types::quanta::Quantity;
 
+#[path = "fixtures/batch_observation.rs"]
+mod batch_observation;
 mod common;
 #[path = "fixtures/model_lifecycle.rs"]
 mod model_lifecycle_fixture;
 
-/// The image's reference direction (J2000).
-const REFERENCE: [f64; 2] = [1.0, -0.5];
-/// The observation's one time: MJD 60000 UTC.
-const MJD_DAYS: f64 = 60_000.0;
-/// Each baseline's stored UVW.
-const UVW_M: [[f64; 3]; 3] = [
-    [100.0, 200.0, 5.0],
-    [-300.0, 50.0, 2.0],
-    [400.0, -150.0, -3.0],
-];
+use batch_observation::{MJD_DAYS, REFERENCE, UVW_M, catalogue, fill, j2000, measures, problem};
 
-/// Earth orientation without corrections and a fixed TAI−UTC.
-#[derive(Debug)]
-struct Measures;
-
-impl MeasuresProvider for Measures {
-    fn eop_values(&self, _utc_mjd: f64) -> Result<Option<EopValues>, String> {
-        Ok(Some(EopValues {
-            dut1_seconds: 0.0,
-            x_arcsec: 0.0,
-            y_arcsec: 0.0,
-            dx_mas: 0.0,
-            dy_mas: 0.0,
-            is_predicted: false,
-        }))
-    }
-
-    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
-        Ok(37.0)
-    }
-
-    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
-        Ok(tai_mjd - 37.0 / 86_400.0)
-    }
-}
-
-fn measures() -> Arc<dyn MeasuresProvider> {
-    Arc::new(Measures)
-}
-
-/// Three VLA-like antennas, one field at `field` and one partition of
-/// their three baselines.
-fn catalogue(field: MDirection) -> Arc<Catalogue> {
-    let antenna = |name: &str, offset_m: [f64; 3]| AntennaEntry {
-        name: name.to_string(),
-        station: name.to_string(),
-        position: MPosition::new_itrf(
-            -1_601_185.4 + offset_m[0],
-            -5_041_977.5 + offset_m[1],
-            3_554_875.9 + offset_m[2],
-        ),
-        mount: "ALT-AZ".to_string(),
-        dish_diameter: Quantity::new(25.0, "m").expect("metres"),
-    };
-    let baseline = |a, b| OrderedBaseline {
-        antenna1: AntennaId(a),
-        antenna2: AntennaId(b),
-    };
-    Arc::new(Catalogue {
-        antennas: vec![
-            antenna("A", [0.0, 0.0, 0.0]),
-            antenna("B", [300.0, -100.0, 50.0]),
-            antenna("C", [-200.0, 400.0, -150.0]),
-        ],
-        fields: vec![FieldEntry {
-            name: "f".to_string(),
-            phase_centre: field,
-            reference_epoch: None,
-            source_name: None,
-        }],
-        scans: vec![ScanEntry {
-            name: "1".to_string(),
-            number: Some(1),
-            intents: Vec::new(),
-        }],
-        observations: vec![ObservationEntry::default()],
-        partitions: vec![PartitionEntry {
-            spectral_window: "spw".to_string(),
-            frequencies_hz: vec![1.4e9],
-            frequency_frame: FrequencyRef::TOPO,
-            channel_widths_hz: vec![1.0e6],
-            correlations: vec![Correlation::XX],
-            intents: Vec::new(),
-            observation: ObservationId(0),
-            feeds: None,
-            fields: vec![FieldId(0)],
-            scans: vec![ScanId(0)],
-            baselines: vec![baseline(0, 1), baseline(0, 2), baseline(1, 2)],
-            time_scale: EpochRef::UTC,
-            time_origin: MjdHighPrec::new(MJD_DAYS, 0.0),
-            data_groups: vec![DataGroupEntry {
-                name: "base".to_string(),
-                visibilities: "VISIBILITY".to_string(),
-                flags: "FLAG".to_string(),
-                weights: "WEIGHT".to_string(),
-                uvw: "UVW".to_string(),
-                units: VisibilityUnits::Undeclared,
-                uvw_frame: UvwFrame {
-                    effective: DirectionRef::J2000,
-                    stored_label: None,
-                },
-            }],
-            receptors: std::collections::BTreeMap::new(),
-        }],
-    })
-}
-
-/// The partition's one time of UVW, as a batch of `catalogue`.
-fn fill(buffers: &mut BatchBuffers, catalogue: &Arc<Catalogue>) {
-    let header = BatchHeader {
-        partition: PartitionId(0),
-        data_group: 0,
-        times: 1,
-        first_channel: 0,
-        channels: 1,
-        correlations: CorrelationAxis::All,
-        roles: Roles {
-            values: false,
-            flags: false,
-            weights: false,
-            uvw: true,
-            time_centroid: false,
-            interval: false,
-            exposure: false,
-            scan: false,
-        },
-        weights_per_channel: false,
-        weight_rule: WeightRule::Stored,
-        interval: Sharing::Constant(10.0),
-        exposure: Sharing::Constant(10.0),
-    };
-    let mut fill = buffers.begin(header, catalogue).expect("a batch header");
-    let arrays = fill.arrays();
-    arrays.time_offsets_s.push(0.0);
-    arrays.field.push(FieldId(0));
-    arrays.uvw.extend(UVW_M.iter().flatten());
-    fill.finish().expect("a whole batch");
-}
-
-/// The geometry of every sample of `catalogue`'s one batch under `problem`.
+/// The geometry of every sample of one time of `catalogue`'s first
+/// partition under `problem`.
 fn apply(problem: &CompiledProblem, catalogue: &Arc<Catalogue>) -> (GeometryPlan, BatchGeometry) {
     let plan = GeometryPlan::compile(problem, catalogue, measures()).expect("a geometry plan");
     let mut buffers = BatchBuffers::default();
-    fill(&mut buffers, catalogue);
+    fill(&mut buffers, catalogue, 0, 1);
     let batch = buffers.batch().expect("a batch");
     let mut geometry = BatchGeometry::default();
     plan.apply(
@@ -192,131 +38,6 @@ fn apply(problem: &CompiledProblem, catalogue: &Arc<Catalogue>) -> (GeometryPlan
     )
     .expect("batch geometry");
     (plan, geometry)
-}
-
-fn problem(phase: PhaseCentreLaw, facets: FacetLayout, psf: PsfPhaseCentreLaw) -> CompiledProblem {
-    compile(ProblemInput::new(
-        specification(),
-        geometry(phase, facets, psf),
-        common::observation_snapshot(0),
-        model_lifecycle_fixture::model_lifecycle(),
-    ))
-    .expect("a compiled problem")
-}
-
-fn geometry(phase: PhaseCentreLaw, facets: FacetLayout, psf: PsfPhaseCentreLaw) -> GeometryInput {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
-        [255.0, 255.0],
-        [-4.848_136_811_095_36e-5, 4.848_136_811_095_36e-5],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    GeometryInput::new(
-        vec![
-            ImageDomainSpec::new(
-                ImageDomainRole::Main,
-                ImageShape::new(512, 512),
-                direction,
-                facets,
-                AxisOrder::new([
-                    ImageAxis::DirectionLongitude,
-                    ImageAxis::DirectionLatitude,
-                    ImageAxis::Polarization,
-                    ImageAxis::Spectral,
-                ]),
-            )
-            .with_psf_phase_centre(psf),
-        ],
-        CentreLaws::new(phase, PointingCentreLaw::PhaseTrackingCentre),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Linear {
-                channels: 1,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    )
-}
-
-fn specification() -> ProblemSpecification {
-    let budgets = NumericalStage::ALL
-        .into_iter()
-        .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
-        .collect();
-    ProblemSpecification::new(
-        ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
-            ),
-        ),
-        ReconstructionContract::new(
-            ReconstructionBasis::Taylor { terms: 2 },
-            ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(100, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        ),
-        WeightingContract::new(
-            WeightingScheme::Briggs { robust: 0.5 },
-            WeightDensityScope::GlobalSelection,
-        ),
-        ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::Sensitivity,
-                ProductKind::TaylorTerms,
-                ProductKind::SpectralIndex,
-            ],
-            ProductNormalization::FlatNoise,
-            RestoringBeamPolicy::PerPlane,
-            ProductValidityPolicies::new(
-                PrimaryBeamValidityPolicy::new(
-                    0.2,
-                    ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::Zero,
-                )
-                .expect("a primary-beam support policy"),
-                TaylorValidityPolicy::new(
-                    TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
-                    0.1,
-                    ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::Zero,
-                )
-                .expect("a Taylor support policy"),
-            ),
-        ),
-        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
-        NumericsContract::new(
-            vec![NumericPrecision::F32, NumericPrecision::F64],
-            ReductionPolicy::Compensated,
-            FiniteValuePolicy::RejectUnflaggedInput,
-            budgets,
-        ),
-    )
-}
-
-fn j2000(longitude: f64, latitude: f64) -> MDirection {
-    MDirection::from_angles(longitude, latitude, DirectionRef::J2000)
 }
 
 /// Whether two reprojections of one sample agree to rounding.
@@ -336,7 +57,7 @@ fn assert_close(actual: ([f64; 3], f64), expected: ([f64; 3], f64), what: &str) 
 #[test]
 fn facets_follow_a_moving_phase_centre_from_the_image_reference() {
     let field = j2000(0.9, -0.45);
-    let catalogue = catalogue(field.clone());
+    let catalogue = catalogue(field.clone(), 1);
     let problem = problem(
         PhaseCentreLaw::Ephemeris("SUN".to_string()),
         FacetLayout::Regular {
@@ -389,7 +110,7 @@ fn facets_follow_a_moving_phase_centre_from_the_image_reference() {
 #[test]
 fn an_icrs_field_without_an_epoch_is_tied_to_j2000() {
     let icrs = MDirection::from_angles(0.9, -0.45, DirectionRef::ICRS);
-    let catalogue = catalogue(icrs.clone());
+    let catalogue = catalogue(icrs.clone(), 1);
     let problem = problem(
         PhaseCentreLaw::Observation,
         FacetLayout::Single,
@@ -428,7 +149,7 @@ fn a_distinct_psf_phase_centre_is_refused() {
         FacetLayout::Single,
         PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.01, -0.5)),
     );
-    let refused = GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45)), measures());
+    let refused = GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures());
     assert!(
         matches!(refused, Err(BatchGeometryError::DistinctPsfCentre)),
         "{refused:?}"
@@ -443,11 +164,11 @@ fn a_batch_of_another_catalogue_is_refused() {
         FacetLayout::Single,
         PsfPhaseCentreLaw::ImageDomainReference,
     );
-    let compiled = catalogue(j2000(0.9, -0.45));
+    let compiled = catalogue(j2000(0.9, -0.45), 1);
     let plan = GeometryPlan::compile(&problem, &compiled, measures()).expect("a geometry plan");
-    let other = catalogue(j2000(0.9, -0.45));
+    let other = catalogue(j2000(0.9, -0.45), 1);
     let mut buffers = BatchBuffers::default();
-    fill(&mut buffers, &other);
+    fill(&mut buffers, &other, 0, 1);
     let batch = buffers.batch().expect("a batch");
     let refused = plan.apply(
         &batch,
@@ -460,4 +181,62 @@ fn a_batch_of_another_catalogue_is_refused() {
         matches!(refused, Err(BatchGeometryError::Catalogue(_))),
         "{refused:?}"
     );
+}
+
+/// A moving phase centre batch geometry cannot follow yet (the fields' own
+/// ephemerides, an ephemeris table) is refused when the plan compiles, not
+/// at the first batch.
+#[test]
+fn a_moving_centre_measures_does_not_name_is_refused_at_compile() {
+    for name in ["TRACKFIELD", "/data/mars.eph"] {
+        let problem = problem(
+            PhaseCentreLaw::Ephemeris(name.to_string()),
+            FacetLayout::Single,
+            PsfPhaseCentreLaw::ImageDomainReference,
+        );
+        let refused = GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures());
+        assert!(
+            matches!(&refused, Err(BatchGeometryError::UnsupportedEphemeris(refused)) if refused == name),
+            "{name}: {refused:?}"
+        );
+    }
+}
+
+/// A time with no row samples holds no geometry: its samples' projections
+/// and its frequencies stay NaN.
+#[test]
+fn a_time_without_rows_holds_no_geometry() {
+    let problem = problem(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let catalogue = catalogue(j2000(0.9, -0.45), 1);
+    let plan = GeometryPlan::compile(&problem, &catalogue, measures()).expect("a geometry plan");
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, &catalogue, 0, 2);
+    let batch = buffers.batch().expect("a batch");
+    let mut geometry = BatchGeometry::default();
+    let rows = [true, true, true, false, false, false];
+    plan.apply(
+        &batch,
+        &rows,
+        None,
+        &mut GeometryTraversal::default(),
+        &mut geometry,
+    )
+    .expect("batch geometry");
+    assert_eq!(geometry.frequencies_hz(0), [1.4e9]);
+    assert!(geometry.frequencies_hz(1)[0].is_nan());
+    for sample in 0..3 {
+        assert!(geometry.projection(sample, 0).phase_shift_m.is_finite());
+        assert!(geometry.projection(sample + 3, 0).phase_shift_m.is_nan());
+        assert!(
+            geometry
+                .pointing(sample + 3)
+                .antenna1
+                .longitude_rad()
+                .is_nan()
+        );
+    }
 }

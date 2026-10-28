@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use casa_imaging_model::{
-    InstrumentModel, MissingPointingPolicy, ObservationPointingLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    AntennaResponseClass, InstrumentModel, MissingPointingPolicy, ObservationPointingLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling,
 };
 use casa_imaging_products::AnalyticPrimaryBeamModel;
@@ -96,7 +96,7 @@ pub(super) fn scientific_instrument_model(
         }),
         Gridder::Mosaic { .. } => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-            |diameter| (diameter - 12.0).abs() < 0.5 || (diameter - 7.0).abs() < 1.0,
+            |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
         ),
         Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
@@ -104,7 +104,7 @@ pub(super) fn scientific_instrument_model(
     let supported = !telescopes.is_empty()
         && telescopes.iter().all(|name| match gridder {
             Gridder::Awproject(_) => matches!(name.as_str(), "VLA" | "EVLA"),
-            _ => matches!(name.as_str(), "ALMA" | "ACA"),
+            _ => AntennaResponseClass::casa_alma_aca_telescope(name),
         });
     if !supported {
         return Err(PrepareError::UnsupportedInstrument {

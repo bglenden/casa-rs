@@ -483,6 +483,18 @@ impl MDirection {
         resolve_named_direction(&parse_named_direction(source_name, frame)?, frame)
     }
 
+    /// Whether [`Self::from_source_name`] knows `source_name`: `ZENITH`, a
+    /// solar-system body, a source of `frame`'s Measures provider or a
+    /// built-in calibrator. Unlike resolving it, this needs no epoch.
+    ///
+    /// # Errors
+    ///
+    /// The error resolving `source_name` would give for a name it does not
+    /// know or cannot parse.
+    pub fn check_source_name(source_name: &str, frame: &MeasFrame) -> Result<(), MeasureError> {
+        parse_named_direction(source_name, frame).map(|_| ())
+    }
+
     /// Computes the rise and set UTC MJDs for this source.
     ///
     /// The frame must contain:

@@ -173,6 +173,20 @@ impl MPosition {
         Self::from_observatory_name(name, provider).ok().flatten()
     }
 
+    /// The position CASA's imager measures an array's geometry from: the
+    /// observatory `telescope` names ([`Self::casa_observatory`]), else
+    /// `first_antenna`'s position, else the geocentre.
+    pub fn casa_array_reference(
+        telescope: Option<&str>,
+        first_antenna: Option<&Self>,
+        provider: &dyn MeasuresProvider,
+    ) -> Self {
+        telescope
+            .and_then(|name| Self::casa_observatory(name, provider))
+            .or_else(|| first_antenna.cloned())
+            .unwrap_or_else(|| Self::new_itrf(0.0, 0.0, 0.0))
+    }
+
     /// Returns the raw coordinate triplet.
     pub fn values(&self) -> [f64; 3] {
         self.values

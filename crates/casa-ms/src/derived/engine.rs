@@ -1109,7 +1109,7 @@ fn casa_alma_aca_response_classes(
         observation.row_count() > 0
             && (0..observation.row_count()).all(|row| {
                 selected_string_value(observation.table(), row, "TELESCOPE_NAME")
-                    .is_ok_and(|name| matches!(name.trim(), "ALMA" | "ACA"))
+                    .is_ok_and(|name| AntennaResponseClass::casa_alma_aca_telescope(&name))
             })
     });
     if !supported_observation {
@@ -1462,16 +1462,11 @@ fn resolve_observatory_position_selected(
     antenna_positions: &[MPosition],
     measures: &dyn MeasuresProvider,
 ) -> MPosition {
-    ms.observation()
-        .ok()
-        .and_then(|observation| {
-            (0..observation.row_count()).find_map(|row| {
-                selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok()
-            })
-        })
-        .and_then(|name| MPosition::casa_observatory(&name, measures))
-        .or_else(|| antenna_positions.first().cloned())
-        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
+    let telescope = ms.observation().ok().and_then(|observation| {
+        (0..observation.row_count())
+            .find_map(|row| selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok())
+    });
+    MPosition::casa_array_reference(telescope.as_deref(), antenna_positions.first(), measures)
 }
 
 fn resolve_field_phase_direction_selected(
@@ -1582,15 +1577,10 @@ fn resolve_observatory_position(
     antenna_positions: &[MPosition],
     measures: &dyn MeasuresProvider,
 ) -> MPosition {
-    ms.observation()
-        .ok()
-        .and_then(|observation| {
-            (0..observation.row_count())
-                .find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
-        })
-        .and_then(|name| MPosition::casa_observatory(&name, measures))
-        .or_else(|| antenna_positions.first().cloned())
-        .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0))
+    let telescope = ms.observation().ok().and_then(|observation| {
+        (0..observation.row_count()).find_map(|row| observation.string(row, "TELESCOPE_NAME").ok())
+    });
+    MPosition::casa_array_reference(telescope.as_deref(), antenna_positions.first(), measures)
 }
 
 fn resolve_field_phase_direction_j2000_with_observatory(

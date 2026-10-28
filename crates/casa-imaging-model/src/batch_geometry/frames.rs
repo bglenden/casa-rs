@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use casa_observation::{AntennaId, Catalogue, FieldId};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::{MPosition, MeasFrame, MeasuresProvider};
+use casa_types::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider};
 use casa_types::quanta::Unit;
 
 use super::BatchGeometryError;
@@ -24,14 +24,16 @@ pub(super) struct Frames {
     antennas: Vec<Antenna>,
     /// Each field's phase centre in J2000.
     fields: Vec<MDirection>,
-    /// Each antenna's parallactic angle by (time bits, field), NaN where
-    /// not yet computed: an antenna's angle at a time is the same in every
+    /// Each antenna's parallactic angle by time and field, NaN where not
+    /// yet computed: an antenna's angle at a time is the same in every
     /// partition, and the batches visit the partitions one after another.
     parallactic: Mutex<ParallacticAngles>,
 }
 
-/// Every antenna's parallactic angle by (time bits, field).
-type ParallacticAngles = HashMap<(u64, FieldId), Box<[f64]>>;
+/// Every antenna's parallactic angle by (time bits, time scale, field).
+type ParallacticAngles = HashMap<ParallacticKey, Box<[f64]>>;
+
+type ParallacticKey = (u64, EpochRef, FieldId);
 
 struct Antenna {
     position: MPosition,
@@ -64,14 +66,14 @@ impl Frames {
                 })
             })
             .collect::<Result<Vec<_>, BatchGeometryError>>()?;
-        let observatory = catalogue
-            .observations
-            .first()
-            .and_then(|observation| {
-                MPosition::casa_observatory(&observation.telescope, measures.as_ref())
-            })
-            .or_else(|| antennas.first().map(|antenna| antenna.position.clone()))
-            .unwrap_or_else(|| MPosition::new_itrf(0.0, 0.0, 0.0));
+        let observatory = MPosition::casa_array_reference(
+            catalogue
+                .observations
+                .first()
+                .map(|observation| observation.telescope.as_str()),
+            antennas.first().map(|antenna| &antenna.position),
+            measures.as_ref(),
+        );
         let fields = catalogue
             .fields
             .iter()
@@ -133,6 +135,15 @@ impl Frames {
         Ok([longitude, latitude])
     }
 
+    /// Whether Measures names `name` ([`MDirection::check_source_name`]),
+    /// which [`Self::named`] then resolves at any time.
+    pub(super) fn check_named(&self, name: &str) -> Result<(), MeasureError> {
+        let frame = MeasFrame::new()
+            .with_position(self.observatory.clone())
+            .with_measures(Arc::clone(&self.measures));
+        MDirection::check_source_name(name, &frame)
+    }
+
     /// The J2000 direction of the solar-system body or catalogued source
     /// `name` at `time_mjd_s`, seen from the observatory.
     pub(super) fn named(
@@ -157,7 +168,7 @@ impl Frames {
         field: FieldId,
         antennas: &[AntennaId],
     ) -> Result<Box<[f64]>, BatchGeometryError> {
-        let key = (time_mjd_s.to_bits(), field);
+        let key = (time_mjd_s.to_bits(), scale, field);
         let mut angles = self
             .parallactic
             .lock()
@@ -192,15 +203,25 @@ impl Frames {
         Ok(angles)
     }
 
-    /// The bytes the parallactic angles computed so far hold: one angle an
-    /// antenna for each (time, field) a batch has asked for.
+    /// At most the bytes the parallactic angles computed so far hold: one
+    /// angle an antenna for each (time, field) a batch has asked for, and
+    /// the table that finds them. The cache holds every (time, field) of
+    /// the observation once its batches have all been read, and no more.
     pub(super) fn parallactic_bytes(&self) -> usize {
-        let entries = self
+        let cache = self
             .parallactic
             .lock()
-            .expect("parallactic angle cache poisoned")
-            .len();
-        entries * (size_of::<(u64, FieldId)>() + self.antennas.len() * size_of::<f64>())
+            .expect("parallactic angle cache poisoned");
+        let angles = cache.len() * self.antennas.len() * size_of::<f64>();
+        let capacity = cache.capacity();
+        if capacity == 0 {
+            return angles;
+        }
+        // The standard table keeps at most capacity × 8/7 + 1 buckets, each
+        // an entry and a control byte, plus one group of control bytes and
+        // its alignment (at most 16 bytes each).
+        let buckets = (capacity * 8).div_ceil(7) + 1;
+        angles + buckets * (size_of::<(ParallacticKey, Box<[f64]>)>() + 1) + 32
     }
 
     /// CASA's aperture class of each antenna
@@ -211,10 +232,9 @@ impl Frames {
         catalogue: &Catalogue,
     ) -> Vec<Option<AntennaResponseClass>> {
         let alma = !catalogue.observations.is_empty()
-            && catalogue
-                .observations
-                .iter()
-                .all(|observation| matches!(observation.telescope.trim(), "ALMA" | "ACA"));
+            && catalogue.observations.iter().all(|observation| {
+                AntennaResponseClass::casa_alma_aca_telescope(&observation.telescope)
+            });
         self.antennas
             .iter()
             .map(|antenna| {

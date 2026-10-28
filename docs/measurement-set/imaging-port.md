@@ -135,12 +135,13 @@ routes on one MeasurementSet for one request and compares every row, matched
 by MAIN row number; a row matched twice, a row not matched and a NaN on
 either side fail it. The T1 fixture checks it after every T1 run and two T1
 laws add `usepointing` (AW over two windows, the mosaic gridder). On all 27
-T1 runs, the 51 T1.5 cases that run on the Mac mini (the four native-AW
-variants need the EVLA surface from `~/.casa/data`), the two `mawproject`
-cases with `usepointing` and CAS-7841, 5.6 M rows in all, every quantity of
-the two routes on the same MeasurementSet is bit-identical, inside the law's
-1e-12 bound: projections, pointing, parallactic angles, AW pointing pixels,
-aperture classes and output-frame frequencies. An MSv4 conversion of the
+T1 runs (1.05 M rows) and 55 T1.5 runs on the Mac mini (5.59 M rows: 18
+refim and 34 kernels cases, the four native-AW variants needing the EVLA
+surface from `~/.casa/data`; the two `mawproject` cases with `usepointing`;
+CAS-7841), every quantity of the two routes on the same MeasurementSet is
+bit-identical, inside the law's 1e-12 bound: projections, pointing,
+parallactic angles, AW pointing pixels, aperture classes and output-frame
+frequencies. An MSv4 conversion of the
 same data is not bit-identical; 2.2.1 records what it changes. Receipts:
 NAS `casa-rs/issue-932/step3b/`.
 
@@ -148,6 +149,14 @@ NAS `casa-rs/issue-932/step3b/`.
 Today's route computes it for every selected row, `FLAG_ROW` rows included,
 so step 4's mask keeps flagged rows and drops only padding (a NaN weight on
 both stores) and the samples the selection excludes.
+
+A moving phase centre follows a body or source Measures names. The two
+others today's route takes, a field's own ephemeris (`TRACKFIELD`) and an
+external ephemeris table, are refused when the plan compiles, and so is a
+rest-frame output, which needs the radial velocity only an ephemeris gives.
+`TRACKFIELD` comes with the field ephemerides of #942; the external table is
+a request input, which `GeometryPlan` must take before step 4 images through
+it.
 
 ### 2.2.1 What geometry needs from the boundary
 
@@ -211,7 +220,13 @@ Two consequences:
   delivery order, partition by partition and each in time order
   (`GeometryTraversal`). On every workload measured (T1's two-window AW with
   `usepointing`, the EVLA `mawproject` pair with `usepointing`) its pixels
-  equal today's MAIN-order plan bit for bit. Both casa-rs orders refresh at
+  equal today's MAIN-order plan bit for bit. That is not so in general:
+  today's plan forms an epoch per (data description, field, time) in MAIN
+  order and counts its rows before channel windows skip any block, where
+  the batch route counts each (partition, time)'s row mask. Where those
+  counts differ (windows at one time holding different numbers of rows, or
+  a window a run's channels skip), refresh decisions can diverge. Both
+  casa-rs orders refresh at
   every field change; CASA's field-major order does not, so a multi-field AW
   mosaic with `usepointing` can group differently from CASA on either route.
   No acceptance workload images AW with `usepointing` over several fields
@@ -353,7 +368,9 @@ Each step is its own PR with its own laws. Only the last switches production.
    - **3b. Geometry** in `casa-imaging-model`. The equality law of 2.2 runs
      both routes on every T1 workload.
 4. **`ObservationSource`** beside `MeasurementSetSource`, behind a run
-   option. T0, T1 and T1.5 run on both.
+   option. T0, T1 and T1.5 run on both. Field ephemerides (#942) land first,
+   or the source refuses a field with `EPHEMERIS_ID` until they do: batch
+   geometry would read its `PHASE_DIR` offset as a direction.
 5. **Write-back** through update sessions. The model-column T1 tests and the
    counting law run on both routes.
 6. **Cutover.**

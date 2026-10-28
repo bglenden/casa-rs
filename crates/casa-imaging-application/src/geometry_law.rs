@@ -42,8 +42,8 @@ pub struct GeometryComparison {
     pub rows: usize,
     /// Of them, rows no batch sample matched.
     pub unmatched: usize,
-    /// Rows two batch samples matched, and MeasurementSet rows that share
-    /// another store's key.
+    /// Rows today's route delivered twice, rows two batch samples matched,
+    /// and MeasurementSet rows that share another store's key.
     pub duplicates: usize,
     /// Per quantity, the largest difference relative to its scale and the
     /// physical row where it occurred.
@@ -140,7 +140,9 @@ pub fn compare_geometry(
     } = prepare(request, context)?;
     let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
     let batches = msv2_rows(&problem, &observation, measures, &today.rows)?;
-    Ok(compare(&today.rows, &batches))
+    let mut comparison = compare(&today.rows, &batches);
+    comparison.duplicates += today.repeated;
+    Ok(comparison)
 }
 
 /// Compare the batch geometry of `request`'s rows in its MeasurementSet
@@ -180,7 +182,7 @@ pub fn compare_stores(
     let mut comparison = compare(&reference.rows, &rows);
     comparison.rows = today.rows.len();
     comparison.unmatched += today.rows.len() - reference.rows.len();
-    comparison.duplicates += reference.duplicates + today.shared;
+    comparison.duplicates += today.repeated + reference.duplicates + today.shared;
     Ok(comparison)
 }
 
@@ -199,6 +201,8 @@ struct Today {
     rows: Rows,
     /// Each row's [`Key`].
     keys: HashMap<Key, u64>,
+    /// Rows delivered a second time.
+    repeated: usize,
     /// Rows whose key an earlier row has.
     shared: usize,
 }
@@ -262,6 +266,7 @@ fn today_rows(
     let mut today = Today {
         rows: HashMap::new(),
         keys: HashMap::new(),
+        repeated: 0,
         shared: 0,
     };
     while let Some(filled) = stream.fill_next(&mut block)? {
@@ -277,7 +282,7 @@ fn today_rows(
             if today.keys.insert(identity, row.physical_row).is_some() {
                 today.shared += 1;
             }
-            today.rows.insert(
+            let repeated = today.rows.insert(
                 row.physical_row,
                 Row {
                     physical_row: row.physical_row,
@@ -307,6 +312,9 @@ fn today_rows(
                         .collect(),
                 },
             );
+            if repeated.is_some() {
+                today.repeated += 1;
+            }
         }
     }
     Ok(today)
