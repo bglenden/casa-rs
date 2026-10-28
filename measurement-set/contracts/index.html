@@ -1014,8 +1014,10 @@ partition's entry and copies none of it. IDs are opaque indices scoped to that
 opening. They are not casacore subtable row numbers, globally unique names, or
 serialized identities; backends keep their own mapping. Large pointing,
 ephemeris and time-dependent metadata are not part of the catalogue and are
-queried in bounded windows (section 8); opening does not build a sample-sized
-metadata snapshot beyond the partition grid of section 2.</p>
+queried in bounded windows; opening does not build a sample-sized
+metadata snapshot beyond the partition grid of section 2. Pointing is such a
+query (<code>Observation::pointing</code>, below); ephemerides are provisional
+(section 8, #942).</p>
 <p>A <strong>partition</strong> is one store unit (an MSv4 dataset; the MSv2 rows that one such
 dataset would hold), defined by its content: spectral window (frequencies,
 widths and frame), correlation products, intents, observing session, and, in
@@ -1023,7 +1025,41 @@ MSv2 only, the feed pair. The MSv2 adapter partitions rows as XRADIO's
 converter does by default (<code>DATA_DESC_ID</code> × <code>OBS_MODE</code> × <code>OBSERVATION_ID</code> ×
 <code>EPHEMERIS_ID</code>, and the feed pair), so one observation opens as the same
 partition set from either store. Each partition also records the fields and
-scans its samples visit.</p>
+scans its samples visit, and its antennas' receptors (polarization types and
+angles): an MSv4 dataset's <code>antenna_xds</code> holds them, and an MSv2's <code>FEED</code>
+rows as casacore's <code>MSIter</code> and XRADIO's converter select them, the
+partition's window's own rows once any row names a window, else the rows
+for every window (-1). Of <code>FEED</code> rows of one antenna, feed and window that
+differ (receptors that vary in time), the last in table order is read, as
+casacore's <code>MSIter</code> reads it (with a warning); XRADIO's converter refuses
+them, and casa-rs's reports them as a loss (owner decision on #946,
+2026-10-28).</p>
+<p>A field's phase centre is stored in one frame for the whole catalogue (a
+data group has one UVW frame, MSv4 one phase-centre frame). The MSv2 adapter
+resolves <code>PHASE_DIR</code>'s frame per row where the column's reference varies
+(<code>PhaseDir_Ref</code>) and refuses fields in different frames. A field read from an
+MSv2 carries <code>FIELD.TIME</code> as its reference epoch, at which a direction in a
+frame that moves against the sky is converted; an MSv4 field has none, its
+frame being celestial.</p>
+<p><strong>Pointing</strong> is read per partition, never held in the catalogue:
+<code>Observation::pointing</code> takes a partition, antennas, a span of times in the
+partition's time system, the direction (the beam's, or MSv2's tracking
+target, which MSv4 does not hold) and a byte budget, and returns a pointing
+series: per antenna, the samples within the span and its nearest each
+side, each a polynomial in time about its own origin, in the store's frame.
+A pointing bracket evaluates them at one time: the sample whose interval
+covers it (the nearest), the last at or before it and the first at or after
+it. MSv2 reads its <code>POINTING</code> rows through today's imaging reader, so its
+brackets are that reader's bit for bit, except that of two rows equally near
+a time it covers with the earlier where that reader takes the lower row
+(the same wherever an antenna's rows are in time order). That reader is
+casa-rs's, not casacore's: <code>MSPointingColumns::pointingIndex</code> covers with
+the first row in table order, gives a row of <code>INTERVAL</code> 0 half the gap to
+the antenna's next row and a negative interval every time (#948). The
+cutover keeps the boundary's tie rule (owner decision on #946, 2026-10-28).
+MSv4 reads <code>POINTING_BEAM</code>, whose samples state no interval, so nothing
+covers and a consumer's law chooses between the samples either side; XRADIO keeps
+one polynomial term and defines no origin for more, so more are refused.</p>
 <p>An <strong>observing session</strong> carries the telescope, project and observers, and
 MSv4's archive identifiers (<code>execution_block_UID</code>, <code>session_reference_UID</code>,
 <code>scheduling_block_UID</code>). An MSv2 holds those only where an importer recorded
@@ -1544,7 +1580,8 @@ duplicated per-element objects. Preserved:</p>
 <li>Channel frequencies and signed widths and their frame; correlation labels in
   stored order.</li>
 <li>Data-group-specific field, source and phase-centre context. Phase centre is
-  not pointing; pointing and ephemeris are provisional (section 8).</li>
+  not pointing; pointing is read per partition and time span (section 2),
+  and ephemeris is provisional (section 8).</li>
 </ul>
 <p>Measures owns the reference-frame mathematics and reusable UVW transforms;
 the scientific geometry owner chooses their context and projection. Neither
@@ -2107,9 +2144,9 @@ when its acceptance obligation is met.</p>
 <td>The binding in production, with <code>gainfield</code> and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; <code>FEED</code> and receptor association; a field binding tolerant of ephemeris fields</td>
 </tr>
 <tr>
-<td>Ephemeris, pointing and time-dependent metadata</td>
-<td>Ephemeris is not a partition key; pointing not read</td>
-<td>Queried in bounded windows; ephemeris keys partitions as XRADIO's converter does</td>
+<td>Ephemeris and time-dependent metadata</td>
+<td>Ephemeris keys MSv2 partitions as XRADIO's converter does but is not read, and the converter refuses fields that follow one (#942). Pointing is read (section 2) and converted both ways, what is not carried found before anything is written: into an MSv4 each row's direction at its own time (further polynomial terms, <code>INTERVAL</code>, <code>TARGET</code>, <code>NAME</code>, <code>TRACKING</code>, repeated rows and rows beyond the partitions' times reported as losses, pointing in a frame MSv4 does not name lost whole); into an MSv2 every row of the partitions' antennas, an MSv4's samples as rows of <code>INTERVAL</code> 0</td>
+<td>Ephemerides queried in bounded windows on both stores and carried by the converter; whether pointing samples without intervals image as the MSv2 they came from (imaging port step 3b)</td>
 </tr>
 <tr>
 <td>Baseline-dependent polarization (<code>polarization_mixed</code>)</td>

@@ -831,91 +831,92 @@
 <a href=#831 id=831 data-nosnippet>831</a>            time_scale,
 <a href=#832 id=832 data-nosnippet>832</a>            time_origin,
 <a href=#833 id=833 data-nosnippet>833</a>            data_groups: Vec::new(),
-<a href=#834 id=834 data-nosnippet>834</a>        }
-<a href=#835 id=835 data-nosnippet>835</a>    }
-<a href=#836 id=836 data-nosnippet>836</a>
-<a href=#837 id=837 data-nosnippet>837</a>    <span class="doccomment">/// A range selects the grid times it holds, exactly at its ends; one
-<a href=#838 id=838 data-nosnippet>838</a>    /// holding none (between two times, past either end) selects nothing;
-<a href=#839 id=839 data-nosnippet>839</a>    /// a range in another scale or origin, or not an interval, is refused.
-<a href=#840 id=840 data-nosnippet>840</a>    </span><span class="attr">#[test]
-<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="kw">fn </span>a_time_range_selects_the_grid_times_it_holds() {
-<a href=#842 id=842 data-nosnippet>842</a>        <span class="kw">let </span>origin = MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>);
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span>entry = entry(EpochRef::UTC, origin);
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="kw">let </span>times = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
-<a href=#845 id=845 data-nosnippet>845</a>        <span class="kw">let </span>within = |start_s, end_s| {
-<a href=#846 id=846 data-nosnippet>846</a>            TimeSelection::Within(TimeRange {
-<a href=#847 id=847 data-nosnippet>847</a>                scale: EpochRef::UTC,
-<a href=#848 id=848 data-nosnippet>848</a>                origin,
-<a href=#849 id=849 data-nosnippet>849</a>                start_s,
-<a href=#850 id=850 data-nosnippet>850</a>                end_s,
-<a href=#851 id=851 data-nosnippet>851</a>            })
-<a href=#852 id=852 data-nosnippet>852</a>            .indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times)
-<a href=#853 id=853 data-nosnippet>853</a>        };
-<a href=#854 id=854 data-nosnippet>854</a>        <span class="macro">assert_eq!</span>(TimeSelection::All.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).unwrap(), <span class="number">0</span>..<span class="number">4</span>);
-<a href=#855 id=855 data-nosnippet>855</a>        <span class="macro">assert_eq!</span>(within(<span class="number">20.0</span>, <span class="number">40.0</span>).unwrap(), <span class="number">1</span>..<span class="number">3</span>);
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="macro">assert_eq!</span>(within(<span class="number">15.0</span>, <span class="number">35.0</span>).unwrap(), <span class="number">1</span>..<span class="number">3</span>);
-<a href=#857 id=857 data-nosnippet>857</a>        <span class="macro">assert_eq!</span>(within(f64::NEG_INFINITY, f64::INFINITY).unwrap(), <span class="number">0</span>..<span class="number">4</span>);
-<a href=#858 id=858 data-nosnippet>858</a>        <span class="macro">assert!</span>(within(<span class="number">21.0</span>, <span class="number">29.0</span>).unwrap().is_empty());
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="macro">assert!</span>(within(<span class="number">50.0</span>, f64::INFINITY).unwrap().is_empty());
-<a href=#860 id=860 data-nosnippet>860</a>        <span class="macro">assert!</span>(within(<span class="number">0.0</span>, <span class="number">10.0</span>).unwrap().is_empty());
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="macro">assert!</span>(within(<span class="number">30.0</span>, <span class="number">20.0</span>).is_err());
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="macro">assert!</span>(within(f64::NAN, <span class="number">20.0</span>).is_err());
-<a href=#863 id=863 data-nosnippet>863</a>        <span class="kw">let </span>tai = TimeSelection::Within(TimeRange {
-<a href=#864 id=864 data-nosnippet>864</a>            scale: EpochRef::TAI,
-<a href=#865 id=865 data-nosnippet>865</a>            origin,
-<a href=#866 id=866 data-nosnippet>866</a>            start_s: <span class="number">0.0</span>,
-<a href=#867 id=867 data-nosnippet>867</a>            end_s: <span class="number">50.0</span>,
-<a href=#868 id=868 data-nosnippet>868</a>        });
-<a href=#869 id=869 data-nosnippet>869</a>        <span class="macro">assert!</span>(tai.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).is_err());
-<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>unix = TimeSelection::Within(TimeRange {
-<a href=#871 id=871 data-nosnippet>871</a>            scale: EpochRef::UTC,
-<a href=#872 id=872 data-nosnippet>872</a>            origin: MjdHighPrec::new(<span class="number">40_587.0</span>, <span class="number">0.0</span>),
-<a href=#873 id=873 data-nosnippet>873</a>            start_s: <span class="number">0.0</span>,
-<a href=#874 id=874 data-nosnippet>874</a>            end_s: <span class="number">50.0</span>,
-<a href=#875 id=875 data-nosnippet>875</a>        });
-<a href=#876 id=876 data-nosnippet>876</a>        <span class="macro">assert!</span>(unix.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).is_err());
-<a href=#877 id=877 data-nosnippet>877</a>    }
-<a href=#878 id=878 data-nosnippet>878</a>
-<a href=#879 id=879 data-nosnippet>879</a>    <span class="doccomment">/// A range stated from grid indices selects exactly those times, and
-<a href=#880 id=880 data-nosnippet>880</a>    /// ranges of consecutive index ranges tile the grid.
-<a href=#881 id=881 data-nosnippet>881</a>    </span><span class="attr">#[test]
-<a href=#882 id=882 data-nosnippet>882</a>    </span><span class="kw">fn </span>ranges_of_grid_indices_select_those_times() {
-<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>grid = TimeBaselineGrid {
-<a href=#884 id=884 data-nosnippet>884</a>            baselines: Vec::new(),
-<a href=#885 id=885 data-nosnippet>885</a>            time_scale: EpochRef::UTC,
-<a href=#886 id=886 data-nosnippet>886</a>            time_origin: MjdHighPrec::new(<span class="number">40_587.0</span>, <span class="number">0.0</span>),
-<a href=#887 id=887 data-nosnippet>887</a>            times_s: <span class="macro">vec!</span>[
-<a href=#888 id=888 data-nosnippet>888</a>                <span class="number">1.7e9 </span>+ <span class="number">0.1</span>,
-<a href=#889 id=889 data-nosnippet>889</a>                <span class="number">1.7e9 </span>+ <span class="number">1.3</span>,
-<a href=#890 id=890 data-nosnippet>890</a>                <span class="number">1.7e9 </span>+ <span class="number">2.7</span>,
-<a href=#891 id=891 data-nosnippet>891</a>                <span class="number">1.7e9 </span>+ <span class="number">3.9</span>,
-<a href=#892 id=892 data-nosnippet>892</a>                <span class="number">1.7e9 </span>+ <span class="number">5.2</span>,
-<a href=#893 id=893 data-nosnippet>893</a>            ],
-<a href=#894 id=894 data-nosnippet>894</a>            field_per_time: Vec::new(),
-<a href=#895 id=895 data-nosnippet>895</a>            scan_per_time: Vec::new(),
-<a href=#896 id=896 data-nosnippet>896</a>            interval_s: <span class="number">1.0</span>,
-<a href=#897 id=897 data-nosnippet>897</a>        };
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="kw">let </span>entry = entry(grid.time_scale, grid.time_origin);
-<a href=#899 id=899 data-nosnippet>899</a>        <span class="kw">for </span>(start, end) <span class="kw">in </span>[(<span class="number">0</span>, <span class="number">2</span>), (<span class="number">2</span>, <span class="number">5</span>), (<span class="number">1</span>, <span class="number">4</span>), (<span class="number">0</span>, <span class="number">5</span>), (<span class="number">3</span>, <span class="number">3</span>), (<span class="number">5</span>, <span class="number">5</span>)] {
-<a href=#900 id=900 data-nosnippet>900</a>            <span class="kw">let </span>selection = TimeSelection::Within(TimeRange::of_grid(<span class="kw-2">&amp;</span>grid, start..end));
-<a href=#901 id=901 data-nosnippet>901</a>            <span class="macro">assert_eq!</span>(
-<a href=#902 id=902 data-nosnippet>902</a>                selection.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>grid.times_s).unwrap(),
-<a href=#903 id=903 data-nosnippet>903</a>                start..end,
-<a href=#904 id=904 data-nosnippet>904</a>                <span class="string">"{start}..{end}"
-<a href=#905 id=905 data-nosnippet>905</a>            </span>);
-<a href=#906 id=906 data-nosnippet>906</a>        }
-<a href=#907 id=907 data-nosnippet>907</a>    }
-<a href=#908 id=908 data-nosnippet>908</a>
-<a href=#909 id=909 data-nosnippet>909</a>    <span class="attr">#[test]
-<a href=#910 id=910 data-nosnippet>910</a>    </span><span class="kw">fn </span>the_budget_fits_whole_times_or_refuses() {
-<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">let </span>bytes = Roles::ALL.sample_bytes(<span class="number">8</span>, <span class="number">4</span>, <span class="bool-val">true</span>, <span class="number">3</span>);
-<a href=#912 id=912 data-nosnippet>912</a>        <span class="macro">assert_eq!</span>(bytes, <span class="number">32 </span>* <span class="number">8 </span>+ <span class="number">32 </span>+ <span class="number">32 </span>* <span class="number">4 </span>+ <span class="number">24 </span>+ <span class="number">24</span>);
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>time = <span class="number">10 </span>* bytes + Roles::ALL.time_bytes(<span class="number">0</span>);
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="macro">assert_eq!</span>(times_per_batch(time * <span class="number">4</span>, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">4</span>);
-<a href=#915 id=915 data-nosnippet>915</a>        <span class="macro">assert_eq!</span>(times_per_batch(time * <span class="number">5 </span>- <span class="number">1</span>, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">4</span>);
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="macro">assert_eq!</span>(times_per_batch(usize::MAX, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">12</span>);
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="macro">assert!</span>(times_per_batch(time - <span class="number">1</span>, time, <span class="number">12</span>).is_err());
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="macro">assert_eq!</span>(times_per_batch(<span class="number">0</span>, time, <span class="number">0</span>).expect(<span class="string">"empty"</span>), <span class="number">0</span>);
-<a href=#919 id=919 data-nosnippet>919</a>    }
-<a href=#920 id=920 data-nosnippet>920</a>}
+<a href=#834 id=834 data-nosnippet>834</a>            receptors: std::collections::BTreeMap::new(),
+<a href=#835 id=835 data-nosnippet>835</a>        }
+<a href=#836 id=836 data-nosnippet>836</a>    }
+<a href=#837 id=837 data-nosnippet>837</a>
+<a href=#838 id=838 data-nosnippet>838</a>    <span class="doccomment">/// A range selects the grid times it holds, exactly at its ends; one
+<a href=#839 id=839 data-nosnippet>839</a>    /// holding none (between two times, past either end) selects nothing;
+<a href=#840 id=840 data-nosnippet>840</a>    /// a range in another scale or origin, or not an interval, is refused.
+<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="attr">#[test]
+<a href=#842 id=842 data-nosnippet>842</a>    </span><span class="kw">fn </span>a_time_range_selects_the_grid_times_it_holds() {
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span>origin = MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>);
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="kw">let </span>entry = entry(EpochRef::UTC, origin);
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="kw">let </span>times = [<span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">30.0</span>, <span class="number">40.0</span>];
+<a href=#846 id=846 data-nosnippet>846</a>        <span class="kw">let </span>within = |start_s, end_s| {
+<a href=#847 id=847 data-nosnippet>847</a>            TimeSelection::Within(TimeRange {
+<a href=#848 id=848 data-nosnippet>848</a>                scale: EpochRef::UTC,
+<a href=#849 id=849 data-nosnippet>849</a>                origin,
+<a href=#850 id=850 data-nosnippet>850</a>                start_s,
+<a href=#851 id=851 data-nosnippet>851</a>                end_s,
+<a href=#852 id=852 data-nosnippet>852</a>            })
+<a href=#853 id=853 data-nosnippet>853</a>            .indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times)
+<a href=#854 id=854 data-nosnippet>854</a>        };
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="macro">assert_eq!</span>(TimeSelection::All.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).unwrap(), <span class="number">0</span>..<span class="number">4</span>);
+<a href=#856 id=856 data-nosnippet>856</a>        <span class="macro">assert_eq!</span>(within(<span class="number">20.0</span>, <span class="number">40.0</span>).unwrap(), <span class="number">1</span>..<span class="number">3</span>);
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="macro">assert_eq!</span>(within(<span class="number">15.0</span>, <span class="number">35.0</span>).unwrap(), <span class="number">1</span>..<span class="number">3</span>);
+<a href=#858 id=858 data-nosnippet>858</a>        <span class="macro">assert_eq!</span>(within(f64::NEG_INFINITY, f64::INFINITY).unwrap(), <span class="number">0</span>..<span class="number">4</span>);
+<a href=#859 id=859 data-nosnippet>859</a>        <span class="macro">assert!</span>(within(<span class="number">21.0</span>, <span class="number">29.0</span>).unwrap().is_empty());
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="macro">assert!</span>(within(<span class="number">50.0</span>, f64::INFINITY).unwrap().is_empty());
+<a href=#861 id=861 data-nosnippet>861</a>        <span class="macro">assert!</span>(within(<span class="number">0.0</span>, <span class="number">10.0</span>).unwrap().is_empty());
+<a href=#862 id=862 data-nosnippet>862</a>        <span class="macro">assert!</span>(within(<span class="number">30.0</span>, <span class="number">20.0</span>).is_err());
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="macro">assert!</span>(within(f64::NAN, <span class="number">20.0</span>).is_err());
+<a href=#864 id=864 data-nosnippet>864</a>        <span class="kw">let </span>tai = TimeSelection::Within(TimeRange {
+<a href=#865 id=865 data-nosnippet>865</a>            scale: EpochRef::TAI,
+<a href=#866 id=866 data-nosnippet>866</a>            origin,
+<a href=#867 id=867 data-nosnippet>867</a>            start_s: <span class="number">0.0</span>,
+<a href=#868 id=868 data-nosnippet>868</a>            end_s: <span class="number">50.0</span>,
+<a href=#869 id=869 data-nosnippet>869</a>        });
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="macro">assert!</span>(tai.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).is_err());
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>unix = TimeSelection::Within(TimeRange {
+<a href=#872 id=872 data-nosnippet>872</a>            scale: EpochRef::UTC,
+<a href=#873 id=873 data-nosnippet>873</a>            origin: MjdHighPrec::new(<span class="number">40_587.0</span>, <span class="number">0.0</span>),
+<a href=#874 id=874 data-nosnippet>874</a>            start_s: <span class="number">0.0</span>,
+<a href=#875 id=875 data-nosnippet>875</a>            end_s: <span class="number">50.0</span>,
+<a href=#876 id=876 data-nosnippet>876</a>        });
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="macro">assert!</span>(unix.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>times).is_err());
+<a href=#878 id=878 data-nosnippet>878</a>    }
+<a href=#879 id=879 data-nosnippet>879</a>
+<a href=#880 id=880 data-nosnippet>880</a>    <span class="doccomment">/// A range stated from grid indices selects exactly those times, and
+<a href=#881 id=881 data-nosnippet>881</a>    /// ranges of consecutive index ranges tile the grid.
+<a href=#882 id=882 data-nosnippet>882</a>    </span><span class="attr">#[test]
+<a href=#883 id=883 data-nosnippet>883</a>    </span><span class="kw">fn </span>ranges_of_grid_indices_select_those_times() {
+<a href=#884 id=884 data-nosnippet>884</a>        <span class="kw">let </span>grid = TimeBaselineGrid {
+<a href=#885 id=885 data-nosnippet>885</a>            baselines: Vec::new(),
+<a href=#886 id=886 data-nosnippet>886</a>            time_scale: EpochRef::UTC,
+<a href=#887 id=887 data-nosnippet>887</a>            time_origin: MjdHighPrec::new(<span class="number">40_587.0</span>, <span class="number">0.0</span>),
+<a href=#888 id=888 data-nosnippet>888</a>            times_s: <span class="macro">vec!</span>[
+<a href=#889 id=889 data-nosnippet>889</a>                <span class="number">1.7e9 </span>+ <span class="number">0.1</span>,
+<a href=#890 id=890 data-nosnippet>890</a>                <span class="number">1.7e9 </span>+ <span class="number">1.3</span>,
+<a href=#891 id=891 data-nosnippet>891</a>                <span class="number">1.7e9 </span>+ <span class="number">2.7</span>,
+<a href=#892 id=892 data-nosnippet>892</a>                <span class="number">1.7e9 </span>+ <span class="number">3.9</span>,
+<a href=#893 id=893 data-nosnippet>893</a>                <span class="number">1.7e9 </span>+ <span class="number">5.2</span>,
+<a href=#894 id=894 data-nosnippet>894</a>            ],
+<a href=#895 id=895 data-nosnippet>895</a>            field_per_time: Vec::new(),
+<a href=#896 id=896 data-nosnippet>896</a>            scan_per_time: Vec::new(),
+<a href=#897 id=897 data-nosnippet>897</a>            interval_s: <span class="number">1.0</span>,
+<a href=#898 id=898 data-nosnippet>898</a>        };
+<a href=#899 id=899 data-nosnippet>899</a>        <span class="kw">let </span>entry = entry(grid.time_scale, grid.time_origin);
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="kw">for </span>(start, end) <span class="kw">in </span>[(<span class="number">0</span>, <span class="number">2</span>), (<span class="number">2</span>, <span class="number">5</span>), (<span class="number">1</span>, <span class="number">4</span>), (<span class="number">0</span>, <span class="number">5</span>), (<span class="number">3</span>, <span class="number">3</span>), (<span class="number">5</span>, <span class="number">5</span>)] {
+<a href=#901 id=901 data-nosnippet>901</a>            <span class="kw">let </span>selection = TimeSelection::Within(TimeRange::of_grid(<span class="kw-2">&amp;</span>grid, start..end));
+<a href=#902 id=902 data-nosnippet>902</a>            <span class="macro">assert_eq!</span>(
+<a href=#903 id=903 data-nosnippet>903</a>                selection.indices(<span class="kw-2">&amp;</span>entry, <span class="kw-2">&amp;</span>grid.times_s).unwrap(),
+<a href=#904 id=904 data-nosnippet>904</a>                start..end,
+<a href=#905 id=905 data-nosnippet>905</a>                <span class="string">"{start}..{end}"
+<a href=#906 id=906 data-nosnippet>906</a>            </span>);
+<a href=#907 id=907 data-nosnippet>907</a>        }
+<a href=#908 id=908 data-nosnippet>908</a>    }
+<a href=#909 id=909 data-nosnippet>909</a>
+<a href=#910 id=910 data-nosnippet>910</a>    <span class="attr">#[test]
+<a href=#911 id=911 data-nosnippet>911</a>    </span><span class="kw">fn </span>the_budget_fits_whole_times_or_refuses() {
+<a href=#912 id=912 data-nosnippet>912</a>        <span class="kw">let </span>bytes = Roles::ALL.sample_bytes(<span class="number">8</span>, <span class="number">4</span>, <span class="bool-val">true</span>, <span class="number">3</span>);
+<a href=#913 id=913 data-nosnippet>913</a>        <span class="macro">assert_eq!</span>(bytes, <span class="number">32 </span>* <span class="number">8 </span>+ <span class="number">32 </span>+ <span class="number">32 </span>* <span class="number">4 </span>+ <span class="number">24 </span>+ <span class="number">24</span>);
+<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>time = <span class="number">10 </span>* bytes + Roles::ALL.time_bytes(<span class="number">0</span>);
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="macro">assert_eq!</span>(times_per_batch(time * <span class="number">4</span>, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">4</span>);
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="macro">assert_eq!</span>(times_per_batch(time * <span class="number">5 </span>- <span class="number">1</span>, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">4</span>);
+<a href=#917 id=917 data-nosnippet>917</a>        <span class="macro">assert_eq!</span>(times_per_batch(usize::MAX, time, <span class="number">12</span>).expect(<span class="string">"fit"</span>), <span class="number">12</span>);
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="macro">assert!</span>(times_per_batch(time - <span class="number">1</span>, time, <span class="number">12</span>).is_err());
+<a href=#919 id=919 data-nosnippet>919</a>        <span class="macro">assert_eq!</span>(times_per_batch(<span class="number">0</span>, time, <span class="number">0</span>).expect(<span class="string">"empty"</span>), <span class="number">0</span>);
+<a href=#920 id=920 data-nosnippet>920</a>    }
+<a href=#921 id=921 data-nosnippet>921</a>}
 </code></pre></div></section></main></body></html>

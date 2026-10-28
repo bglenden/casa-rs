@@ -646,6 +646,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#221-what-geometry-needs-from-the-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2.1 What geometry needs from the boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#23-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -898,6 +909,89 @@ Measures as the plan requires, with no translation layer left behind.</p>
 <p><strong>Law:</strong> for every T1 and T1.5 workload, the batch geometry must equal today's
 per-row geometry to 1e-12 relative, sample for sample. Only summation order
 may differ.</p>
+<h3 id="221-what-geometry-needs-from-the-boundary">2.2.1 What geometry needs from the boundary<a class="headerlink" href="#221-what-geometry-needs-from-the-boundary" title="Permanent link">&para;</a></h3>
+<p>Added 2026-10-27, when step 3 began. Section 2.2 assumed that the catalogue
+holds everything today's per-row geometry reads, and 2.4 relies on "the
+catalogue's pointing". A map of today's geometry (<code>casa-ms</code> <code>derived/engine.rs</code>,
+<code>selected_observation/access/geometry.rs</code>, <code>selected_pointing.rs</code>,
+<code>ephemeris.rs</code>) found six inputs that the boundary does not carry. The
+converter refuses or drops the same inputs, so section 3's decision 5 (MSv4
+T1 at cutover) needs them on both stores.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Today</th>
+<th>On the boundary now</th>
+<th>Proposed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Field direction's reference epoch</td>
+<td>A non-J2000 <code>PHASE_DIR</code> is converted to J2000 once, at <code>FIELD.TIME</code> and the observatory position</td>
+<td>Constant term and frame only</td>
+<td><code>FieldEntry</code> gains the reference epoch. MSv4 phase centres are in celestial frames, so theirs is <code>None</code>.</td>
+</tr>
+<tr>
+<td>Per-row direction references</td>
+<td><code>PHASE_DIR</code> with a variable reference column (<code>PhaseDir_Ref</code>, common in ALMA data), integer or string codes</td>
+<td>Refused at opening</td>
+<td>The MSv2 adapter resolves each field's frame. Fields in different frames are refused, since a data group has one UVW frame and MSv4 one phase-centre frame.</td>
+</tr>
+<tr>
+<td>Field ephemerides</td>
+<td>A field with <code>EPHEMERIS_ID</code> takes its direction from the attached table, offset by <code>PHASE_DIR</code>; the radial velocity feeds the frequency conversion</td>
+<td>Refused by the converter; the catalogue ignores <code>EPHEMERIS_ID</code></td>
+<td><code>FieldEntry</code> gains the ephemeris as MSv4's <code>field_and_source_ephemeris</code> holds it: geocentric samples (time, direction, distance, radial velocity) and the phase centre's offset from them. The MSv2 adapter reads the attached table. Imaging interpolates as today.</td>
+</tr>
+<tr>
+<td>Antenna pointing</td>
+<td><code>PreparedSelectedPointingCatalog</code> finds, per (antenna, time), the covering, preceding and following POINTING rows, each evaluated at that time (polynomials included); the imaging law (covering, nearest, slerp, hold, reject) chooses</td>
+<td>Not carried; the converter drops POINTING</td>
+<td>A boundary query, <code>Observation::pointing</code>, returns those brackets per (antenna, time) for a partition. Each store answers natively: MSv2 evaluates its polynomial rows, MSv4 its <code>POINTING_BEAM</code> samples. The imaging law is unchanged. Nothing large enters the catalogue.</td>
+</tr>
+<tr>
+<td>Receptor angles</td>
+<td>Native AW compile keys <code>FEED</code> <code>RECEPTOR_ANGLE</code> by time and window</td>
+<td>One vector per antenna</td>
+<td>Per partition, as MSv4's per-partition <code>antenna_xds</code> holds them. The MSv2 adapter takes the partition's window rows and, where <code>FEED</code> varies in time for an antenna and window, the last of them, as casacore's <code>MSIter</code> does (owner decision, 2026-10-28; XRADIO's converter refuses them).</td>
+</tr>
+<tr>
+<td>Window identity</td>
+<td>Per-row <code>DATA_DESC_ID</code> and spectral window number key frequency conversions and per-(field, window) rules</td>
+<td>A window name per partition</td>
+<td>Geometry keys by partition. Window numbers for task selection belong to step 4.</td>
+</tr>
+</tbody>
+</table>
+<p>The batch already carries the rest: stored UVW and time centroids per
+(time, baseline), field per time, and antennas per baseline. The catalogue
+carries the antenna positions, mounts, dish diameters, telescope names, and
+the partitions' frequencies and frames.</p>
+<p>As landed in step 3a (trial README, "Geometry inputs"): field reference
+epochs, per-row phase-centre frames, pointing and per-partition receptors.
+Field ephemerides take a PR of their own, which must merge before the
+cutover (#942); until then the converter refuses them, as it did.</p>
+<p>Two consequences:
+- <strong>Pointing in MSv4.</strong> XRADIO keeps one polynomial term per sample and
+  defines no origin for more, so an MSv2 row with <code>NUM_POLY</code> &gt; 0 converts as
+  its direction at its own time, the further terms a reported loss; the MSv2
+  adapter keeps today's evaluation. MSv4 states no interval per sample, so
+  a converted store's brackets have no covering sample, and imaging's law
+  chooses between the samples either side (nearest, or interpolation). For
+  pointing sampled at the integration, that can pick a different sample
+  than the MSv2 did. Step 3b measured it (#958), and the owner decided
+  (2026-10-28, #946) that the MSv4 route's choice stands, with no
+  intervals recovered. The converter reports <code>INTERVAL</code>, <code>TARGET</code>, <code>NAME</code>
+  and <code>TRACKING</code> as a table loss. Today's covering rule is casa-rs's, not
+  casacore's (#948), and the batch route keeps it (#958).
+- <strong>AW pointing epochs.</strong> Today's epochs follow MAIN order, which interleaves
+  windows; batches are partition-major. Refresh decisions carry state across
+  consecutive epochs, so the order can change which epochs refresh. CASA's
+  imager iterates by field, then window, then time. Step 3b instruments both
+  orders against CASA before choosing, and the equality law runs on the
+  native AW workloads.</p>
 <h3 id="23-selection">2.3 Selection<a class="headerlink" href="#23-selection" title="Permanent link">&para;</a></h3>
 <p>The imager's selection is resolved once (<code>RowSelection</code>,
 <code>casa-imaging-model/src/observation.rs:188</code>): fields, a UV-distance
@@ -1005,8 +1099,16 @@ stated; and MSv4 imaging is part of the cutover's acceptance.</p>
    imaging.</li>
 <li><strong>Selection on the request</strong> (packet a, if decision 3 is (a)): field and
    intent selections, with laws on both stores.</li>
-<li><strong>Geometry over batches</strong> in imaging, beside today's. The equality law of
-   2.2 runs both on every T1 workload.</li>
+<li><strong>Geometry over batches</strong> in imaging, beside today's, in two parts
+   (2.2.1):</li>
+<li><strong>3a. Boundary inputs for geometry.</strong> Field reference epochs, per-row
+     direction references, pointing brackets and per-partition receptor
+     angles on both adapters; the converter carries pointing both ways.
+     Laws: each input equals today's reading on MSv2 and survives an
+     MSv2 → MSv4 → MSv2 round trip. Field ephemerides follow in their own
+     PR before the cutover (#942).</li>
+<li><strong>3b. Geometry</strong> in <code>casa-imaging-model</code>. The equality law of 2.2 runs
+     both routes on every T1 workload.</li>
 <li><strong><code>ObservationSource</code></strong> beside <code>MeasurementSetSource</code>, behind a run
    option. T0, T1 and T1.5 run on both.</li>
 <li><strong>Write-back</strong> through update sessions. The model-column T1 tests and the
