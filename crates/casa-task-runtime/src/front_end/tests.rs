@@ -459,6 +459,38 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
     };
     assert_eq!(task.text("box").unwrap(), None);
     assert!(task.required_text("box").is_err());
+
+    // Astra's #962 P2: an optional number (flagdata's thresholds) was read
+    // as text, refusing every explicit value.
+    let mut flagdata =
+        crate::ParameterSession::defaults(builtin_surface_bundle("flagdata").unwrap()).unwrap();
+    {
+        let task = TaskInvocation {
+            session: &flagdata,
+            workspace: Path::new("."),
+        };
+        assert_eq!(task.optional_number("timedev").unwrap(), None);
+    }
+    flagdata
+        .set(
+            "timedev",
+            casa_provider_contracts::ParameterValue::Float(1.5),
+        )
+        .unwrap();
+    flagdata
+        .set(
+            "freqdev",
+            casa_provider_contracts::ParameterValue::String("none".into()),
+        )
+        .unwrap();
+    let task = TaskInvocation {
+        session: &flagdata,
+        workspace: Path::new("."),
+    };
+    assert_eq!(task.optional_number("timedev").unwrap(), Some(1.5));
+    assert_eq!(task.optional_number("freqdev").unwrap(), None);
+    let wrong = task.optional_number("mode").unwrap_err();
+    assert_eq!(wrong.parameter.as_deref(), Some("mode"));
 }
 
 /// A stderr a test hands `main` and reads back.

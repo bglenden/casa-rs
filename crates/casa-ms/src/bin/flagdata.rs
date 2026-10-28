@@ -81,8 +81,8 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         quackmode: choice(task, "quackmode", quackmode)?,
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
-        timedev: optional_number(task, "timedev")?,
-        freqdev: optional_number(task, "freqdev")?,
+        timedev: task.optional_number("timedev")?,
+        freqdev: task.optional_number("freqdev")?,
         extendflags: task.flag("extendflags")?,
         extendpols: task.flag("extendpols")?,
         ..FlagDataRequest::default()
@@ -115,17 +115,6 @@ fn choice<T>(
     let text = task.required_text(name)?;
     parse(&text.to_ascii_lowercase())
         .ok_or_else(|| TaskFailure::validation(format!("unsupported {name} {text:?}")).at(name))
-}
-
-/// A threshold held as text, absent when `none`.
-fn optional_number(task: &TaskInvocation<'_>, name: &str) -> Result<Option<f64>, TaskFailure> {
-    task.text(name)?
-        .map(|text| {
-            text.trim().parse::<f64>().map_err(|error| {
-                TaskFailure::validation(format!("invalid {name} {text:?}: {error}")).at(name)
-            })
-        })
-        .transpose()
 }
 
 fn mode(value: &str) -> Option<FlagDataMode> {
@@ -167,7 +156,43 @@ fn quackmode(value: &str) -> Option<QuackMode> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
     use super::*;
+
+    /// The request a `flagdata` command line resolves to.
+    fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata").unwrap();
+        let line = TaskCommandLine::parse(&bundle, &args).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .unwrap();
+        flagdata_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+    }
+
+    #[test]
+    fn rflag_thresholds_are_read_as_numbers() {
+        // Astra's #962 P2: every explicit threshold was refused as not text.
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "rflag",
+            "--timedev",
+            "1.0",
+            "--freqdev",
+            "10",
+        ])
+        .unwrap();
+        assert_eq!(request.mode, FlagDataMode::Rflag);
+        assert_eq!((request.timedev, request.freqdev), (Some(1.0), Some(10.0)));
+
+        let defaults = request_for(&["--vis", "in.ms", "--mode", "rflag"]).unwrap();
+        assert_eq!((defaults.timedev, defaults.freqdev), (None, None));
+    }
 
     #[test]
     fn provider_bundle_embeds_flagdata_parameter_contract() {
