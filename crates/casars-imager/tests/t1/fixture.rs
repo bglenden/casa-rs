@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
+use casa_imaging_application::geometry_law::compare_geometry;
+use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{
     MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
     SyntheticCorruptionConfig, SyntheticField, SyntheticNoiseCorruption, SyntheticNoiseMode,
@@ -346,8 +348,30 @@ impl Observation {
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
         let result = run(parameters, &request)?;
+        assert_geometry_law(name, &request);
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))
+    }
+
+    /// Imaging port step 3b's equality law (#932) alone for `controls`,
+    /// without imaging: for a geometry no imaging law of its own covers.
+    pub fn assert_geometry(&self, name: &str, controls: Value) {
+        let mut parameters = json!({
+            "vis": self.measurement_set,
+            "imagename": self.root.path().join(name),
+            "imsize": self.geometry.image_size,
+            "cell": format!("{}arcsec", self.geometry.cell_arcsec),
+            "backend": "cpu",
+        });
+        let fields = parameters.as_object_mut().expect("parameters object");
+        for (key, value) in controls.as_object().expect("controls object") {
+            fields.insert(key.clone(), value.clone());
+        }
+        let Value::Object(parameters) = parameters else {
+            unreachable!("parameters are an object");
+        };
+        let (_, request) = resolve_request(&ImagingParameters(parameters)).expect("request");
+        assert_geometry_law(name, &request);
     }
 
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
@@ -442,6 +466,28 @@ impl Observation {
         };
         assert_eq!(stokes.stokes(), [StokesType::I]);
     }
+}
+
+/// Imaging port step 3b's equality law (#932): the batch geometry of every
+/// row the run imaged equals today's route's to 1e-12 relative (each
+/// quantity to its scale: UVW and phase shift to the baseline length,
+/// pixels to their magnitude, angles in radians).
+fn assert_geometry_law(name: &str, request: &ImagingRequest) {
+    let context = RunContext {
+        host: HostResources::detect().expect("host resources"),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    };
+    let comparison = compare_geometry(request, &context).expect("both geometry routes");
+    eprintln!("{name}: geometry law {comparison:?}");
+    assert!(comparison.rows > 0, "{name}: no rows to compare");
+    assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
+    assert_eq!(comparison.duplicates, 0, "{name}: {comparison:?}");
+    assert!(
+        comparison.holds(),
+        "{name}: batch geometry departs from today's: {comparison:?}"
+    );
 }
 
 fn angle_difference_rad(actual: f64, expected: f64) -> f64 {

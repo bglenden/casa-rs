@@ -51,6 +51,8 @@ fn invalid(reason: impl Into<String>) -> ObservationError {
 #[derive(Debug)]
 struct Partition {
     grid: Grid,
+    /// Its `DATA_DESCRIPTION` row.
+    data_description_id: u32,
     /// The `SPECTRAL_WINDOW` row of its data description.
     spectral_window_id: u32,
 }
@@ -157,15 +159,16 @@ impl Msv2Observation {
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
         for (key, grid) in index.partitions {
-            let setup = usize::try_from(key.data_description)
+            let data_description_id = u32::try_from(key.data_description)
                 .ok()
-                .and_then(|row| setups.get(row))
+                .filter(|row| (*row as usize) < setups.len())
                 .ok_or_else(|| {
                     invalid(format!(
                         "DATA_DESC_ID {} is not in DATA_DESCRIPTION",
                         key.data_description
                     ))
                 })?;
+            let setup = &setups[data_description_id as usize];
             let observation = u32::try_from(key.observation)
                 .ok()
                 .filter(|id| (*id as usize) < observations.len())
@@ -205,6 +208,7 @@ impl Msv2Observation {
             });
             partitions.push(Partition {
                 grid,
+                data_description_id,
                 spectral_window_id: setup.spectral_window_id,
             });
         }
@@ -245,6 +249,35 @@ impl Msv2Observation {
     #[must_use]
     pub fn spectral_window_id(&self, id: PartitionId) -> u32 {
         self.partitions[id.0 as usize].spectral_window_id
+    }
+
+    /// The `DATA_DESCRIPTION` row of partition `id`.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn data_description_id(&self, id: PartitionId) -> u32 {
+        self.partitions[id.0 as usize].data_description_id
+    }
+
+    /// The MAIN row partition `id` holds at `time_s` (MAIN `TIME`, seconds
+    /// from MJD 0, as its batches deliver it) on `baseline`; `None` where
+    /// its grid is padded or the partition has no such time or baseline.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn main_row(&self, id: PartitionId, time_s: f64, baseline: OrderedBaseline) -> Option<u32> {
+        let grid = &self.partitions[id.0 as usize].grid;
+        let time = grid
+            .times_s
+            .binary_search_by(|stored| stored.total_cmp(&time_s))
+            .ok()?;
+        let baseline = grid.baselines.binary_search(&baseline).ok()?;
+        let row = grid.cells[time * grid.baselines.len() + baseline];
+        (row != index::NO_ROW).then_some(row)
     }
 
     /// The first MAIN row of partition `id`, `None` when it holds none:

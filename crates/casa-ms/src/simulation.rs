@@ -2482,31 +2482,11 @@ fn field_parallactic_angle_rad(
         ))
         .with_direction(phase_center.clone())
         .with_measures(measures);
-    let source_azel = phase_center
-        .convert_to(DirectionRef::AZEL, &frame)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "simobserve parallactic-angle source conversion failed: {error}"
-            ))
-        })?;
-    let pole_azel = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
-        .convert_to(DirectionRef::AZEL, &frame)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "simobserve parallactic-angle pole conversion failed: {error}"
-            ))
-        })?;
-    Ok(spherical_position_angle(&source_azel, &pole_azel))
-}
-
-fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
-    let (origin_lon, origin_lat) = origin.as_angles();
-    let (target_lon, target_lat) = target.as_angles();
-    let delta_lon = target_lon - origin_lon;
-    let y = delta_lon.sin() * target_lat.cos();
-    let x =
-        origin_lat.cos() * target_lat.sin() - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
-    y.atan2(x)
+    phase_center.parallactic_angle(&frame).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "simobserve parallactic-angle conversion failed: {error}"
+        ))
+    })
 }
 
 fn apply_fractional_stokes_to_linear_rows(
