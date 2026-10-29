@@ -30,11 +30,6 @@ CASA_RS_ONLY = {"calibrate", "msexplore"}
 # CASA-named tasks not yet CASA-exact: each family's PR in #931 empties its
 # entries, and plotms waits for its own decision. This list only shrinks.
 PENDING = {
-    "applycal": "#931 PR 4d",
-    "bandpass": "#931 PR 4d",
-    "fluxscale": "#931 PR 4d",
-    "gaincal": "#931 PR 4d",
-    "gencal": "#931 PR 4d",
     "imager": "#931 PR 4e, as tclean",
     "plotms": "its own decision (#931)",
 }

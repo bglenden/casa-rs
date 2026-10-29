@@ -32,7 +32,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
+use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
 use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
 use kernel::solve_group;
@@ -52,6 +54,15 @@ impl GainType {
         match self {
             Self::G => "G Jones",
             Self::T => "T Jones",
+        }
+    }
+
+    /// The polarizations a solution holds: one gain per receptor for G, one
+    /// for both for T.
+    pub(crate) fn polarizations(self) -> usize {
+        match self {
+            Self::G => 2,
+            Self::T => 1,
         }
     }
 }
@@ -152,6 +163,12 @@ pub struct GainSolveReport {
     pub spectral_window_ids: Vec<i32>,
     /// Number of solution rows written.
     pub solution_row_count: usize,
+    /// The data the solve selected, CASA's `selectvis`.
+    #[serde(default)]
+    pub selected_data: SelectedData,
+    /// How far the solve's intervals got, CASA's `solvestats`.
+    #[serde(default)]
+    pub solve_stats: SolveStats,
 }
 
 /// Errors returned by the limited `gaincal` solver.
@@ -308,6 +325,10 @@ pub(crate) struct SolvedGains {
     /// The spectral windows an interval reached a solve in, whether or not
     /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
+    /// The data the solve selected.
+    pub(crate) selected_data: SelectedData,
+    /// How far its intervals got.
+    pub(crate) solve_stats: SolveStats,
 }
 
 /// The solutions of [`solve_gain`], the resolved reference antenna and the
@@ -353,12 +374,24 @@ pub(crate) fn solve_gain_rows(
 
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
+    let mut solve_stats = SolveStatsBuilder::new(
+        request.gain_type.polarizations(),
+        spectral_window_ids(ms)?,
+        &context.available_antennas,
+    );
+    // Each solved interval's window and its rows in `solution_rows`.
+    let mut intervals = Vec::new();
     for ((base_key, bucket_key), mut group) in groups {
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
         }
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
+        solve_stats.interval(&IntervalStages::of(
+            &group,
+            request.min_baselines_per_antenna,
+        ));
+        let spw_id = group.spw_id;
         let Some(group_rows) = solve_closed_group(
             group,
             &context.available_antennas,
@@ -367,6 +400,13 @@ pub(crate) fn solve_gain_rows(
         ) else {
             continue;
         };
+        solve_stats.solutions(
+            spw_id,
+            group_rows.iter().map(|row| AntennaSolution {
+                antenna_id: row.antenna_id,
+                passed: row.flags.iter().map(|flagged| !flagged).collect(),
+            }),
+        );
         trace::trace_solution_rows(
             &base_key,
             &bucket_key,
@@ -374,7 +414,9 @@ pub(crate) fn solve_gain_rows(
             request,
             context.refant_id,
         );
+        let start = solution_rows.len();
         solution_rows.extend(group_rows);
+        intervals.push((spw_id, start..solution_rows.len()));
     }
     if solution_rows.is_empty() {
         return Err(GainSolveError::NoSolutions);
@@ -384,11 +426,40 @@ pub(crate) fn solve_gain_rows(
         context.refant_id,
         &refant_distance_order(ms, context.refant_id)?,
     );
+    // The reference antenna each interval ended with, where it kept its
+    // solution: flex flags an interval it found none for.
+    for (spw_id, rows) in intervals {
+        let rows = &solution_rows[rows];
+        if let Some(refant) = rows
+            .iter()
+            .find(|row| row.antenna_id == row.refant_id && row.flags.iter().any(|flagged| !flagged))
+        {
+            solve_stats.used_as_refant(spw_id, refant.antenna_id);
+        }
+    }
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
+        selected_data: context.selected_data,
+        solve_stats: solve_stats.finish(),
     })
+}
+
+/// Every spectral window of `ms`, by id.
+pub(crate) fn spectral_window_ids(ms: &MeasurementSet) -> Result<Vec<i32>, GainSolveError> {
+    let windows = ms
+        .spectral_window()
+        .map_err(|source| GainSolveError::OpenMeasurementSet {
+            path: ms
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<in-memory>".to_string()),
+            source,
+        })?;
+    Ok((0..windows.row_count())
+        .map(|row| i32::try_from(row).expect("window count fits in i32"))
+        .collect())
 }
 
 /// Solve one complete group whose accumulation is finalized

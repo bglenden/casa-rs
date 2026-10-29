@@ -29,6 +29,34 @@
            },
            "elements": {
             "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "null": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[bool](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[float](kind)": {
               "kind": {
                "str": null
@@ -865,6 +893,34 @@
            },
            "elements": {
             "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "null": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[bool](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[float](kind)": {
               "kind": {
                "str": null
@@ -1137,6 +1193,7 @@
    "float": null,
    "int": null,
    "list": {
+    "bool": null,
     "float": null,
     "int": null,
     "str": null

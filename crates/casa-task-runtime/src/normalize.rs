@@ -153,6 +153,17 @@ fn normalize_domain(
                 ParameterValue::Array(values) if pair > 0 && values.len() == 1 => {
                     vec![values[0].clone(); pair]
                 }
+                // CASA's list of lists (`spwmap`) takes a flat list as its
+                // one item: `[0, 0, 1]` is the first table's map (#931).
+                ParameterValue::Array(values)
+                    if matches!(**element, ParameterType::Array { .. })
+                        && !values.is_empty()
+                        && !values
+                            .iter()
+                            .any(|value| matches!(value, ParameterValue::Array(_))) =>
+                {
+                    vec![value.clone()]
+                }
                 ParameterValue::Array(values) => values.clone(),
                 // A path list given as one string is comma-separated, as on
                 // the command line; it is split before any path is
@@ -717,6 +728,46 @@ mod tests {
             },
             persistence_class: PersistenceClass::Profile,
         }
+    }
+
+    #[test]
+    fn a_flat_list_is_the_one_item_of_a_list_of_lists() {
+        // CASA's spwmap (#931): [0, 0, 1] maps the first table's windows,
+        // [[0, 0], [1, 1]] maps two tables'.
+        let concept = concept(
+            ParameterType::Array {
+                element: Box::new(ParameterType::Array {
+                    element: Box::new(ParameterType::Integer),
+                    min_items: 0,
+                    max_items: None,
+                    allow_scalar: false,
+                }),
+                min_items: 0,
+                max_items: None,
+                allow_scalar: false,
+            },
+            NormalizationRule::Identity,
+        );
+        let ints = |values: &[i64]| {
+            ParameterValue::Array(
+                values
+                    .iter()
+                    .copied()
+                    .map(ParameterValue::Integer)
+                    .collect(),
+            )
+        };
+        let lists = |values: Vec<ParameterValue>| ParameterValue::Array(values);
+        assert_eq!(
+            normalize_value(&ints(&[0, 0, 1]), &concept).unwrap(),
+            lists(vec![ints(&[0, 0, 1])])
+        );
+        let two = lists(vec![ints(&[0, 0]), ints(&[1, 1])]);
+        assert_eq!(normalize_value(&two, &concept).unwrap(), two);
+        assert_eq!(
+            normalize_value(&lists(vec![]), &concept).unwrap(),
+            lists(vec![])
+        );
     }
 
     #[test]

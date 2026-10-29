@@ -9,6 +9,10 @@
 //! `chanaverage=True` with `chanbin`. Its condition may therefore name only
 //! values a profile set: it is a conjunction of [`Predicate::IsSet`] and
 //! [`Predicate::Equals`], so no step can pin a default the profile omitted.
+//! A conjunction may also require that a parameter was not set, as
+//! `Not(IsSet)`, beside at least one explicit value it depends on: the old
+//! gaincal's explicit `gain_model_source='point'` meant a 1 Jy model when
+//! `smodel` was omitted.
 
 use std::collections::BTreeMap;
 
@@ -17,34 +21,47 @@ use super::{ContractValidationError, ParameterValue, Predicate, SurfaceDefinitio
 impl Predicate {
     /// Whether this condition holds of a profile's explicit `overrides`, by
     /// the parameter names they carry: `IsSet` when the profile set the
-    /// parameter, `Equals` when it set it to exactly `value`, `All` when
-    /// every part holds. Any other predicate never holds here; contract
-    /// validation refuses it in a migration.
+    /// parameter, `Equals` when it set it to exactly `value`, `Not(IsSet)`
+    /// when it did not set it, `All` when every part holds. Any other
+    /// predicate never holds here; contract validation refuses it in a
+    /// migration.
     pub fn holds_for_overrides(&self, overrides: &BTreeMap<String, ParameterValue>) -> bool {
         match self {
             Self::IsSet { parameter } => overrides.contains_key(parameter),
             Self::Equals { parameter, value } => overrides.get(parameter) == Some(value),
+            Self::Not { predicate } => match predicate.as_ref() {
+                Self::IsSet { parameter } => !overrides.contains_key(parameter),
+                _ => false,
+            },
             Self::All { predicates } => {
                 !predicates.is_empty()
                     && predicates
                         .iter()
                         .all(|predicate| predicate.holds_for_overrides(overrides))
             }
-            Self::Always | Self::Never | Self::Not { .. } | Self::Any { .. } => false,
+            Self::Always | Self::Never | Self::Any { .. } => false,
         }
     }
 }
 
-/// Whether `when` names only values a profile set.
+/// Whether `when` holds only of a value a profile set: `IsSet` or
+/// `Equals`.
+fn names_a_set_value(when: &Predicate) -> bool {
+    matches!(when, Predicate::IsSet { .. } | Predicate::Equals { .. })
+}
+
+/// Whether `when` names only values a profile set: one of them, or a
+/// conjunction of at least one of them with any number of `Not(IsSet)`.
 fn names_only_set_values(when: &Predicate) -> bool {
+    let unset = |when: &Predicate| matches!(when, Predicate::Not { predicate } if matches!(**predicate, Predicate::IsSet { .. }));
     match when {
-        Predicate::IsSet { .. } | Predicate::Equals { .. } => true,
         Predicate::All { predicates } => {
-            !predicates.is_empty() && predicates.iter().all(names_only_set_values)
+            predicates.iter().any(names_a_set_value)
+                && predicates
+                    .iter()
+                    .all(|predicate| names_a_set_value(predicate) || unset(predicate))
         }
-        Predicate::Always | Predicate::Never | Predicate::Not { .. } | Predicate::Any { .. } => {
-            false
-        }
+        other => names_a_set_value(other),
     }
 }
 
@@ -61,7 +78,7 @@ pub(super) fn validate_condition(
             ContractValidationError::new(
                 "migration_set_condition",
                 "a migration's set step needs a condition of explicit values only: \
-                 is_set and equals, or all of them",
+                 is_set or equals, or all of at least one of them and any not(is_set)",
             )
             .at(surface.id(), Some(parameter)),
         );
@@ -137,5 +154,35 @@ mod tests {
                 }
             ],
         }));
+        // An unset parameter alone names no explicit value.
+        assert!(!names_only_set_values(&Predicate::All {
+            predicates: vec![unset("smodel")],
+        }));
+    }
+
+    fn unset(parameter: &str) -> Predicate {
+        Predicate::Not {
+            predicate: Box::new(Predicate::IsSet {
+                parameter: parameter.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_condition_may_require_a_parameter_left_unset_beside_an_explicit_value() {
+        // The old gaincal's explicit point model meant 1 Jy when smodel was
+        // omitted, and the explicit smodel otherwise.
+        let point = Predicate::All {
+            predicates: vec![equals("gain_model_source", "point"), unset("smodel")],
+        };
+        assert!(names_only_set_values(&point));
+        let mut overrides = BTreeMap::from([(
+            "gain_model_source".to_string(),
+            ParameterValue::String("point".into()),
+        )]);
+        assert!(point.holds_for_overrides(&overrides));
+        overrides.insert("smodel".into(), ParameterValue::Array(Vec::new()));
+        assert!(!point.holds_for_overrides(&overrides));
+        assert!(!point.holds_for_overrides(&BTreeMap::new()));
     }
 }

@@ -128,14 +128,14 @@ mod tests {
             .set("vis", ParameterValue::String("in.ms".into()))
             .unwrap();
         session
-            .set("spw", ParameterValue::String("0".into()))
+            .set("antenna", ParameterValue::String("A0".into()))
             .unwrap();
         session
             .set("selectdata", ParameterValue::Bool(false))
             .unwrap();
         let values = request(&session).values;
         assert_eq!(values["selectdata"], serde_json::json!(false));
-        assert!(!values.contains_key("spw"), "{values:?}");
+        assert!(!values.contains_key("antenna"), "{values:?}");
     }
 
     #[test]

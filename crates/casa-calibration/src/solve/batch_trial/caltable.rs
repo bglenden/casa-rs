@@ -562,6 +562,8 @@ fn write_known_gains(path: &Path, table: &Path) -> f64 {
             rows,
             refant_id: 0,
             attempted_spw_ids: BTreeSet::new(),
+            selected_data: crate::SelectedData::default(),
+            solve_stats: crate::SolveStats::default(),
         },
     )
     .expect("write");
@@ -1051,6 +1053,8 @@ fn the_writer_refuses_a_namespace_of_another_opening() {
             rows: Vec::new(),
             refant_id: 0,
             attempted_spw_ids: BTreeSet::new(),
+            selected_data: crate::SelectedData::default(),
+            solve_stats: crate::SolveStats::default(),
         },
     ) {
         Err(ObservationError::InvalidRequest { reason }) => {

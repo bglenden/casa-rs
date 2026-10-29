@@ -34,15 +34,18 @@ use crate::constants::{
     COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_TIME_EXTRA_PREC, COL_VALID_DOMAIN, COL_WEIGHT,
     LEGACY_CAL_DESC_KEYWORD,
 };
+use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve::grouping::{
     SolveAccumulator, SolveGroupOptions, build_solve_groups, validate_smodel,
 };
 use crate::solve::kernel::{SolveGraphOptions, SolvedGraphs, solve_graphs};
+use crate::solve::spectral_window_ids;
 use crate::solve::{
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
     RefAntSelector,
 };
+use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
     set_measinfo_keyword,
@@ -113,6 +116,12 @@ pub struct BandpassSolveReport {
     pub solution_row_count: usize,
     /// Number of channels in each solved row.
     pub channel_count: usize,
+    /// The data the solve selected, CASA's `selectvis`.
+    #[serde(default)]
+    pub selected_data: SelectedData,
+    /// How far the solve's intervals got, CASA's `solvestats`.
+    #[serde(default)]
+    pub solve_stats: SolveStats,
 }
 
 /// Errors returned by the limited `bandpass` solver.
@@ -273,23 +282,54 @@ pub(crate) fn solve_bandpass(
     }
 
     let mut solution_rows = Vec::new();
+    let mut solve_stats = SolveStatsBuilder::new(
+        GainType::G.polarizations(),
+        spectral_window_ids(ms)?,
+        &context.available_antennas,
+    );
     for mut group in groups.into_values() {
         group.finalize_for_solve(GainSolveMode::AmplitudePhase);
-        solution_rows.extend(solve_bandpass_group(
+        // The channel solves keep any antenna with a baseline (CASA's
+        // minblperant is not applied yet, #979).
+        solve_stats.interval(&IntervalStages::of(&group, 0));
+        let (rows, refants) = solve_bandpass_group(
             &group,
             &context.available_antennas,
             context.refant_id,
             request.combine,
             request.normalize_average_amplitude,
-        ));
+        );
+        let solutions = rows
+            .iter()
+            .map(|row| AntennaSolution {
+                antenna_id: row.antenna_id,
+                passed: (0..2)
+                    .map(|receptor| row.flags.iter().skip(receptor).step_by(2).any(|f| !f))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        // A bandpass keeps each channel's reference antenna; no flex choice
+        // follows.
+        for solution in &solutions {
+            if refants.contains(&solution.antenna_id) && solution.passed.contains(&true) {
+                solve_stats.used_as_refant(group.spw_id, solution.antenna_id);
+            }
+        }
+        solve_stats.solutions(group.spw_id, solutions);
+        solution_rows.extend(rows);
     }
     if solution_rows.is_empty() {
         return Err(BandpassSolveError::NoSolutions);
     }
-    match request.band_type {
+    let report = match request.band_type {
         BandpassType::B => write_bandpass_caltable(ms, request, context.refant_id, &solution_rows),
         BandpassType::BPoly => write_bpoly_caltable(ms, request, context.refant_id, &solution_rows),
-    }
+    }?;
+    Ok(BandpassSolveReport {
+        selected_data: context.selected_data,
+        solve_stats: solve_stats.finish(),
+        ..report
+    })
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
@@ -344,7 +384,7 @@ fn solve_bandpass_group(
     refant_id: i32,
     combine: BandpassSolveCombine,
     normalize_average_amplitude: bool,
-) -> Vec<BandpassSolutionRow> {
+) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
     // last solution found (`Calibrater::genericGatherAndSolve`).
@@ -366,8 +406,14 @@ fn solve_bandpass_group(
         }
         solved_channels[channel] = solved;
     }
-    if solved_channels.iter().all(Option::is_none) {
-        return Vec::new();
+    // The antennas the channel solves referred their gains to.
+    let refants = solved_channels
+        .iter()
+        .flatten()
+        .map(|solved| solved.refant_id)
+        .collect::<BTreeSet<_>>();
+    if refants.is_empty() {
+        return (Vec::new(), refants);
     }
 
     let mut antenna_ids = available_antennas.clone();
@@ -414,11 +460,12 @@ fn solve_bandpass_group(
         }
     }
 
-    if normalize_average_amplitude {
+    let rows = if normalize_average_amplitude {
         normalize_bandpass_rows(solution_rows, channel_count)
     } else {
         solution_rows
-    }
+    };
+    (rows, refants)
 }
 
 fn normalize_bandpass_rows(
@@ -621,6 +668,8 @@ fn write_bandpass_caltable(
         spectral_window_ids: spw_ids.iter().copied().collect(),
         solution_row_count: rows.len(),
         channel_count,
+        selected_data: SelectedData::default(),
+        solve_stats: SolveStats::default(),
     })
 }
 
@@ -987,6 +1036,8 @@ fn write_bpoly_caltable(
         spectral_window_ids: spw_ids.iter().copied().collect(),
         solution_row_count: fitted_rows.len(),
         channel_count,
+        selected_data: SelectedData::default(),
+        solve_stats: SolveStats::default(),
     })
 }
 

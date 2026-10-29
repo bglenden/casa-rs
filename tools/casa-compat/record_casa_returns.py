@@ -7,9 +7,8 @@ Run with CASA's own Python, which has `casatasks` and `casatools`:
     "$CASA_PYTHON" -I tools/casa-compat/record_casa_returns.py \
         --out resources/casa-compat/casa-6.7.6.14/returns.json
 
-Each case calls one task on small images or a small MeasurementSet built
-here with `casatools` and
-records the structure of the value it returns: for a dictionary its keys in
+Each case calls one task on small images or small MeasurementSets built
+here with `casatools` and records the structure of the value it returns: for a dictionary its keys in
 order and the type of each key, for a NumPy array its dtype and shape, for
 anything else its Python type. Values are not recorded; the casa-rs tests
 compare the structure of casa-rs's return values with these, and the
@@ -122,6 +121,72 @@ def ms_cases(root: Path) -> dict[str, Callable[[], Any]]:
     }
 
 
+def make_cal_ms(path: str) -> None:
+    """A MeasurementSet of five antennas, two fields (FLUX, then PHASE) and
+    one 8-channel window in XX and YY: a 60 s scan of each, 10 s
+    integrations, predicted from point sources of 2 and 1 Jy with no
+    noise."""
+    from casatools import componentlist, measures, simulator
+
+    me = measures()
+    components = path + ".cl"
+    cl = componentlist()
+    cl.addcomponent(dir="J2000 0h0m0s -30d0m0s", flux=2.0, fluxunit="Jy", freq="100GHz", shape="point")
+    cl.addcomponent(dir="J2000 1h0m0s -30d0m0s", flux=1.0, fluxunit="Jy", freq="100GHz", shape="point")
+    cl.rename(components)
+    cl.close()
+    sm = simulator()
+    sm.open(path)
+    sm.setconfig(
+        telescopename="ALMA",
+        x=[0.0, 30.0, 0.0, 30.0, 60.0],
+        y=[0.0, 0.0, 30.0, 30.0, 10.0],
+        z=[0.0] * 5,
+        dishdiameter=[12.0] * 5,
+        mount=["alt-az"] * 5,
+        antname=["A0", "A1", "A2", "A3", "A4"],
+        padname=["P0", "P1", "P2", "P3", "P4"],
+        coordsystem="local",
+        referencelocation=me.observatory("ALMA"),
+    )
+    sm.setspwindow(
+        spwname="SPW0", freq="100GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=8, stokes="XX YY"
+    )
+    sm.setfeed(mode="perfect X Y")
+    sm.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "0h0m0s", "-30d0m0s"))
+    sm.setfield(sourcename="PHASE", sourcedirection=me.direction("J2000", "1h0m0s", "-30d0m0s"))
+    sm.setlimits(shadowlimit=0.001, elevationlimit="8.0deg")
+    sm.setauto(autocorrwt=0.0)
+    sm.settimes(integrationtime="10s", usehourangle=True, referencetime=me.epoch("UTC", "2020/01/01/00:00:00"))
+    sm.observe("FLUX", "SPW0", starttime="0s", stoptime="60s")
+    sm.observe("PHASE", "SPW0", starttime="60s", stoptime="120s")
+    sm.predict(complist=components)
+    sm.close()
+
+
+def cal_cases(root: Path) -> dict[str, Callable[[], Any]]:
+    """Each calibration case's name and call, on a MeasurementSet under
+    `root`; they run in order, so a later case reads an earlier case's
+    table."""
+    import casatasks as ct
+
+    vis = str(root / "cal.ms")
+    make_cal_ms(vis)
+    gain = str(root / "g.cal")
+    return {
+        "gaincal": lambda: ct.gaincal(vis=vis, caltable=gain, refant="A0", solint="int"),
+        "gaincal pre-applied": lambda: ct.gaincal(
+            vis=vis, caltable=str(root / "g2.cal"), refant="A0", gaintable=[gain]
+        ),
+        "bandpass": lambda: ct.bandpass(vis=vis, caltable=str(root / "b.cal"), refant="A0", field="FLUX"),
+        "fluxscale": lambda: ct.fluxscale(
+            vis=vis, caltable=gain, fluxtable=str(root / "f.cal"), reference=["FLUX"], transfer=["PHASE"]
+        ),
+        "applycal": lambda: ct.applycal(vis=vis, gaintable=[gain]),
+        "gencal": lambda: ct.gencal(vis=vis, caltable=str(root / "o.cal"), caltype="opac", parameter=[0.05]),
+    }
+
+
 def cases(root: Path) -> dict[str, Callable[[], Any]]:
     """Each case's name and call, on images and a MeasurementSet under
     `root`."""
@@ -173,6 +238,7 @@ def cases(root: Path) -> dict[str, Callable[[], Any]]:
         "imstat no beam": lambda: ct.imstat(imagename=unbeamed, box="0,0,3,3"),
         "imsubimage": lambda: ct.imsubimage(imagename=image, outfile=str(root / "s.im"), box="0,0,7,7"),
         **ms_cases(root),
+        **cal_cases(root),
     }
 
 

@@ -22,6 +22,7 @@
 
 mod bandpass;
 mod callib;
+mod casa_return;
 mod cli;
 pub mod constants;
 mod corrected_export;
@@ -33,9 +34,11 @@ mod managed_output;
 mod model;
 mod plan;
 mod plots;
+mod selected_data;
 mod session;
 mod simulated;
 mod solve;
+mod solve_stats;
 mod stats;
 mod summary;
 mod task_contract;
@@ -46,6 +49,7 @@ pub use bandpass::{
     BandpassType,
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
+pub use casa_return::{fluxscale_record, solve_record};
 pub use cli::{CALIBRATION_SURFACES, task_front_end};
 pub use corrected_export::{
     ExportCorrectedDataError, ExportCorrectedDataReport, ExportCorrectedDataRequest,
@@ -80,6 +84,7 @@ pub use plots::{
     CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
     build_calibration_plot_payload,
 };
+pub use selected_data::SelectedData;
 pub use session::{
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
     solve_calibration,
@@ -93,6 +98,7 @@ pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
 };
+pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{
     CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsError, CalibrationStatsReport,
     CalibrationStatsRequest, CalibrationValueStats, calibration_stats,

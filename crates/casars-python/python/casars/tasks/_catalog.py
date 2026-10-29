@@ -506,132 +506,204 @@ def split(
     return _call_casa(split, locals())
 
 def applycal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str = '',
+    msselect: str = '',
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    calwt: bool | list[bool] | tuple[bool, ...] = [True],
+    parang: bool = False,
+    applymode: Literal['', 'calflag', 'calflagstrict', 'calonly', 'flagonly', 'flagonlystrict', 'trial'] = '',
+    flagbackup: bool = True,
     *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
-    callib: StrPath | object = _UNSET,
-    gainfield: str | object = _UNSET,
-    interp: str | object = _UNSET,
-    spwmap: str | object = _UNSET,
-    apply_mode: Literal['calflag', 'calonly', 'trial'] | object = _UNSET,
-    calwt: str | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    parang: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    selectdata: bool | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    flagbackup: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Apply one or more calibration tables to a MeasurementSet."""
-    return _run("applycal", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'flagbackup')))
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+    array: str = '',
+) -> Any:
+    """Apply one or more calibration tables to a MeasurementSet.
+
+    CASA's ``applycal``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #979: ``intent``, ``uvrange``.
+    """
+    return _call_casa(applycal, locals())
 
 def gaincal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str = '',
+    msselect: str = '',
+    solint: str = 'inf',
+    combine: str = '',
+    preavg: float = -1.0,
+    refant: str = '',
+    refantmode: Literal['flex', 'strict'] = 'flex',
+    minblperant: int = 4,
+    minsnr: float = 3.0,
+    solnorm: bool = False,
+    normtype: Literal['mean', 'median'] = 'mean',
+    gaintype: Literal['G', 'GSPLINE', 'K', 'KCROSS', 'T', 'XY+QU', 'XYf+QU'] = 'G',
+    smodel: float | list[float] | tuple[float, ...] = [],
+    calmode: Literal['a', 'ap', 'p'] = 'ap',
+    solmode: Literal['', 'L1', 'L1R', 'R'] = '',
+    rmsthresh: float | list[float] | tuple[float, ...] = [],
+    corrdepflags: bool = False,
+    append: bool = False,
+    splinetime: float = 3600.0,
+    npointaver: int = 3,
+    phasewrap: float = 180.0,
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    parang: bool = False,
     *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
-    callib: StrPath | object = _UNSET,
-    gainfield: str | object = _UNSET,
-    interp: str | object = _UNSET,
-    spwmap: str | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    out_table: StrPath | object = _UNSET,
-    refant: str | object = _UNSET,
-    gain_type: Literal['g', 't'] | object = _UNSET,
-    solve_mode: Literal['ap', 'p'] | object = _UNSET,
-    solint: str | object = _UNSET,
-    gain_combine: str | object = _UNSET,
-    gain_model_source: Literal['model-column', 'point'] | object = _UNSET,
-    smodel: str | object = _UNSET,
-    min_snr: float | object = _UNSET,
-    solnorm: bool | object = _UNSET,
-    selectdata: bool | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    minblperant: int | object = _UNSET,
-) -> TaskCompletion:
-    """Solve antenna gain calibration for a MeasurementSet."""
-    return _run("gaincal", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'minblperant')))
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+    array: str = '',
+) -> Any:
+    """Solve antenna gain calibration for a MeasurementSet.
+
+    CASA's ``gaincal``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #979: ``intent``, ``uvrange``,
+    ``preavg``, ``refantmode``, ``normtype``, ``solmode``, ``rmsthresh``,
+    ``corrdepflags``, ``append``, ``splinetime``, ``npointaver``,
+    ``phasewrap``.
+    """
+    return _call_casa(gaincal, locals())
 
 def bandpass(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    selectdata: bool = True,
+    timerange: str = '',
+    uvrange: str = '',
+    antenna: str = '',
+    scan: str = '',
+    observation: str = '',
+    msselect: str = '',
+    solint: str = 'inf',
+    combine: str = 'scan',
+    refant: str = '',
+    minblperant: int = 4,
+    minsnr: float = 3.0,
+    solnorm: bool = False,
+    bandtype: Literal['B', 'BPOLY'] = 'B',
+    smodel: float | list[float] | tuple[float, ...] = [],
+    corrdepflags: bool = False,
+    append: bool = False,
+    fillgaps: int = 0,
+    degamp: int = 3,
+    degphase: int = 3,
+    visnorm: bool = False,
+    maskcenter: int = 0,
+    maskedge: int = 5,
+    docallib: bool = False,
+    callib: StrPath = '',
+    gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    gainfield: str | list[str] | tuple[str, ...] = [],
+    interp: str | list[str] | tuple[str, ...] = [],
+    spwmap: list[list[int] | tuple[int, ...]] | tuple[list[int] | tuple[int, ...], ...] = [],
+    parang: bool = False,
     *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    gaintables: StrPath | list[StrPath] | tuple[StrPath, ...] | Literal['none'] | object = _UNSET,
-    callib: StrPath | object = _UNSET,
-    gainfield: str | object = _UNSET,
-    interp: str | object = _UNSET,
-    spwmap: str | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    out_table: StrPath | object = _UNSET,
-    refant: str | object = _UNSET,
-    smodel: str | object = _UNSET,
-    min_snr: float | object = _UNSET,
-    bandpass_combine: Literal['field', 'none', 'scan', 'scan,field'] | object = _UNSET,
-    bandtype: Literal['b', 'bpoly'] | object = _UNSET,
-    solnorm: bool | object = _UNSET,
-    selectdata: bool | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    degamp: int | object = _UNSET,
-    degphase: int | object = _UNSET,
-) -> TaskCompletion:
-    """Solve bandpass calibration for a MeasurementSet."""
-    return _run("bandpass", _explicit(locals(), ('vis', 'gaintables', 'callib', 'gainfield', 'interp', 'spwmap', 'output', 'overwrite', 'format', 'out_table', 'refant', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'degamp', 'degphase')))
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+    array: str = '',
+) -> Any:
+    """Solve bandpass calibration for a MeasurementSet.
+
+    CASA's ``bandpass``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #979: ``intent``, ``uvrange``,
+    ``solint``, ``minblperant``, ``minsnr``, ``corrdepflags``, ``append``,
+    ``fillgaps``, ``visnorm``, ``maskcenter``, ``maskedge``.
+    """
+    return _call_casa(bandpass, locals())
 
 def fluxscale(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    fluxtable: StrPath = '',
+    reference: str | list[str] | tuple[str, ...] = [],
+    transfer: str | list[str] | tuple[str, ...] = [],
+    listfile: str = '',
+    append: bool = False,
+    refspwmap: int | list[int] | tuple[int, ...] = [-1],
+    gainthreshold: float = -1.0,
+    antenna: str = '',
+    timerange: str = '',
+    scan: str = '',
+    incremental: bool = False,
+    fitorder: int = 1,
+    display: bool = False,
     *,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    out_table: StrPath | object = _UNSET,
-    fluxscale_input: StrPath | object = _UNSET,
-    reference_fields: str | object = _UNSET,
-    transfer_fields: str | object = _UNSET,
-    refspwmap: str | object = _UNSET,
-    gainthreshold: float | Literal['none'] | object = _UNSET,
-    incremental: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Scale gain solutions using reference calibrator fields."""
-    return _run("fluxscale", _explicit(locals(), ('output', 'overwrite', 'format', 'out_table', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental')))
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+) -> Any:
+    """Scale gain solutions using reference calibrator fields.
+
+    CASA's ``fluxscale``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #979: ``listfile``, ``append``,
+    ``antenna``, ``timerange``, ``scan``, ``fitorder``, ``display``.
+    """
+    return _call_casa(fluxscale, locals())
 
 def gencal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    caltable: StrPath = '',
+    caltype: Literal['', 'amp', 'antpos', 'antposvla', 'eff', 'eop', 'evlagain', 'gc', 'gceff', 'jyperk', 'mbd', 'opac', 'ph', 'rq', 'sbd', 'swp/rq', 'swpow', 'swpwts', 'tecim', 'tsys'] = '',
+    infile: str = '',
+    endpoint: str = 'asdm',
+    timeout: int = 180,
+    retry: int = 3,
+    retry_wait_time: int = 5,
+    ant_pos_time_limit: int = 0,
+    spw: str = '',
+    antenna: str = '',
+    pol: str = '',
+    parameter: float | list[float] | tuple[float, ...] = [],
+    uniform: bool = True,
     *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    out_table: StrPath | object = _UNSET,
-    caltype: Literal['antpos', 'gceff', 'opac'] | Literal['none'] | object = _UNSET,
-    parameter: str | object = _UNSET,
-    gaincurve_table: StrPath | object = _UNSET,
-    spw: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-) -> TaskCompletion:
-    """Generate a calibration table such as antpos, gceff, or opac."""
-    return _run("gencal", _explicit(locals(), ('vis', 'output', 'overwrite', 'format', 'out_table', 'caltype', 'parameter', 'gaincurve_table', 'spw', 'antenna')))
+    output: StrPath = '',
+    overwrite: bool = False,
+    format: Literal['json', 'text'] = 'text',
+    gaincurve_table: StrPath = '',
+) -> Any:
+    """Generate a calibration table such as antpos, gceff, or opac.
+
+    CASA's ``gencal``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #979: ``infile``, ``endpoint``,
+    ``timeout``, ``retry``, ``retry_wait_time``, ``ant_pos_time_limit``,
+    ``pol``, ``uniform``.
+    """
+    return _call_casa(gencal, locals())
 
 def plotms(
     *,

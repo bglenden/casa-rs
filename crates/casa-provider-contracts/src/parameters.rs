@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
+#[path = "migration_list.rs"]
+mod migration_list;
 #[path = "migration_set.rs"]
 mod migration_set;
+
+pub use migration_list::ListElement;
 
 pub use casa_signature::{UnimplementedParameter, python_repr};
 
@@ -910,6 +914,14 @@ pub enum MigrationStep {
         value: ParameterValue,
         when: Predicate,
     },
+    /// Repeat the one item of the explicit list `parameter` once for each
+    /// item of the explicit list `to_length_of`: casa-rs's old per-table
+    /// lists gave one value for every table, where CASA's are positional
+    /// (#931).
+    Broadcast {
+        parameter: String,
+        to_length_of: String,
+    },
 }
 
 /// Closed set of safe deterministic migration transforms.
@@ -929,6 +941,13 @@ pub enum MigrationTransform {
     /// Comma-separated numbers (`"0.1,10"`) as a list of numbers, and the
     /// old explicit absence (`"none"` or empty) as CASA's `-1` (#931).
     NumberList,
+    /// Text of `separator`-separated items as a list of `element` values,
+    /// and the old explicit absence (`"none"` or empty) as an empty list
+    /// (#931); see [`ListElement`].
+    TextList {
+        separator: String,
+        element: ListElement,
+    },
 }
 
 /// One-shot surface definition.
@@ -2068,14 +2087,26 @@ fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractVal
                 MigrationStep::Rename { to, .. } => Some(to),
                 MigrationStep::ReplaceValue { parameter, .. }
                 | MigrationStep::Transform { parameter, .. }
-                | MigrationStep::Set { parameter, .. } => Some(parameter),
+                | MigrationStep::Set { parameter, .. }
+                | MigrationStep::Broadcast { parameter, .. } => Some(parameter),
                 MigrationStep::Remove { .. } => None,
             };
-            if let MigrationStep::Set {
-                parameter, when, ..
-            } = step
-            {
-                migration_set::validate_condition(surface, parameter, when, errors);
+            match step {
+                MigrationStep::Set {
+                    parameter, when, ..
+                } => migration_set::validate_condition(surface, parameter, when, errors),
+                MigrationStep::Broadcast { to_length_of, .. }
+                    if !known.contains(to_length_of.as_str()) =>
+                {
+                    errors.push(
+                        ContractValidationError::new(
+                            "unknown_migration_target",
+                            format!("migration broadcasts to unknown parameter {to_length_of:?}"),
+                        )
+                        .at(surface.id(), Some(to_length_of)),
+                    );
+                }
+                _ => {}
             }
             if let Some(name) = current_name
                 && !known.contains(name.as_str())

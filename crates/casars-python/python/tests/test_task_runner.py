@@ -187,18 +187,18 @@ def test_a_profile_runs_as_the_wrappers_values(
     monkeypatch.chdir(tmp_path)
     draft = TaskParameters.defaults("gaincal", workspace=tmp_path)
     draft.set_many(
-        {"vis": "target.ms", "out_table": "target.gcal", "refant": "ea01", "solint": "60s"}
+        {"vis": "target.ms", "caltable": "target.gcal", "refant": "ea01", "solint": "60s"}
     )
     path = draft.save(tmp_path / "gaincal.toml")
 
-    assert tasks.gaincal(**parameters.load(path)).successful
+    assert tasks.run("gaincal", **parameters.load(path)).successful
 
     invocation = recorded(log)
     # calibrate hosts gaincal among its surfaces and is told which runs.
     assert invocation["argv"] == ["gaincal", "--json-run", "-"]
     values = invocation["request"]["values"]
     assert values["vis"] == ["target.ms"]
-    assert values["out_table"] == "target.gcal"
+    assert values["caltable"] == "target.gcal"
     assert values["solint"] == "60s"
 
 

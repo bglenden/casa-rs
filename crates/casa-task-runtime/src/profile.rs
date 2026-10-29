@@ -598,6 +598,10 @@ fn apply_migration_step(
                 parameters.insert(parameter.clone(), value.clone());
             }
         }
+        MigrationStep::Broadcast {
+            parameter,
+            to_length_of,
+        } => crate::migration_list::broadcast(parameters, parameter, to_length_of),
     }
     Ok(())
 }
@@ -639,6 +643,9 @@ fn transform_value(
             ))),
         },
         MigrationTransform::NumberList => crate::normalize::number_list(value, parameter),
+        MigrationTransform::TextList { separator, element } => {
+            crate::migration_list::text_list(value, separator, *element, parameter)
+        }
     }
 }
 
