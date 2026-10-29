@@ -63,7 +63,7 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
             "vis": observation.measurement_set(),
             "imagename": image_name,
             "imsize": geometry.image_size,
-            "cell": format!("{}arcsec", geometry.cell_arcsec),
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
             "backend": "cpu",
             "specmode": "cube",
             "channel_count": 4,

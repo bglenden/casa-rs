@@ -8049,7 +8049,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 27,
+      "contract_version": 28,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8186,7 +8186,7 @@
           "name": "imsize",
           "concept": {
             "id": "image.geometry.imsize",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -8202,11 +8202,7 @@
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "square_pair"
-            }
-          ],
+          "refinements": [],
           "context_role": null,
           "surface_note": null,
           "projections": {
@@ -8240,7 +8236,7 @@
           "name": "cell",
           "concept": {
             "id": "image.geometry.cell",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -8256,11 +8252,7 @@
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "square_pair"
-            }
-          ],
+          "refinements": [],
           "context_role": null,
           "surface_note": "Canonical cell maps to provider field cell_arcsec.",
           "projections": {
@@ -12281,6 +12273,111 @@
             "presentation": {
               "label": "Science Trace",
               "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "uvtaper",
+          "concept": {
+            "id": "parameter.uvtaper",
+            "semantic_revision": 2
+          },
+          "order": 107,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--uvtaper"
+              ],
+              "false_flags": [],
+              "metavar": "BMAJ[,BMIN[,BPA]]"
+            },
+            "provider": {
+              "field": "uvtaper",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "uvtaper",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "UV Taper",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "startmodel",
+          "concept": {
+            "id": "parameter.startmodel",
+            "semantic_revision": 2
+          },
+          "order": 108,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--startmodel"
+              ],
+              "false_flags": [],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "startmodel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "startmodel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Start Model",
+              "group": "Stage Parameters",
               "advanced": true,
               "hidden": false
             }

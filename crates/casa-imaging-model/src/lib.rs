@@ -7,6 +7,7 @@ mod batch_geometry;
 mod compiled_problem;
 mod frame_refs;
 mod geometry;
+mod image_size;
 mod measurement_equation;
 mod model_state;
 mod native_aw;
@@ -44,6 +45,7 @@ pub use geometry::{
     SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes,
     UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
 };
+pub use image_size::optimum_image_size;
 
 pub use measurement_equation::{
     DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,

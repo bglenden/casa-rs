@@ -402,16 +402,12 @@ impl Drop for SelectedVisibilityWrite {
     }
 }
 
-/// Storage managers whose selected-row save patches the written rows' tiles
-/// in place: the managers CASA and casa-rs store visibilities in.
-#[cfg(unix)]
-const BOUNDED_WRITE_MANAGERS: [&str; 2] = ["TiledShapeStMan", "TiledColumnStMan"];
-
 /// Refuse, before anything is changed, a write whose save would not be
-/// bounded: an existing destination stored outside
-/// [`BOUNDED_WRITE_MANAGERS`], or a missing `MODEL_DATA` whose clone of
-/// DATA's manager would be or cannot be made. A missing `CORRECTED_DATA` is
-/// refused too, since it holds the output of a continuum transform.
+/// bounded ([`crate::scratch_columns::unbounded_destination`]): an existing
+/// destination stored outside a tiled manager, or a missing `MODEL_DATA`
+/// whose clone of DATA's manager would be or cannot be made. A missing
+/// `CORRECTED_DATA` is refused too, since it holds the output of a
+/// continuum transform.
 #[cfg(unix)]
 fn require_bounded_destinations(
     main: &Table,
@@ -432,39 +428,10 @@ fn require_bounded_destinations(
         if !written {
             continue;
         }
-        let created = !has(column);
-        let stored = if created { "DATA" } else { column };
-        let Some(manager) = main
-            .data_manager_info()
-            .iter()
-            .find(|manager| manager.columns.iter().any(|name| name == stored))
-        else {
-            return Err(ObservationOwnerError::UnboundedWriteDestination {
-                column,
-                reason: format!("{stored} has no storage manager on disk"),
-            });
-        };
-        let storage = if created {
-            format!(
-                "it would be created in a clone of DATA's {}",
-                manager.dm_type
-            )
-        } else {
-            format!("it is stored in {}", manager.dm_type)
-        };
-        if !BOUNDED_WRITE_MANAGERS.contains(&manager.dm_type.as_str()) {
-            return Err(ObservationOwnerError::UnboundedWriteDestination {
-                column,
-                reason: format!(
-                    "{storage}; only TiledShapeStMan and TiledColumnStMan columns are written in place"
-                ),
-            });
-        }
-        if created && manager.columns.len() != 1 {
-            return Err(ObservationOwnerError::UnboundedWriteDestination {
-                column,
-                reason: format!("{storage}, which DATA shares with other columns"),
-            });
+        if let Some(reason) =
+            crate::scratch_columns::unbounded_destination(main, column, !has(column))
+        {
+            return Err(ObservationOwnerError::UnboundedWriteDestination { column, reason });
         }
     }
     Ok(())

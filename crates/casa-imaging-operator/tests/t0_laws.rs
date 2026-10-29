@@ -11,7 +11,10 @@ use casa_imaging_operator::{
     ModelPrescale, NormalImages, PlaneRange, Tile, Work,
 };
 use casa_types::Correlation;
-use common::{IMAGE, INCREMENT_RAD, Rng, buffer, max_abs, operator, placements, samples};
+use common::{
+    IMAGE, INCREMENT_RAD, Rng, buffer, geometry, geometry_of, max_abs, operator, operator_on,
+    placements, samples,
+};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
@@ -26,8 +29,14 @@ fn tolerance(precision: GridPrecision) -> f64 {
 }
 
 fn random_model(pols: usize, rng: &mut Rng) -> ModelImages {
+    random_model_of([IMAGE, IMAGE], pols, rng)
+}
+
+/// Random model images over an `[nx, ny]` extent, each `[y][x]` as the
+/// operator takes them.
+fn random_model_of([nx, ny]: [usize; 2], pols: usize, rng: &mut Rng) -> ModelImages {
     let images = (0..pols)
-        .map(|_| Array2::from_shape_fn((IMAGE, IMAGE), |_| rng.signed() as f32))
+        .map(|_| Array2::from_shape_fn((ny, nx), |_| rng.signed() as f32))
         .collect();
     ModelImages {
         first_plane: 0,
@@ -40,12 +49,23 @@ fn random_model(pols: usize, rng: &mut Rng) -> ModelImages {
 /// is exact; with `[I, Q]` from `[XX, YY]` CASA's image-domain basis is
 /// `½·Sᴴ`, so the image-side product is half the visibility-side one.
 fn adjoint_law(precision: GridPrecision, requested: &[PolarizationCoordinate], basis_factor: f64) {
-    let operator = operator(precision, Basis::Constant, &XX_YY, requested);
+    adjoint_law_on(geometry(), precision, requested, basis_factor);
+}
+
+/// [`adjoint_law`] on `geometry`.
+fn adjoint_law_on(
+    geometry: casa_imaging_operator::GridGeometry,
+    precision: GridPrecision,
+    requested: &[PolarizationCoordinate],
+    basis_factor: f64,
+) {
+    let shape = geometry.image().shape;
+    let operator = operator_on(geometry, precision, Basis::Constant, &XX_YY, requested);
     let mut rng = Rng::new(7);
     let placed = placements(operator.geometry(), 300, 1, &mut rng);
     let (values, weights) = samples(&placed, 2, &mut rng);
     let block = buffer(&placed, &values, &weights, 2);
-    let model = random_model(requested.len(), &mut rng);
+    let model = random_model_of(shape, requested.len(), &mut rng);
     let mut backend = CpuBackend::new();
 
     let prepared = operator
@@ -103,6 +123,16 @@ fn adjoint_law(precision: GridPrecision, requested: &[PolarizationCoordinate], b
 fn adjoint_dot_product_holds_for_stokes_i_both_precisions() {
     adjoint_law(GridPrecision::F64, &STOKES_I, 1.0);
     adjoint_law(GridPrecision::F32, &STOKES_I, 1.0);
+}
+
+/// #841 Phase 6b: on a non-square grid of non-square cells (`[64, 40]`,
+/// `|Δx| ≠ |Δy|`) the adjoint holds, so no axis's extent or scale is
+/// taken from the other.
+#[test]
+fn adjoint_dot_product_holds_on_a_non_square_grid() {
+    let geometry = || geometry_of([64, 40], [-2.0e-5, 1.5e-5]);
+    adjoint_law_on(geometry(), GridPrecision::F64, &STOKES_I, 1.0);
+    adjoint_law_on(geometry(), GridPrecision::F32, &STOKES_I, 1.0);
 }
 
 #[test]

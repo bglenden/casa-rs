@@ -143,7 +143,16 @@ fn normalize_domain(
             max_items,
             allow_scalar,
         } => {
+            // A fixed pair whose scalar is one value for every item (`imsize`,
+            // `cell`) takes a one-element list the same way, as CASA does.
+            let pair = match max_items {
+                Some(max) if *allow_scalar && *max == *min_items && *min_items > 1 => *min_items,
+                _ => 0,
+            };
             let source = match value {
+                ParameterValue::Array(values) if pair > 0 && values.len() == 1 => {
+                    vec![values[0].clone(); pair]
+                }
                 ParameterValue::Array(values) => values.clone(),
                 // A path list given as one string is comma-separated, as on
                 // the command line; it is split before any path is
@@ -159,13 +168,7 @@ fn normalize_domain(
                         .map(|item| ParameterValue::String(item.to_string()))
                         .collect()
                 }
-                _ if *allow_scalar => {
-                    let repeat = match max_items {
-                        Some(max) if *max == *min_items && *min_items > 1 => *min_items,
-                        _ => 1,
-                    };
-                    vec![value.clone(); repeat]
-                }
+                _ if *allow_scalar => vec![value.clone(); pair.max(1)],
                 _ => return type_error(value, domain),
             };
             if source.len() < *min_items || max_items.is_some_and(|max| source.len() > max) {
@@ -514,15 +517,6 @@ fn validate_refinements(
                 validate_selector_capabilities(*grammar, value, capabilities)
                     .map_err(NormalizationError::Constraint)?;
             }
-            NarrowingConstraint::SquarePair => match value {
-                ParameterValue::Array(values)
-                    if values.len() == 2 && values_semantically_equal(&values[0], &values[1]) => {}
-                _ => {
-                    return Err(NormalizationError::Constraint(
-                        "two-axis value must be square/equal".into(),
-                    ));
-                }
-            },
         }
     }
     Ok(())
@@ -726,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_imsize_normalizes_to_square_pair() {
+    fn a_scalar_pair_value_normalizes_to_both_axes() {
         let concept = concept(
             ParameterType::Array {
                 element: Box::new(ParameterType::Integer),
@@ -739,6 +733,22 @@ mod tests {
         assert_eq!(
             normalize_value(&ParameterValue::Integer(512), &concept).unwrap(),
             ParameterValue::Array(vec![ParameterValue::Integer(512); 2])
+        );
+        // CASA's one-element list is one value for both (#970 review).
+        assert_eq!(
+            normalize_value(
+                &ParameterValue::Array(vec![ParameterValue::Integer(120)]),
+                &concept
+            )
+            .unwrap(),
+            ParameterValue::Array(vec![ParameterValue::Integer(120); 2])
+        );
+        assert!(
+            normalize_value(
+                &ParameterValue::Array(vec![ParameterValue::Integer(1); 3]),
+                &concept
+            )
+            .is_err()
         );
     }
 

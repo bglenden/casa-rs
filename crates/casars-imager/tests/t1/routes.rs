@@ -55,8 +55,8 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
     std::fs::create_dir(&directory).expect("run directory");
     let measurement_set = observation.measurement_set().to_str().expect("UTF-8 path");
     let geometry = observation.geometry();
-    let image_size = geometry.image_size.to_string();
-    let cell = geometry.cell_arcsec.to_string();
+    let image_size = geometry.image_size[0].to_string();
+    let cell = geometry.cell_arcsec[0].to_string();
 
     // Both routes grid on the CPU: on the GPU the order of `f32` atomic adds
     // changes from run to run, which is not what this law compares.

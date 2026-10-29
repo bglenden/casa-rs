@@ -212,8 +212,8 @@ fn two_windows(root: &Path) -> PathBuf {
                 .write(
                     &batch,
                     &[
-                        casa_observation::PatchValues::Visibilities(data.view()),
-                        casa_observation::PatchValues::Visibilities(model.view()),
+                        casa_observation::PatchValues::visibilities(data.view()),
+                        casa_observation::PatchValues::visibilities(model.view()),
                     ],
                 )
                 .expect("write");

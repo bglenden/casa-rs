@@ -65,7 +65,7 @@ fn main() -> Result<(), Error> {
         while let Some(event) = traversal.next(&mut buffers)? {
             if let ReadEvent::Batch(batch) = event {
                 let values = batch.group.values.ok_or("visibilities")?;
-                updater.write(&batch, &[PatchValues::Visibilities(values)])?;
+                updater.write(&batch, &[PatchValues::visibilities(values)])?;
             }
         }
         let finish = Instant::now();

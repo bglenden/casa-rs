@@ -370,22 +370,21 @@ pub(super) fn observation_info(
         .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().1))
 }
 
-/// A SIN direction coordinate of `image_size` square cells of `cell_arcsec`
-/// centred on `(longitude, latitude)` in `frame`.
+/// A SIN direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
+/// (x, y), centred on `(longitude, latitude)` in `frame`.
 pub(super) fn direction_spec(
-    image_size: usize,
-    cell_arcsec: f64,
+    image_size: [usize; 2],
+    cell_arcsec: [f64; 2],
     frame: DirectionFrame,
     longitude: f64,
     latitude: f64,
 ) -> DirectionCoordinateSpec {
-    let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
-    let reference_pixel = image_reference_pixel(image_size);
+    let [cell_x, cell_y] = cell_arcsec.map(|cell| cell * std::f64::consts::PI / (180.0 * 3600.0));
     DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(frame, longitude, latitude),
-        [reference_pixel, reference_pixel],
-        [-cell, cell],
+        image_reference_pixel(image_size),
+        [-cell_x, cell_y],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     )
@@ -403,20 +402,19 @@ pub(super) struct ImageSpectralCoordinate {
 /// The coordinate system of one image domain's products.
 pub(super) fn image_coordinates(
     direction: DirectionCoordinateSpec,
-    image_size: usize,
+    image_size: [usize; 2],
     polarizations: &[PolarizationCoordinate],
     spectral: ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> CoordinateSystem {
     let reference = direction.reference_direction();
-    let reference_pixel = image_reference_pixel(image_size);
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         reference.frame().direction_ref(),
         CoordinateProjection::new(ProjectionType::SIN),
         [reference.longitude_rad(), reference.latitude_rad()],
         direction.increment_rad(),
-        [reference_pixel, reference_pixel],
+        image_reference_pixel(image_size),
     ));
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
@@ -432,9 +430,9 @@ pub(super) fn image_coordinates(
     coordinates
 }
 
-/// CASA's direction reference pixel: half the image extent.
-fn image_reference_pixel(image_size: usize) -> f64 {
-    image_size as f64 / 2.0
+/// CASA's direction reference pixel: half the image extent on each axis.
+fn image_reference_pixel(image_size: [usize; 2]) -> [f64; 2] {
+    image_size.map(|side| side as f64 / 2.0)
 }
 
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
@@ -531,8 +529,18 @@ mod tests {
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
-        assert_eq!(image_reference_pixel(16), 8.0);
-        assert_eq!(image_reference_pixel(15), 7.5);
+        assert_eq!(image_reference_pixel([16, 16]), [8.0, 8.0]);
+        assert_eq!(image_reference_pixel([120, 80]), [60.0, 40.0]);
+        assert_eq!(image_reference_pixel([15, 16]), [7.5, 8.0]);
+    }
+
+    #[test]
+    fn a_direction_coordinate_takes_each_axis_size_and_cell() {
+        let spec = direction_spec([120, 80], [8.0, 6.0], DirectionFrame::J2000, 0.0, 0.0);
+        let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
+        assert_eq!(spec.reference_pixel(), [60.0, 40.0]);
+        let [x, y] = spec.increment_rad();
+        assert!((x + 8.0 * arcsec).abs() < 1.0e-18 && (y - 6.0 * arcsec).abs() < 1.0e-18);
     }
 
     #[test]
@@ -561,8 +569,8 @@ mod tests {
     #[test]
     fn the_stokes_axis_lists_the_imaged_coordinate() {
         let coordinates = image_coordinates(
-            direction_spec(64, 8.0, DirectionFrame::J2000, 0.0, 0.0),
-            64,
+            direction_spec([64, 64], [8.0, 8.0], DirectionFrame::J2000, 0.0, 0.0),
+            [64, 64],
             &[PolarizationCoordinate::StokesQ],
             ImageSpectralCoordinate {
                 frequency_reference: FrequencyRef::LSRK,

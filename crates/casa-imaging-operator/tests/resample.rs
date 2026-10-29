@@ -11,7 +11,7 @@ use casa_imaging_operator::{
     GridGeometry, GridPadding, GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation,
     MeasurementOperator, MuellerRouting, NativeRow, OperatorError, PaddingFactor,
     PolarizationRouting, RowContext, RowSpectrum, SampleBuffer, SpectralAxis, SpectralKernel,
-    SpectralResampler, Spheroidal, TapLayout, WPlaneCount, WPlanes, WeightingGeneration,
+    SpectralResampler, Spheroidal, TapLayout, Taper, WPlaneCount, WPlanes, WeightingGeneration,
     build_density_grid,
 };
 use casa_types::Correlation;
@@ -153,6 +153,81 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
         .place(&operator, &uniform, &row([-400.0, 260.0, -5.0]), &mut out)
         .expect("place");
     assert_eq!(out.block().weights_of(0), &[1.0, 1.0]);
+}
+
+/// `VisImagingWeight::filter` tapers each native channel's weight after its
+/// density weighting, at that channel's own `u` and `v` in wavelengths:
+/// a two-channel row's tapered Briggs weights are its untapered ones times
+/// CASA's Gaussian at `uvw · f / c` (#841 Phase 6b). The two channels'
+/// factors differ by more than the test resolves, so one reference
+/// frequency for both would fail it.
+#[test]
+fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [1.0e9, 1.5e9];
+    let values = [Complex32::new(1.0, 0.0); 4];
+    let weights = [2.0; 4];
+    let flags = [false; 4];
+    let uvw_m = [600.0, -350.0, 7.0];
+    let row = NativeRow {
+        uvw_m,
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut density)
+        .expect("density");
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    let taper = Taper::new(3000.0, 2000.0, 0.4);
+    let weights_with = |taper: Option<Taper>| {
+        let briggs =
+            WeightingGeneration::density(grid.clone(), Some(0.5), None, taper).expect("briggs");
+        let mut out = SampleBuffer::new(2);
+        resampler
+            .place(&operator, &briggs, &row, &mut out)
+            .expect("place");
+        (0..out.placements().len())
+            .map(|sample| f64::from(out.block().weights_of(sample)[0]))
+            .collect::<Vec<_>>()
+    };
+    let untapered = weights_with(None);
+    let tapered = weights_with(Some(taper));
+    assert_eq!(tapered.len(), 2);
+    let factors = frequencies.map(|frequency_hz| {
+        let [u, v] = [uvw_m[0], uvw_m[1]].map(|metres| metres * frequency_hz / C);
+        let (sine, cosine) = taper.position_angle_rad().sin_cos();
+        let (rotated_u, rotated_v) = (sine * u + cosine * v, -cosine * u + sine * v);
+        (-std::f64::consts::LN_2 * ((rotated_u / 3000.0).powi(2) + (rotated_v / 2000.0).powi(2)))
+            .exp()
+    });
+    assert!(
+        factors[0] > 1.5 * factors[1] && factors[1] > 0.05,
+        "{factors:?}"
+    );
+    for channel in 0..2 {
+        let expected = untapered[channel] * factors[channel];
+        assert!(
+            (tapered[channel] - expected).abs() <= 1.0e-6 * expected,
+            "channel {channel}: {} against {expected}",
+            tapered[channel]
+        );
+    }
 }
 
 /// CASA's `BriggsCubeWeightor` grids the cube density through `GridFT::put`,

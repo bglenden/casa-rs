@@ -23,7 +23,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | fluxscale | fluxscale | no | 15 | 3 | 12 | 0 | 7 | 2 |
 | gaincal | gaincal | no | 38 | 18 | 20 | 0 | 11 | 14 |
 | gencal | gencal | no | 14 | 5 | 9 | 0 | 5 | 5 |
-| imager | tclean | no | 92 | 54 | 38 | 0 | 27 | 23 |
+| imager | tclean | no | 92 | 56 | 36 | 0 | 27 | 24 |
 | imhead | imhead | yes | 5 | 5 | 0 | 1 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
@@ -237,9 +237,9 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
   - returns at line 706: `retrec`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
 - CASA's signature: not yet
-- CASA parameters casa-rs lacks: `selectdata`, `timerange`, `antenna`, `scan`, `observation`, `projection`, `startmodel`, `reffreq`, `nchan`, `psfphasecenter`, `vptable`, `mosweight`, `aterm`, `psterm`, `wbawp`, `conjbeams`, `computepastep`, `rotatepastep`, `fusedthreshold`, `largestscale`, `restoration`, `noise`, `npixels`, `uvtaper`, `cycleniter`, `interactive`, `fullsummary`, `mask`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `restart`, `calcres`, `calcpsf`
+- CASA parameters casa-rs lacks: `selectdata`, `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `nchan`, `psfphasecenter`, `vptable`, `mosweight`, `aterm`, `psterm`, `wbawp`, `conjbeams`, `computepastep`, `rotatepastep`, `fusedthreshold`, `largestscale`, `restoration`, `noise`, `npixels`, `cycleniter`, `interactive`, `fullsummary`, `mask`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `restart`, `calcres`, `calcpsf`
 - casa-rs parameters CASA lacks: `phasecenter_field`, `ddid`, `channel_start`, `channel_count`, `dirty_only`, `minor_cycle_length`, `hogbom_iteration_mode`, `mask_box`, `mask_image`, `write_pb`, `cf_resident_mb`, `fitspw`, `fitorder`, `save_continuum_residual`, `aw_cf_source`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `backend`, `gridprecision`, `stage_timing`, `metal_stage_timing`, `science_trace`
-- Shared parameters: 54, in CASA's order: no
+- Shared parameters: 56, in CASA's order: no
 - Defaults that differ (CASA, casa-rs):
   - `vis`: `''`, `required`
   - `field`: `''`, `none`
@@ -251,6 +251,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
   - `imsize`: `[100]`, `512`
   - `cell`: `[]`, `1.0arcsec`
   - `phasecenter`: `''`, `none`
+  - `startmodel`: `''`, `none`
   - `start`: `''`, `none`
   - `width`: `''`, `none`
   - `veltype`: `'radio'`, `RADIO`

@@ -226,39 +226,74 @@ pub fn open_update(
     } else {
         Store::V2(Box::new(Msv2Update::open(path, options)?))
     };
-    let catalogue = match &store {
-        Store::V2(update) => update.observation().catalogue(),
-        #[cfg(feature = "msv4")]
-        Store::V4(update) => update.observation().catalogue(),
-    };
-    let creatable = matches!(store, Store::V2(_));
-    // A group the session creates shares the MSv2 flags and weights, so it
-    // is an alias of their targets before it exists.
-    let creating: Vec<String> = targets
-        .iter()
-        .filter(|target| {
-            creatable
-                && target.create
-                && !catalogue
-                    .partitions
-                    .iter()
-                    .any(|entry| entry.data_group(&target.data_group).is_some())
-        })
-        .map(|target| target.data_group.clone())
-        .collect();
-    let targets = targets
-        .iter()
-        .map(|target| resolve(catalogue, target, creatable, &creating))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(UpdateSession {
-        store,
-        targets,
-        claims: Mutex::default(),
-        _intent: intent,
-    })
+    UpdateSession::with(store, targets, intent)
 }
 
 impl UpdateSession {
+    /// An update session over `observation`, a MeasurementSet v2 opened
+    /// already (with a grant for its index,
+    /// [`Msv2Observation::open_granted`](super::Msv2Observation::open_granted)),
+    /// writing `targets`: [`open_update`]'s session, without opening and
+    /// indexing the MeasurementSet a second time.
+    ///
+    /// # Errors
+    ///
+    /// As [`open_update`], and when MAIN's rows changed since `observation`
+    /// opened.
+    #[cfg(unix)]
+    pub fn over_msv2(
+        observation: super::Msv2Observation,
+        targets: &[UpdateTarget],
+    ) -> Result<Self, ObservationError> {
+        let intent = Intent::take(observation.path()?)?;
+        let store = Store::V2(Box::new(Msv2Update::over(observation)?));
+        Self::with(store, targets, intent)
+    }
+
+    /// The session of `store`, its `targets` resolved, under `intent`.
+    fn with(
+        store: Store,
+        targets: &[UpdateTarget],
+        intent: Intent,
+    ) -> Result<Self, ObservationError> {
+        let catalogue = match &store {
+            Store::V2(update) => update.observation().catalogue(),
+            #[cfg(feature = "msv4")]
+            Store::V4(update) => update.observation().catalogue(),
+        };
+        let creatable = matches!(store, Store::V2(_));
+        // A group the session creates shares the MSv2 flags and weights, so it
+        // is an alias of their targets before it exists.
+        let creating: Vec<String> = targets
+            .iter()
+            .filter(|target| {
+                creatable
+                    && target.create
+                    && !catalogue
+                        .partitions
+                        .iter()
+                        .any(|entry| entry.data_group(&target.data_group).is_some())
+            })
+            .map(|target| target.data_group.clone())
+            .collect();
+        let targets = targets
+            .iter()
+            .map(|target| resolve(catalogue, target, creatable, &creating))
+            .collect::<Result<Vec<_>, _>>()?;
+        match &store {
+            Store::V2(update) => update.preflight(&targets)?,
+            // An MSv4 chunk is replaced whole, however the store lays it out.
+            #[cfg(feature = "msv4")]
+            Store::V4(_) => {}
+        }
+        Ok(UpdateSession {
+            store,
+            targets,
+            claims: Mutex::default(),
+            _intent: intent,
+        })
+    }
+
     /// The observation, for reading: the same store the updaters write.
     #[must_use]
     pub fn observation(&self) -> &dyn Observation {
@@ -362,6 +397,39 @@ impl UpdateSession {
             Store::V2(update) => update.updater(request, &bound, claim),
             #[cfg(feature = "msv4")]
             Store::V4(update) => update.updater(request, &bound, claim),
+        }
+    }
+
+    /// The most bytes an updater bound to `request` and the targets
+    /// numbered `targets` holds while it writes a batch, besides the values
+    /// it is given: what a pass that writes admits for it. On MSv2, the
+    /// cells of the largest batch's rows, built or read and merged, and the
+    /// mutation that writes them, or the seeding of a `MODEL_DATA` the
+    /// session creates; on MSv4, one partition's windows and the chunks
+    /// they replace.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::updater`] for an unknown target or a request the
+    /// observation cannot estimate; a storage error when the store's
+    /// layout cannot be read.
+    pub fn write_bytes(
+        &self,
+        request: &AccessRequest,
+        targets: &[usize],
+    ) -> Result<usize, ObservationError> {
+        let bound = targets
+            .iter()
+            .map(|&index| {
+                self.targets
+                    .get(index)
+                    .ok_or_else(|| request_error(format!("the session has no target {index}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match &self.store {
+            Store::V2(update) => update.write_bytes(request, &bound),
+            #[cfg(feature = "msv4")]
+            Store::V4(update) => update.write_bytes(request, &bound),
         }
     }
 
@@ -613,7 +681,7 @@ mod tests {
     impl Owned {
         fn view(&self) -> PatchValues<'_> {
             match self {
-                Self::Visibilities(values) => PatchValues::Visibilities(values.view()),
+                Self::Visibilities(values) => PatchValues::visibilities(values.view()),
                 Self::SetFlags(set) => PatchValues::Flags {
                     set: Some(set.view()),
                     clear: None,

@@ -132,8 +132,8 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                 assert!(matches!(request.gridder, Gridder::Awproject(_)));
             }
             "standard-continuum" => {
-                assert_eq!(request.imsize, 1024);
-                assert_eq!(request.cell, 0.25);
+                assert_eq!(request.imsize, [1024; 2]);
+                assert_eq!(request.cell, [0.25; 2]);
                 assert_eq!(request.field.as_deref(), Some(&[0, 1, 2][..]));
                 assert_eq!(request.stokes, [PolarizationCoordinate::StokesQ]);
                 assert_eq!(request.deconvolver, Deconvolver::Multiscale);
@@ -145,7 +145,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                 assert!(request.parallel);
             }
             "standard-cube" => {
-                assert_eq!(request.imsize, 768);
+                assert_eq!(request.imsize, [768; 2]);
                 assert_eq!(request.channel_start, Some(10));
                 assert_eq!(request.channel_count, Some(24));
                 assert_eq!(request.stokes, [PolarizationCoordinate::LinearXx]);
@@ -199,8 +199,8 @@ fn minimal_profile_adds_defaults_but_serializes_only_required_values() -> Result
     assert_eq!(render_sparse_profile(&bundle, &resolved.values)?, source);
 
     let request = request_from_profile("minimal", &source)?;
-    assert_eq!(request.imsize, 512);
-    assert_eq!(request.cell, 1.0);
+    assert_eq!(request.imsize, [512; 2]);
+    assert_eq!(request.cell, [1.0; 2]);
     assert_eq!(request.stokes, [PolarizationCoordinate::StokesI]);
     assert_eq!(request.specmode, SpecMode::Mfs);
     assert!(!request.parallel);

@@ -182,9 +182,19 @@
       "fingerprint": "56df2b0860599c0e9ef0bc63ef989af5478e3f6900a287d24f28fc855df8f06f"
     },
     {
+      "id": "image.geometry.cell",
+      "semantic_revision": 2,
+      "fingerprint": "6383bb7cf0d01a5988a124ed1fe12ee84173143bde07acd64ce4740665e6b218"
+    },
+    {
       "id": "image.geometry.imsize",
       "semantic_revision": 1,
       "fingerprint": "be5abd61fe0d353813f2668ad2cbb26b47f490b40f2ad026d3141475dc5db5f7"
+    },
+    {
+      "id": "image.geometry.imsize",
+      "semantic_revision": 2,
+      "fingerprint": "61bef11f2a62e6f44f75068c79c0f41efa60dbb28f7f72d2ccc5f1f62bfcba85"
     },
     {
       "id": "image.input.imagename",
@@ -2172,6 +2182,11 @@
       "fingerprint": "9f32edb271aa4e46e8c7410accfa254ee99b06715bb8b161d923c7e688ee8529"
     },
     {
+      "id": "parameter.startmodel",
+      "semantic_revision": 2,
+      "fingerprint": "c6c5338079b0122ca138e48f12064393c26e9cf809770c0691bfa2c5649b91da"
+    },
+    {
       "id": "parameter.starttime",
       "semantic_revision": 1,
       "fingerprint": "0a33f1b3f85266d030fa1feb89eccbfc5faf7a7ee676526fae311428d6306ba8"
@@ -2330,6 +2345,11 @@
       "id": "parameter.uvtaper",
       "semantic_revision": 1,
       "fingerprint": "bf8aa535f753853c41976769ae2e6d9161bb5a773d9573a555227f387255e704"
+    },
+    {
+      "id": "parameter.uvtaper",
+      "semantic_revision": 2,
+      "fingerprint": "e8a944e34b8346ed9d00ee634a3e4c42aa91c88fcd508333a960afe272517816"
     },
     {
       "id": "parameter.veldef",
@@ -3077,6 +3097,11 @@
       "id": "imager",
       "contract_version": 27,
       "fingerprint": "bd2e394dfd3bda8aa8cb2e2141d3083f022abe518fb4a7624857854ba803d91b"
+    },
+    {
+      "id": "imager",
+      "contract_version": 28,
+      "fingerprint": "6e4ab5745076298cd039ae7df0ecea19b7b55a01b353da254fdb51f67fbea1ce"
     },
     {
       "id": "imcollapse",

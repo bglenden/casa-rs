@@ -18,8 +18,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use casa_observation::{
-    AccessRequest, ObservationError, PartitionEntry, PartitionId, PatchValues, ResolvedTarget,
-    TimeRuns, UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole, check_values,
+    AccessRequest, BatchAddress, Correlation, ObservationError, PartitionEntry, PartitionId,
+    PatchValues, ResolvedTarget, TimeRuns, UpdateReport, Updater, VisibilityBatch, WeightChannels,
+    WritableRole, check_values, refuse_payload_checks,
 };
 use num_complex::Complex32;
 use zarrs::array::CodecOptions;
@@ -111,60 +112,12 @@ impl Msv4Update {
         targets: &[&ResolvedTarget],
         claim: impl FnOnce(Vec<Unit>) -> Result<Claim<'s>, ObservationError>,
     ) -> Result<Box<dyn Updater + 's>, ObservationError> {
-        let estimate = self.observation.estimate(request)?;
         let store = Arc::new(ReplacingStore::new(&self.root).map_err(storage)?);
         #[cfg(test)]
         if let Some((replacements, point)) = self.failure.lock().expect("failure hook").take() {
             store.fail_after(replacements, point);
         }
-        let mut partitions = Vec::with_capacity(request.partitions.len());
-        for (id, selection) in request.partitions.iter().zip(&estimate.partitions) {
-            let (dataset, _) = self.observation.dataset(*id)?;
-            let mut windows = Vec::with_capacity(targets.len());
-            for target in targets {
-                let group = dataset
-                    .groups
-                    .iter()
-                    .find(|group| group.record.name == target.target.data_group)
-                    .ok_or_else(|| {
-                        request_error(format!(
-                            "{id:?} has no data group {}",
-                            target.target.data_group
-                        ))
-                    })?;
-                let record = &group.record;
-                let path = |variable: &str| format!("{}/{variable}", dataset.path);
-                let channels = request.channels.clone();
-                windows.push(match target.target.role {
-                    WritableRole::Visibilities => Target::Visibilities(Window::open(
-                        &store,
-                        &path(&record.correlated_data),
-                        channels,
-                    )?),
-                    WritableRole::Flags => {
-                        Target::Flags(Window::open(&store, &path(&record.flag), channels)?)
-                    }
-                    // A weight patch may change every channel
-                    // (`WeightChannels::All`).
-                    WritableRole::Weights => Target::Weights(Window::open(
-                        &store,
-                        &path(&record.weight),
-                        0..catalogue_channels(self, *id),
-                    )?),
-                });
-            }
-            partitions.push(Partition {
-                id: *id,
-                times: dataset
-                    .times
-                    .iter()
-                    .enumerate()
-                    .map(|(index, time)| (time.to_bits(), index))
-                    .collect(),
-                selected: selection.time_runs.clone(),
-                targets: windows,
-            });
-        }
+        let partitions = self.partitions(&store, request, targets)?;
         let units = partitions
             .iter()
             .flat_map(|partition| {
@@ -194,6 +147,89 @@ impl Msv4Update {
             report: UpdateReport::default(),
         }))
     }
+
+    /// The most bytes an updater of `targets` over `request` holds: one
+    /// partition's windows ([`Window::held_bytes`]) and a chunk of each
+    /// decoded and encoded as it is replaced.
+    pub(in crate::observation_io) fn write_bytes(
+        &self,
+        request: &AccessRequest,
+        targets: &[&ResolvedTarget],
+    ) -> Result<usize, ObservationError> {
+        let store = Arc::new(ReplacingStore::new(&self.root).map_err(storage)?);
+        Ok(self
+            .partitions(&store, request, targets)?
+            .iter()
+            .map(|partition| {
+                partition
+                    .targets
+                    .iter()
+                    .map(|target| target.held_bytes() + 2 * target.chunk_bytes())
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// Each partition `request` reads, with the windows of `targets` over
+    /// `store`.
+    fn partitions(
+        &self,
+        store: &Arc<ReplacingStore>,
+        request: &AccessRequest,
+        targets: &[&ResolvedTarget],
+    ) -> Result<Vec<Partition>, ObservationError> {
+        let estimate = self.observation.estimate(request)?;
+        let mut partitions = Vec::with_capacity(request.partitions.len());
+        for (id, selection) in request.partitions.iter().zip(&estimate.partitions) {
+            let (dataset, _) = self.observation.dataset(*id)?;
+            let mut windows = Vec::with_capacity(targets.len());
+            for target in targets {
+                let group = dataset
+                    .groups
+                    .iter()
+                    .find(|group| group.record.name == target.target.data_group)
+                    .ok_or_else(|| {
+                        request_error(format!(
+                            "{id:?} has no data group {}",
+                            target.target.data_group
+                        ))
+                    })?;
+                let record = &group.record;
+                let path = |variable: &str| format!("{}/{variable}", dataset.path);
+                let channels = request.channels.clone();
+                windows.push(match target.target.role {
+                    WritableRole::Visibilities => Target::Visibilities(Window::open(
+                        store,
+                        &path(&record.correlated_data),
+                        channels,
+                    )?),
+                    WritableRole::Flags => {
+                        Target::Flags(Window::open(store, &path(&record.flag), channels)?)
+                    }
+                    // A weight patch may change every channel
+                    // (`WeightChannels::All`).
+                    WritableRole::Weights => Target::Weights(Window::open(
+                        store,
+                        &path(&record.weight),
+                        0..catalogue_channels(self, *id),
+                    )?),
+                });
+            }
+            partitions.push(Partition {
+                id: *id,
+                times: dataset
+                    .times
+                    .iter()
+                    .enumerate()
+                    .map(|(index, time)| (time.to_bits(), index))
+                    .collect(),
+                selected: selection.time_runs.clone(),
+                targets: windows,
+            });
+        }
+        Ok(partitions)
+    }
 }
 
 impl Target {
@@ -203,6 +239,24 @@ impl Target {
             Self::Visibilities(window) => window.chunk_rows(times),
             Self::Flags(window) => window.chunk_rows(times),
             Self::Weights(window) => window.chunk_rows(times),
+        }
+    }
+
+    /// The most bytes the window holds ([`Window::held_bytes`]).
+    fn held_bytes(&self) -> usize {
+        match self {
+            Self::Visibilities(window) => window.held_bytes(),
+            Self::Flags(window) => window.held_bytes(),
+            Self::Weights(window) => window.held_bytes(),
+        }
+    }
+
+    /// Bytes one decoded chunk of the variable holds.
+    fn chunk_bytes(&self) -> usize {
+        match self {
+            Self::Visibilities(window) => window.chunk_bytes(),
+            Self::Flags(window) => window.chunk_bytes(),
+            Self::Weights(window) => window.chunk_bytes(),
         }
     }
 }
@@ -230,11 +284,7 @@ impl Msv4Updater<'_> {
                 partition
                     .targets
                     .iter()
-                    .map(|target| match target {
-                        Target::Visibilities(window) => window.held_bytes(),
-                        Target::Flags(window) => window.held_bytes(),
-                        Target::Weights(window) => window.held_bytes(),
-                    })
+                    .map(Target::held_bytes)
                     .sum::<usize>()
             })
             .max()
@@ -248,54 +298,23 @@ impl Updater for Msv4Updater<'_> {
         batch: &VisibilityBatch<'_>,
         values: &[PatchValues<'_>],
     ) -> Result<(), ObservationError> {
-        check_values(batch, &self.roles, values)?;
-        if !Arc::ptr_eq(batch.catalogue, self.update.observation.catalogue()) {
-            return Err(request_error(
-                "the batch was not delivered by this session's observation",
-            ));
-        }
-        // Every window holds the traversal's channels; a batch of others
-        // would be refused by one target after another had taken it.
-        if batch.channels() != self.channels {
-            return Err(request_error(
-                "the batch's channels are not the traversal's the updater was bound to",
-            ));
-        }
-        let index = self
-            .partitions
-            .iter()
-            .position(|partition| partition.id == batch.partition)
-            .ok_or_else(|| request_error("the batch's partition is not the traversal's"))?;
-        let entry = batch.catalogue.partition(batch.partition);
-        let times = dataset_times(batch, entry, &self.partitions[index].times)?;
-        if !self.partitions[index].selected.holds(times.clone()) {
-            return Err(request_error(
-                "the batch's times are outside the traversal's time and field selection",
-            ));
-        }
-        let products = product_indices(batch, entry)?;
+        let address = batch.address();
+        // Shapes first: the padding check indexes the values by the batch.
+        check_values(&address, &self.roles, values)?;
         for value in values {
             refuse_padding_changes(batch, value)?;
         }
-        if self.open != Some(index) {
-            self.flush()?;
-            self.open = Some(index);
-        }
-        let channels = batch.channels();
-        let all_channels = 0..entry.frequencies_hz.len();
-        for (target, value) in self.partitions[index].targets.iter_mut().zip(values) {
-            assign(
-                target,
-                value,
-                times.clone(),
-                (channels.clone(), all_channels.clone()),
-                &products,
-                &self.options,
-            )?;
-        }
-        self.report.batches += 1;
-        self.report.samples += batch.samples();
-        Ok(())
+        self.write_checked(&address, values)
+    }
+
+    fn write_at(
+        &mut self,
+        address: &BatchAddress,
+        values: &[PatchValues<'_>],
+    ) -> Result<(), ObservationError> {
+        refuse_payload_checks(values)?;
+        check_values(address, &self.roles, values)?;
+        self.write_checked(address, values)
     }
 
     fn finish(mut self: Box<Self>) -> Result<UpdateReport, ObservationError> {
@@ -308,6 +327,62 @@ impl Updater for Msv4Updater<'_> {
             counters.replaced.load(Ordering::Relaxed) + counters.erased.load(Ordering::Relaxed);
         report.held_bytes = self.held_bytes();
         Ok(report)
+    }
+}
+
+impl Msv4Updater<'_> {
+    /// Assign `values`, checked against the bound targets and the batch's
+    /// shape ([`check_values`]), for the samples of the batch at `address`
+    /// into the windows of its partition, moving them there first.
+    fn write_checked(
+        &mut self,
+        address: &BatchAddress,
+        values: &[PatchValues<'_>],
+    ) -> Result<(), ObservationError> {
+        if !Arc::ptr_eq(address.catalogue(), self.update.observation.catalogue()) {
+            return Err(request_error(
+                "the batch was not delivered by this session's observation",
+            ));
+        }
+        // Every window holds the traversal's channels; a batch of others
+        // would be refused by one target after another had taken it.
+        if address.channels() != self.channels {
+            return Err(request_error(
+                "the batch's channels are not the traversal's the updater was bound to",
+            ));
+        }
+        let index = self
+            .partitions
+            .iter()
+            .position(|partition| partition.id == address.partition())
+            .ok_or_else(|| request_error("the batch's partition is not the traversal's"))?;
+        let entry = address.catalogue().partition(address.partition());
+        let times = dataset_times(address, entry, &self.partitions[index].times)?;
+        if !self.partitions[index].selected.holds(times.clone()) {
+            return Err(request_error(
+                "the batch's times are outside the traversal's time and field selection",
+            ));
+        }
+        let products = product_indices(address.correlations(), entry)?;
+        if self.open != Some(index) {
+            self.flush()?;
+            self.open = Some(index);
+        }
+        let channels = address.channels();
+        let all_channels = 0..entry.frequencies_hz.len();
+        for (target, value) in self.partitions[index].targets.iter_mut().zip(values) {
+            assign(
+                target,
+                value,
+                times.clone(),
+                (channels.clone(), all_channels.clone()),
+                &products,
+                &self.options,
+            )?;
+        }
+        self.report.batches += 1;
+        self.report.samples += address.samples();
+        Ok(())
     }
 }
 
@@ -331,11 +406,12 @@ fn assign(
     options: &CodecOptions,
 ) -> Result<(), ObservationError> {
     match (target, value) {
-        (Target::Visibilities(window), PatchValues::Visibilities(values)) => {
-            window.assign(times, channels, products, options, |s, c, p| {
-                Some(values[[s, c, p]])
-            })
-        }
+        (Target::Visibilities(window), PatchValues::Visibilities { values, written }) => window
+            .assign(times, channels, products, options, |s, c, p| {
+                written
+                    .is_none_or(|written| written[[s, c, p]])
+                    .then(|| values[[s, c, p]])
+            }),
         (Target::Flags(window), PatchValues::Flags { set, clear }) => {
             window.assign(times, channels, products, options, |s, c, p| {
                 if set.as_ref().is_some_and(|set| set[[s, c, p]]) {
@@ -369,36 +445,36 @@ fn assign(
     }
 }
 
-/// The dataset times of `batch`'s times, which must be contiguous.
+/// The dataset times of the batch at `address`, which must be contiguous.
 fn dataset_times(
-    batch: &VisibilityBatch<'_>,
+    address: &BatchAddress,
     entry: &PartitionEntry,
     known: &HashMap<u64, usize>,
 ) -> Result<Range<usize>, ObservationError> {
+    let time = address.time();
     let index = |t: usize| {
         known
-            .get(&batch.time.seconds_since(t, entry.time_origin).to_bits())
+            .get(&time.seconds_since(t, entry.time_origin).to_bits())
             .copied()
             .ok_or_else(|| request_error("a batch time is not one of the dataset's"))
     };
     let first = index(0)?;
-    for t in 1..batch.times() {
+    for t in 1..address.times() {
         if index(t)? != first + t {
             return Err(request_error(
                 "the batch's times are not contiguous in the dataset",
             ));
         }
     }
-    Ok(first..first + batch.times())
+    Ok(first..first + address.times())
 }
 
 /// The delivered products' positions among the partition's.
 fn product_indices(
-    batch: &VisibilityBatch<'_>,
+    correlations: &[Correlation],
     entry: &PartitionEntry,
 ) -> Result<Vec<usize>, ObservationError> {
-    batch
-        .correlations
+    correlations
         .iter()
         .map(|product| {
             entry

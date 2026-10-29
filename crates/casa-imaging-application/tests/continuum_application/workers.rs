@@ -256,12 +256,18 @@ fn synthetic_clean(measurement_set: &Path, image_name: &Path, controls: Value) -
 /// one, two and four workers that budget is found to 16 KiB, and over the
 /// 160 KiB above it, 16 KiB apart, and Astra's reproductions (10,199,040
 /// and 10,223,616 bytes for multiscale, 14,909,440 for MT-MFS), every run
-/// completes or is refused with the fit's own reason.
+/// completes or is refused with the fit's own reason. A run with no minor
+/// cycle seeded from a start model writes on its initial pass, which
+/// seeds beside the write (#970 review, finding 2).
 #[test]
 fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = synthetic_observation::observation(root.path(), 4);
+    let (started, _) = fit_run(root.path(), "start", 256 << 20, &|name| {
+        synthetic_clean(&measurement_set, name, json!({ "deconvolver": "hogbom" }))
+    });
+    assert!(started.is_some(), "the run whose model seeds the last case");
     let cases = [
         (
             "multiscale",
@@ -276,6 +282,15 @@ fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
         (
             "savemodel",
             json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+            &[],
+        ),
+        (
+            "seeded savemodel",
+            json!({
+                "niter": 0,
+                "savemodel": "modelcolumn",
+                "startmodel": root.path().join("start.model"),
+            }),
             &[],
         ),
     ];

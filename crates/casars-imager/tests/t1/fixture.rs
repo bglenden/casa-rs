@@ -48,31 +48,52 @@ pub const PHASE_CENTER_RAD: [f64; 2] = [4.712_391_234_768_306, -0.401_423_788_70
 /// The image geometry a run images and a component's pixel offsets refer to.
 #[derive(Debug, Clone, Copy)]
 pub struct Geometry {
-    /// Image side in pixels.
-    pub image_size: usize,
-    /// Cell in arcseconds.
-    pub cell_arcsec: f64,
+    /// Pixels along x and y.
+    pub image_size: [usize; 2],
+    /// Cell along x and y in arcseconds.
+    pub cell_arcsec: [f64; 2],
 }
 
 impl Geometry {
     /// The default T1 geometry: [`IMAGE_SIZE`] cells of [`CELL_ARCSEC`].
-    pub const DEFAULT: Self = Self {
-        image_size: IMAGE_SIZE,
-        cell_arcsec: CELL_ARCSEC,
-    };
+    pub const DEFAULT: Self = Self::square(IMAGE_SIZE, CELL_ARCSEC);
 
-    /// Cell in radians.
-    pub fn cell_rad(self) -> f64 {
-        self.cell_arcsec.to_radians() / 3_600.0
+    /// `image_size` cells of `cell_arcsec` on both axes.
+    pub const fn square(image_size: usize, cell_arcsec: f64) -> Self {
+        Self {
+            image_size: [image_size; 2],
+            cell_arcsec: [cell_arcsec; 2],
+        }
+    }
+
+    /// Cell along x and y in radians.
+    pub fn cell_rad(self) -> [f64; 2] {
+        self.cell_arcsec.map(|cell| cell.to_radians() / 3_600.0)
+    }
+
+    /// The image reference pixel: half the image on each axis.
+    pub fn centre(self) -> [usize; 2] {
+        self.image_size.map(|side| side / 2)
+    }
+
+    /// The imager's `imsize` and `cell` parameters for this geometry.
+    pub fn parameters(self) -> [(&'static str, Value); 2] {
+        [
+            ("imsize", json!(self.image_size)),
+            (
+                "cell",
+                json!(self.cell_arcsec.map(|cell| format!("{cell}arcsec"))),
+            ),
+        ]
     }
 
     /// Pixel `[x, y]` of a component offset from the image reference pixel.
     pub fn pixel(self, component: Component) -> [usize; 2] {
-        let centre = (self.image_size / 2) as i32;
-        [
-            usize::try_from(centre + component.offset_px[0]).expect("component inside image"),
-            usize::try_from(centre + component.offset_px[1]).expect("component inside image"),
-        ]
+        let centre = self.centre();
+        [0, 1].map(|axis| {
+            usize::try_from(centre[axis] as i32 + component.offset_px[axis])
+                .expect("component inside image")
+        })
     }
 }
 
@@ -146,10 +167,10 @@ impl Component {
     /// Direction cosines `[l, m]` on `geometry`: `l` grows east, opposite
     /// to image `x`.
     pub fn direction_cosines(self, geometry: Geometry) -> [f64; 2] {
-        let cell_rad = geometry.cell_rad();
+        let [cell_x, cell_y] = geometry.cell_rad();
         [
-            -f64::from(self.offset_px[0]) * cell_rad,
-            f64::from(self.offset_px[1]) * cell_rad,
+            -f64::from(self.offset_px[0]) * cell_x,
+            f64::from(self.offset_px[1]) * cell_y,
         ]
     }
 
@@ -175,7 +196,8 @@ impl Component {
                 spectrum,
             },
             Some(fwhm_px) => {
-                let fwhm_rad = fwhm_px * geometry.cell_rad();
+                // A circular component, sized in x cells.
+                let fwhm_rad = fwhm_px * geometry.cell_rad()[0];
                 SyntheticAnalyticComponent::Gaussian {
                     name,
                     l_rad,
@@ -336,11 +358,12 @@ impl Observation {
         let mut parameters = json!({
             "vis": self.measurement_set,
             "imagename": image_name,
-            "imsize": self.geometry.image_size,
-            "cell": format!("{}arcsec", self.geometry.cell_arcsec),
             "backend": "cpu",
         });
         let fields = parameters.as_object_mut().expect("parameters object");
+        for (key, value) in self.geometry.parameters() {
+            fields.insert(key.to_string(), value);
+        }
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
@@ -348,6 +371,11 @@ impl Observation {
             unreachable!("parameters are an object");
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
+        if !route_law::written_columns(&request).is_empty() {
+            // The batch route writes a copy of the MeasurementSet as it is
+            // before either route writes.
+            route_law::copy_for_batches(&request.vis).expect("copy the MeasurementSet");
+        }
         let result = run(parameters.clone(), &request)?;
         assert_geometry_law(name, &request);
         assert_route_law(name, parameters, &request, &result.artifacts);
@@ -361,11 +389,12 @@ impl Observation {
         let mut parameters = json!({
             "vis": self.measurement_set,
             "imagename": self.root.path().join(name),
-            "imsize": self.geometry.image_size,
-            "cell": format!("{}arcsec", self.geometry.cell_arcsec),
             "backend": "cpu",
         });
         let fields = parameters.as_object_mut().expect("parameters object");
+        for (key, value) in self.geometry.parameters() {
+            fields.insert(key.to_string(), value);
+        }
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
@@ -426,8 +455,8 @@ impl Observation {
             (frequency_hz - band_centre_hz).abs() < 1.0,
             "MFS reference frequency {frequency_hz} Hz, band centre {band_centre_hz} Hz"
         );
-        let side = self.geometry.image_size;
-        assert_eq!(image.pixels.dim(), (side, side));
+        let [nx, ny] = self.geometry.image_size;
+        assert_eq!(image.pixels.dim(), (nx, ny));
     }
 
     /// Direction and Stokes axes: SIN projection at the phase centre with
@@ -449,19 +478,19 @@ impl Observation {
                 reference[axis]
             );
         }
-        let cell_rad = self.geometry.cell_rad();
+        let [cell_x, cell_y] = self.geometry.cell_rad();
         let increment = coordinates.coordinate(0).increment();
         assert!(
-            (increment[0] + cell_rad).abs() < 1.0e-6 * cell_rad,
+            (increment[0] + cell_x).abs() < 1.0e-6 * cell_x,
             "{increment:?}"
         );
         assert!(
-            (increment[1] - cell_rad).abs() < 1.0e-6 * cell_rad,
+            (increment[1] - cell_y).abs() < 1.0e-6 * cell_y,
             "{increment:?}"
         );
         assert_eq!(
             coordinates.coordinate(0).reference_pixel(),
-            vec![(self.geometry.image_size / 2) as f64; 2]
+            self.geometry.centre().map(|pixel| pixel as f64).to_vec()
         );
         let CoordinateModel::Stokes(stokes) = coordinates.coordinate(1) else {
             panic!(".image coordinate 1 is not a Stokes coordinate");
@@ -492,25 +521,24 @@ fn assert_geometry_law(name: &str, request: &ImagingRequest) {
     );
 }
 
-/// Imaging port step 4's route law (#932): the run imaged again on the
-/// observation-batch route gives every product of `reported` to a
-/// normalized RMS of [`route_law::TOLERANCE`]. A run that writes a column
-/// back is not run there: the batch route writes nothing yet (step 5).
+/// Imaging port's route law (#932, steps 4 and 5): the run imaged again
+/// on the observation-batch route gives every product of `reported`, and
+/// every column it writes back (to the copy of the MeasurementSet taken
+/// before), to a normalized RMS of [`route_law::TOLERANCE`].
 fn assert_route_law(
     name: &str,
     mut parameters: ImagingParameters,
     request: &ImagingRequest,
     reported: &[ImagerArtifact],
 ) {
-    if !route_law::applies_to(request) {
-        eprintln!("{name}: route law not run, the run writes visibilities back");
-        return;
-    }
     let batches = route_law::on_batches(request);
     parameters.0.insert(
         "imagename".to_string(),
         json!(batches.imagename.display().to_string()),
     );
+    parameters
+        .0
+        .insert("vis".to_string(), json!(batches.vis.display().to_string()));
     let result = run(parameters, &batches)
         .unwrap_or_else(|error| panic!("{name}: the observation-batch route: {error}"));
     let prefix = request.imagename.display().to_string();
@@ -532,6 +560,16 @@ fn assert_route_law(
         assert!(
             nrms <= route_law::TOLERANCE,
             "{name}{suffix}: the observation-batch route departs from today's by NRMS {nrms:.3e}"
+        );
+    }
+    for column in route_law::written_columns(request) {
+        let nrms = route_law::column_nrms(&request.vis, &batches.vis, column)
+            .unwrap_or_else(|error| panic!("{name} {column}: {error}"));
+        eprintln!("{name} {column}: route law NRMS {nrms:.3e}");
+        assert!(
+            nrms <= route_law::TOLERANCE,
+            "{name} {column}: the observation-batch route writes it departing from today's by \
+             NRMS {nrms:.3e}"
         );
     }
 }
@@ -930,7 +968,7 @@ pub fn box_sum(pixels: &Array2<f32>, centre: [usize; 2], half_width: usize) -> f
 /// quadratic to `ln(psf)` over the connected lobe above `cutoff` of the peak.
 /// Returns FWHM `[major, minor]` in radians on the default geometry.
 pub fn fit_psf_main_lobe(psf: &Array2<f32>, cutoff: f32) -> [f64; 2] {
-    fit_psf_main_lobe_cells(psf, cutoff).map(|fwhm| fwhm * Geometry::DEFAULT.cell_rad())
+    fit_psf_main_lobe_cells(psf, cutoff).map(|fwhm| fwhm * Geometry::DEFAULT.cell_rad()[0])
 }
 
 /// [`fit_psf_main_lobe`] in cells.
