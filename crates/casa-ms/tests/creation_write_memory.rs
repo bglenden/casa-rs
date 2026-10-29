@@ -65,7 +65,10 @@ fn open_phase() {
     PHASE_PEAK.store(0, Ordering::Relaxed);
     // Released after the counts are zeroed, so a block tagged with the new
     // phase is counted after them.
-    PHASE.store(OPENED.fetch_add(1, Ordering::Relaxed) + 1, Ordering::Release);
+    PHASE.store(
+        OPENED.fetch_add(1, Ordering::Relaxed) + 1,
+        Ordering::Release,
+    );
 }
 
 /// The most bytes of the blocks allocated since [`open_phase`] that were
@@ -234,10 +237,8 @@ unsafe impl GlobalAlloc for CountingHeap {
                 // Old and new were held at once while the block moved.
                 PEAK.fetch_max(LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
                 if phase != 0 {
-                    PHASE_PEAK.fetch_max(
-                        PHASE_LIVE.load(Ordering::Relaxed) + new,
-                        Ordering::Relaxed,
-                    );
+                    PHASE_PEAK
+                        .fetch_max(PHASE_LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
                 }
             }
             shrink(old, old_phase);
