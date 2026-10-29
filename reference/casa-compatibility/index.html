@@ -1354,24 +1354,24 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>flagdata</td>
 <td>flagdata</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">76</td>
-<td style="text-align: right;">18</td>
-<td style="text-align: right;">58</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">52</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">13</td>
 </tr>
 <tr>
 <td>flagmanager</td>
 <td>flagmanager</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">6</td>
 <td style="text-align: right;">6</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>fluxscale</td>
@@ -1475,13 +1475,13 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>importvla</td>
 <td>importvla</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">12</td>
 <td style="text-align: right;">12</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>impv</td>
@@ -1530,13 +1530,13 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>mstransform</td>
 <td>mstransform</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">55</td>
-<td style="text-align: right;">10</td>
-<td style="text-align: right;">45</td>
+<td style="text-align: right;">55</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">1</td>
-<td style="text-align: right;">8</td>
+<td style="text-align: right;">43</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>plotms</td>
@@ -1563,13 +1563,13 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>split</td>
 <td>split</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">19</td>
-<td style="text-align: right;">10</td>
-<td style="text-align: right;">9</td>
+<td style="text-align: right;">19</td>
 <td style="text-align: right;">0</td>
+<td style="text-align: right;">9</td>
 <td style="text-align: right;">1</td>
-<td style="text-align: right;">8</td>
+<td style="text-align: right;">0</td>
 </tr>
 </tbody>
 </table>
@@ -1662,24 +1662,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>returns at line 611: <code>summary_stats</code></li>
 <li>returns at line 800: <code>summary_stats_list</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>autocorr</code>, <code>inpfile</code>, <code>reason</code>, <code>tbuff</code>, <code>uvrange</code>, <code>timerange</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>observation</code>, <code>feed</code>, <code>clipminmax</code>, <code>clipoutside</code>, <code>channelavg</code>, <code>chanbin</code>, <code>timeavg</code>, <code>timebin</code>, <code>quackincrement</code>, <code>tolerance</code>, <code>addantenna</code>, <code>lowerlimit</code>, <code>upperlimit</code>, <code>ntime</code>, <code>combinescans</code>, <code>timefit</code>, <code>freqfit</code>, <code>maxnpieces</code>, <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>, <code>timedevscale</code>, <code>freqdevscale</code>, <code>spectralmax</code>, <code>spectralmin</code>, <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growtime</code>, <code>growfreq</code>, <code>growaround</code>, <code>flagneartime</code>, <code>flagnearfreq</code>, <code>minrel</code>, <code>maxrel</code>, <code>minabs</code>, <code>maxabs</code>, <code>spwchan</code>, <code>spwcorr</code>, <code>basecnt</code>, <code>fieldcnt</code>, <code>name</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #978: <code>autocorr</code>, <code>inpfile</code>, <code>reason</code>, <code>tbuff</code>, <code>uvrange</code>, <code>timerange</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>observation</code>, <code>feed</code>, <code>clipminmax</code>, <code>clipoutside</code>, <code>channelavg</code>, <code>chanbin</code>, <code>timeavg</code>, <code>timebin</code>, <code>quackincrement</code>, <code>tolerance</code>, <code>addantenna</code>, <code>lowerlimit</code>, <code>upperlimit</code>, <code>ntime</code>, <code>combinescans</code>, <code>timefit</code>, <code>freqfit</code>, <code>maxnpieces</code>, <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>, <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growaround</code>, <code>flagneartime</code>, <code>flagnearfreq</code>, <code>minrel</code>, <code>maxrel</code>, <code>minabs</code>, <code>maxabs</code>, <code>spwchan</code>, <code>spwcorr</code>, <code>basecnt</code>, <code>fieldcnt</code>, <code>name</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
-<li>Shared parameters: 18, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>mode</code>: <code>'manual'</code>, <code>summary</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>datacolumn</code>: <code>'DATA'</code>, <code>data</code></li>
-<li><code>quackinterval</code>: <code>1.0</code>, <code>0.0</code></li>
-<li><code>extendflags</code>: <code>True</code>, <code>false</code></li>
-<li><code>timedev</code>: <code>''</code>, <code>none</code></li>
-<li><code>freqdev</code>: <code>''</code>, <code>none</code></li>
-<li><code>extendpols</code>: <code>True</code>, <code>false</code></li>
-<li><code>action</code>: <code>'apply'</code>, <code>flag</code></li>
+<li>Shared parameters: 76, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="flagmanager">flagmanager<a class="headerlink" href="#flagmanager" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1687,15 +1675,11 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casatasks/private/task_flagmanager.py</code>, <code>flagmanager</code> (line 8): 1 return statements, 9 raise statements</li>
 <li>returns at line 49: <code>fversionsdict</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
+<li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 6, in CASA's order: yes</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>versionname</code>: <code>''</code>, <code>none</code></li>
-<li><code>oldname</code>: <code>''</code>, <code>none</code></li>
-<li><code>comment</code>: <code>''</code>, <code>none</code></li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="fluxscale">fluxscale<a class="headerlink" href="#fluxscale" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1872,17 +1856,11 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>CASA source: <code>casatasks/importvla.py</code>, 12 parameters</li>
 <li>Implementation: <code>casatasks/private/task_importvla.py</code>, <code>importvla</code> (line 10): 0 return statements, 7 raise statements</li>
 <li>Called with its defaults in an empty directory, CASA raises <code>RuntimeError</code>: *** Error importing [] to : Need valid visibility file name (bad name or already exists)</li>
-<li>CASA's signature: not yet</li>
+<li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 12, in CASA's order: yes</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>archivefiles</code>: <code>[]</code>, <code>required</code></li>
-<li><code>vis</code>: <code>''</code>, <code>[]</code></li>
-<li><code>bandname</code>: <code>''</code>, <code>none</code></li>
-<li><code>project</code>: <code>''</code>, <code>none</code></li>
-<li><code>starttime</code>: <code>''</code>, <code>none</code></li>
-<li><code>stoptime</code>: <code>''</code>, <code>none</code></li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="impv">impv<a class="headerlink" href="#impv" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1944,19 +1922,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>returns at line 137: <code>True</code></li>
 <li>returns at line 150: <code>None</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>, <code>chanaverage</code>, <code>chanbin</code>, <code>hanning</code>, <code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>nspw</code>, <code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>, <code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>, <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>, <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>, <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>, <code>taql</code>, <code>monolithic_processing</code>, <code>reindex</code></li>
-<li>casa-rs parameters CASA lacks: <code>msselect</code></li>
-<li>Shared parameters: 10, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>outputvis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
-<li><code>datacolumn</code>: <code>'corrected'</code>, <code>DATA</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #978: <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>, <code>hanning</code>, <code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>, <code>nspw</code>, <code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>, <code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>, <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>, <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>, <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>, <code>monolithic_processing</code>, <code>reindex</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 55, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="plotms">plotms<a class="headerlink" href="#plotms" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1982,19 +1953,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casatasks/private/task_split.py</code>, <code>split</code> (line 21): 1 return statements, 1 raise statements</li>
 <li>returns at line 63: <code>None</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>keepmms</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>timebin</code>, <code>combine</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #978: <code>keepmms</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>timebin</code>, <code>combine</code></li>
 <li>casa-rs parameters CASA lacks: <code>msselect</code></li>
-<li>Shared parameters: 10, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>outputvis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
-<li><code>datacolumn</code>: <code>'corrected'</code>, <code>DATA</code></li>
+<li>Shared parameters: 19, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 
 

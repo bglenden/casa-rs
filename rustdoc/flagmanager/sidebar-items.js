@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute","main","run"]};
+window.SIDEBAR_ITEMS = {"fn":["execute","keep_existing_version","main","run"]};

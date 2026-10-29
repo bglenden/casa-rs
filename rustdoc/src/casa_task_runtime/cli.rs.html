@@ -237,210 +237,213 @@
 <a href=#237 id=237 data-nosnippet>237</a>    binding: <span class="kw-2">&amp;</span>SurfaceParameterBinding,
 <a href=#238 id=238 data-nosnippet>238</a>    value: <span class="kw-2">&amp;</span>ParameterValue,
 <a href=#239 id=239 data-nosnippet>239</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ParameterValue, String&gt; {
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>named = |error: <span class="kw">crate</span>::NormalizationError| <span class="macro">format!</span>(<span class="string">"parameter {:?}: {error}"</span>, binding.name);
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">let </span>concept = bundle
-<a href=#242 id=242 data-nosnippet>242</a>        .catalog
-<a href=#243 id=243 data-nosnippet>243</a>        .concept(<span class="kw-2">&amp;</span>binding.concept)
-<a href=#244 id=244 data-nosnippet>244</a>        .ok_or_else(|| <span class="macro">format!</span>(<span class="string">"missing parameter concept for {:?}"</span>, binding.name))<span class="question-mark">?</span>;
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">let </span>normalized = normalize_value(value, concept).map_err(named)<span class="question-mark">?</span>;
-<a href=#246 id=246 data-nosnippet>246</a>    validate_value(<span class="kw-2">&amp;</span>normalized, concept, <span class="kw-2">&amp;</span>binding.refinements).map_err(named)<span class="question-mark">?</span>;
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="prelude-val">Ok</span>(normalized)
-<a href=#248 id=248 data-nosnippet>248</a>}
-<a href=#249 id=249 data-nosnippet>249</a>
-<a href=#250 id=250 data-nosnippet>250</a><span class="kw">fn </span>is_bool_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">match </span>domain {
-<a href=#252 id=252 data-nosnippet>252</a>        ParameterType::Bool =&gt; <span class="bool-val">true</span>,
-<a href=#253 id=253 data-nosnippet>253</a>        ParameterType::Optional { value, .. } =&gt; is_bool_domain(value),
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#255 id=255 data-nosnippet>255</a>    }
-<a href=#256 id=256 data-nosnippet>256</a>}
-<a href=#257 id=257 data-nosnippet>257</a>
-<a href=#258 id=258 data-nosnippet>258</a><span class="doccomment">/// Whether `domain` is a list with no fixed size, which a repeated flag
-<a href=#259 id=259 data-nosnippet>259</a>/// extends.
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">fn </span>is_open_list_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">match </span>domain {
-<a href=#262 id=262 data-nosnippet>262</a>        ParameterType::Array { max_items, .. } =&gt; max_items.is_none(),
-<a href=#263 id=263 data-nosnippet>263</a>        ParameterType::Optional { value, .. } =&gt; is_open_list_domain(value),
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#265 id=265 data-nosnippet>265</a>    }
-<a href=#266 id=266 data-nosnippet>266</a>}
-<a href=#267 id=267 data-nosnippet>267</a>
-<a href=#268 id=268 data-nosnippet>268</a><span class="attr">#[cfg(test)]
-<a href=#269 id=269 data-nosnippet>269</a></span><span class="kw">mod </span>tests {
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">use </span>casa_provider_contracts::ParameterValue;
-<a href=#272 id=272 data-nosnippet>272</a>
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="attr">#[test]
-<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">fn </span>a_request_is_read_from_a_file_or_reports_the_path() {
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span>temp = tempfile::NamedTempFile::new().unwrap();
-<a href=#276 id=276 data-nosnippet>276</a>        std::fs::write(temp.path(), <span class="string">r#"{"surface": "imstat"}"#</span>).unwrap();
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="macro">assert_eq!</span>(
-<a href=#278 id=278 data-nosnippet>278</a>            read_task_request(temp.path().to_str().unwrap()).unwrap(),
-<a href=#279 id=279 data-nosnippet>279</a>            <span class="string">r#"{"surface": "imstat"}"#
-<a href=#280 id=280 data-nosnippet>280</a>        </span>);
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>missing = read_task_request(<span class="string">"/definitely/missing/request.json"</span>).unwrap_err();
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(missing, TaskCliError::ReadFile { .. }));
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="macro">assert!</span>(missing.to_string().contains(<span class="string">"failed to read JSON request"</span>));
-<a href=#284 id=284 data-nosnippet>284</a>    }
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="attr">#[test]
-<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">fn </span>catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#291 id=291 data-nosnippet>291</a>            <span class="kw-2">&amp;</span>[
-<a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"--ms"</span>.into(),
-<a href=#293 id=293 data-nosnippet>293</a>                <span class="string">"input.ms"</span>.into(),
-<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"--imsize"</span>.into(),
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"1024"</span>.into(),
-<a href=#296 id=296 data-nosnippet>296</a>                <span class="string">"--cell-arcsec=0.0002777777777777778deg"</span>.into(),
-<a href=#297 id=297 data-nosnippet>297</a>                <span class="string">"--gridder"</span>.into(),
-<a href=#298 id=298 data-nosnippet>298</a>                <span class="string">"awproject"</span>.into(),
-<a href=#299 id=299 data-nosnippet>299</a>                <span class="string">"--no-parallel"</span>.into(),
-<a href=#300 id=300 data-nosnippet>300</a>                <span class="string">"--gridprecision"</span>.into(),
-<a href=#301 id=301 data-nosnippet>301</a>                <span class="string">"f64"</span>.into(),
-<a href=#302 id=302 data-nosnippet>302</a>            ],
-<a href=#303 id=303 data-nosnippet>303</a>        )
-<a href=#304 id=304 data-nosnippet>304</a>        .unwrap();
-<a href=#305 id=305 data-nosnippet>305</a>
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert_eq!</span>(
-<a href=#307 id=307 data-nosnippet>307</a>            patch.values[<span class="string">"vis"</span>],
-<a href=#308 id=308 data-nosnippet>308</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"input.ms"</span>.into())])
-<a href=#309 id=309 data-nosnippet>309</a>        );
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="macro">assert_eq!</span>(
-<a href=#311 id=311 data-nosnippet>311</a>            patch.values[<span class="string">"imsize"</span>],
-<a href=#312 id=312 data-nosnippet>312</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::Integer(<span class="number">1024</span>); <span class="number">2</span>])
-<a href=#313 id=313 data-nosnippet>313</a>        );
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="macro">assert_eq!</span>(
-<a href=#315 id=315 data-nosnippet>315</a>            patch.values[<span class="string">"cell"</span>],
-<a href=#316 id=316 data-nosnippet>316</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"1arcsec"</span>.into()); <span class="number">2</span>])
-<a href=#317 id=317 data-nosnippet>317</a>        );
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"parallel"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
-<a href=#319 id=319 data-nosnippet>319</a>        <span class="macro">assert_eq!</span>(
-<a href=#320 id=320 data-nosnippet>320</a>            patch.values[<span class="string">"gridprecision"</span>],
-<a href=#321 id=321 data-nosnippet>321</a>            ParameterValue::String(<span class="string">"f64"</span>.into())
-<a href=#322 id=322 data-nosnippet>322</a>        );
-<a href=#323 id=323 data-nosnippet>323</a>
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="comment">// The parameter's own name reaches the same binding and value.
-<a href=#325 id=325 data-nosnippet>325</a>        </span><span class="kw">let </span>named =
-<a href=#326 id=326 data-nosnippet>326</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold"</span>.into(), <span class="string">"1Jy"</span>.into()]).unwrap();
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>declared =
-<a href=#328 id=328 data-nosnippet>328</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold-jy"</span>.into(), <span class="string">"1Jy"</span>.into()])
-<a href=#329 id=329 data-nosnippet>329</a>                .unwrap();
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="macro">assert_eq!</span>(named, declared);
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>unknown =
-<a href=#332 id=332 data-nosnippet>332</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--thresh"</span>.into(), <span class="string">"1Jy"</span>.into()]).unwrap_err();
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="macro">assert!</span>(unknown.contains(<span class="string">"unknown imager parameter flag --thresh"</span>));
-<a href=#334 id=334 data-nosnippet>334</a>    }
-<a href=#335 id=335 data-nosnippet>335</a>
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="attr">#[test]
-<a href=#337 id=337 data-nosnippet>337</a>    </span><span class="kw">fn </span>every_parameter_is_reachable_by_its_own_name() {
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">for </span>surface <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.surfaces {
-<a href=#340 id=340 data-nosnippet>340</a>            <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
-<a href=#341 id=341 data-nosnippet>341</a>            <span class="kw">for </span>binding <span class="kw">in </span>bundle.surface.bindings() {
-<a href=#342 id=342 data-nosnippet>342</a>                <span class="kw">let </span>flag = <span class="macro">format!</span>(<span class="string">"--{}"</span>, binding.name);
-<a href=#343 id=343 data-nosnippet>343</a>                <span class="kw">let </span>(found, <span class="kw">_</span>) = cli_flag_binding(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>flag)
-<a href=#344 id=344 data-nosnippet>344</a>                    .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"{}: {flag} names nothing"</span>, surface.id()));
-<a href=#345 id=345 data-nosnippet>345</a>                <span class="macro">assert_eq!</span>(found.name, binding.name, <span class="string">"{}: {flag}"</span>, surface.id());
-<a href=#346 id=346 data-nosnippet>346</a>            }
-<a href=#347 id=347 data-nosnippet>347</a>        }
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"applycal"</span>).unwrap();
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw-2">&amp;</span>[<span class="string">"--vis"</span>.into(), <span class="string">"target.ms"</span>.into(), <span class="string">"--no-flagbackup"</span>.into()],
-<a href=#353 id=353 data-nosnippet>353</a>        )
-<a href=#354 id=354 data-nosnippet>354</a>        .unwrap();
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="macro">assert_eq!</span>(
-<a href=#356 id=356 data-nosnippet>356</a>            patch.values[<span class="string">"vis"</span>],
-<a href=#357 id=357 data-nosnippet>357</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"target.ms"</span>.into())])
-<a href=#358 id=358 data-nosnippet>358</a>        );
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw">let </span>declared =
-<a href=#360 id=360 data-nosnippet>360</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--ms"</span>.into(), <span class="string">"target.ms"</span>.into()]).unwrap();
-<a href=#361 id=361 data-nosnippet>361</a>        <span class="macro">assert_eq!</span>(declared.values[<span class="string">"vis"</span>], patch.values[<span class="string">"vis"</span>]);
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"flagbackup"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
-<a href=#363 id=363 data-nosnippet>363</a>    }
-<a href=#364 id=364 data-nosnippet>364</a>
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="attr">#[test]
-<a href=#366 id=366 data-nosnippet>366</a>    </span><span class="kw">fn </span>every_declared_spelling_reaches_its_parameter_short_ones_included() {
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="comment">// msexplore's `-o` was read as a positional before.
-<a href=#368 id=368 data-nosnippet>368</a>        </span><span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span><span class="kw-2">mut </span>short = <span class="number">0</span>;
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">for </span>surface <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.surfaces {
-<a href=#371 id=371 data-nosnippet>371</a>            <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
-<a href=#372 id=372 data-nosnippet>372</a>            <span class="kw">for </span>binding <span class="kw">in </span>bundle.surface.bindings() {
-<a href=#373 id=373 data-nosnippet>373</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(cli) = binding.projections.cli.as_ref() <span class="kw">else </span>{
-<a href=#374 id=374 data-nosnippet>374</a>                    <span class="kw">continue</span>;
-<a href=#375 id=375 data-nosnippet>375</a>                };
-<a href=#376 id=376 data-nosnippet>376</a>                <span class="kw">for </span>flag <span class="kw">in </span>cli.flags.iter().chain(<span class="kw-2">&amp;</span>cli.false_flags) {
-<a href=#377 id=377 data-nosnippet>377</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>((found, <span class="kw">_</span>)) = cli_flag_binding(<span class="kw-2">&amp;</span>bundle, flag) <span class="kw">else </span>{
-<a href=#378 id=378 data-nosnippet>378</a>                        <span class="macro">panic!</span>(<span class="string">"{}: {flag} names nothing"</span>, surface.id());
-<a href=#379 id=379 data-nosnippet>379</a>                    };
-<a href=#380 id=380 data-nosnippet>380</a>                    <span class="macro">assert_eq!</span>(found.name, binding.name, <span class="string">"{}: {flag}"</span>, surface.id());
-<a href=#381 id=381 data-nosnippet>381</a>                    <span class="kw">if </span>!flag.starts_with(<span class="string">"--"</span>) {
-<a href=#382 id=382 data-nosnippet>382</a>                        short += <span class="number">1</span>;
-<a href=#383 id=383 data-nosnippet>383</a>                    }
-<a href=#384 id=384 data-nosnippet>384</a>                }
-<a href=#385 id=385 data-nosnippet>385</a>            }
-<a href=#386 id=386 data-nosnippet>386</a>        }
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert!</span>(short &gt; <span class="number">0</span>, <span class="string">"the catalog declares no short spelling to test"</span>);
-<a href=#388 id=388 data-nosnippet>388</a>
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#392 id=392 data-nosnippet>392</a>            <span class="kw-2">&amp;</span>[<span class="string">"-o"</span>.into(), <span class="string">"summary.txt"</span>.into(), <span class="string">"in.ms"</span>.into()],
-<a href=#393 id=393 data-nosnippet>393</a>        )
-<a href=#394 id=394 data-nosnippet>394</a>        .unwrap();
-<a href=#395 id=395 data-nosnippet>395</a>        <span class="macro">assert_eq!</span>(
-<a href=#396 id=396 data-nosnippet>396</a>            patch.values[<span class="string">"output"</span>],
-<a href=#397 id=397 data-nosnippet>397</a>            ParameterValue::String(<span class="string">"summary.txt"</span>.into())
-<a href=#398 id=398 data-nosnippet>398</a>        );
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="macro">assert_eq!</span>(
-<a href=#400 id=400 data-nosnippet>400</a>            patch.values[<span class="string">"vis"</span>],
-<a href=#401 id=401 data-nosnippet>401</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"in.ms"</span>.into())])
-<a href=#402 id=402 data-nosnippet>402</a>        );
-<a href=#403 id=403 data-nosnippet>403</a>    }
-<a href=#404 id=404 data-nosnippet>404</a>
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="attr">#[test]
-<a href=#406 id=406 data-nosnippet>406</a>    </span><span class="kw">fn </span>catalog_cli_parser_applies_unsets_in_argument_order() {
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#409 id=409 data-nosnippet>409</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#410 id=410 data-nosnippet>410</a>            <span class="kw-2">&amp;</span>[
-<a href=#411 id=411 data-nosnippet>411</a>                <span class="string">"--niter"</span>.into(),
-<a href=#412 id=412 data-nosnippet>412</a>                <span class="string">"7"</span>.into(),
-<a href=#413 id=413 data-nosnippet>413</a>                <span class="string">"--unset"</span>.into(),
-<a href=#414 id=414 data-nosnippet>414</a>                <span class="string">"niter"</span>.into(),
-<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"--niter=9"</span>.into(),
-<a href=#416 id=416 data-nosnippet>416</a>            ],
-<a href=#417 id=417 data-nosnippet>417</a>        )
-<a href=#418 id=418 data-nosnippet>418</a>        .unwrap();
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"niter"</span>], ParameterValue::Integer(<span class="number">9</span>));
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="macro">assert!</span>(!patch.unset.contains(<span class="string">"niter"</span>));
-<a href=#421 id=421 data-nosnippet>421</a>    }
-<a href=#422 id=422 data-nosnippet>422</a>
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="attr">#[test]
-<a href=#424 id=424 data-nosnippet>424</a>    </span><span class="kw">fn </span>cli_values_are_normalized_through_the_binding_concept() {
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>field = ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"field"</span>).unwrap();
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(
-<a href=#428 id=428 data-nosnippet>428</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">" 0, 2 "</span>).unwrap(),
-<a href=#429 id=429 data-nosnippet>429</a>            ParameterValue::String(<span class="string">"0,2"</span>.to_string())
-<a href=#430 id=430 data-nosnippet>430</a>        );
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(
-<a href=#432 id=432 data-nosnippet>432</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">"  "</span>)
-<a href=#433 id=433 data-nosnippet>433</a>                .unwrap_err()
-<a href=#434 id=434 data-nosnippet>434</a>                .contains(<span class="string">"no typed value"</span>)
-<a href=#435 id=435 data-nosnippet>435</a>        );
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert!</span>(ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"not_a_parameter"</span>).is_err());
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="comment">// A value the concept refuses names its parameter.
-<a href=#438 id=438 data-nosnippet>438</a>        </span><span class="kw">let </span>imager = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>imsize = ensure_parameter_binding(<span class="kw-2">&amp;</span>imager, <span class="string">"imsize"</span>).unwrap();
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>refused = validated_cli_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="string">"abc"</span>).unwrap_err();
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span>refused = checked_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="kw-2">&amp;</span>ParameterValue::Bool(<span class="bool-val">true</span>)).unwrap_err();
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
-<a href=#444 id=444 data-nosnippet>444</a>    }
-<a href=#445 id=445 data-nosnippet>445</a>}
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>named = |error: <span class="kw">crate</span>::NormalizationError| {
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>note = error.binding_note(binding);
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="macro">format!</span>(<span class="string">"parameter {:?}: {error}{note}"</span>, binding.name)
+<a href=#243 id=243 data-nosnippet>243</a>    };
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span>concept = bundle
+<a href=#245 id=245 data-nosnippet>245</a>        .catalog
+<a href=#246 id=246 data-nosnippet>246</a>        .concept(<span class="kw-2">&amp;</span>binding.concept)
+<a href=#247 id=247 data-nosnippet>247</a>        .ok_or_else(|| <span class="macro">format!</span>(<span class="string">"missing parameter concept for {:?}"</span>, binding.name))<span class="question-mark">?</span>;
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>normalized = normalize_value(value, concept).map_err(named)<span class="question-mark">?</span>;
+<a href=#249 id=249 data-nosnippet>249</a>    validate_value(<span class="kw-2">&amp;</span>normalized, concept, <span class="kw-2">&amp;</span>binding.refinements).map_err(named)<span class="question-mark">?</span>;
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="prelude-val">Ok</span>(normalized)
+<a href=#251 id=251 data-nosnippet>251</a>}
+<a href=#252 id=252 data-nosnippet>252</a>
+<a href=#253 id=253 data-nosnippet>253</a><span class="kw">fn </span>is_bool_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">match </span>domain {
+<a href=#255 id=255 data-nosnippet>255</a>        ParameterType::Bool =&gt; <span class="bool-val">true</span>,
+<a href=#256 id=256 data-nosnippet>256</a>        ParameterType::Optional { value, .. } =&gt; is_bool_domain(value),
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#258 id=258 data-nosnippet>258</a>    }
+<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a><span class="doccomment">/// Whether `domain` is a list with no fixed size, which a repeated flag
+<a href=#262 id=262 data-nosnippet>262</a>/// extends.
+<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">fn </span>is_open_list_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">match </span>domain {
+<a href=#265 id=265 data-nosnippet>265</a>        ParameterType::Array { max_items, .. } =&gt; max_items.is_none(),
+<a href=#266 id=266 data-nosnippet>266</a>        ParameterType::Optional { value, .. } =&gt; is_open_list_domain(value),
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#268 id=268 data-nosnippet>268</a>    }
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="attr">#[cfg(test)]
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">mod </span>tests {
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">use </span>casa_provider_contracts::ParameterValue;
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="attr">#[test]
+<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">fn </span>a_request_is_read_from_a_file_or_reports_the_path() {
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>temp = tempfile::NamedTempFile::new().unwrap();
+<a href=#279 id=279 data-nosnippet>279</a>        std::fs::write(temp.path(), <span class="string">r#"{"surface": "imstat"}"#</span>).unwrap();
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="macro">assert_eq!</span>(
+<a href=#281 id=281 data-nosnippet>281</a>            read_task_request(temp.path().to_str().unwrap()).unwrap(),
+<a href=#282 id=282 data-nosnippet>282</a>            <span class="string">r#"{"surface": "imstat"}"#
+<a href=#283 id=283 data-nosnippet>283</a>        </span>);
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>missing = read_task_request(<span class="string">"/definitely/missing/request.json"</span>).unwrap_err();
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(missing, TaskCliError::ReadFile { .. }));
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="macro">assert!</span>(missing.to_string().contains(<span class="string">"failed to read JSON request"</span>));
+<a href=#287 id=287 data-nosnippet>287</a>    }
+<a href=#288 id=288 data-nosnippet>288</a>
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="attr">#[test]
+<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">fn </span>catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#293 id=293 data-nosnippet>293</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#294 id=294 data-nosnippet>294</a>            <span class="kw-2">&amp;</span>[
+<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"--ms"</span>.into(),
+<a href=#296 id=296 data-nosnippet>296</a>                <span class="string">"input.ms"</span>.into(),
+<a href=#297 id=297 data-nosnippet>297</a>                <span class="string">"--imsize"</span>.into(),
+<a href=#298 id=298 data-nosnippet>298</a>                <span class="string">"1024"</span>.into(),
+<a href=#299 id=299 data-nosnippet>299</a>                <span class="string">"--cell-arcsec=0.0002777777777777778deg"</span>.into(),
+<a href=#300 id=300 data-nosnippet>300</a>                <span class="string">"--gridder"</span>.into(),
+<a href=#301 id=301 data-nosnippet>301</a>                <span class="string">"awproject"</span>.into(),
+<a href=#302 id=302 data-nosnippet>302</a>                <span class="string">"--no-parallel"</span>.into(),
+<a href=#303 id=303 data-nosnippet>303</a>                <span class="string">"--gridprecision"</span>.into(),
+<a href=#304 id=304 data-nosnippet>304</a>                <span class="string">"f64"</span>.into(),
+<a href=#305 id=305 data-nosnippet>305</a>            ],
+<a href=#306 id=306 data-nosnippet>306</a>        )
+<a href=#307 id=307 data-nosnippet>307</a>        .unwrap();
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">assert_eq!</span>(
+<a href=#310 id=310 data-nosnippet>310</a>            patch.values[<span class="string">"vis"</span>],
+<a href=#311 id=311 data-nosnippet>311</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"input.ms"</span>.into())])
+<a href=#312 id=312 data-nosnippet>312</a>        );
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="macro">assert_eq!</span>(
+<a href=#314 id=314 data-nosnippet>314</a>            patch.values[<span class="string">"imsize"</span>],
+<a href=#315 id=315 data-nosnippet>315</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::Integer(<span class="number">1024</span>); <span class="number">2</span>])
+<a href=#316 id=316 data-nosnippet>316</a>        );
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="macro">assert_eq!</span>(
+<a href=#318 id=318 data-nosnippet>318</a>            patch.values[<span class="string">"cell"</span>],
+<a href=#319 id=319 data-nosnippet>319</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"1arcsec"</span>.into()); <span class="number">2</span>])
+<a href=#320 id=320 data-nosnippet>320</a>        );
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"parallel"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="macro">assert_eq!</span>(
+<a href=#323 id=323 data-nosnippet>323</a>            patch.values[<span class="string">"gridprecision"</span>],
+<a href=#324 id=324 data-nosnippet>324</a>            ParameterValue::String(<span class="string">"f64"</span>.into())
+<a href=#325 id=325 data-nosnippet>325</a>        );
+<a href=#326 id=326 data-nosnippet>326</a>
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="comment">// The parameter's own name reaches the same binding and value.
+<a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">let </span>named =
+<a href=#329 id=329 data-nosnippet>329</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold"</span>.into(), <span class="string">"1Jy"</span>.into()]).unwrap();
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>declared =
+<a href=#331 id=331 data-nosnippet>331</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold-jy"</span>.into(), <span class="string">"1Jy"</span>.into()])
+<a href=#332 id=332 data-nosnippet>332</a>                .unwrap();
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="macro">assert_eq!</span>(named, declared);
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>unknown =
+<a href=#335 id=335 data-nosnippet>335</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--thresh"</span>.into(), <span class="string">"1Jy"</span>.into()]).unwrap_err();
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="macro">assert!</span>(unknown.contains(<span class="string">"unknown imager parameter flag --thresh"</span>));
+<a href=#337 id=337 data-nosnippet>337</a>    }
+<a href=#338 id=338 data-nosnippet>338</a>
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="attr">#[test]
+<a href=#340 id=340 data-nosnippet>340</a>    </span><span class="kw">fn </span>every_parameter_is_reachable_by_its_own_name() {
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">for </span>surface <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.surfaces {
+<a href=#343 id=343 data-nosnippet>343</a>            <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">for </span>binding <span class="kw">in </span>bundle.surface.bindings() {
+<a href=#345 id=345 data-nosnippet>345</a>                <span class="kw">let </span>flag = <span class="macro">format!</span>(<span class="string">"--{}"</span>, binding.name);
+<a href=#346 id=346 data-nosnippet>346</a>                <span class="kw">let </span>(found, <span class="kw">_</span>) = cli_flag_binding(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>flag)
+<a href=#347 id=347 data-nosnippet>347</a>                    .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"{}: {flag} names nothing"</span>, surface.id()));
+<a href=#348 id=348 data-nosnippet>348</a>                <span class="macro">assert_eq!</span>(found.name, binding.name, <span class="string">"{}: {flag}"</span>, surface.id());
+<a href=#349 id=349 data-nosnippet>349</a>            }
+<a href=#350 id=350 data-nosnippet>350</a>        }
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"applycal"</span>).unwrap();
+<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw-2">&amp;</span>[<span class="string">"--vis"</span>.into(), <span class="string">"target.ms"</span>.into(), <span class="string">"--no-flagbackup"</span>.into()],
+<a href=#356 id=356 data-nosnippet>356</a>        )
+<a href=#357 id=357 data-nosnippet>357</a>        .unwrap();
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="macro">assert_eq!</span>(
+<a href=#359 id=359 data-nosnippet>359</a>            patch.values[<span class="string">"vis"</span>],
+<a href=#360 id=360 data-nosnippet>360</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"target.ms"</span>.into())])
+<a href=#361 id=361 data-nosnippet>361</a>        );
+<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>declared =
+<a href=#363 id=363 data-nosnippet>363</a>            parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--ms"</span>.into(), <span class="string">"target.ms"</span>.into()]).unwrap();
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="macro">assert_eq!</span>(declared.values[<span class="string">"vis"</span>], patch.values[<span class="string">"vis"</span>]);
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"flagbackup"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
+<a href=#366 id=366 data-nosnippet>366</a>    }
+<a href=#367 id=367 data-nosnippet>367</a>
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="attr">#[test]
+<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">fn </span>every_declared_spelling_reaches_its_parameter_short_ones_included() {
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="comment">// msexplore's `-o` was read as a positional before.
+<a href=#371 id=371 data-nosnippet>371</a>        </span><span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span><span class="kw-2">mut </span>short = <span class="number">0</span>;
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">for </span>surface <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.surfaces {
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+<a href=#375 id=375 data-nosnippet>375</a>            <span class="kw">for </span>binding <span class="kw">in </span>bundle.surface.bindings() {
+<a href=#376 id=376 data-nosnippet>376</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(cli) = binding.projections.cli.as_ref() <span class="kw">else </span>{
+<a href=#377 id=377 data-nosnippet>377</a>                    <span class="kw">continue</span>;
+<a href=#378 id=378 data-nosnippet>378</a>                };
+<a href=#379 id=379 data-nosnippet>379</a>                <span class="kw">for </span>flag <span class="kw">in </span>cli.flags.iter().chain(<span class="kw-2">&amp;</span>cli.false_flags) {
+<a href=#380 id=380 data-nosnippet>380</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>((found, <span class="kw">_</span>)) = cli_flag_binding(<span class="kw-2">&amp;</span>bundle, flag) <span class="kw">else </span>{
+<a href=#381 id=381 data-nosnippet>381</a>                        <span class="macro">panic!</span>(<span class="string">"{}: {flag} names nothing"</span>, surface.id());
+<a href=#382 id=382 data-nosnippet>382</a>                    };
+<a href=#383 id=383 data-nosnippet>383</a>                    <span class="macro">assert_eq!</span>(found.name, binding.name, <span class="string">"{}: {flag}"</span>, surface.id());
+<a href=#384 id=384 data-nosnippet>384</a>                    <span class="kw">if </span>!flag.starts_with(<span class="string">"--"</span>) {
+<a href=#385 id=385 data-nosnippet>385</a>                        short += <span class="number">1</span>;
+<a href=#386 id=386 data-nosnippet>386</a>                    }
+<a href=#387 id=387 data-nosnippet>387</a>                }
+<a href=#388 id=388 data-nosnippet>388</a>            }
+<a href=#389 id=389 data-nosnippet>389</a>        }
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="macro">assert!</span>(short &gt; <span class="number">0</span>, <span class="string">"the catalog declares no short spelling to test"</span>);
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw-2">&amp;</span>[<span class="string">"-o"</span>.into(), <span class="string">"summary.txt"</span>.into(), <span class="string">"in.ms"</span>.into()],
+<a href=#396 id=396 data-nosnippet>396</a>        )
+<a href=#397 id=397 data-nosnippet>397</a>        .unwrap();
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="macro">assert_eq!</span>(
+<a href=#399 id=399 data-nosnippet>399</a>            patch.values[<span class="string">"output"</span>],
+<a href=#400 id=400 data-nosnippet>400</a>            ParameterValue::String(<span class="string">"summary.txt"</span>.into())
+<a href=#401 id=401 data-nosnippet>401</a>        );
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="macro">assert_eq!</span>(
+<a href=#403 id=403 data-nosnippet>403</a>            patch.values[<span class="string">"vis"</span>],
+<a href=#404 id=404 data-nosnippet>404</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"in.ms"</span>.into())])
+<a href=#405 id=405 data-nosnippet>405</a>        );
+<a href=#406 id=406 data-nosnippet>406</a>    }
+<a href=#407 id=407 data-nosnippet>407</a>
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="attr">#[test]
+<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">fn </span>catalog_cli_parser_applies_unsets_in_argument_order() {
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw-2">&amp;</span>[
+<a href=#414 id=414 data-nosnippet>414</a>                <span class="string">"--niter"</span>.into(),
+<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"7"</span>.into(),
+<a href=#416 id=416 data-nosnippet>416</a>                <span class="string">"--unset"</span>.into(),
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="string">"niter"</span>.into(),
+<a href=#418 id=418 data-nosnippet>418</a>                <span class="string">"--niter=9"</span>.into(),
+<a href=#419 id=419 data-nosnippet>419</a>            ],
+<a href=#420 id=420 data-nosnippet>420</a>        )
+<a href=#421 id=421 data-nosnippet>421</a>        .unwrap();
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"niter"</span>], ParameterValue::Integer(<span class="number">9</span>));
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="macro">assert!</span>(!patch.unset.contains(<span class="string">"niter"</span>));
+<a href=#424 id=424 data-nosnippet>424</a>    }
+<a href=#425 id=425 data-nosnippet>425</a>
+<a href=#426 id=426 data-nosnippet>426</a>    <span class="attr">#[test]
+<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">fn </span>cli_values_are_normalized_through_the_binding_concept() {
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span>field = ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"field"</span>).unwrap();
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">assert_eq!</span>(
+<a href=#431 id=431 data-nosnippet>431</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">" 0, 2 "</span>).unwrap(),
+<a href=#432 id=432 data-nosnippet>432</a>            ParameterValue::String(<span class="string">"0,2"</span>.to_string())
+<a href=#433 id=433 data-nosnippet>433</a>        );
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="macro">assert!</span>(
+<a href=#435 id=435 data-nosnippet>435</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">"  "</span>)
+<a href=#436 id=436 data-nosnippet>436</a>                .unwrap_err()
+<a href=#437 id=437 data-nosnippet>437</a>                .contains(<span class="string">"no typed value"</span>)
+<a href=#438 id=438 data-nosnippet>438</a>        );
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">assert!</span>(ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"not_a_parameter"</span>).is_err());
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="comment">// A value the concept refuses names its parameter.
+<a href=#441 id=441 data-nosnippet>441</a>        </span><span class="kw">let </span>imager = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span>imsize = ensure_parameter_binding(<span class="kw-2">&amp;</span>imager, <span class="string">"imsize"</span>).unwrap();
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="kw">let </span>refused = validated_cli_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="string">"abc"</span>).unwrap_err();
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>refused = checked_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="kw-2">&amp;</span>ParameterValue::Bool(<span class="bool-val">true</span>)).unwrap_err();
+<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
+<a href=#447 id=447 data-nosnippet>447</a>    }
+<a href=#448 id=448 data-nosnippet>448</a>}
 </code></pre></div></section></main></body></html>

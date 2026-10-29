@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["action","antenna_selection","choice","data_column","flagdata_request","main","mode","quackmode","run"]};
+window.SIDEBAR_ITEMS = {"fn":["antenna_selection","applies","data_column","flagdata_request","main","mode","not_yet","quackmode","run","selection","unknown"]};

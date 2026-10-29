@@ -1303,9 +1303,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 389</li>
+<li>Concepts: 470</li>
 <li>Surfaces: 26 (26 task, 0 session)</li>
-<li>Surface bindings: 594</li>
+<li>Surface bindings: 705</li>
 </ul>
 <table>
 <thead>
@@ -1338,7 +1338,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-importvla">ImportVLA</a><br><code>importvla</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>importvla</code></td>
 <td style="text-align: right;">12</td>
 <td>scan or import old VLA export archives from disk</td>
@@ -1394,17 +1394,17 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-mstransform">MSTransform</a><br><code>mstransform</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>mstransform</code></td>
-<td style="text-align: right;">11</td>
+<td style="text-align: right;">55</td>
 <td>Materialize a selected MeasurementSet into a new output MS.</td>
 </tr>
 <tr>
 <td><a href="#surface-split">Split</a><br><code>split</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>mstransform</code></td>
-<td style="text-align: right;">11</td>
+<td style="text-align: right;">20</td>
 <td>Create a selected MeasurementSet subset, equivalent to CASA split.</td>
 </tr>
 <tr>
@@ -1458,15 +1458,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-flagdata">Flag Data</a><br><code>flagdata</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>flagdata</code></td>
-<td style="text-align: right;">18</td>
+<td style="text-align: right;">76</td>
 <td>Run native CASA-style MeasurementSet flagging.</td>
 </tr>
 <tr>
 <td><a href="#surface-flagmanager">Flag Manager</a><br><code>flagmanager</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>flagmanager</code></td>
 <td style="text-align: right;">6</td>
 <td>Manage MeasurementSet flag-version snapshots.</td>
@@ -2531,7 +2531,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="importvla-importvla">ImportVLA (<code>importvla</code>)<a class="headerlink" href="#importvla-importvla" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Import</li>
 <li>Provider family: <code>importvla</code></li>
 <li>Summary: scan or import old VLA export archives from disk</li>
@@ -2550,9 +2550,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tbody>
 <tr>
 <td><code>archivefiles</code></td>
-<td><code>parameter.archivefiles@r2</code></td>
+<td><code>parameter.archivefiles@r3</code></td>
 <td><code>array&lt;path (archive)&gt;</code></td>
-<td>no default; required</td>
+<td><code>[]</code>; required</td>
 <td>Input</td>
 <td>Input VLA export archive paths.<br><em>Surface:</em> The canonical archive-path list is passed to importvla as one comma-separated --archivefiles value.</td>
 </tr>
@@ -2560,15 +2560,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.output.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td><code>[]</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
-<td>Output MeasurementSet path; defaults to ./&lt;first-archive-stem&gt;.ms for imports</td>
+<td>Output MeasurementSet path; defaults to ./&lt;first-archive-stem&gt;.ms for imports<br><em>Surface:</em> When vis is empty, casa-rs names the MeasurementSet after the first archive file, where CASA raises.</td>
 </tr>
 <tr>
 <td><code>bandname</code></td>
-<td><code>parameter.bandname@r1</code></td>
+<td><code>parameter.bandname@r2</code></td>
 <td><code>choice (11 values)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Optional CASA <code>importvla</code> band selector</td>
 </tr>
@@ -2584,7 +2584,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>project</code></td>
 <td><code>parameter.project@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Optional project-code selector</td>
 </tr>
@@ -2592,7 +2592,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>starttime</code></td>
 <td><code>parameter.starttime@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Optional inclusive CASA-style start time</td>
 </tr>
@@ -2600,7 +2600,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>stoptime</code></td>
 <td><code>parameter.stoptime@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Optional inclusive CASA-style stop time</td>
 </tr>
@@ -4156,7 +4156,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="mstransform-mstransform">MSTransform (<code>mstransform</code>)<a class="headerlink" href="#mstransform-mstransform" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Materialize a selected MeasurementSet into a new output MS.</li>
@@ -4177,7 +4177,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms.</td>
 </tr>
@@ -4185,39 +4185,63 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>outputvis</code></td>
 <td><code>parameter.outputvis@r1</code></td>
 <td><code>path (measurement_set)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
 </tr>
 <tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+<td><code>createmms</code></td>
+<td><code>mstransform.createmms@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Write a multi-MS rather than one MeasurementSet.</td>
 </tr>
 <tr>
-<td><code>width</code></td>
-<td><code>ms.transform.width@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Selection</td>
-<td>Number of adjacent selected channels averaged into each output channel.</td>
+<td><code>separationaxis</code></td>
+<td><code>mstransform.separationaxis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Output</td>
+<td>Axis a multi-MS is partitioned along.</td>
+</tr>
+<tr>
+<td><code>numsubms</code></td>
+<td><code>mstransform.numsubms@r1</code></td>
+<td><code>string</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Output</td>
+<td>Number of sub-MeasurementSets in a multi-MS: 'auto' or a count.</td>
+</tr>
+<tr>
+<td><code>tileshape</code></td>
+<td><code>mstransform.tileshape@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[0]</code>; optional</td>
+<td>Output</td>
+<td>Tile shape of the output data columns.</td>
 </tr>
 <tr>
 <td><code>field</code></td>
 <td><code>ms.selection.field@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>CASA field selector.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
 <td><code>ms.selection.scan@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated scan numbers</td>
 </tr>
@@ -4225,33 +4249,81 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>antenna</code></td>
 <td><code>ms.selection.antenna@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>correlation</code></td>
+<td><code>ms.selection.correlation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Correlation selector.</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
 <td><code>ms.selection.timerange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Inclusive TIME range in MJD seconds</td>
 </tr>
 <tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>array</code></td>
+<td><code>ms.selection.array@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated ARRAY_ID integers</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>UV range selector.</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>feed</code></td>
+<td><code>ms.selection.feed@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Feed selector.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>
 <td><code>parameter.datacolumn@r1</code></td>
 <td><code>string</code></td>
-<td><code>"DATA"</code>; optional</td>
+<td><code>"corrected"</code>; optional</td>
 <td>Data</td>
 <td>Visibility data column used by the surface.</td>
+</tr>
+<tr>
+<td><code>realmodelcol</code></td>
+<td><code>mstransform.realmodelcol@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Data</td>
+<td>Write a virtual MODEL column as a real one.</td>
 </tr>
 <tr>
 <td><code>keepflags</code></td>
@@ -4261,13 +4333,293 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Data</td>
 <td>Preserve rows that are fully flagged in the selected output.</td>
 </tr>
+<tr>
+<td><code>usewtspectrum</code></td>
+<td><code>mstransform.usewtspectrum@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Data</td>
+<td>Create WEIGHT_SPECTRUM and SIGMA_SPECTRUM in the output.</td>
+</tr>
+<tr>
+<td><code>combinespws</code></td>
+<td><code>mstransform.combinespws@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Spectral</td>
+<td>Combine the selected spectral windows into one.</td>
+</tr>
+<tr>
+<td><code>chanaverage</code></td>
+<td><code>mstransform.chanaverage@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Spectral</td>
+<td>Average chanbin channels into one.</td>
+</tr>
+<tr>
+<td><code>chanbin</code></td>
+<td><code>parameter.chanbin@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Spectral</td>
+<td>Channel bin mode.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True, as CASA's mstransform does.</td>
+</tr>
+<tr>
+<td><code>hanning</code></td>
+<td><code>mstransform.hanning@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Spectral</td>
+<td>Hanning-smooth the spectra.</td>
+</tr>
+<tr>
+<td><code>regridms</code></td>
+<td><code>mstransform.regridms@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Spectral</td>
+<td>Regrid the spectral axis.</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td><code>regridms.mode@r1</code></td>
+<td><code>string</code></td>
+<td><code>"channel"</code>; optional</td>
+<td>Spectral</td>
+<td>How the regridded spectral axis is given: 'channel', 'velocity', 'frequency' or 'channel_b'.</td>
+</tr>
+<tr>
+<td><code>nchan</code></td>
+<td><code>regridms.nchan@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Spectral</td>
+<td>Number of channels of the regridded spectral axis; -1 for all.</td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td><code>regridms.start@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Spectral</td>
+<td>First channel of the regridded spectral axis.</td>
+</tr>
+<tr>
+<td><code>width</code></td>
+<td><code>regridms.width@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Spectral</td>
+<td>Channel width of the regridded spectral axis.</td>
+</tr>
+<tr>
+<td><code>nspw</code></td>
+<td><code>regridms.nspw@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Spectral</td>
+<td>Number of spectral windows the regridded axis is split into.</td>
+</tr>
+<tr>
+<td><code>interpolation</code></td>
+<td><code>regridms.interpolation@r1</code></td>
+<td><code>string</code></td>
+<td><code>"linear"</code>; optional</td>
+<td>Spectral</td>
+<td>Interpolation the spectral regridding uses.</td>
+</tr>
+<tr>
+<td><code>phasecenter</code></td>
+<td><code>parameter.phasecenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Spectral</td>
+<td>Explicit CASA-style J2000 phase center</td>
+</tr>
+<tr>
+<td><code>restfreq</code></td>
+<td><code>parameter.restfreq@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Spectral</td>
+<td>Rest frequency used for velocity-style cube axes</td>
+</tr>
+<tr>
+<td><code>outframe</code></td>
+<td><code>regridms.outframe@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Spectral</td>
+<td>Reference frame of the regridded spectral axis; empty keeps the input's.</td>
+</tr>
+<tr>
+<td><code>veltype</code></td>
+<td><code>regridms.veltype@r1</code></td>
+<td><code>string</code></td>
+<td><code>"radio"</code>; optional</td>
+<td>Spectral</td>
+<td>Velocity definition: 'radio' or 'optical'.</td>
+</tr>
+<tr>
+<td><code>preaverage</code></td>
+<td><code>regridms.preaverage@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Spectral</td>
+<td>Average channels before regridding to wider ones.</td>
+</tr>
+<tr>
+<td><code>timeaverage</code></td>
+<td><code>mstransform.timeaverage@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Time</td>
+<td>Average in time over timebin.</td>
+</tr>
+<tr>
+<td><code>timebin</code></td>
+<td><code>parameter.timebin@r2</code></td>
+<td><code>string</code></td>
+<td><code>"0s"</code>; optional</td>
+<td>Time</td>
+<td>Averaging time bin, a time quantity as CASA writes it.</td>
+</tr>
+<tr>
+<td><code>timespan</code></td>
+<td><code>mstransform.timespan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Time</td>
+<td>Let time averages span 'scan', 'state' or both.</td>
+</tr>
+<tr>
+<td><code>maxuvwdistance</code></td>
+<td><code>mstransform.maxuvwdistance@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Time</td>
+<td>Largest UVW change, in metres, a time average may span.</td>
+</tr>
+<tr>
+<td><code>docallib</code></td>
+<td><code>mstransform.docallib@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Calibration</td>
+<td>Apply calibration from callib on the fly.</td>
+</tr>
+<tr>
+<td><code>callib</code></td>
+<td><code>parameter.callib@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Calibration</td>
+<td>CASA callibrary file describing the calibration-table chain</td>
+</tr>
+<tr>
+<td><code>douvcontsub</code></td>
+<td><code>mstransform.douvcontsub@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Continuum</td>
+<td>Subtract the continuum, as uvcontsub does.</td>
+</tr>
+<tr>
+<td><code>fitspw</code></td>
+<td><code>parameter.fitspw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Continuum</td>
+<td>Fit SPW selector.</td>
+</tr>
+<tr>
+<td><code>fitorder</code></td>
+<td><code>parameter.fitorder@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Continuum</td>
+<td>Polynomial fit order.</td>
+</tr>
+<tr>
+<td><code>want_cont</code></td>
+<td><code>uvcontsub.want_cont@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Continuum</td>
+<td>Write the continuum fit rather than the subtracted data.</td>
+</tr>
+<tr>
+<td><code>denoising_lib</code></td>
+<td><code>uvcontsub.denoising_lib@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Continuum</td>
+<td>Fit the continuum with the GSL denoising library.</td>
+</tr>
+<tr>
+<td><code>nthreads</code></td>
+<td><code>uvcontsub.nthreads@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Continuum</td>
+<td>Threads for the continuum fit.</td>
+</tr>
+<tr>
+<td><code>niter</code></td>
+<td><code>uvcontsub.niter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Continuum</td>
+<td>Iterations of the continuum's re-weighted linear fit.</td>
+</tr>
+<tr>
+<td><code>disableparallel</code></td>
+<td><code>mstransform.disableparallel@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>CASA's internal control of parallel processing.</td>
+</tr>
+<tr>
+<td><code>ddistart</code></td>
+<td><code>mstransform.ddistart@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Output</td>
+<td>CASA's internal first data-description id.</td>
+</tr>
+<tr>
+<td><code>taql</code></td>
+<td><code>mstransform.taql@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>TaQL expression that selects rows.</td>
+</tr>
+<tr>
+<td><code>monolithic_processing</code></td>
+<td><code>mstransform.monolithic_processing@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>CASA's internal control of multi-MS processing.</td>
+</tr>
+<tr>
+<td><code>reindex</code></td>
+<td><code>mstransform.reindex@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Re-index the output's subtable ids from zero.</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-split"></a></p>
 <h2 id="split-split">Split (<code>split</code>)<a class="headerlink" href="#split-split" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Create a selected MeasurementSet subset, equivalent to CASA split.</li>
@@ -4288,7 +4640,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms.</td>
 </tr>
@@ -4296,39 +4648,39 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>outputvis</code></td>
 <td><code>parameter.outputvis@r1</code></td>
 <td><code>path (measurement_set)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
 </tr>
 <tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>width</code></td>
-<td><code>ms.transform.width@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Selection</td>
-<td>Number of adjacent selected channels averaged into each output channel.</td>
+<td><code>keepmms</code></td>
+<td><code>parameter.keepmms@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Preserve MMS structure.</td>
 </tr>
 <tr>
 <td><code>field</code></td>
 <td><code>ms.selection.field@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>CASA field selector.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
 <td><code>ms.selection.scan@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated scan numbers</td>
 </tr>
@@ -4336,31 +4688,71 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>antenna</code></td>
 <td><code>ms.selection.antenna@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>correlation</code></td>
+<td><code>ms.selection.correlation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Correlation selector.</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
 <td><code>ms.selection.timerange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Inclusive TIME range in MJD seconds</td>
 </tr>
 <tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>array</code></td>
+<td><code>ms.selection.array@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated ARRAY_ID integers</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>UV range selector.</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>feed</code></td>
+<td><code>ms.selection.feed@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Feed selector.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>
 <td><code>parameter.datacolumn@r1</code></td>
 <td><code>string</code></td>
-<td><code>"DATA"</code>; optional</td>
+<td><code>"corrected"</code>; optional</td>
 <td>Data</td>
 <td>Visibility data column used by the surface.</td>
 </tr>
@@ -4371,6 +4763,38 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>true</code>; optional</td>
 <td>Data</td>
 <td>Preserve rows that are fully flagged in the selected output.</td>
+</tr>
+<tr>
+<td><code>width</code></td>
+<td><code>ms.transform.width@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Selection</td>
+<td>Number of adjacent selected channels averaged into each output channel.</td>
+</tr>
+<tr>
+<td><code>timebin</code></td>
+<td><code>parameter.timebin@r2</code></td>
+<td><code>string</code></td>
+<td><code>"0s"</code>; optional</td>
+<td>Averaging</td>
+<td>Averaging time bin, a time quantity as CASA writes it.</td>
+</tr>
+<tr>
+<td><code>combine</code></td>
+<td><code>parameter.combine@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Averaging</td>
+<td>Axes to combine.</td>
+</tr>
+<tr>
+<td><code>msselect</code></td>
+<td><code>ms.selection.msselect@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Raw TaQL WHERE expression to AND with the structured selectors<br><em>Surface:</em> casa-rs's own control: CASA's split has no msselect parameter.</td>
 </tr>
 </tbody>
 </table>
@@ -5828,7 +6252,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="flag-data-flagdata">Flag Data (<code>flagdata</code>)<a class="headerlink" href="#flag-data-flagdata" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Flagging</li>
 <li>Provider family: <code>flagdata</code></li>
 <li>Summary: Run native CASA-style MeasurementSet flagging.</li>
@@ -5849,23 +6273,55 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.</td>
 </tr>
 <tr>
 <td><code>mode</code></td>
-<td><code>flagdata.mode@r1</code></td>
-<td><code>choice (7 values)</code></td>
-<td><code>"summary"</code>; optional</td>
+<td><code>flagdata.mode@r2</code></td>
+<td><code>choice (13 values)</code></td>
+<td><code>"manual"</code>; optional</td>
 <td>Flagging</td>
 <td>Flagging mode.</td>
+</tr>
+<tr>
+<td><code>autocorr</code></td>
+<td><code>flagdata.autocorr@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Flag only the autocorrelations of the selection.</td>
+</tr>
+<tr>
+<td><code>inpfile</code></td>
+<td><code>flagdata.inpfile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>File, files or list of flag commands to apply in list mode.</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td><code>flagdata.reason@r1</code></td>
+<td><code>string</code></td>
+<td><code>"any"</code>; optional</td>
+<td>Input</td>
+<td>Select list-mode flag commands by their reason.</td>
+</tr>
+<tr>
+<td><code>tbuff</code></td>
+<td><code>flagdata.tbuff@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Input</td>
+<td>Time buffer in seconds that pads each flag command's time range.</td>
 </tr>
 <tr>
 <td><code>spw</code></td>
 <td><code>ms.selection.spw@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
 </tr>
@@ -5873,49 +6329,137 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>field</code></td>
 <td><code>ms.selection.field@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>CASA field selector.</td>
-</tr>
-<tr>
-<td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated scan numbers</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
 <td><code>ms.selection.antenna@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>UV range selector.</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Inclusive TIME range in MJD seconds</td>
+</tr>
+<tr>
+<td><code>correlation</code></td>
+<td><code>ms.selection.correlation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Correlation selector.</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated scan numbers</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>array</code></td>
+<td><code>ms.selection.array@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated ARRAY_ID integers</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>feed</code></td>
+<td><code>ms.selection.feed@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Feed selector.</td>
+</tr>
+<tr>
+<td><code>clipminmax</code></td>
+<td><code>flagdata.clipminmax@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Clip</td>
+<td>Range of data values that clip mode keeps; values outside it are flagged.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>
 <td><code>parameter.datacolumn@r1</code></td>
 <td><code>string</code></td>
-<td><code>"data"</code>; optional</td>
+<td><code>"DATA"</code>; optional</td>
 <td>Data</td>
 <td>Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes.</td>
 </tr>
 <tr>
-<td><code>action</code></td>
-<td><code>flagdata.action@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"flag"</code>; optional</td>
-<td>Flagging</td>
-<td>Manual mode flagging action.</td>
-</tr>
-<tr>
-<td><code>flagbackup</code></td>
-<td><code>parameter.flagbackup@r1</code></td>
+<td><code>clipoutside</code></td>
+<td><code>flagdata.clipoutside@r1</code></td>
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
-<td>Safety</td>
-<td>Create a flagmanager backup before mutating flags.</td>
+<td>Clip</td>
+<td>Clip outside clipminmax's range rather than inside it.</td>
+</tr>
+<tr>
+<td><code>channelavg</code></td>
+<td><code>flagdata.channelavg@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Clip</td>
+<td>Average channels before clipping.</td>
+</tr>
+<tr>
+<td><code>chanbin</code></td>
+<td><code>parameter.chanbin@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Clip</td>
+<td>Channel bin mode.</td>
+</tr>
+<tr>
+<td><code>timeavg</code></td>
+<td><code>flagdata.timeavg@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Clip</td>
+<td>Average time before clipping.</td>
+</tr>
+<tr>
+<td><code>timebin</code></td>
+<td><code>parameter.timebin@r2</code></td>
+<td><code>string</code></td>
+<td><code>"0s"</code>; optional</td>
+<td>Clip</td>
+<td>Averaging time bin, a time quantity as CASA writes it.</td>
 </tr>
 <tr>
 <td><code>clipzeros</code></td>
@@ -5929,17 +6473,73 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>quackinterval</code></td>
 <td><code>parameter.quackinterval@r1</code></td>
 <td><code>float</code></td>
-<td><code>0.0</code>; optional</td>
+<td><code>1.0</code>; optional</td>
 <td>Quack</td>
 <td>Quack interval in seconds.</td>
 </tr>
 <tr>
 <td><code>quackmode</code></td>
-<td><code>parameter.quackmode@r1</code></td>
-<td><code>choice (2 values)</code></td>
+<td><code>parameter.quackmode@r2</code></td>
+<td><code>choice (4 values)</code></td>
 <td><code>"beg"</code>; optional</td>
 <td>Quack</td>
-<td>Quack scan edge.</td>
+<td>Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first.</td>
+</tr>
+<tr>
+<td><code>quackincrement</code></td>
+<td><code>flagdata.quackincrement@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Quack</td>
+<td>Quack successive intervals, taking existing flags into account.</td>
+</tr>
+<tr>
+<td><code>tolerance</code></td>
+<td><code>flagdata.tolerance@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Shadow</td>
+<td>Shadowing in metres that shadow mode tolerates.</td>
+</tr>
+<tr>
+<td><code>addantenna</code></td>
+<td><code>flagdata.addantenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Shadow</td>
+<td>Antennas, from a file or dictionary, that shadow mode adds.</td>
+</tr>
+<tr>
+<td><code>lowerlimit</code></td>
+<td><code>flagdata.lowerlimit@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Elevation</td>
+<td>Lowest elevation, in degrees, that elevation mode keeps.</td>
+</tr>
+<tr>
+<td><code>upperlimit</code></td>
+<td><code>flagdata.upperlimit@r1</code></td>
+<td><code>float</code></td>
+<td><code>90.0</code>; optional</td>
+<td>Elevation</td>
+<td>Highest elevation, in degrees, that elevation mode keeps.</td>
+</tr>
+<tr>
+<td><code>ntime</code></td>
+<td><code>flagdata.ntime@r1</code></td>
+<td><code>string</code></td>
+<td><code>"scan"</code>; optional</td>
+<td>Automatic</td>
+<td>Time chunk the automatic modes analyse: 'scan' or a time.<br><em>Surface:</em> CASA's flagdata parses ntime in every mode before it runs one, so a value other than 'scan' is refused in every mode until #978.</td>
+</tr>
+<tr>
+<td><code>combinescans</code></td>
+<td><code>flagdata.combinescans@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Automatic</td>
+<td>Let the automatic modes' time chunks span scans.</td>
 </tr>
 <tr>
 <td><code>timecutoff</code></td>
@@ -5958,36 +6558,324 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>TFCrop frequency cutoff in robust sigma units.</td>
 </tr>
 <tr>
-<td><code>timedev</code></td>
-<td><code>parameter.timedev@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>timefit</code></td>
+<td><code>flagdata.timefit@r1</code></td>
+<td><code>string</code></td>
+<td><code>"line"</code>; optional</td>
 <td>Automatic</td>
-<td>Explicit RFlag time threshold.</td>
+<td>Fit tfcrop makes along time: 'line' or 'poly'.</td>
 </tr>
 <tr>
-<td><code>freqdev</code></td>
-<td><code>parameter.freqdev@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
+<td><code>freqfit</code></td>
+<td><code>flagdata.freqfit@r1</code></td>
+<td><code>string</code></td>
+<td><code>"poly"</code>; optional</td>
+<td>Automatic</td>
+<td>Fit tfcrop makes along frequency: 'line' or 'poly'.</td>
+</tr>
+<tr>
+<td><code>maxnpieces</code></td>
+<td><code>flagdata.maxnpieces@r1</code></td>
+<td><code>integer</code></td>
+<td><code>7</code>; optional</td>
+<td>Automatic</td>
+<td>Number of pieces in tfcrop's piecewise polynomial fits.</td>
+</tr>
+<tr>
+<td><code>flagdimension</code></td>
+<td><code>flagdata.flagdimension@r1</code></td>
+<td><code>string</code></td>
+<td><code>"freqtime"</code>; optional</td>
+<td>Automatic</td>
+<td>Directions tfcrop flags along: 'freq', 'time', 'freqtime' or 'timefreq'.</td>
+</tr>
+<tr>
+<td><code>usewindowstats</code></td>
+<td><code>flagdata.usewindowstats@r1</code></td>
+<td><code>string</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Automatic</td>
-<td>Explicit RFlag spectral threshold.</td>
+<td>Sliding-window statistics tfcrop adds: 'none', 'sum', 'std' or 'both'.</td>
+</tr>
+<tr>
+<td><code>halfwin</code></td>
+<td><code>flagdata.halfwin@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Automatic</td>
+<td>Half-width of tfcrop's sliding window.</td>
 </tr>
 <tr>
 <td><code>extendflags</code></td>
 <td><code>parameter.extendflags@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Extend</td>
 <td>Run post-extension after automatic flagging.</td>
+</tr>
+<tr>
+<td><code>winsize</code></td>
+<td><code>flagdata.winsize@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Automatic</td>
+<td>Number of time steps in rflag's sliding window.</td>
+</tr>
+<tr>
+<td><code>timedev</code></td>
+<td><code>parameter.timedev@r2</code></td>
+<td><code>optional&lt;float&gt; (states: , none)</code></td>
+<td><code>""</code>; optional</td>
+<td>Automatic</td>
+<td>Explicit RFlag time threshold.<br><em>Surface:</em> One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it.</td>
+</tr>
+<tr>
+<td><code>freqdev</code></td>
+<td><code>parameter.freqdev@r2</code></td>
+<td><code>optional&lt;float&gt; (states: , none)</code></td>
+<td><code>""</code>; optional</td>
+<td>Automatic</td>
+<td>Explicit RFlag spectral threshold.<br><em>Surface:</em> One threshold for every field and window, scaled by freqdevscale; '', 'none' or [] lets rflag compute it.</td>
+</tr>
+<tr>
+<td><code>timedevscale</code></td>
+<td><code>flagdata.timedevscale@r1</code></td>
+<td><code>float</code></td>
+<td><code>5.0</code>; optional</td>
+<td>Automatic</td>
+<td>Factor that scales rflag's time-deviation threshold.</td>
+</tr>
+<tr>
+<td><code>freqdevscale</code></td>
+<td><code>flagdata.freqdevscale@r1</code></td>
+<td><code>float</code></td>
+<td><code>5.0</code>; optional</td>
+<td>Automatic</td>
+<td>Factor that scales rflag's frequency-deviation threshold.</td>
+</tr>
+<tr>
+<td><code>spectralmax</code></td>
+<td><code>flagdata.spectralmax@r1</code></td>
+<td><code>float</code></td>
+<td><code>1000000.0</code>; optional</td>
+<td>Automatic</td>
+<td>rflag flags a whole spectrum whose deviation exceeds this.</td>
+</tr>
+<tr>
+<td><code>spectralmin</code></td>
+<td><code>flagdata.spectralmin@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Automatic</td>
+<td>rflag flags a whole spectrum whose deviation is below this.</td>
+</tr>
+<tr>
+<td><code>antint_ref_antenna</code></td>
+<td><code>flagdata.antint_ref_antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Antint</td>
+<td>Antenna whose baselines antint mode examines.</td>
+</tr>
+<tr>
+<td><code>minchanfrac</code></td>
+<td><code>flagdata.minchanfrac@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.6</code>; optional</td>
+<td>Antint</td>
+<td>Fraction of flagged channels at which antint flags an integration.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Antint</td>
+<td>Verbose logging.</td>
 </tr>
 <tr>
 <td><code>extendpols</code></td>
 <td><code>parameter.extendpols@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Extend</td>
 <td>Extend flags across correlations.</td>
+</tr>
+<tr>
+<td><code>growtime</code></td>
+<td><code>flagdata.growtime@r1</code></td>
+<td><code>float</code></td>
+<td><code>50.0</code>; optional</td>
+<td>Extend</td>
+<td>Percentage of flagged time at which extend mode flags a whole channel.</td>
+</tr>
+<tr>
+<td><code>growfreq</code></td>
+<td><code>flagdata.growfreq@r1</code></td>
+<td><code>float</code></td>
+<td><code>50.0</code>; optional</td>
+<td>Extend</td>
+<td>Percentage of flagged channels at which extend mode flags a whole time step.</td>
+</tr>
+<tr>
+<td><code>growaround</code></td>
+<td><code>flagdata.growaround@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Extend</td>
+<td>Extend flags to points mostly surrounded by flags.</td>
+</tr>
+<tr>
+<td><code>flagneartime</code></td>
+<td><code>flagdata.flagneartime@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Extend</td>
+<td>Flag the time steps either side of each flagged one.</td>
+</tr>
+<tr>
+<td><code>flagnearfreq</code></td>
+<td><code>flagdata.flagnearfreq@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Extend</td>
+<td>Flag the channels either side of each flagged one.</td>
+</tr>
+<tr>
+<td><code>minrel</code></td>
+<td><code>flagdata.minrel@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Summary</td>
+<td>Smallest flagged fraction a summary entry reports.</td>
+</tr>
+<tr>
+<td><code>maxrel</code></td>
+<td><code>flagdata.maxrel@r1</code></td>
+<td><code>float</code></td>
+<td><code>1.0</code>; optional</td>
+<td>Summary</td>
+<td>Largest flagged fraction a summary entry reports.</td>
+</tr>
+<tr>
+<td><code>minabs</code></td>
+<td><code>flagdata.minabs@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Summary</td>
+<td>Smallest flag count a summary entry reports.</td>
+</tr>
+<tr>
+<td><code>maxabs</code></td>
+<td><code>flagdata.maxabs@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Summary</td>
+<td>Largest flag count a summary entry reports; -1 for no limit.</td>
+</tr>
+<tr>
+<td><code>spwchan</code></td>
+<td><code>flagdata.spwchan@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Summary</td>
+<td>Report flags per spectral window and channel in the summary.</td>
+</tr>
+<tr>
+<td><code>spwcorr</code></td>
+<td><code>flagdata.spwcorr@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Summary</td>
+<td>Report flags per spectral window and correlation in the summary.</td>
+</tr>
+<tr>
+<td><code>basecnt</code></td>
+<td><code>flagdata.basecnt@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Summary</td>
+<td>Report flags per baseline in the summary.</td>
+</tr>
+<tr>
+<td><code>fieldcnt</code></td>
+<td><code>flagdata.fieldcnt@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Summary</td>
+<td>Break the summary down per field.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>flagdata.name@r1</code></td>
+<td><code>string</code></td>
+<td><code>"Summary"</code>; optional</td>
+<td>Summary</td>
+<td>Name the summary's dictionary carries.</td>
+</tr>
+<tr>
+<td><code>action</code></td>
+<td><code>flagdata.action@r2</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>"apply"</code>; optional</td>
+<td>Flagging</td>
+<td>CASA's flagdata action: 'apply' writes the flags, 'calculate' computes them without writing, 'none' or '' does neither.</td>
+</tr>
+<tr>
+<td><code>display</code></td>
+<td><code>flagdata.display@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Show data or reports while flagging: '', 'data', 'report' or 'both'.</td>
+</tr>
+<tr>
+<td><code>flagbackup</code></td>
+<td><code>parameter.flagbackup@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Safety</td>
+<td>Create a flagmanager backup before mutating flags.</td>
+</tr>
+<tr>
+<td><code>savepars</code></td>
+<td><code>flagdata.savepars@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Save the flag commands to FLAG_CMD or to outfile.</td>
+</tr>
+<tr>
+<td><code>cmdreason</code></td>
+<td><code>flagdata.cmdreason@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Reason saved with the flag commands.</td>
+</tr>
+<tr>
+<td><code>outfile</code></td>
+<td><code>savepars.outfile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>File that receives the saved flag commands; empty for the FLAG_CMD table.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>savepars.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Let savepars replace an existing command file.</td>
+</tr>
+<tr>
+<td><code>writeflags</code></td>
+<td><code>flagdata.writeflags@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Write the flags the automatic modes compute to the MeasurementSet.</td>
 </tr>
 </tbody>
 </table>
@@ -5995,7 +6883,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="flag-manager-flagmanager">Flag Manager (<code>flagmanager</code>)<a class="headerlink" href="#flag-manager-flagmanager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Flagging</li>
 <li>Provider family: <code>flagmanager</code></li>
 <li>Summary: Manage MeasurementSet flag-version snapshots.</li>
@@ -6016,7 +6904,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.</td>
 </tr>
@@ -6032,7 +6920,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>versionname</code></td>
 <td><code>parameter.versionname@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Operation</td>
 <td>Target flag-version name.</td>
 </tr>
@@ -6040,7 +6928,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>oldname</code></td>
 <td><code>parameter.oldname@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Operation</td>
 <td>Existing flag-version name for rename.</td>
 </tr>
@@ -6048,7 +6936,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>comment</code></td>
 <td><code>parameter.comment@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Operation</td>
 <td>Comment stored with saved or renamed versions.</td>
 </tr>

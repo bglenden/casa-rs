@@ -1089,12 +1089,15 @@ declared products (<code>result</code>, <code>products</code>); result projectio
 Rust-owned.</p>
 <p>The CASA-named wrappers and their type stubs are generated from the catalog,
 under <code>casars.tasks</code>; there is no second provider-specific task API. A
-surface that names its CASA task (<code>casa_task</code>; the image tasks and
-<code>simobserve</code> so far) has CASA's exact signature: CASA's parameters in CASA's
-order, positional or by keyword, with CASA's defaults, then casa-rs's own
-controls, keyword-only. Its wrapper returns CASA's value: <code>imstat</code>'s
-statistics dictionary with NumPy arrays, <code>immath</code>'s <code>True</code>, <code>None</code> for most
-tasks. A parameter casa-rs does not implement yet is taken only at CASA's
+surface that names its CASA task (<code>casa_task</code>; the image tasks, <code>flagdata</code>,
+<code>flagmanager</code>, <code>importvla</code>, <code>mstransform</code>, <code>split</code> and <code>simobserve</code> so far)
+has CASA's exact signature: CASA's parameters in CASA's order, positional or
+by keyword, with CASA's defaults, then casa-rs's own controls, keyword-only.
+Its wrapper returns CASA's value: <code>imstat</code>'s statistics dictionary with NumPy
+arrays, <code>immath</code>'s <code>True</code>, <code>flagdata</code>'s summary dictionary in summary mode
+and <code>{}</code> in its other modes, <code>flagmanager</code>'s version list in list mode,
+<code>None</code> for most tasks. A parameter casa-rs does not implement yet is taken
+only at CASA's
 default and refused at any other value, naming its issue; the wrapper's
 docstring lists them. The other wrappers take keyword arguments and return
 the <code>TaskCompletion</code> until their families are converted (#931).

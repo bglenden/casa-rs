@@ -1967,6 +1967,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagmanager gives the version a save renames the new comment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagdata's summary aborts on a correlation it cannot name
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2082,7 +2104,10 @@ Calibration behaviours casa-rs does not follow:
 <a href="#modifymodel-labels-the-new-images-stokes-planes-by-their-count"><code>modifymodel</code>'s Stokes labels</a>,
 <a href="#modifymodel-indexes-the-map-it-makes-of-two-cells"><code>incell</code> as two cells</a>,
 <a href="#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment">the component-only model's unset width</a>,
-<a href="#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame">component spectra in another frame</a>.</p>
+<a href="#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame">component spectra in another frame</a>.
+Flagging behaviours casa-rs does not follow:
+<a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
+<a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -4237,6 +4262,36 @@ single plane included (<code>casa_imaging_application</code>'s <code>StartModel<
 one plane seeds the MFS plane at whatever frequency it is stated. That is
 physically sound for a continuum model, and casa-rs keeps it. A cube's start
 model must have the cube's spectral axis.</p>
+<h2 id="flagmanager-gives-the-version-a-save-renames-the-new-comment"><code>flagmanager</code> gives the version a save renames the new comment<a class="headerlink" href="#flagmanager-gives-the-version-a-save-renames-the-new-comment" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#931, #997 review)</li>
+<li>Affected code: casatasks <code>private/task_flagmanager.py</code> (mode <code>save</code>,
+  lines 51–83)</li>
+</ul>
+<p>Saving a version under a name that already exists first renames the old
+version to <code>&lt;name&gt;.old.&lt;seconds since 1970&gt;</code>, so both stay restorable. The
+task then rewrites the old entry of <code>FLAG_VERSION_LIST</code> as
+<code>tmpname + ' : ' + comment</code>, where <code>comment</code> is the comment of the new save.
+CASA 6.7.6.14 lists <code>{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
+1: {'name': 'v1', 'comment': 'second'}}</code> after saving <code>v1</code> with <code>'first'</code>
+and then <code>'second'</code>; the first comment is lost. casa-rs renames the version
+the same way and keeps its own comment (<code>flagmanager</code>'s
+<code>keep_existing_version</code>).</p>
+<h2 id="flagdatas-summary-aborts-on-a-correlation-it-cannot-name"><code>flagdata</code>'s summary aborts on a correlation it cannot name<a class="headerlink" href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#931, #997 review)</li>
+<li>Affected code: casatools <code>flagging/Flagging/FlagMSHandler.cc</code> (<code>open</code>) and
+  <code>FlagDataHandler.cc</code> (<code>generatePolarizationsMap</code>)</li>
+</ul>
+<p>With a polarization whose <code>CORR_TYPE</code> is RX, RY, LX and LY (casacore Stokes
+types 13 to 16), CASA 6.7.6.14's <code>flagdata(mode='summary')</code> warns
+"Correlation product unknown found: 13" and "The 0 th correlation is
+unknown: 13", then aborts the Python process with an uncaught
+<code>std::out_of_range</code> from <code>map::at</code>; there is no summary. casa-rs names
+every correlation by casacore's <code>Stokes::name</code>, so the summary keys those
+correlations <code>RX</code>, <code>RY</code>, <code>LX</code> and <code>LY</code> (<code>listobs::stokes_name</code>).</p>
 
 
 
