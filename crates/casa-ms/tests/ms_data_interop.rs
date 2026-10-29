@@ -11,7 +11,7 @@ mod common;
 
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
-use casa_ms::{OptionalMainColumn, VisibilityDataColumn};
+use casa_ms::{OptionalMainColumn, SubtableId, VisibilityDataColumn};
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_interop::MeasurementSetOracle;
 use common::{NUM_CHAN, NUM_CORR, populate_main_rows, populate_subtables, verify_vis_data};
@@ -102,6 +102,41 @@ fn ms_data_column_rust_to_cpp_round_trip() {
 
 /// C++ write → Rust read: Rust must be able to open a MeasurementSet created
 /// with casacore's `MeasurementSet` and read back the same typed structure.
+/// casa-rs lays out each subtable it creates as casacore does
+/// (`MeasurementSet::createDefaultSubtables`): the same columns in the same
+/// order, which CASA's `concat` needs to append to it (`TableRow::put`
+/// compares the names in order).
+#[test]
+fn created_subtables_are_laid_out_as_casacore_lays_them_out() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping subtable layout interop test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let cpp = dir.path().join("cpp.ms");
+    MeasurementSetOracle::write_basic_fixture(&cpp).expect("C++ should write fixture MS");
+    let rust = dir.path().join("rust.ms");
+    MeasurementSet::create(&rust, MeasurementSetBuilder::new())
+        .and_then(|mut ms| ms.save().map(|()| ms))
+        .expect("Rust should create an MS");
+    let (cpp, rust) = (
+        MeasurementSet::open(&cpp).unwrap(),
+        MeasurementSet::open(&rust).unwrap(),
+    );
+    let names = |ms: &MeasurementSet, id: SubtableId| -> Vec<String> {
+        ms.subtable(id)
+            .and_then(|table| table.schema())
+            .unwrap_or_else(|| panic!("{}", id.name()))
+            .columns()
+            .iter()
+            .map(|column| column.name().to_string())
+            .collect()
+    };
+    for id in SubtableId::ALL_REQUIRED {
+        assert_eq!(names(&rust, *id), names(&cpp, *id), "{}", id.name());
+    }
+}
+
 #[test]
 fn ms_data_column_cpp_to_rust_round_trip() {
     if !casacore_oracle_available() {

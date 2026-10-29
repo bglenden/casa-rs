@@ -77,15 +77,16 @@ impl MeasurementSetBuilder {
         }
         let main = build_table_schema(&main_cols)?;
 
-        // Subtables: all required + selected optional
+        // Subtables: all required + selected optional, each laid out as
+        // casacore lays it out.
         let mut subtables = Vec::new();
         for id in SubtableId::ALL_REQUIRED {
-            let schema = build_table_schema(schema::required_columns(*id))?;
+            let schema = build_table_schema(&schema::required_columns_in_casacore_order(*id))?;
             subtables.push((*id, schema));
         }
         for id in &self.optional_subtables {
             if !id.is_required() {
-                let schema = build_table_schema(schema::required_columns(*id))?;
+                let schema = build_table_schema(&schema::required_columns_in_casacore_order(*id))?;
                 subtables.push((*id, schema));
             }
         }
@@ -180,5 +181,36 @@ mod tests {
         }
         let schemas = builder.build_schemas().expect("valid schemas");
         assert_eq!(schemas.subtables.len(), 17);
+    }
+
+    /// Every subtable is laid out in casacore's order, which CASA's
+    /// `concat` needs to append to it (`schema::casacore_order`).
+    #[test]
+    fn subtables_are_laid_out_as_casacore_lays_them_out() {
+        let mut builder = MeasurementSetBuilder::new();
+        for id in SubtableId::ALL_OPTIONAL {
+            builder = builder.with_optional_subtable(*id);
+        }
+        let schemas = builder.build_schemas().expect("valid schemas");
+        for (id, schema) in &schemas.subtables {
+            let names: Vec<&str> = schema
+                .columns()
+                .iter()
+                .map(|column| column.name())
+                .collect();
+            assert_eq!(
+                names,
+                schema::casacore_order::column_order(*id),
+                "{}",
+                id.name()
+            );
+        }
+        let pointing = &schemas
+            .subtables
+            .iter()
+            .find(|(id, _)| *id == SubtableId::Pointing)
+            .expect("POINTING")
+            .1;
+        assert_eq!(pointing.columns()[0].name(), "DIRECTION");
     }
 }
