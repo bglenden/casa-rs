@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The compiled selection resolved to an opened MeasurementSet's
-//! partitions, for the observation-batch route (#932, step 4).
+//! The compiled selection resolved to the opened MeasurementSet's
+//! partitions, which the passes read (#932).
 //!
 //! Compile resolves a request's selection against the MeasurementSet:
 //! data descriptions, channels, correlations, fields, UV distance and
@@ -8,8 +8,8 @@
 //! MeasurementSet's [`Msv2Observation`] that hold those samples: a
 //! partition's data description must be selected and, under an intent
 //! selection, its `OBS_MODE` must be a selected state's. It is the only part
-//! of the batch route that knows the store; the cutover resolves the
-//! selection against the catalogue itself (imaging-port §2.4).
+//! of the run that knows the store; compile resolves the selection against
+//! the catalogue itself in imaging-port §2.4.
 
 use std::collections::BTreeSet;
 
@@ -24,11 +24,11 @@ use crate::imaging::{PartitionSelection, SelectedPartition};
 /// Speed of light in m/s, for a window's reference wavelength.
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
-/// Why the selection cannot be read through the batch route.
+/// Why the selection cannot be read through the observation's partitions.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PartitionSelectionError {
-    /// What the batch route does not read yet.
-    #[error("the observation-batch route does not read {0}")]
+    /// What the passes do not read.
+    #[error("native imaging does not read {0}")]
     Unsupported(&'static str),
     /// A selected product the partition does not hold, or a window
     /// without channels or reference frequency.
@@ -40,13 +40,14 @@ pub(crate) enum PartitionSelectionError {
 }
 
 /// `problem`'s selection resolved to `observation`'s partitions, in
-/// partition order.
+/// partition order. Each partition's weights are its data group's
+/// ([`stored_weights`]).
 ///
 /// # Errors
 ///
-/// [`PartitionSelectionError::Unsupported`] for what the batch route does
-/// not read yet: several MeasurementSets, `FLOAT_DATA` and weights the
-/// observation's data group does not hold.
+/// [`PartitionSelectionError::Unsupported`] for what the passes do not
+/// read: several MeasurementSets, `FLOAT_DATA` (no request names it), and
+/// an intent selection by state that splits an `OBS_MODE`.
 pub(crate) fn resolve_partitions(
     problem: &CompiledProblem,
     observation: &Msv2Observation,
@@ -60,15 +61,10 @@ pub(crate) fn resolve_partitions(
     let columns = source.selected_columns();
     let catalogue = observation.catalogue();
     let visibilities = match columns.visibility() {
-        VisibilityColumn::Data => "DATA",
-        VisibilityColumn::CorrectedData => "CORRECTED_DATA",
         VisibilityColumn::FloatData => {
             return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
         }
-    };
-    let weights = match columns.weights() {
-        WeightColumn::Weight => "WEIGHT",
-        WeightColumn::WeightSpectrum => "WEIGHT_SPECTRUM",
+        visibility => column_name(visibility),
     };
     let rows = selection.rows_filter();
     let fields = match rows.fields() {
@@ -109,12 +105,6 @@ pub(crate) fn resolve_partitions(
             .ok_or(PartitionSelectionError::Unsupported(
                 "a visibility column without its data group",
             ))?;
-        if group.weights != weights {
-            return Err(PartitionSelectionError::Unsupported(
-                "a WEIGHT_SPECTRUM that MAIN's first row and the selected rows disagree on \
-                 (the MSv2 adapter decides from the first, today's route from every selected row)",
-            ));
-        }
         match &data_group {
             None => data_group = Some(group.name.clone()),
             Some(name) if *name == group.name => {}
@@ -191,6 +181,45 @@ pub(crate) fn resolve_partitions(
         fields,
         uv: rows.uv_distances().clone(),
     })
+}
+
+/// MAIN's column that holds `visibility`.
+fn column_name(visibility: VisibilityColumn) -> &'static str {
+    match visibility {
+        VisibilityColumn::Data => "DATA",
+        VisibilityColumn::CorrectedData => "CORRECTED_DATA",
+        VisibilityColumn::FloatData => "FLOAT_DATA",
+    }
+}
+
+/// The weights `observation`'s partitions of the selected data descriptions
+/// (`rows`) hold beside `visibility`: `WEIGHT_SPECTRUM` when any of them
+/// reads it, else `WEIGHT`. The MSv2 adapter decides each partition's by
+/// CASA's rule, at the first of its rows, and the passes read each
+/// partition's own weights; this names them in the problem's manifest.
+pub(super) fn stored_weights(
+    observation: &Msv2Observation,
+    rows: &casa_ms::SelectedObservationRowSelection,
+    visibility: VisibilityColumn,
+) -> WeightColumn {
+    let column = column_name(visibility);
+    let catalogue = observation.catalogue();
+    let spectral = catalogue.partition_ids().into_iter().any(|id| {
+        let description = observation.data_description_id(id);
+        rows.data_descriptions()
+            .iter()
+            .any(|selected| selected.data_description_id() == description)
+            && catalogue
+                .partition(id)
+                .data_groups
+                .iter()
+                .any(|group| group.visibilities == column && group.weights == "WEIGHT_SPECTRUM")
+    });
+    if spectral {
+        WeightColumn::WeightSpectrum
+    } else {
+        WeightColumn::Weight
+    }
 }
 
 /// The `OBS_MODE`s the MSv2 adapter partitions the rows of the states

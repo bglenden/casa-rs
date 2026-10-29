@@ -14,7 +14,7 @@ pub const SLOTS: usize = 2;
 /// pass that is one block reads and then grids, and one of a few blocks
 /// waits on its first and last. On a cold `MeasurementSet` (#932), a
 /// standard MFS pass of one block took 601 ms, of four 405 ms and of eight
-/// 367 ms, against 497 ms on the selected-observation route.
+/// 367 ms, against 497 ms on the MAIN-row route the cutover removed.
 pub const OVERLAPPED_BLOCKS: usize = 8;
 
 /// Bytes the stream's blocks hold for a source whose largest block is

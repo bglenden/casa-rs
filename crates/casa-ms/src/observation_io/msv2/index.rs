@@ -648,7 +648,7 @@ impl Grid {
 
     /// The first of its rows in time order, as CASA's iteration meets them:
     /// the lowest MAIN row of its first time.
-    pub(super) fn first_row(&self) -> usize {
+    pub(super) fn first_time_row(&self) -> usize {
         self.cells(0..1)
             .iter()
             .copied()

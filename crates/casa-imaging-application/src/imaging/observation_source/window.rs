@@ -3,14 +3,13 @@
 //! output-frame frequencies reach the wave's planes at some selected time,
 //! with both linear-interpolation partners at each edge.
 //!
-//! The selected-observation route decides this per block, converting each
-//! row's channels at the row's time and field and keeping the union of the
-//! rows' windows. A batch traversal binds its channels before it reads a
-//! batch, so the batch route decides per partition, from the range of
-//! conversion factors its selected (field, time)s span: a channel reaches
-//! the planes when its frequency times some factor of the range does.
-//! That window holds every channel any time's would; the extra channels a
-//! wider range adds reach no plane of the wave and place nothing.
+//! A traversal binds its channels before it reads a batch, so the window
+//! is decided per partition, from the range of conversion factors its
+//! selected (field, time)s span: a channel reaches the planes when its
+//! frequency times some factor of the range does. That window holds every
+//! channel any one time's would (each row's channels converted at its own
+//! time and field); the extra channels a wider range adds reach no plane of
+//! the wave and place nothing.
 
 use std::ops::Range;
 
@@ -65,10 +64,9 @@ impl FactorRange {
 /// bounds, and both channels of an adjacent pair whose spans together
 /// straddle a bound. `None` when no channel reaches the wave.
 ///
-/// This is the selected-observation route's rule
-/// (`selected_observation/access/channel_window.rs`) with each channel's
-/// frequency at one time replaced by its span over the partition's times,
-/// so it holds every channel that rule keeps at any time.
+/// This is the rule for one time's channels with each channel's frequency
+/// at that time replaced by its span over the partition's times, so it
+/// holds every channel the one-time rule keeps at any time.
 pub(super) fn wave_window(
     frequencies_hz: &[f64],
     factors: FactorRange,
@@ -111,8 +109,8 @@ mod tests {
             .fold(FactorRange::EMPTY, |range, factor| range.with(*factor))
     }
 
-    /// One factor gives the selected-observation route's window: the
-    /// channels inside the bounds and the straddling partner at each edge.
+    /// One factor gives one time's window: the channels inside the bounds
+    /// and the straddling partner at each edge.
     #[test]
     fn one_factor_keeps_both_partners_at_each_edge() {
         let channels = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];

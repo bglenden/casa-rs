@@ -32,10 +32,10 @@ pub enum PrepareError {
     /// description twice out of sequence.
     #[error(transparent)]
     SelectedRows(#[from] casa_imaging_model::SelectedRowSequenceError),
-    /// The selected observation could not be resolved against its
-    /// MeasurementSet.
+    /// The MeasurementSet could not be opened as an observation: a store
+    /// the observation boundary refuses, or rows its grids cannot hold.
     #[error(transparent)]
-    Resolution(#[from] casa_ms::ObservationOwnerError),
+    Opening(#[from] casa_observation::ObservationError),
     /// The resolved observation could not be compiled.
     #[error(transparent)]
     Observation(#[from] casa_imaging_model::CompileObservationError),
@@ -137,6 +137,15 @@ pub enum PrepareError {
     UnsupportedDoppler {
         /// The convention.
         convention: DopplerRef,
+    },
+    /// A selected spectral window's axis does not describe channels.
+    #[error(
+        "SPW {spw_id}'s channel frequencies are not all finite and positive, or its first \
+         channel width is zero or not finite"
+    )]
+    SpectralWindowCoordinates {
+        /// The spectral window.
+        spw_id: usize,
     },
     /// A selected spectral window's `MEAS_FREQ_REF` is not a frequency frame.
     #[error("SPW {spw_id} has an unknown frequency frame code {code}")]

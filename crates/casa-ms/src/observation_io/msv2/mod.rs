@@ -157,10 +157,17 @@ impl Msv2Observation {
         grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<Self, ObservationError> {
         let ms = MeasurementSet::open_retained_read(path).map_err(storage)?;
-        Self::from_measurement_set(ms, options, grant)
+        Self::open_granted_on(ms, options, grant)
     }
 
-    fn from_measurement_set(
+    /// [`Self::open_granted`] on `ms`, a MeasurementSet already open for a
+    /// retained read ([`MeasurementSet::open_retained_read`]), so that a
+    /// caller who reads MAIN's row count to admit the opening opens it once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open_granted`].
+    pub fn open_granted_on(
         ms: MeasurementSet,
         options: &OpenOptions,
         grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
@@ -238,7 +245,7 @@ impl Msv2Observation {
                 setup.spectral_window_id as i32,
             )?;
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
-            let spectral_weights = has_content(main, "WEIGHT_SPECTRUM", grid.first_row())?;
+            let spectral_weights = has_content(main, "WEIGHT_SPECTRUM", grid.first_time_row())?;
             // A state or processor a row names that its table does not hold
             // (CASA's simulator writes PROCESSOR_ID 0 without a row) has no
             // entry.

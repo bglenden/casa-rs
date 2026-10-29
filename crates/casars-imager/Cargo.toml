@@ -24,7 +24,7 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 
 [dev-dependencies]
-# The geometry-law example reads MSv4 conversions.
+# T1's store law converts a track to MSv4 and reads it back.
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-logging = { path = "../casa-logging" }
 tracing.workspace = true

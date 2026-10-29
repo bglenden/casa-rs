@@ -141,6 +141,13 @@ pub(super) struct SetupDemand<'r> {
     /// The imaging weights the passes keep across passes, when the run
     /// keeps them (`Run::keep_weights`).
     pub(super) kept_weights: u64,
+    /// What the products hold on one lane
+    /// (`PlannedContinuumGeneration::planned_demand`): they run after the
+    /// passes, beside the completion they publish.
+    pub(super) products: u64,
+    /// The source's admitted charge, which the run releases before its
+    /// products.
+    pub(super) source: u64,
     /// The memory the policy leaves free before the setup's charges.
     pub(super) free: u64,
 }
@@ -170,8 +177,25 @@ impl SetupDemand<'_> {
     /// work and imaging weights it keeps, the first major-cycle pass beside
     /// the model, and after it a minor cycle or a refresh pass beside the
     /// normal state and model and [`RefreshDemand`]
-    /// ([`StageCharges::largest`]).
+    /// ([`StageCharges::largest`]); or, if more, the products
+    /// ([`Self::products_bytes`]).
     pub(super) fn bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
+        let (passes, products) = self.stages(cores)?;
+        Ok(passes.max(products))
+    }
+
+    /// What the products hold beside the run on `cores`, net of the
+    /// source's charge, which the run releases before them: the products on
+    /// one lane, the completion they publish (the normal state and model,
+    /// and a cube's paged state with its cache), and the masks and
+    /// minor-cycle records the run keeps. The kernel sets are released with
+    /// the passes.
+    pub(super) fn products_bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
+        Ok(self.stages(cores)?.1)
+    }
+
+    /// [`Self::bytes`]' two parts: the setup and cycles, and the products.
+    fn stages(&self, cores: CoreAllocation) -> Result<(u64, u64), ImagingError> {
         let streaming = cores.streaming_workers;
         let kernels = self
             .domains
@@ -279,7 +303,14 @@ impl SetupDemand<'_> {
                 refresh_pass: demand.masks + refresh,
             }),
         };
-        Ok(kernels + cube + stages.largest())
+        let kept = self
+            .refresh
+            .as_ref()
+            .map_or(0, |demand| demand.masks + demand.records);
+        let products = (cube + refreshing.resident_normal_bytes() + self.model_bytes + kept)
+            .saturating_add(self.products)
+            .saturating_sub(self.source);
+        Ok((kernels + cube + stages.largest(), products))
     }
 }
 

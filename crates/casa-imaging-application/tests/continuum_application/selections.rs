@@ -69,40 +69,17 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     ms.save().unwrap();
     drop(ms);
 
-    let image_on = |name: &str, selection: &serde_json::Value, route: SourceRoute| {
+    // The run reads its partitions by data description and intent, and
+    // tests the UV distance per sample (#932 step 4).
+    let image = |name: &str, selection: serde_json::Value| {
         let image_name = root.path().join(name);
         let mut overrides = json!({ "niter": 0, "ddid": null });
         overrides
             .as_object_mut()
             .unwrap()
             .extend(selection.as_object().unwrap().clone());
-        let mut imaging = request(&path, &image_name, overrides);
-        imaging.source_route = route;
+        let imaging = request(&path, &image_name, overrides);
         execute(&imaging).map(|outcome| (image_name, outcome))
-    };
-    // Each selection imaged on the observation-batch route too (#932 step
-    // 4), which reads its partitions by data description and intent and
-    // tests the UV distance per sample, gives the same products.
-    let image = |name: &str, selection: serde_json::Value| {
-        let imaged = image_on(name, &selection, SourceRoute::SelectedRows)?;
-        let (batches, _) = image_on(
-            &format!("{name}-batches"),
-            &selection,
-            SourceRoute::ObservationBatches,
-        )
-        .unwrap_or_else(|error| panic!("{name} on batches: {error}"));
-        for suffix in [".psf", ".residual", ".sumwt"] {
-            let nrms = route_law::image_nrms(
-                &PathBuf::from(format!("{}{suffix}", imaged.0.display())),
-                &PathBuf::from(format!("{}{suffix}", batches.display())),
-            )
-            .expect("both routes' products");
-            assert!(
-                nrms <= route_law::TOLERANCE,
-                "{name}{suffix}: the routes differ by NRMS {nrms:.3e}"
-            );
-        }
-        Ok(imaged)
     };
     let plane = |image_name: &Path, suffix: &str| {
         product_plane(image_name, suffix)
@@ -154,7 +131,7 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
 
     // The MSv2 adapter partitions rows by their state's OBS_MODE. A second
     // state of state 0's mode that no row holds leaves state 0's partition
-    // its own: `intent='0'` images alike on both routes.
+    // its own: `intent='0'` images.
     let mut ms = MeasurementSet::open(&path).unwrap();
     ms.subtable_mut(SubtableId::State)
         .unwrap()
@@ -166,8 +143,9 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     ms.save().unwrap();
     drop(ms);
     image("unused-state", json!({ "intent": "0" })).expect("state 0 alone");
-    // Once rows hold it, the two states' rows share the partition, and the
-    // batch route refuses a selection of one of them.
+    // Once rows hold it, the two states' rows share the partition, and a
+    // selection of one of them is refused (contracts, section 4: no
+    // selection by STATE_ID).
     let mut ms = MeasurementSet::open(&path).unwrap();
     for row in (0..ms.row_count()).step_by(8) {
         ms.main_table_mut()
@@ -177,12 +155,8 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     }
     ms.save().unwrap();
     drop(ms);
-    let error = image_on(
-        "shared-mode",
-        &json!({ "intent": "0" }),
-        SourceRoute::ObservationBatches,
-    )
-    .err()
-    .expect("a state sharing its OBS_MODE with an unselected one");
+    let error = image("shared-mode", json!({ "intent": "0" }))
+        .err()
+        .expect("a state sharing its OBS_MODE with an unselected one");
     assert!(error.to_string().contains("sharing an OBS_MODE"), "{error}");
 }

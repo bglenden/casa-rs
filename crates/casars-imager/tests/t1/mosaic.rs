@@ -190,14 +190,12 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
-/// Imaging port step 3b (#932): under `usepointing` each row's pointing
-/// comes from the POINTING table; the batch geometry equals the selected
-/// rows', and so do the products of the batch route (step 4).
+/// Under `usepointing` each row's pointing comes from the POINTING table
+/// (#932 step 3b).
 #[test]
-fn mosaic_pointing_geometry_of_batches_is_the_selected_rows() {
+fn a_mosaic_images_on_its_pointing_table() {
     let (observation, mut controls) = mosaic_run(false);
     controls["usepointing"] = json!(true);
-    observation.assert_geometry("mosaic-pointing", controls.clone());
     observation.image("mosaic-pointing-image", controls);
 }
 
