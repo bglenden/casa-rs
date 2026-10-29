@@ -37,6 +37,7 @@ mod occupancy;
 mod plan;
 pub(crate) mod pointing_plan;
 mod pointing_scan;
+mod preservation;
 mod scans;
 
 use std::fmt;

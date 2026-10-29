@@ -244,7 +244,11 @@ fn msv2(
                 .to_string(),
         ));
     }
-    subtables(&ms, destination, losses)
+    subtables(&ms, destination, losses)?;
+    if destination == Store::Msv2 {
+        super::preservation::inventory(&ms, losses);
+    }
+    Ok(())
 }
 
 /// Refuse fields whose direction moves, among those `destination` writes:

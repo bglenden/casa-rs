@@ -24,8 +24,9 @@ use ndarray::ArrayD;
 use super::convert::rows_and_sigmas;
 use super::fixture;
 
-/// Every loss the trial fixture takes into an MSv2.
-const ACCEPT: [LossKind; 2] = [LossKind::Sigma, LossKind::Tables];
+/// Every loss the trial fixture takes into an MSv2: its SIGMA, its
+/// HISTORY and its `OBSERVATION LOG` and `SCHEDULE_TYPE`.
+const ACCEPT: [LossKind; 3] = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
 
 fn options() -> CreationOptions {
     CreationOptions {
@@ -744,4 +745,49 @@ fn a_new_session_is_offset_and_weights_take_their_inputs_scale() {
     for ((weight, _), (stated, _)) in written[60 * correlations..].iter().zip(&own) {
         assert_eq!(weight.to_bits(), (stated * 3.0).to_bits());
     }
+}
+
+/// A subtable column the catalogue does not carry is a declared loss when
+/// a row holds a value other than the one the writer writes: an antenna's
+/// offset is, its type `GROUND-BASED` is not; refused until accepted.
+#[test]
+fn uncarried_subtable_columns_are_declared() {
+    let root = tempfile::tempdir().expect("root");
+    let path = edited(root.path(), "offset", 0..0, |ms| {
+        set(
+            subtable(ms, SubtableId::Antenna),
+            0,
+            &[
+                ("OFFSET", floats(&[0.0, 0.0, 1.5], vec![3])),
+                ("TYPE", text("GROUND-BASED")),
+            ],
+        );
+    });
+    let plan = CreationPlan::new(&[CreationInput::new(&path)], &options()).expect("plan");
+    let columns: Vec<&Loss> = plan
+        .losses()
+        .iter()
+        .filter(|loss| matches!(loss, Loss::Column(_)))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            &Loss::Column("ANTENNA OFFSET".to_string()),
+            &Loss::Column("OBSERVATION LOG".to_string()),
+            &Loss::Column("OBSERVATION SCHEDULE_TYPE".to_string())
+        ]
+    );
+    let strict = CreationOptions {
+        accept: vec![LossKind::Sigma, LossKind::Tables],
+        ..options()
+    };
+    let refused = CreationPlan::new(&[CreationInput::new(&path)], &strict);
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("ANTENNA OFFSET")),
+        "{}",
+        refused
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default()
+    );
 }
