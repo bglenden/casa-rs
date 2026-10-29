@@ -32,6 +32,11 @@ const STRING_BYTES: usize = 64;
 /// Bytes allowed each antenna's receptors in a partition.
 const RECEPTOR_BYTES: usize = 256;
 
+/// Bytes allowed an MSv2 input's tables held open with read locks beside
+/// its catalogue: their descriptions, keywords and storage managers'
+/// headers (about 220 kB for the standard subtables).
+pub(super) const OPEN_TABLES_BYTES: usize = 384 << 10;
+
 /// The memory a plan admitted ([`super::CreationPlan::charges`]), in bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryCharges {
@@ -53,6 +58,10 @@ pub struct MemoryCharges {
     /// the plan is made with: its planning, and its writing with the MAIN
     /// writers at their least.
     pub least: usize,
+    /// The least [`CreationOptions::batch_bytes`](super::CreationOptions):
+    /// one integration (one time of every group read) of the widest input
+    /// partition.
+    pub integration: usize,
 }
 
 /// The bytes admitted so far against a budget, and the most at once.

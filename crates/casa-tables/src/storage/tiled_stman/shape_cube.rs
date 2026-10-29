@@ -517,7 +517,10 @@ mod tests {
                 peak(&format!("{value_type:?}.at"), buffered),
             );
             assert!(below < at, "{value_type:?}: bands buffer from {buffered}");
-            assert!(at <= buffered, "{value_type:?}: held {at}, beyond {buffered}");
+            assert!(
+                at <= buffered,
+                "{value_type:?}: held {at}, beyond {buffered}"
+            );
         }
     }
 }

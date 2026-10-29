@@ -4,18 +4,17 @@
 //! as CASA's `concat` meets them, and by earliest time in an MSv4.
 
 use std::path::PathBuf;
+#[cfg(feature = "msv4")]
+use std::slice;
 
 use casa_observation::{Observation, ObservationError, ObservationId};
 
 use super::CreationInput;
 #[cfg(feature = "msv4")]
-use std::slice;
-
-#[cfg(feature = "msv4")]
 use super::lockstep::{Sizing, WEIGHTS};
 #[cfg(feature = "msv4")]
 use super::memory::grid_bytes;
-use super::memory::{Ledger, catalogue_bytes};
+use super::memory::{Ledger, OPEN_TABLES_BYTES, catalogue_bytes};
 use crate::observation_io::update::request_error;
 use crate::observation_io::{Msv2Observation, OpenOptions};
 
@@ -38,10 +37,11 @@ pub(super) struct Input {
 
 impl Input {
     /// Open `input`, its weight scale checked, admitting what the opening
-    /// keeps to `ledger`: an MSv2's index, each increase asked for before
-    /// it is allocated ([`Msv2Observation::open_granted`]) and the charge
-    /// then trimmed to the index kept, and its catalogue once read; an
-    /// MSv4's catalogue and coordinates once read.
+    /// keeps to `ledger`: an MSv2's tables held open, its index, each
+    /// increase asked for before it is allocated
+    /// ([`Msv2Observation::open_granted`]) and the charge then trimmed to
+    /// the index kept, and its catalogue once read; an MSv4's catalogue and
+    /// coordinates once read.
     pub(super) fn open(
         input: &CreationInput,
         ledger: &mut Ledger,
@@ -51,6 +51,7 @@ impl Input {
         if path.join("zarr.json").is_file() {
             return msv4(path, weight_scale, ledger);
         }
+        ledger.admit("an input's tables", OPEN_TABLES_BYTES)?;
         let mut granted = 0;
         let observation =
             Msv2Observation::open_granted(&path, &OpenOptions::default(), &mut |total| {
