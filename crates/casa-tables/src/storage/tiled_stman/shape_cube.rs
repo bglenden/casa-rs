@@ -166,20 +166,29 @@ impl Geometry {
     }
 }
 
+/// The row map of `runs` runs of rows: an entry of three `u32`s for each
+/// run of consecutive rows in one cube.
+fn row_map_bytes(runs: usize) -> usize {
+    runs.saturating_mul(3 * size_of::<u32>())
+}
+
 /// The budget from which a column writer of `rows` rows, working in
 /// `working` bytes, assembles its cubes' bands (`bands` bytes) in memory:
 /// both, beside the largest row map the rows can need.
 pub(super) fn buffered_bytes(working: usize, bands: usize, rows: usize) -> usize {
     working
         .saturating_add(bands)
-        .saturating_add(rows.saturating_mul(3 * size_of::<u32>()))
+        .saturating_add(row_map_bytes(rows))
 }
 
 impl StreamingTiledShapeWriter {
-    /// The bytes a writer of `value_type` cells in `layouts` works in, the
-    /// least budget it is created with (its largest encoded row, tile row
-    /// and packed Bool tile row), and the budget from which it assembles
-    /// its bands in memory ([`buffered_bytes`]), which it then holds.
+    /// The bytes a writer of `value_type` cells in `layouts` works in: the
+    /// least budget it writes its rows in, when they come as at most `runs`
+    /// runs of consecutive rows of one cell shape (undefined rows one more
+    /// shape), which is its largest encoded row, tile row and packed Bool
+    /// tile row beside the row map of `runs` entries; and the budget from
+    /// which it assembles its bands in memory ([`buffered_bytes`]), which it
+    /// then holds.
     ///
     /// # Errors
     ///
@@ -187,6 +196,7 @@ impl StreamingTiledShapeWriter {
     pub fn resident_bytes(
         value_type: StreamedTiledShapeValueType,
         layouts: &[StreamedTiledShapeCubeLayout],
+        runs: usize,
     ) -> Result<(usize, usize), StorageError> {
         let mut working_set = ShapeCubeWorkingSet::default();
         let (mut bands, mut rows) = (0usize, 0usize);
@@ -199,7 +209,10 @@ impl StreamingTiledShapeWriter {
         let working = working_set.bytes().ok_or_else(|| {
             StorageError::FormatMismatch("streamed TiledShape working set overflows usize".into())
         })?;
-        Ok((working, buffered_bytes(working, bands, rows)))
+        Ok((
+            working.saturating_add(row_map_bytes(runs.min(rows))),
+            buffered_bytes(working, bands, rows),
+        ))
     }
 }
 
@@ -498,7 +511,8 @@ mod tests {
             StreamedTiledShapeValueType::Bool,
         ] {
             let (working, buffered) =
-                StreamingTiledShapeWriter::resident_bytes(value_type, &layouts()).expect("bytes");
+                StreamingTiledShapeWriter::resident_bytes(value_type, &layouts(), 0)
+                    .expect("bytes");
             let refused = StreamingTiledShapeWriter::create(
                 dir.path().join(format!("{value_type:?}.less")),
                 value_type,
@@ -522,5 +536,44 @@ mod tests {
                 "{value_type:?}: held {at}, beyond {buffered}"
             );
         }
+    }
+
+    /// The least budget holds the row map of the runs it is sized for:
+    /// [`ORDER`]'s rows come as twelve runs of one shape, which a writer of
+    /// the least budget for twelve writes and one for eleven refuses.
+    #[test]
+    fn the_least_budget_holds_the_row_map_of_its_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let value_type = StreamedTiledShapeValueType::Complex32;
+        let runs = 1 + ORDER.windows(2).filter(|pair| pair[0] != pair[1]).count();
+        assert_eq!(runs, 12);
+        let push_all = |name: &str, budget: usize| {
+            let mut writer = StreamingTiledShapeWriter::create(
+                dir.path().join(name),
+                value_type,
+                layouts(),
+                budget,
+                true,
+            )?;
+            let shapes = [[2usize, 5], [2, 4]];
+            for shape in ORDER {
+                match shape {
+                    Some(shape) => {
+                        let cell = shapes[shape];
+                        let values = vec![Complex32::new(1.0, 0.0); cell[0] * cell[1]];
+                        writer.push_complex32_row(&cell, &values)?;
+                    }
+                    None => writer.push_undefined_row()?,
+                }
+            }
+            writer.finish().map(|_| ())
+        };
+        let least = |runs| {
+            StreamingTiledShapeWriter::resident_bytes(value_type, &layouts(), runs)
+                .expect("bytes")
+                .0
+        };
+        push_all("enough", least(runs)).expect("every run fits");
+        assert!(push_all("short", least(runs - 1)).is_err(), "a run short");
     }
 }

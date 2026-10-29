@@ -34,22 +34,27 @@ impl MeasurementSetArrayColumnPlan {
 
 impl MeasurementSetWritePlan {
     /// The share each array column of a variable-shape creation of
-    /// `array_columns` needs: the least its writer is created with, and the
-    /// share from which it assembles its bands in memory, the largest of
-    /// any column's (every column gets one share).
+    /// `array_columns` needs, its rows pushed as at most `runs` runs of one
+    /// cell shape: the least its writer writes them in, and the share from
+    /// which it assembles its bands in memory, the largest of any column's
+    /// (every column gets one share).
     ///
     /// # Errors
     ///
     /// A column's layout its writer refuses.
     pub fn variable_array_column_bytes(
         array_columns: &[MeasurementSetArrayColumnPlan],
+        runs: usize,
     ) -> Result<(usize, usize), MeasurementSetWriteError> {
         array_columns
             .iter()
             .try_fold((0, 0), |(least, buffered), column| {
-                let (working, banded) =
-                    StreamingTiledShapeWriter::resident_bytes(column.value_type, &column.layouts())
-                        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                let (working, banded) = StreamingTiledShapeWriter::resident_bytes(
+                    column.value_type,
+                    &column.layouts(),
+                    runs,
+                )
+                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 Ok((least.max(working), buffered.max(banded)))
             })
     }

@@ -96,8 +96,15 @@ pub(super) fn admit(
     } = batches(inputs, combined, batch_bytes)?;
     let catalogue = &combined.catalogue;
     let columns = msv2_rows::array_columns(catalogue, data_columns, occupancy)?;
+    // Each input partition's rows are written together, in one cell shape,
+    // so a column's rows come as at most a run per input partition and one
+    // of undefined cells.
+    let runs = 1 + inputs
+        .iter()
+        .map(|input| input.observation.catalogue().partitions.len())
+        .sum::<usize>();
     let (least, buffered) =
-        MeasurementSetWritePlan::variable_array_column_bytes(&columns).map_err(storage)?;
+        MeasurementSetWritePlan::variable_array_column_bytes(&columns, runs).map_err(storage)?;
     let cell = catalogue
         .partitions
         .iter()

@@ -124,7 +124,8 @@ fn options(batch_bytes: usize, memory_bytes: usize) -> CreationOptions {
 }
 
 /// Input `index`: a VLA-A track of [`INTEGRATIONS`] ten-second
-/// integrations of 32 channels towards one field, `index` minutes after
+/// integrations of 32 channels (16 for an odd `index`) towards one field,
+/// `index` minutes after
 /// the first input, so `POINTING` holds a row per antenna and integration;
 /// created again with `CORRECTED_DATA` (from `DATA`) and `MODEL_DATA` (the
 /// initial model) for three data groups.
@@ -139,7 +140,9 @@ fn input(root: &Path, index: usize) -> PathBuf {
     request.duration_seconds = 10.0 * INTEGRATIONS as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    request.spectral_windows[0].channel_count = 32;
+    // Alternate inputs have another cell shape, so the MAIN writers' rows
+    // change cube at every input.
+    request.spectral_windows[0].channel_count = if index.is_multiple_of(2) { 32 } else { 16 };
     request.spectral_windows[0].channel_width_hz = 1.0e6;
     request.fields = vec![SyntheticField {
         name: request.field_name.clone(),
