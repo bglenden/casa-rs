@@ -98,6 +98,8 @@ Calibration behaviours casa-rs does not follow:
 [`incell` as two cells](#modifymodel-indexes-the-map-it-makes-of-two-cells),
 [the component-only model's unset width](#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment),
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
+Coordinate behaviours casa-rs does not follow:
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2400,3 +2402,28 @@ A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is
 physically sound for a continuum model, and casa-rs keeps it. A cube's start
 model must have the cube's spectral axis.
+
+## A subimage offsets a tabular coordinate's world values instead of moving its table
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#1001, PR #1005 review)
+- Affected code: casacore `coordinates/Coordinates/CoordinateSystem.cc`
+  (`subImageInSitu`) and `TabularCoordinate.cc` (`toWorld`,
+  `setReferencePixel`)
+
+A `TabularCoordinate` with a nonlinear table converts a pixel through its
+channel corrector first and its linear part (`crval`, `cdelt`, `crpix`)
+second. `subImageInSitu` moves a tabular coordinate's reference pixel by the
+subimage's start, as for a linear axis, but the corrector stays in the input's
+pixels. A subimage's world values are therefore the input's at the same
+pixel, offset by `cdelt × start`, not the input's at the pixel they were cut
+from. For a table at pixels `[0, 1, 3, 4]` with world values
+`[10, 11, 15, 22]`, `coordsys.subimage(originshft=[0, 1])` gives world values
+`[13, 14, 16]` at pixels 0 to 2, where the input has `[11, 13, 15]` (CASA
+6.7.6). A tabular spectral coordinate is not affected: `subImageInSitu`
+rebuilds its table over the subimage's channels. casa-rs moves the table's
+pixels with the reference pixel (`casa_images` `imsubimage`), so a subimage
+reads the input's world values at the pixels it was cut from. CASA's
+`imsubimage` ignores a box on an image without a direction coordinate, the
+only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
+CASA.
