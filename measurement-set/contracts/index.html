@@ -967,10 +967,13 @@
 
 
 <h1 id="intermediate-observation-contracts">Intermediate observation contracts<a class="headerlink" href="#intermediate-observation-contracts" title="Permanent link">&para;</a></h1>
-<p>Status: revision 7; the read contract the M0/M1 trial realizes, frozen
-narrowly for M2 by the owner on 2026-10-25
+<p>Status: revision 8; the read contract the M0/M1 trial realizes, frozen
+narrowly for M2 by the owner on 2026-10-25. Revision 8 (2026-10-28, #937
+design revision 3) adds the catalogue's descriptive metadata, pointing's
+<code>store_has_pointing</code> and intent selection, and corrects how CASA matches
+intents.
 Truth class: design proposal
-Date: 2026-10-25</p>
+Date: 2026-10-28</p>
 <p>This is the interface between persistent observations and numerical consumers.
 The governing principle is that MSv4 is the future: the interface takes MSv4's
 native shape, and the MSv2 adapter assembles MSv2 data into it.</p>
@@ -1076,6 +1079,53 @@ resolves <code>PHASE_DIR</code>'s frame per row where the column's reference var
 MSv2 carries <code>FIELD.TIME</code> as its reference epoch, at which a direction in a
 frame that moves against the sky is converted; an MSv4 field has none, its
 frame being celestial.</p>
+<p><strong>Descriptive metadata</strong> (revision 8, #937) sits beside these identities:
+what a consumer needs as science (a source's rest frequency for a cube's
+or a single-dish image's default) or as identity (what concatenation
+matches on), each member typed. <code>None</code> means the store does not state it and
+is never a value: an unstated flag is not <code>false</code>, an unstated string not
+empty. A column the store lacks, or a cell it leaves undefined, is <code>None</code>.
+An adapter validates units and shapes at opening and refuses a store it
+cannot read as stated, naming the column: a window's per-channel arrays
+hold <code>NUM_CHAN</code> values on one axis, a FIELD direction is <code>[2, NUM_POLY + 1]</code>,
+and SOURCE's fixed vectors have their length on one axis.
+- <strong>Windows</strong> (<code>Catalogue::windows</code>, <code>WindowId</code>): every spectral window the
+  store states, a window no partition uses included. Each states its name,
+  reference frequency (<code>MFrequency</code>, in its frame), total bandwidth, IF
+  chain, net sideband, frequency group and its name, each channel's
+  effective bandwidth and resolution, and flag. A partition names its
+  window, and still carries its channels' frequencies, widths and frame.
+  MSv2: <code>SPECTRAL_WINDOW</code>, the reference frequency in the row's
+  <code>MEAS_FREQ_REF</code>. MSv4: the frequency coordinate's <code>reference_frequency</code>;
+  the rest are unstated.
+- <strong>Sources</strong> (<code>Catalogue::sources</code>, <code>SourceId</code>): a logical source (an MSv2
+  <code>SOURCE_ID</code>), never one <code>SOURCE</code> row. It has a name and its records in
+  stored order. Each record is for one window or for every window (<code>SPECTRAL_WINDOW_ID</code>
+  −1), with its validity (time and interval), code, calibration group,
+  direction, proper motion, position, pulsar ID, <code>NUM_LINES</code>, and its
+  transitions, rest frequencies (<code>MFrequency</code>) and systemic velocities
+  (<code>Velocity</code>: m/s, and the frame when the store states one), each line
+  array independently optional. A field names its source
+  (<code>FieldEntry::source</code>); two sources of one name stay two.
+  <code>Catalogue::source_records(field, window)</code> gives that window's records,
+  then those for every window: CASA's default rest frequency is the first
+  record's first line. A record for a window the store lacks is not read,
+  and a line array whose length is not <code>NUM_LINES</code> is dropped, each with a
+  warning, since the table is readable otherwise. The MSv4 adapter does not
+  yet read <code>field_and_source</code>'s <code>SOURCE_DIRECTION</code> and line variables
+  (#976): its sources are empty.
+- <strong>States</strong> (<code>Catalogue::states</code>, <code>StateId</code>): every MSv2 <code>STATE</code> row, with
+  <code>OBS_MODE</code> whole, <code>CAL</code> and <code>LOAD</code> (K), <code>SIG</code>, <code>REF</code>, <code>SUB_SCAN</code> and flag.
+  A partition lists the states its rows use: several when they share an
+  <code>OBS_MODE</code> but differ in the rest. MSv4 states intents only and has none.
+- <strong>Processors</strong> (<code>Catalogue::processors</code>, <code>ProcessorId</code>): MSv2 <code>PROCESSOR</code>
+  rows, and MSv4's <code>processor_info</code>, which states a type and subtype. A
+  partition names its rows' one processor; a <code>PROCESSOR_ID</code> the table does
+  not hold (CASA's simulator writes 0 without a row) names none.
+- <strong>Fields</strong> add their code, delay and reference centres (MSv2 <code>DELAY_DIR</code>,
+  <code>REFERENCE_DIR</code>) and flag; <strong>observing sessions</strong> add the stored extent
+  (<code>TIME_RANGE</code>, never derived from the samples), release date and flag;
+  <strong>antennas</strong> add their flag.</p>
 <p><strong>Pointing</strong> is read per partition, never held in the catalogue:
 <code>Observation::pointing</code> takes a partition, antennas, a span of times in the
 partition's time system, the direction (the beam's, or MSv2's tracking
@@ -1094,7 +1144,12 @@ the antenna's next row and a negative interval every time (#948). The
 cutover keeps the boundary's tie rule (owner decision on #946, 2026-10-28).
 MSv4 reads <code>POINTING_BEAM</code>, whose samples state no interval, so nothing
 covers and a consumer's law chooses between the samples either side; XRADIO keeps
-one polynomial term and defines no origin for more, so more are refused.</p>
+one polynomial term and defines no origin for more, so more are refused.
+A series also says whether the store holds any pointing sample at all,
+whatever the request's span (<code>PointingSeries::store_has_pointing</code>, revision
+8): false for no pointing table or an empty one, which CASA's single-dish
+gridder images at the FIELD phase centre (<code>havePointings</code>), and true
+otherwise, when an acquisition without a usable sample is not gridded.</p>
 <p>An <strong>observing session</strong> carries the telescope, project and observers, and
 MSv4's archive identifiers (<code>execution_block_UID</code>, <code>session_reference_UID</code>,
 <code>scheduling_block_UID</code>). An MSv2 holds those only where an importer recorded
@@ -1130,7 +1185,7 @@ fields):</p>
 </tr>
 <tr>
 <td>Partition</td>
-<td>the spectral and product content (frequencies and widths bit for bit, frame, products in order, intents), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one</td>
+<td>the spectral and product content (frequencies and widths bit for bit, frame, products in order, intents), compatible window metadata (a member one store leaves unstated does not distinguish), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one</td>
 </tr>
 </tbody>
 </table>
@@ -1725,13 +1780,23 @@ updaters take a field selection as they take a time range: slices tile the
 selected times, and an updater claims and writes its runs.</p>
 <p>Intents are not selected on the request. A partition's samples share their
 intents (the adapters partition by <code>OBS_MODE</code>, as XRADIO's converter does),
-so a consumer selects intents by the partitions it requests. Two
-differences from CASA's selection follow:
-- The catalogue keeps a partition's intents split at commas, sorted and
-  deduplicated. CASA matches an intent pattern against the whole
-  <code>OBS_MODE</code> string, so a pattern that depends on an intent's place in
-  that string (<code>CALIBRATE_BANDPASS*</code> rather than <code>*BANDPASS*</code>) can select
-  otherwise when matched intent by intent.
+so a consumer selects intents by the partitions it requests:
+<code>Catalogue::partitions_with_intent</code> does it as CASA's <code>MSStateIndex</code> does
+(revision 8 corrects revision 7, which said CASA matched the whole
+<code>OBS_MODE</code>).
+- A state's stored <code>OBS_MODE</code> is split at commas, and one element, not
+  trimmed, must equal the intent (<code>MSStateIndex::matchStateObsMode</code>), so
+  <code>"A, B"</code> holds <code>" B"</code> and not <code>"B"</code>. A partition without states (an MSv4)
+  is matched by its stated intents. The catalogue's <code>PartitionEntry::intents</code>
+  are trimmed, sorted and deduplicated, for display and grouping, and are
+  not what MSv2 selection matches. Patterns are matched element by element
+  too, which this contract does not implement yet.
+- The rows of a flagged state are never selected, and neither are rows
+  without a state (<code>STATE_ID</code> −1), which have no intents. A partition whose
+  states are all flagged is not selected. A partition whose rows use both
+  flagged and unflagged states of its <code>OBS_MODE</code> is refused
+  (<code>IntentError::MixedStateFlags</code>), since a batch carries no state to
+  separate them; reading it without intent selection reads every row.
 - Selection by <code>STATE_ID</code> (CASA's intent selection by number) has no
   counterpart. States with one <code>OBS_MODE</code> share a partition, so a
   consumer cannot select one of them.</p>
