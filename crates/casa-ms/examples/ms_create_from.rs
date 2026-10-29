@@ -4,13 +4,16 @@
 //! `concat`.
 //!
 //! ```text
-//! ms_create_from DESTINATION INPUT[=SCALE]... [--sort] [--batch-mib M]
-//!     [--memory-mib M] [--accept KIND,...]
+//! ms_create_from DESTINATION INPUT[=SCALE]... [--sort] [--replace]
+//!     [--batch-mib M] [--memory-mib M] [--accept KIND,...]
 //! ```
 //!
 //! Each `INPUT` may carry its weight scale (`part2.ms=2.0`, CASA's
 //! `visweightscale`). `--sort` orders the inputs by their earliest time, as
-//! CASA's `concat` task does. Padding is omitted. The memory budget is the
+//! CASA's `concat` task does. `--replace` appends the inputs to the
+//! existing MeasurementSet at `DESTINATION`, which comes first unscaled, as
+//! `concat` appends to an existing `concatvis`. Padding is omitted. The
+//! memory budget is the
 //! host's usual share unless `--memory-mib` says otherwise. `KIND` is
 //! `sigma`, `row-flags`, `flag-categories`, `data-groups`, `tables`,
 //! `columns` or `defaulted`. Prints one JSON object: elapsed seconds, the
@@ -65,7 +68,7 @@ fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
     let destination = PathBuf::from(args.next().ok_or("a destination")?);
     let mut inputs = Vec::new();
-    let mut sort = false;
+    let (mut sort, mut replace) = (false, false);
     let mut options = CreationOptions {
         data_groups: None,
         accept: Vec::new(),
@@ -78,6 +81,7 @@ fn main() -> Result<(), Error> {
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--sort" => sort = true,
+            "--replace" => replace = true,
             "--batch-mib" => {
                 let value = args.next().ok_or("--batch-mib needs a value")?;
                 options.batch_bytes = value.parse::<usize>()? << 20;
@@ -110,8 +114,14 @@ fn main() -> Result<(), Error> {
         timed.sort_by(|a, b| a.0.total_cmp(&b.0));
         inputs = timed.into_iter().map(|(_, input)| input).collect();
     }
+    let destination = if replace {
+        inputs.insert(0, CreationInput::new(&destination));
+        Destination::Replace(destination)
+    } else {
+        Destination::New(destination)
+    };
     let started = Instant::now();
-    let plan = CreationPlan::new(&inputs, &options, Destination::New(destination))?;
+    let plan = CreationPlan::new(&inputs, &options, destination)?;
     let notices = plan.notices().to_vec();
     let charges = plan.charges();
     let report = plan.write()?;
