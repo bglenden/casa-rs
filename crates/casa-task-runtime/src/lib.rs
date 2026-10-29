@@ -11,6 +11,7 @@ mod completion;
 mod diagnostic;
 mod front_end;
 mod invocation;
+mod migrate;
 mod migration_list;
 mod normalize;
 mod overrides;

@@ -142,6 +142,29 @@ fn a_callib_profile_sets_docallib() {
     assert_eq!(resolved.values["docallib"], ParameterValue::Bool(true));
     let resolved = load("applycal", "vis = \"in.ms\"\ngaintables = [\"g.gcal\"]\n");
     assert_eq!(resolved.values["docallib"], ParameterValue::Bool(false));
+    // The old explicit absence, "none" or empty, names no library.
+    for (surface, solve) in [
+        ("applycal", ""),
+        ("gaincal", "out_table = \"o.cal\"\nrefant = \"0\"\n"),
+        ("bandpass", "out_table = \"o.cal\"\nrefant = \"0\"\n"),
+    ] {
+        for callib in ["none", ""] {
+            let resolved = load(
+                surface,
+                &format!(
+                    "vis = \"in.ms\"\ngaintables = [\"g.gcal\"]\ncallib = \"{callib}\"\n{solve}"
+                ),
+            );
+            assert_eq!(
+                values(&resolved, &["docallib", "callib"]),
+                expected(&[
+                    ("docallib", ParameterValue::Bool(false)),
+                    ("callib", text(""))
+                ]),
+                "{surface} callib={callib:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -169,6 +192,9 @@ fn gaincal_old_names_and_values_take_casas() {
         ])
     );
     assert!(!resolved.values.contains_key("gain_model_source"));
+    // calmode was set, as solve_mode, and smodel too: neither adopts a
+    // changed default.
+    assert!(changed_defaults(&resolved).is_empty());
 }
 
 #[test]
@@ -187,6 +213,9 @@ fn gaincal_model_source_becomes_casas_smodel() {
         "vis = \"in.ms\"\nout_table = \"g.gcal\"\nrefant = \"0\"\ngain_model_source = \"point\"\n",
     );
     assert_eq!(resolved.values["smodel"], floats(&[1.0, 0.0, 0.0, 0.0]));
+    // The migration gave the omitted smodel the point's meaning, so it does
+    // not adopt the changed default; the omitted calmode does.
+    assert_eq!(changed_defaults(&resolved), ["calmode"]);
 }
 
 #[test]
@@ -209,6 +238,8 @@ fn bandpass_old_names_and_values_take_casas() {
             ("gaintable", texts(&[])),
         ])
     );
+    // combine was set, as bandpass_combine.
+    assert!(changed_defaults(&resolved).is_empty());
 }
 
 #[test]

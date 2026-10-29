@@ -434,6 +434,14 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         with(&flux, "fitorder", json!(2)),
         "fitorder",
     );
+    // CASA's fluxscale passes timerange and scan to the solve whatever
+    // antenna is, though its task XML shows them under antenna.
+    for (name, value) in [
+        ("timerange", json!("2030/01/01~2030/01/02")),
+        ("scan", json!("1")),
+    ] {
+        refused_naming_979(dir.path(), "fluxscale", with(&flux, name, value), name);
+    }
     // gencal reads infile only for the caltypes CASA's task XML shows it
     // under, antpos among them.
     let gencal = json!({"vis": ms, "caltable": "o.cal", "caltype": "antpos"});
@@ -457,8 +465,8 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
     for (surface, values) in [
         (
             "gaincal",
-            json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "splinetime": 1800.0,
-                   "phasewrap": 90.0, "normtype": "median"}),
+            json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "minblperant": 2,
+                   "splinetime": 1800.0, "phasewrap": 90.0, "normtype": "median"}),
         ),
         (
             "bandpass",
@@ -477,4 +485,48 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+/// CASA's empty `smodel` reads a field's virtual model (`setjy` with
+/// `usescratch=False`) before `MODEL_DATA`. casa-rs does not implement the
+/// virtual model yet, so a solve that would read one is refused, naming
+/// #979, rather than run against another model.
+#[test]
+fn an_empty_smodel_is_refused_where_casa_would_read_a_virtual_model() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    {
+        let mut opened = casa_ms::ms::MeasurementSet::open(&ms).expect("open");
+        let keywords = opened.main_table_mut().keywords_mut();
+        keywords.upsert(
+            "definedmodel_field_0",
+            casa_types::Value::Scalar(casa_types::ScalarValue::String("model_0".into())),
+        );
+        keywords.upsert(
+            "model_0",
+            casa_types::Value::Record(casa_types::RecordValue::default()),
+        );
+        opened.save().expect("save");
+    }
+    let ms = ms.to_str().unwrap();
+    for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
+        refused_naming_979(
+            dir.path(),
+            surface,
+            json!({"vis": ms, "caltable": caltable, "refant": "0"}),
+            "smodel",
+        );
+    }
+    // An explicit point model is CASA's too, whatever the MeasurementSet holds.
+    let (output, reply) = json_run(
+        dir.path(),
+        "gaincal",
+        json!({"vis": ms, "caltable": "p.gcal", "refant": "0", "minblperant": 2,
+               "smodel": [1, 0, 0, 0]}),
+    );
+    assert!(
+        matches!(reply, Some(TaskReply::Succeeded { .. })),
+        "{reply:?}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

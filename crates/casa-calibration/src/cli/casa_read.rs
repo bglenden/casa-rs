@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
+use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant_selector};
 use crate::{
@@ -184,11 +185,36 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "opac" => GencalType::Opac,
         other => return Err(not_yet("caltype", other)),
     };
+    let antenna = task.text("antenna")?.unwrap_or_default();
+    match caltype {
+        // CASA looks the corrections up (the VLA's position database, the
+        // ALMA tables) when no antenna is named.
+        GencalType::Antpos if antenna.trim().is_empty() => {
+            return Err(not_yet("antenna", &antenna));
+        }
+        // CASA writes the opacity for the named antennas alone, and zero
+        // for the others; casa-rs writes it for every antenna.
+        GencalType::Opac if !antenna.trim().is_empty() => {
+            return Err(not_yet("antenna", &antenna));
+        }
+        // With no window named, CASA takes one opacity for all of them.
+        GencalType::Opac
+            if task.text("spw")?.is_none_or(|spw| spw.trim().is_empty())
+                && task.numbers("parameter")?.len() > 1 =>
+        {
+            return Err(TaskFailure::validation(
+                "opac with spw='' takes one opacity for every window; name the windows to give \
+                 one for each",
+            )
+            .at("parameter"));
+        }
+        _ => {}
+    }
     Ok(GencalTaskRequest {
         measurement_set: task.path("vis")?,
         output_table: PathBuf::from(task.required_text("caltable")?),
         caltype,
-        antenna: task.text("antenna")?.unwrap_or_default(),
+        antenna,
         spw: task.text("spw")?.unwrap_or_default(),
         parameter: task.numbers("parameter")?,
         gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
@@ -292,17 +318,40 @@ fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
 
 /// The sky model of a solve: CASA's empty `smodel` is the `MODEL_DATA`
 /// column where the MeasurementSet has one and a 1 Jy point source where it
-/// does not; `[I, Q, U, V]` is a point source.
+/// does not; `[I, Q, U, V]` is a point source. CASA reads a field's virtual
+/// model (`setjy` with `usescratch=False`) before `MODEL_DATA`; casa-rs
+/// does not implement it yet, so an empty `smodel` on a MeasurementSet
+/// that holds one is refused.
 fn model(
     task: &TaskInvocation<'_>,
     measurement_set: &Path,
 ) -> Result<(GainSolveModelSource, [f32; 4]), TaskFailure> {
     let smodel = task.numbers("smodel")?;
     match smodel.as_slice() {
-        [] if has_model_column(measurement_set)? => {
-            Ok((GainSolveModelSource::ModelColumn, [1.0, 0.0, 0.0, 0.0]))
+        [] => {
+            let ms = MeasurementSet::open(measurement_set).map_err(|error| {
+                TaskFailure::validation(format!(
+                    "open MeasurementSet {}: {error}",
+                    measurement_set.display()
+                ))
+                .at("vis")
+            })?;
+            let virtual_fields = casa_ms::scratch_columns::virtual_model_fields(&ms);
+            if !virtual_fields.is_empty() {
+                return Err(TaskFailure::validation(format!(
+                    "smodel=[] reads the virtual model of field(s) {virtual_fields:?} (setjy with \
+                     usescratch=False), which casa-rs does not implement yet (#979); give smodel, \
+                     or write MODEL_DATA"
+                ))
+                .at("smodel"));
+            }
+            let source = if has_model_column(&ms) {
+                GainSolveModelSource::ModelColumn
+            } else {
+                GainSolveModelSource::PointSource
+            };
+            Ok((source, [1.0, 0.0, 0.0, 0.0]))
         }
-        [] => Ok((GainSolveModelSource::PointSource, [1.0, 0.0, 0.0, 0.0])),
         &[i, q, u, v] => {
             if !(i > 0.0 && i.is_finite()) {
                 return Err(TaskFailure::validation(
@@ -323,16 +372,11 @@ fn model(
     }
 }
 
-/// Whether the MeasurementSet at `path` has a `MODEL_DATA` column.
-fn has_model_column(path: &Path) -> Result<bool, TaskFailure> {
-    let ms = MeasurementSet::open(path).map_err(|error| {
-        TaskFailure::validation(format!("open MeasurementSet {}: {error}", path.display()))
-            .at("vis")
-    })?;
-    Ok(ms
-        .main_table()
+/// Whether `ms` has a `MODEL_DATA` column.
+fn has_model_column(ms: &MeasurementSet) -> bool {
+    ms.main_table()
         .schema()
-        .is_some_and(|schema| schema.contains_column("MODEL_DATA")))
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
 }
 
 fn applymode(task: &TaskInvocation<'_>) -> Result<ApplyMode, TaskFailure> {
@@ -360,39 +404,67 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
     }
 }
 
-/// CASA's `solint`: `'inf'`, `'int'`, or seconds; CASA's other time units
-/// and channel intervals are not implemented yet.
+/// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: text that
+/// contains `inf`, in any case, is one solution per scan; text that
+/// contains `int`, one per integration; anything else is a time, in
+/// seconds when it has no unit. A time of zero is CASA's `inf`, and a
+/// negative one its `int`. Channel intervals (`'inf,2ch'`) are not
+/// implemented yet.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     let text = task.required_text("solint")?;
-    super::read::parse_gain_solve_interval(&text).map_err(|_| not_yet("solint", &text))
+    if text.contains(',') {
+        return Err(not_yet("solint", &text));
+    }
+    let upper = text.to_ascii_uppercase();
+    if upper.contains("INF") {
+        return Ok(GainSolveInterval::Infinite);
+    }
+    if upper.contains("INT") {
+        return Ok(GainSolveInterval::Integration);
+    }
+    let invalid = || unknown("solint", &text, "'inf', 'int' or a time such as '60s'");
+    let quantity = text.parse::<Quantity>().map_err(|_| invalid())?;
+    let seconds = if quantity.unit().name().is_empty() {
+        quantity.value()
+    } else {
+        let second = Unit::new("s").map_err(|_| invalid())?;
+        quantity.get_value_in(&second).map_err(|_| invalid())?
+    };
+    if !seconds.is_finite() {
+        return Err(invalid());
+    }
+    Ok(if seconds > 0.0 {
+        GainSolveInterval::Seconds(seconds)
+    } else if seconds == 0.0 {
+        GainSolveInterval::Infinite
+    } else {
+        GainSolveInterval::Integration
+    })
 }
 
-/// The axes CASA's `combine` names, `','`-separated; `'scan'` and
-/// `'field'` are implemented.
+/// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
+/// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
+/// `'scan field'` both combine scans and fields). `'scan'` and `'field'`
+/// are implemented; `'spw'` and `'obs'` are not yet.
 fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let text = task.required_text("combine")?;
-    let mut combine = GainSolveCombine::default();
-    for axis in text
-        .split(',')
-        .map(str::trim)
-        .filter(|axis| !axis.is_empty())
-    {
-        match axis {
-            "scan" => combine.scans = true,
-            "field" => combine.fields = true,
-            "spw" | "obs" => return Err(not_yet("combine", &text)),
-            other => return Err(unknown("combine", other, "'scan', 'field', 'spw' or 'obs'")),
-        }
+    let upper = text.to_ascii_uppercase();
+    if upper.contains("SPW") || upper.contains("OBS") {
+        return Err(not_yet("combine", &text));
     }
-    Ok(combine)
+    Ok(GainSolveCombine {
+        scans: upper.contains("SCAN"),
+        fields: upper.contains("FIELD"),
+    })
 }
 
-/// CASA's `refant`: one antenna, by name or id; CASA's ranked lists are not
+/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
+/// its default `''`, a solve with no reference antenna, are not
 /// implemented yet.
 fn refant(task: &TaskInvocation<'_>) -> Result<RefAntSelector, TaskFailure> {
     let text = task.required_text("refant")?;
-    if text.is_empty() {
-        return Err(TaskFailure::validation("refant is required").at("refant"));
+    if text.trim().is_empty() {
+        return Err(not_yet("refant", &text));
     }
     if text.contains(',') {
         return Err(not_yet("refant", &text));

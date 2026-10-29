@@ -286,8 +286,11 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         ("calmode", json!("a")),
         ("combine", json!("spw")),
         ("combine", json!("scan,obs")),
-        ("solint", json!("1min")),
+        ("combine", json!("Scan,SPW")),
+        ("solint", json!("inf,2ch")),
         ("refant", json!("A0,A1")),
+        // CASA's default: a solve with no reference antenna.
+        ("refant", json!("")),
         ("smodel", json!([1, 0.1, 0, 0])),
         ("interp", json!(["cubic"])),
     ] {
@@ -299,9 +302,69 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         let message = refused(casa("gaincal", values), name);
         assert!(message.contains("#979"), "{name}={value}: {message}");
     }
-    assert!(!refused(with("combine", json!("time")), "combine").contains("#979"));
+    for solint in ["nan", "1Jy", "soon"] {
+        let message = refused(with("solint", json!(solint)), "solint");
+        assert!(message.contains("not valid"), "{solint}: {message}");
+    }
     assert!(refused(with("smodel", json!([1, 0])), "smodel").contains("[I, Q, U, V]"));
-    assert!(refused(with("refant", json!("")), "refant").contains("required"));
+    // CASA's numeric solint and observation are refused as the wrong type,
+    // naming the issue.
+    for (name, value) in [("solint", json!(30)), ("observation", json!(0))] {
+        let bundle = builtin_surface_bundle("gaincal").expect("gaincal");
+        let mut request = OpenSessionRequest::defaults(bundle, ".");
+        request.override_patch = ResolutionPatch {
+            values: [(
+                name.to_string(),
+                ParameterValue::from_plain_json(&value).expect("a value"),
+            )]
+            .into(),
+            ..ResolutionPatch::default()
+        };
+        request.managed_save = false;
+        let message = ParameterRuntime::default()
+            .open_session(request)
+            .expect_err("the wrong type")
+            .to_string();
+        assert!(message.contains("#979"), "{name}: {message}");
+    }
+}
+
+#[test]
+fn gaincal_reads_solint_and_combine_as_casa_does() {
+    // SolvableVisCal::setSolve: text containing inf or int, in any case;
+    // otherwise a time, in seconds without a unit; zero is inf and a
+    // negative time int.
+    let base = json!({"vis": "d.ms", "caltable": "g.gcal", "refant": "0", "smodel": [1, 0, 0, 0]});
+    let read = |name: &str, value: &str| {
+        let mut values = base.clone();
+        values[name] = json!(value);
+        gain(values)
+    };
+    for (solint, interval) in [
+        ("INF", GainSolveInterval::Infinite),
+        ("Int", GainSolveInterval::Integration),
+        ("1min", GainSolveInterval::Seconds(60.0)),
+        ("0.5h", GainSolveInterval::Seconds(1800.0)),
+        ("45", GainSolveInterval::Seconds(45.0)),
+        ("0s", GainSolveInterval::Infinite),
+        ("-1s", GainSolveInterval::Integration),
+    ] {
+        assert_eq!(read("solint", solint).solve_interval, interval, "{solint}");
+    }
+    // combine names an axis anywhere in its text, in any case; text naming
+    // none combines nothing.
+    for (combine, scans, fields) in [
+        ("Scan,Field", true, true),
+        ("scan field", true, true),
+        ("FIELD", false, true),
+        ("time", false, false),
+    ] {
+        assert_eq!(
+            read("combine", combine).combine,
+            GainSolveCombine { scans, fields },
+            "{combine}"
+        );
+    }
 }
 
 #[test]
@@ -459,4 +522,30 @@ fn gencal_reads_casas_values() {
             "{value}"
         );
     }
+}
+
+#[test]
+fn gencal_refuses_the_antenna_and_opacity_forms_casa_reads_otherwise() {
+    let gencal = |values: Value| {
+        let mut base = json!({"vis": "t.ms", "caltable": "c.cal"});
+        base.as_object_mut()
+            .unwrap()
+            .extend(values.as_object().unwrap().clone());
+        casa("gencal", base)
+    };
+    // CASA looks antenna position corrections up when no antenna is named,
+    // and writes an opacity for the named antennas alone.
+    for values in [
+        json!({"caltype": "antpos", "parameter": [0.01, 0, 0]}),
+        json!({"caltype": "opac", "antenna": "VA01", "parameter": [0.05]}),
+    ] {
+        assert!(refused(gencal(values), "antenna").contains("#979"));
+    }
+    // With no window named, CASA takes one opacity, which holds for all.
+    let message = refused(
+        gencal(json!({"caltype": "opac", "parameter": [0.05, 0.06]})),
+        "parameter",
+    );
+    assert!(message.contains("one opacity"), "{message}");
+    assert!(gencal(json!({"caltype": "opac", "parameter": [0.05]})).is_ok());
 }

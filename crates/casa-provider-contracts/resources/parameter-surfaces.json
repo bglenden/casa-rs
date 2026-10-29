@@ -17494,7 +17494,8 @@
             "provider": {"field": "observation", "adapter": "omit_none"},
             "python": {"name": "observation"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
-          }
+          },
+          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
         },
         {
           "name": "msselect",
@@ -17752,7 +17753,8 @@
             {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "callib"}}
+            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
+            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
           ],
           "changed_defaults": ["calwt"]
         }
@@ -17958,7 +17960,8 @@
             "provider": {"field": "observation", "adapter": "omit_none"},
             "python": {"name": "observation"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
-          }
+          },
+          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
         },
         {
           "name": "msselect",
@@ -17986,7 +17989,8 @@
             "provider": {"field": "solint", "adapter": "identity"},
             "python": {"name": "solint"},
             "presentation": {"label": "Solution Interval", "group": "Solve Gain"}
-          }
+          },
+          "unimplemented_forms": {"issue": 979, "forms": "a number of seconds (give it as text: solint='30s')"}
         },
         {
           "name": "combine",
@@ -18459,7 +18463,8 @@
             {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "callib"}}
+            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
+            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
           ],
           "changed_defaults": ["calmode", "smodel"]
         }
@@ -18665,7 +18670,8 @@
             "provider": {"field": "observation", "adapter": "omit_none"},
             "python": {"name": "observation"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
-          }
+          },
+          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
         },
         {
           "name": "msselect",
@@ -19115,7 +19121,8 @@
             {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "callib"}}
+            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
+            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
           ],
           "changed_defaults": ["combine", "smodel"]
         }
@@ -19323,7 +19330,7 @@
             "python": {"name": "timerange"},
             "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "antenna", "value": {"kind": "string", "value": ""}}}}
+          "unimplemented": {"issue": 979}
         },
         {
           "name": "scan",
@@ -19338,7 +19345,7 @@
             "python": {"name": "scan"},
             "presentation": {"label": "Scan", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "antenna", "value": {"kind": "string", "value": ""}}}}
+          "unimplemented": {"issue": 979}
         },
         {
           "name": "incremental",

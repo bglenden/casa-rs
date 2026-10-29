@@ -85,7 +85,10 @@ own `--gaintables` with `;`-separated per-table lists.
 
 CASA's empty `smodel` solves against the `MODEL_DATA` column where the
 MeasurementSet has one and a 1 Jy point source where it does not; `bandpass`
-does not solve against `MODEL_DATA` yet, so give it a point source. A CASA
+does not solve against `MODEL_DATA` yet, so give it a point source. CASA
+reads a field's virtual model (`setjy` with `usescratch=False`) before
+`MODEL_DATA`; casa-rs does not yet, so an empty `smodel` on a
+MeasurementSet that holds one is refused. A CASA
 parameter casa-rs does not implement yet is taken only at its default, and a
 CASA value it does not implement yet (such as `gaintype='K'`) is refused;
 both refusals name [#979](https://github.com/bglenden/casa-rs/issues/979).
