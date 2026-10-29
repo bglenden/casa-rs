@@ -5,7 +5,8 @@ use std::path::{Component, Path};
 
 use casa_provider_contracts::{
     Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
-    ParameterType, ParameterValue, validate_parameter_value, validate_selector_capabilities,
+    ParameterType, ParameterValue, SurfaceParameterBinding, validate_parameter_value,
+    validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -675,6 +676,18 @@ pub enum NormalizationError {
     EnvironmentExpression(String),
     #[error("parameter constraint failed: {0}")]
     Constraint(String),
+}
+
+impl NormalizationError {
+    /// The note a refusal of a value for `binding` ends with: for a value of
+    /// a type the binding does not take, its surface note, which says the
+    /// forms it takes (flagdata's `timedev` names #978's), and nothing else.
+    pub fn binding_note(&self, binding: &SurfaceParameterBinding) -> String {
+        match (self, &binding.surface_note) {
+            (Self::Type(_), Some(note)) => format!(" ({note})"),
+            _ => String::new(),
+        }
+    }
 }
 
 #[cfg(test)]

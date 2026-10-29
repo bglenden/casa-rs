@@ -236,9 +236,10 @@ pub fn resolve_profile(
                 canonical.insert(binding.name.clone(), value);
             }
             Err(error) => {
+                let note = error.binding_note(binding);
                 let mut diagnostic = Diagnostic::error(
                     DiagnosticCode::InvalidValue,
-                    format!("invalid value for {}: {error}", binding.name),
+                    format!("invalid value for {}: {error}{note}", binding.name),
                 )
                 .for_parameter(binding.name.clone());
                 diagnostic.location = profile.locations.get(&source_name).copied();

@@ -38,10 +38,12 @@ pub fn create_msexplore_fixture_ms_with_flags(
     populate_subtables(&mut ms);
 
     for row in 0..4usize {
+        // The FLAG cell is built column-major (`.f()` below), so its
+        // (corr, chan) element is `corr + chan * NUM_CORR`.
         let mut flags = vec![false; NUM_CORR * NUM_CHAN];
         for &(flag_row, corr, chan) in flagged_samples {
             if flag_row == row && corr < NUM_CORR && chan < NUM_CHAN {
-                flags[corr * NUM_CHAN + chan] = true;
+                flags[corr + chan * NUM_CORR] = true;
             }
         }
         add_main_row(
