@@ -458,6 +458,36 @@ fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
     assert_eq!(describe(&put), casa("imhead put"));
 }
 
+/// CASA reads imhead's `verbose` only in summary mode, as its task XML
+/// shows it: list mode takes any value, and summary refuses all but the
+/// default, naming #977.
+#[test]
+fn imhead_verbose_is_read_only_in_summary_mode() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("fromshape.im");
+    write_fromshape(&image, "Jy/beam", false);
+    let list = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": image, "mode": "list", "verbose": true}),
+    );
+    assert!(matches!(list, CasaValue::Dict { .. }), "{list:?}");
+    let (output, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": image, "verbose": true}),
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let Some(TaskReply::Failed {
+        message, parameter, ..
+    }) = reply
+    else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(parameter.as_deref(), Some("verbose"));
+    assert!(message.contains("#977"), "{message}");
+}
+
 /// CASA's `imhead(image, mode='put', hdkey='bunit', hdvalue='')` clears the
 /// brightness unit, whether the empty value is given or left at its
 /// default, as the Python wrapper leaves it, and on the command line.
