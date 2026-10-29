@@ -341,11 +341,14 @@ impl BoundObservationSource {
     ) -> Result<Self, BoundObservationSourceError> {
         let row_predicate = selected_row_predicate(&measurement_set, source)?;
         let coordinates = Arc::from(selected_coordinates(&measurement_set, source.selection())?);
-        let geometry_engine = Arc::new(MsCalEngine::new_selected_observation(
-            &measurement_set,
-            measures.provider(),
-            ephemeris.cloned(),
-        )?);
+        let geometry_engine = Arc::new(
+            MsCalEngine::new_selected_observation(
+                &measurement_set,
+                measures.provider(),
+                ephemeris.cloned(),
+            )?
+            .with_field_ephemerides(&measurement_set)?,
+        );
         Ok(Self {
             measurement_set,
             geometry_engine,

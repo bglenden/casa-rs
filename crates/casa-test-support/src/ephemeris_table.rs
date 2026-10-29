@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA ephemeris tables for tests: the layout casacore's `MeasComet`
-//! reads, both as a MeasurementSet field's attached ephemeris
-//! (`FIELD/EPHEM<id>_<name>.tab`) and as a `phasecenter` table.
+//! reads (an `IERS` table of regularly spaced samples with its `MJD0`,
+//! `dMJD` and `VS_*` keywords) and XRADIO's converter reads (`GeoLong`,
+//! `GeoLat`, `GeoDist`, `obsloc`, `posrefsys`), both as a MeasurementSet
+//! field's attached ephemeris (`FIELD/EPHEM<id>_<name>.tab`) and as a
+//! `phasecenter` table.
 
 use std::path::{Path, PathBuf};
 
-use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// One sample: MJD (days), RA and DEC (degrees, ICRS), geocentric
@@ -16,8 +19,15 @@ pub type EphemerisRow = [f64; 5];
 ///
 /// # Panics
 ///
-/// If the table cannot be built or saved.
+/// If the table cannot be built or saved, or `rows` are fewer than two or
+/// not equally spaced in time, as `MeasComet` requires.
 pub fn write_ephemeris_table(path: &Path, name: &str, rows: &[EphemerisRow]) {
+    let step = rows[1][0] - rows[0][0];
+    assert!(
+        rows.windows(2)
+            .all(|pair| ((pair[1][0] - pair[0][0]) - step).abs() <= 1.0e-9),
+        "MeasComet reads equally spaced samples"
+    );
     let schema = TableSchema::new(
         ["MJD", "RA", "DEC", "Rho", "RadVel"]
             .into_iter()
@@ -40,6 +50,10 @@ pub fn write_ephemeris_table(path: &Path, name: &str, rows: &[EphemerisRow]) {
             .expect("an ephemeris row");
     }
     for (keyword, value) in [
+        ("VS_CREATE", "2026/10/29/00:00"),
+        ("VS_DATE", "2026/10/29/00:00"),
+        ("VS_VERSION", "0001.0001"),
+        ("VS_TYPE", "Table of comet/planetary positions"),
         ("NAME", name),
         ("posrefsys", "ICRF/ICRS"),
         ("obsloc", "GEOCENTRIC"),
@@ -49,10 +63,24 @@ pub fn write_ephemeris_table(path: &Path, name: &str, rows: &[EphemerisRow]) {
             Value::Scalar(ScalarValue::String(value.to_string())),
         ));
     }
-    table.keywords_mut().push(RecordField::new(
-        "GeoDist",
-        Value::Scalar(ScalarValue::Float64(0.0)),
-    ));
+    // MeasComet indexes rows from MJD0, one step before the first sample.
+    for (keyword, value) in [
+        ("MJD0", rows[0][0] - step),
+        ("dMJD", step),
+        ("GeoLong", 0.0),
+        ("GeoLat", 0.0),
+        ("GeoDist", 0.0),
+    ] {
+        table.keywords_mut().push(RecordField::new(
+            keyword,
+            Value::Scalar(ScalarValue::Float64(value)),
+        ));
+    }
+    table.set_info(TableInfo {
+        table_type: "IERS".to_string(),
+        sub_type: String::new(),
+        readme: Vec::new(),
+    });
     table
         .save(TableOptions::new(path))
         .expect("save the ephemeris table");

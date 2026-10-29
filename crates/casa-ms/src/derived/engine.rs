@@ -25,6 +25,7 @@ use crate::SelectedObservationEphemeris;
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
+use casa_observation::FieldEphemeris;
 
 /// Engine for computing derived quantities from MS metadata.
 ///
@@ -57,6 +58,9 @@ pub struct MsCalEngine {
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
     field_phase_offsets: Box<[[f64; 2]]>,
+    /// The ephemeris each field follows, once attached
+    /// ([`Self::with_field_ephemerides`]); empty until then.
+    field_ephemerides: Box<[Option<Arc<FieldEphemeris>>]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
@@ -128,6 +132,9 @@ impl MsCalEngine {
     pub(crate) fn selected_observation_retained_heap_bytes(ms: &MeasurementSet) -> MsResult<usize> {
         let antenna_count = ms.antenna()?.row_count();
         let field_count = ms.field()?.row_count();
+        // The fields' ephemerides ([`Self::with_field_ephemerides`]).
+        let ephemerides = crate::ephemeris::field_ephemerides_bytes(ms)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         antenna_count
             .checked_mul(
                 size_of::<MPosition>()
@@ -139,6 +146,7 @@ impl MsCalEngine {
                     .checked_mul(size_of::<MDirection>() + size_of::<[f64; 2]>())
                     .and_then(|fields| bytes.checked_add(fields))
             })
+            .and_then(|bytes| bytes.checked_add(ephemerides))
             .ok_or_else(|| {
                 MsError::InvalidInput(
                     "selected-observation geometry metadata byte count overflow".to_string(),
@@ -208,6 +216,7 @@ impl MsCalEngine {
             antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+            field_ephemerides: Box::new([]),
             observatory_position,
             time_reference,
             measures: Some(measures),
@@ -280,6 +289,7 @@ impl MsCalEngine {
             antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+            field_ephemerides: Box::new([]),
             observatory_position,
             time_reference: detect_time_reference(ms),
             measures: Some(measures),
@@ -310,6 +320,34 @@ impl MsCalEngine {
         self.antenna_response_family_envelope
     }
 
+    /// This engine with the ephemeris each field of `ms` follows
+    /// (`FIELD/EPHEM<id>_*.tab`, named by `EPHEMERIS_ID`), each table read
+    /// once. A field that follows one is then observed, at each time,
+    /// towards the body offset by its `PHASE_DIR`, whatever the imaging
+    /// phase centre ([`Self::observation_direction_j2000`]); a field whose
+    /// `NUM_POLY` is above zero follows its polynomial, as casacore reads
+    /// it. Imaging attaches them; an engine without them reads every
+    /// field's `PHASE_DIR` as its direction, as it always has.
+    ///
+    /// # Errors
+    ///
+    /// A field follows an ephemeris whose table is missing or is not one
+    /// an ephemeris is read from.
+    pub fn with_field_ephemerides(mut self, ms: &MeasurementSet) -> MsResult<Self> {
+        self.field_ephemerides = crate::ephemeris::field_ephemerides(ms)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        Ok(self)
+    }
+
+    /// Whether `field_id` follows an attached ephemeris
+    /// ([`Self::with_field_ephemerides`]).
+    #[must_use]
+    pub fn field_moves(&self, field_id: usize) -> bool {
+        self.field_ephemerides
+            .get(field_id)
+            .is_some_and(Option::is_some)
+    }
+
     /// Create an engine with explicit data (useful for testing).
     pub fn from_parts(
         antenna_positions: Vec<MPosition>,
@@ -334,6 +372,7 @@ impl MsCalEngine {
             antenna_response_family_envelope: None,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
+            field_ephemerides: Box::new([]),
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
@@ -400,7 +439,7 @@ impl MsCalEngine {
     ) -> MsResult<MeasFrame> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        Ok(frame.with_direction(self.field_dir(field_id)?.clone()))
+        Ok(frame.with_direction(self.direction_at(time_mjd_sec, field_id)?.into_owned()))
     }
 
     /// Build a spectral-conversion frame using the observatory position and an
@@ -570,30 +609,39 @@ impl MsCalEngine {
         )?)
     }
 
-    pub(crate) fn observation_direction_j2000(
+    /// The J2000 direction rows of `field_id` are observed towards at
+    /// `time_mjd_sec` ([`Self::direction_at`]).
+    pub fn observation_direction_j2000(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
     ) -> MsResult<MDirection> {
-        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
-            return self.field_dir(field_id).cloned();
-        };
-        let ephemeris_mjd_tdb = self.ephemeris_mjd_tdb(time_mjd_sec)?;
-        let Some(sample) = ephemeris
-            .attached_field_sample(field_id, ephemeris_mjd_tdb)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+        Ok(self.direction_at(time_mjd_sec, field_id)?.into_owned())
+    }
+
+    /// The J2000 direction of `field_id` at `time_mjd_sec`: its constant
+    /// `PHASE_DIR`, or, for a field that follows an attached ephemeris, the
+    /// body's direction from the observatory (its samples interpolated at
+    /// the time's TDB, as CASA's imager reads a `MeasComet`) shifted by
+    /// `PHASE_DIR`'s true angle, as casacore's `phaseDirMeas` shifts it.
+    fn direction_at(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<Cow<'_, MDirection>> {
+        let Some(ephemeris) = self
+            .field_ephemerides
+            .get(field_id)
+            .and_then(Option::as_ref)
         else {
-            return self.field_dir(field_id).cloned();
+            return Ok(Cow::Borrowed(self.field_dir(field_id)?));
         };
+        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         let direction = self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)?;
-        let [offset_longitude, offset_latitude] = *self
+        let offset = *self
             .field_phase_offsets
             .get(field_id)
             .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        Ok(casa_types::measures::ephemeris::offset_true_angle(
-            &direction,
-            [offset_longitude, offset_latitude],
-        )?)
+        Ok(Cow::Owned(
+            casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
+        ))
     }
 
     /// Get the field direction for the given field_id.
@@ -654,7 +702,9 @@ impl MsCalEngine {
             return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let value = self.field_dir(field_id)?.parallactic_angle(&frame)?;
+        let value = self
+            .direction_at(time_mjd_sec, field_id)?
+            .parallactic_angle(&frame)?;
         store_geometry_value(&self.parallactic_angle_cache, key, value);
         Ok(value)
     }
@@ -668,7 +718,7 @@ impl MsCalEngine {
     pub fn hour_angle_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
         Ok(hadec.longitude_rad())
     }
@@ -681,7 +731,9 @@ impl MsCalEngine {
     ) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        Ok(self.field_dir(field_id)?.parallactic_angle(&frame)?)
+        Ok(self
+            .direction_at(time_mjd_sec, field_id)?
+            .parallactic_angle(&frame)?)
     }
 
     /// Compute azimuth and elevation (radians) for a given time, field, and antenna.
@@ -700,7 +752,7 @@ impl MsCalEngine {
             return Ok(value);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
         let value = azel.as_angles();
         store_geometry_value(&self.azel_cache, key, value);
@@ -711,7 +763,7 @@ impl MsCalEngine {
     pub fn azel_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<(f64, f64)> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
         Ok(azel.as_angles())
     }
@@ -761,7 +813,7 @@ impl MsCalEngine {
             return Ok(value);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
         let value = hadec.as_angles();
         store_geometry_value(&self.hadec_cache, key, value);
@@ -806,7 +858,7 @@ impl MsCalEngine {
         let dz = pos2.as_itrf()[2] - pos1.as_itrf()[2];
 
         // Get the field direction in J2000
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let (ra, dec) = dir.as_angles();
 
         let (sin_dec, cos_dec) = dec.sin_cos();
@@ -846,7 +898,7 @@ impl MsCalEngine {
         offset_m: [f64; 3],
     ) -> MsResult<[f64; 3]> {
         let frame = self.make_frame(time_mjd_sec, 0)?;
-        let dir = self.field_dir(field_id)?;
+        let dir = self.direction_at(time_mjd_sec, field_id)?;
         let source_itrf = dir.convert_to(DirectionRef::ITRF, &frame)?.cosines();
         let w = offset_m[0] * source_itrf[0]
             + offset_m[1] * source_itrf[1]
@@ -902,8 +954,13 @@ impl MsCalEngine {
         source_field_id: usize,
         target_field_id: usize,
     ) -> MsResult<([f64; 3], f64)> {
-        let target_dir = self.field_dir(target_field_id)?;
-        self.reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, source_field_id, target_dir)
+        // Between the fields' constant phase directions.
+        let transform = GridFtProjection::mosaic_between_directions(
+            self.field_dir(source_field_id)?,
+            self.field_dir(target_field_id)?,
+        );
+        let (uvw_m, phase_shift_m) = transform.apply(raw_uvw_m);
+        Ok((uvw_m, -phase_shift_m))
     }
 
     /// Reproject raw MS UVW coordinates from one field phase center to an
@@ -1005,12 +1062,14 @@ impl MsCalEngine {
         Ok(GridFtProjection::faceted_between_directions(&source, &target).apply(raw_uvw_m))
     }
 
-    /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
-    /// using the CASA mosaic `girarUVW()` convention.
+    /// Reproject raw MS UVW coordinates of a row of `source_field_id` at
+    /// `time_mjd_sec` to an explicit J2000 direction using the CASA mosaic
+    /// `girarUVW()` convention. A field that follows an attached ephemeris
+    /// is reprojected from its direction at the time, uncached.
     pub fn reproject_raw_uvw_for_mosaic_to_direction(
         &self,
         raw_uvw_m: [f64; 3],
-        source_field_id: usize,
+        (time_mjd_sec, source_field_id): (f64, usize),
         target_direction: &MDirection,
     ) -> MsResult<([f64; 3], f64)> {
         if target_direction.refer() != DirectionRef::J2000 {
@@ -1022,7 +1081,10 @@ impl MsCalEngine {
             });
         }
         let key = MosaicUvwCacheKey::new(source_field_id, target_direction);
-        let transform = if let Some(transform) = self
+        let transform = if self.field_moves(source_field_id) {
+            let source_direction = self.direction_at(time_mjd_sec, source_field_id)?;
+            GridFtProjection::mosaic_between_directions(&source_direction, target_direction)
+        } else if let Some(transform) = self
             .mosaic_uvw_cache
             .read()
             .expect("MS mosaic UVW cache poisoned")
@@ -2125,7 +2187,7 @@ mod tests {
         // compiled with floating-point contraction disabled.
         let raw_uvw = [-1_200.0, -2_000.0, 1_900.0];
         let (uvw, casa_phase) = engine
-            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw, 0, &target)
+            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw, (0.0, 0), &target)
             .expect("AWProject girarUVW projection");
         let expected = [
             -1_205.658_949_685_163_6,
@@ -2177,7 +2239,7 @@ mod tests {
                     -2_033.447_768_019_716_7,
                     1_892.803_548_834_091,
                 ],
-                0,
+                (0.0, 0),
                 &image_direction,
             )
             .unwrap();

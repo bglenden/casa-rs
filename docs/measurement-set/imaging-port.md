@@ -317,34 +317,59 @@ J2000 directions, distances, radial velocities and their frame), the
 field's phase centre then the offset from them; fields of one
 `EPHEMERIS_ID` share it. The MSv2 adapter reads each table once at
 opening, through the reader today's route uses, and the batch route charges
-its bytes with the opening's index. Interpolation (`FieldEphemeris::sample`),
-the topocentric correction and the true-angle offset
-(`casa_types::measures::ephemeris`) moved out of `casa-ms`, whose engine
-now calls them, so both routes evaluate a moving field with the same code.
-Batch geometry reads a field that follows an ephemeris, at each time, as
-casacore's `MSFieldColumns::phaseDirMeas` does: the body's direction from
-the observatory (samples interpolated at the time's TDB) offset by the
-field's phase centre; its reprojections, parallactic angles and frequency
-conversions are formed per time. A request without `phasecenter` over such
-a field is refused on both routes: its image centre would be read from the
-offset. Evidence: the T1 track's field attached to a distant body
-(`casars-imager` T1 `ephemeris`), imaged with `TRACKFIELD` (MFS, and a
-four-channel `cubesource` cube in the rest frame) and with the body's table
-as `phasecenter`: every geometry quantity of the two routes is
-bit-identical on all 52,650 rows, and every product is bit-identical on
-both routes. `casa-imaging-model`'s `batch_geometry_ephemeris` checks the
-same arithmetic on a hand-made catalogue, and `casa-ms`'s
-`fields_carry_the_ephemerides_they_follow` the adapter against today's
-reading of the table.
+its bytes with the opening's index. A field whose `NUM_POLY` is above zero
+follows its polynomial whatever its `EPHEMERIS_ID`, as casacore's
+`MSFieldColumns::phaseDirMeas` reads it. Interpolation
+(`FieldEphemeris::sample`), the topocentric correction and the true-angle
+offset (`casa_types::measures::ephemeris`) moved out of `casa-ms`, whose
+engine now calls them, so both routes evaluate a moving field with the same
+code.
 
-Where today's route reads the offset as the direction, the batch route
-departs from it, deliberately: today's route evaluates a field's ephemeris
-only under a moving phase centre, so under a fixed one it reprojects
-from, and converts frequencies towards, the offset itself; and it takes
-parallactic angles and mosaic reprojections from the offset under any
-centre. The batch route uses the moving direction for each, as casacore
-does. No T1 or T1.5 workload images such a case, and the cutover removes
-today's route. The MSv4 store's ephemerides (reading and writing
+A field that follows an ephemeris is observed, at each time, towards the
+body's direction from the observatory, its samples interpolated at the
+time's TDB, shifted by its phase centre's true angle. casacore's
+`phaseDirMeas` supplies the shift and the geocentric position (at UTC);
+the observatory and the TDB are CASA's imager's convention, which today's
+route adopted (the T41 oracle). Both routes now use that direction
+wherever a field's direction enters: reprojection (the mosaic's
+included), parallactic angles, frequency conversion, and compile's LSRK
+envelope and cube density padding. Before #942, today's route read
+`PHASE_DIR` (the offset) as the direction unless the phase centre was
+`TRACKFIELD`, a body or a table, and its parallactic angles, mosaic
+reprojection, envelope and padding read the offset under any centre:
+`MsCalEngine::with_field_ephemerides` gives the engines imaging builds each
+field's ephemeris, whatever the phase centre. A request without
+`phasecenter` over such a field is refused on both routes, since its image
+centre would be read from the offset (CASA appears to centre such an
+image on the body: #987). An analytic primary beam over such a field is
+refused, as for a moving centre.
+
+The MSv2 adapter refuses to open a MeasurementSet whose attached table
+today's reader refuses (no table or several for an id, a non-geocentric
+`obsloc`, a `posrefsys` other than ICRS or J2000, fewer than two rows),
+even when no field read follows it; casacore is more lenient there.
+
+Evidence:
+- T1 (`casars-imager` T1 `ephemeris`): the track's field attached to a
+  distant body, imaged with `TRACKFIELD` (MFS, Stokes IV, and a
+  four-channel `cubesource` cube in the rest frame), with the body's table
+  as `phasecenter`, and with a fixed J2000 centre. Every geometry quantity
+  of the two routes is bit-identical on all 52,650 rows, parallactic
+  angles included, and every product is bit-identical on both routes.
+- T1.5 on the Mac mini: the T41 oracle on `alma_ephemobj_icrs.ms`
+  (`TRACKFIELD` cubesource, 512 × 512 × 16), now on both routes, against
+  CASA 6.7.5's `tclean`: PSF NRMS 1.10e-7, residual and image 1.06e-7,
+  `sumwt` exactly 39,987,396 on each route; the geometry law bit-identical
+  on all 1,620 rows; every product bit-identical between the routes. The
+  `TRACKFIELD` direction oracle agrees with CASA to 9.4e-13 rad at three
+  row times. The oracle's recorded sample count (3,317,760) is stale on
+  `main` too (1,087,560 on both routes; #986).
+- `casa-imaging-model`'s `batch_geometry_ephemeris` checks the same
+  arithmetic on a hand-made catalogue, and `casa-ms`'s
+  `fields_carry_the_ephemerides_they_follow` the adapter against today's
+  reading of the table.
+
+The MSv4 store's ephemerides (reading and writing
 `field_and_source_ephemeris`, and the converter carrying them both ways)
 are the rest of #942.
 

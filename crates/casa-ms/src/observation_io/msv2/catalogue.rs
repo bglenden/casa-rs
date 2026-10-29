@@ -4,11 +4,10 @@
 //! batches carry has the reference and unit its type claims.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use casa_observation::{
-    AntennaEntry, Correlation, FieldEntry, FieldEphemeris, ObservationEntry, ObservationError,
-    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, Receptors,
+    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -165,7 +164,10 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
     let ephemerides = (0..field.row_count())
         .map(|row| field.ephemeris_id(row).map_err(storage))
         .collect::<Result<Vec<_>, ObservationError>>()?;
-    let attached = attached_ephemerides(ms, &ephemerides)?;
+    // What each field follows, read as today's imaging reads it: a field
+    // whose `NUM_POLY` is above zero follows its polynomial instead.
+    let attached = crate::ephemeris::field_ephemerides(ms)
+        .map_err(|error| invalid(format!("the ephemeris a field follows: {error}")))?;
     let phase_dir = DirectionColumn::phase_dir(field_table);
     let fields = (0..field.row_count())
         .map(|row| {
@@ -177,7 +179,7 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
                 phase_centre: MDirection::from_angles(longitude, latitude, frames[row]),
                 reference_epoch: Some(MEpoch::from_mjd(time_s / 86_400.0, epoch_scale)),
                 source_name: source_name(ms, source)?,
-                ephemeris: ephemerides[row].and_then(|id| attached.get(&id).cloned()),
+                ephemeris: attached[row].clone(),
             })
         })
         .collect::<Result<_, ObservationError>>()?;
@@ -209,28 +211,6 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
             stored_label,
         },
     })
-}
-
-/// The ephemeris of each `EPHEMERIS_ID` that `ids` (one a field) name at
-/// or above 0: the table casacore attaches to those fields
-/// (`FIELD/EPHEM<id>_*.tab`), read once, whatever number of fields share it.
-fn attached_ephemerides(
-    ms: &MeasurementSet,
-    ids: &[Option<i32>],
-) -> Result<BTreeMap<i32, Arc<FieldEphemeris>>, ObservationError> {
-    let mut attached = BTreeMap::new();
-    for id in ids.iter().flatten().filter(|id| **id >= 0) {
-        if attached.contains_key(id) {
-            continue;
-        }
-        let root = ms.path().ok_or_else(|| {
-            invalid("a field follows an ephemeris of a MeasurementSet with no path")
-        })?;
-        let ephemeris = crate::ephemeris::attached_ephemeris(root, *id)
-            .map_err(|error| invalid(format!("the ephemeris a field follows: {error}")))?;
-        attached.insert(*id, Arc::new(ephemeris));
-    }
-    Ok(attached)
 }
 
 /// Every `OBSERVATION` row. A MeasurementSet without one gets a single

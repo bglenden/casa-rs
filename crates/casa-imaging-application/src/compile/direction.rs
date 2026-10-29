@@ -294,8 +294,7 @@ fn image_centre(
     Ok((centre, frame))
 }
 
-/// A named ephemeris (or an external table), joined with the selected
-/// fields' attached ephemerides when they have them.
+/// A named ephemeris (or an external table).
 fn named_ephemeris(
     text: &str,
     ms: &MeasurementSet,
@@ -303,7 +302,7 @@ fn named_ephemeris(
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationEphemeris, PrepareError> {
     let budget = budget.reference_data_budget();
-    let mut ephemeris = if Path::new(text).is_dir() {
+    let ephemeris = if Path::new(text).is_dir() {
         SelectedObservationEphemeris::external(text, budget)?
     } else {
         SelectedObservationEphemeris::named(text, budget)?
@@ -322,16 +321,12 @@ fn named_ephemeris(
             attached.push(field_id);
         }
     }
-    if attached.is_empty() {
-        return Ok(ephemeris);
-    }
-    if attached.len() != survey.fields.len() {
+    // The engine observes each attached field towards its own body
+    // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
+    // of which only some move is refused.
+    if !attached.is_empty() && attached.len() != survey.fields.len() {
         return Err(PrepareError::MixedEphemerisFields);
     }
-    ephemeris = ephemeris.with_attached_fields(
-        SelectedObservationEphemeris::tracked_fields(ms, attached, budget)?,
-        budget,
-    )?;
     Ok(ephemeris)
 }
 

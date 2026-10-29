@@ -6,8 +6,9 @@
 //! casacore attaches to an MSv2 field (`FIELD/EPHEM<id>_<name>.tab`, named
 //! by the field's `EPHEMERIS_ID`). Casacore reads such a field's phase
 //! centre ([`crate::FieldEntry::phase_centre`]) as an offset from the
-//! body's direction seen from the observatory
-//! ([`casa_types::measures::ephemeris`]).
+//! body's direction, shifted by its true angle; CASA's imager evaluates
+//! that direction from the observatory, its samples interpolated at the
+//! time's TDB ([`casa_types::measures::ephemeris`]).
 
 use std::mem::size_of;
 

@@ -27,8 +27,10 @@
 //! traversal visits every epoch.
 //!
 //! A field that follows an ephemeris ([`FieldEntry::ephemeris`]) is
-//! observed towards the body's direction at each time, offset by its phase
-//! centre, as casacore reads it; its reprojections, parallactic angles and
+//! observed towards the body's direction from the observatory at each time,
+//! shifted by its phase centre, as CASA's imager evaluates it (casacore
+//! shifts by the true angle; the imager adds the observatory and reads the
+//! samples at the time's TDB); its reprojections, parallactic angles and
 //! frequency conversions are computed per time. A moving phase centre
 //! follows a body or source Measures names, each field's own ephemeris
 //! (`TRACKFIELD`), or an ephemeris table the caller reads. A conversion

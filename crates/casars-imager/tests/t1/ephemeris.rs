@@ -107,6 +107,27 @@ fn trackfield_images_agree_on_both_routes() {
     );
 }
 
+/// A fixed phase centre over the moving field: rows reproject, and
+/// frequencies convert, from the field's direction at each time; and
+/// Stokes IV under `TRACKFIELD`, whose parallactic angles follow the moving
+/// field.
+#[test]
+fn a_fixed_centre_and_parallactic_angles_follow_the_moving_field_on_both_routes() {
+    let observation = moving_track();
+    let [ra, dec] = PHASE_CENTER_RAD;
+    observation.image(
+        "fixed-mfs",
+        json!({
+            "phasecenter": format!("J2000 {}rad {}rad", ra + 2.0e-6, dec - 1.0e-6),
+            "niter": 0,
+        }),
+    );
+    observation.image(
+        "trackfield-iv",
+        json!({ "phasecenter": "TRACKFIELD", "stokes": "IV", "niter": 0 }),
+    );
+}
+
 /// Following the body from a table given as the phase centre.
 #[test]
 fn a_table_phase_centre_agrees_on_both_routes() {

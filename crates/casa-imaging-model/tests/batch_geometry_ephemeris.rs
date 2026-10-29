@@ -148,9 +148,9 @@ fn assert_projected(geometry: &BatchGeometry, time: usize, machine: &GridFtProje
 }
 
 /// A field that follows an ephemeris is observed, at each time, towards the
-/// body's direction from the observatory offset by its phase centre, as
-/// casacore's `MSFieldColumns::phaseDirMeas` reads it: rows reproject from
-/// there to a fixed image centre, time by time.
+/// body's direction from the observatory shifted by its phase centre's true
+/// angle, as CASA's imager evaluates it: rows reproject from there to a
+/// fixed image centre, time by time.
 #[test]
 fn a_moving_field_is_observed_towards_the_body_offset_by_its_phase_centre() {
     let comet = body("comet", 1.0e-4);

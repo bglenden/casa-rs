@@ -63,7 +63,7 @@ impl Frames {
     /// reference epoch, or with no epoch where the field states none (an
     /// MSv4 field: ICRS or another frame whose tie to J2000 is fixed). A
     /// field that follows an ephemeris keeps its centre's angles as the
-    /// offset casacore reads them as ([`Self::field_at`]).
+    /// offset from the body casacore reads them as ([`Self::field_at`]).
     pub(super) fn new(
         catalogue: &Catalogue,
         measures: Arc<dyn MeasuresProvider>,
@@ -127,9 +127,10 @@ impl Frames {
 
     /// `field`'s phase centre in J2000 at `time_mjd_s` on `scale`: its
     /// fixed centre, or, for a field that follows an ephemeris, the body's
-    /// direction ([`Self::ephemeris_direction`]) offset by the field's
-    /// centre ([`offset_true_angle`]), as casacore's
-    /// `MSFieldColumns::phaseDirMeas` reads a moving field.
+    /// direction from the observatory at the time's TDB
+    /// ([`Self::ephemeris_direction`], as CASA's imager evaluates it)
+    /// shifted by the field's centre's true angle ([`offset_true_angle`],
+    /// as casacore's `MSFieldColumns::phaseDirMeas` shifts it).
     pub(super) fn field_at(
         &self,
         field: FieldId,

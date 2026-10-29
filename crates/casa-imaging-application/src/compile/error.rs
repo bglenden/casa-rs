@@ -205,7 +205,7 @@ pub enum PrepareError {
     MixedEphemerisFields,
     /// No `phasecenter` over a selected field that follows an ephemeris:
     /// the image centre would be read from its `PHASE_DIR`, which is an
-    /// offset from the body, not a direction.
+    /// offset from the body, not a direction (#987).
     #[error(
         "FIELD_ID {field_id} follows an ephemeris; give phasecenter TRACKFIELD, a direction, \
          a body or an ephemeris table"

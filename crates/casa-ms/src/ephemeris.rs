@@ -16,6 +16,7 @@ use casa_types::measures::radial_velocity::RadialVelocityRef;
 use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
+use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, SelectedObservationReferenceDataBudget};
 
 const AU_METRES: f64 = 149_597_870_700.0;
@@ -67,7 +68,6 @@ enum EphemerisKind {
 #[derive(Debug, Clone)]
 pub struct SelectedObservationEphemeris {
     kind: EphemerisKind,
-    attached_fields: Box<[FieldEphemerisBinding]>,
     retained_bytes: usize,
 }
 
@@ -90,7 +90,6 @@ impl SelectedObservationEphemeris {
             kind: EphemerisKind::Named {
                 target: target.into(),
             },
-            attached_fields: Box::new([]),
             retained_bytes,
         })
     }
@@ -108,7 +107,6 @@ impl SelectedObservationEphemeris {
         let series = Arc::new(preflight.load()?);
         Ok(Self {
             kind: EphemerisKind::External { series },
-            attached_fields: Box::new([]),
             retained_bytes,
         })
     }
@@ -179,7 +177,6 @@ impl SelectedObservationEphemeris {
             kind: EphemerisKind::TrackedField {
                 fields: bindings.into_boxed_slice(),
             },
-            attached_fields: Box::new([]),
             retained_bytes,
         })
     }
@@ -189,26 +186,6 @@ impl SelectedObservationEphemeris {
     #[must_use]
     pub fn is_table(&self) -> bool {
         matches!(self.kind, EphemerisKind::External { .. })
-    }
-
-    /// Bind the MS FIELD-attached ephemerides that define stored UVW phase centres.
-    pub fn with_attached_fields(
-        mut self,
-        attached: Self,
-        budget: SelectedObservationReferenceDataBudget,
-    ) -> Result<Self, SelectedObservationEphemerisError> {
-        let EphemerisKind::TrackedField { fields } = attached.kind else {
-            return Err(SelectedObservationEphemerisError::AttachedFieldsRequired);
-        };
-        let shared_owner_bytes = selected_ephemeris_allocation_bytes()?;
-        self.retained_bytes = self
-            .retained_bytes
-            .checked_add(attached.retained_bytes)
-            .and_then(|bytes| bytes.checked_sub(shared_owner_bytes))
-            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
-        admit_reference_data(budget, self.retained_bytes)?;
-        self.attached_fields = fields;
-        Ok(self)
     }
 
     pub(crate) const fn retained_bytes(&self) -> usize {
@@ -252,30 +229,10 @@ impl SelectedObservationEphemeris {
             ),
         }
     }
-
-    pub(crate) fn attached_field_sample(
-        &self,
-        field_id: usize,
-        mjd_days: f64,
-    ) -> Result<Option<EvaluatedEphemerisSample>, SelectedObservationEphemerisError> {
-        let fields = if self.attached_fields.is_empty() {
-            match &self.kind {
-                EphemerisKind::TrackedField { fields } => fields.as_ref(),
-                EphemerisKind::Named { .. } | EphemerisKind::External { .. } => return Ok(None),
-            }
-        } else {
-            self.attached_fields.as_ref()
-        };
-        fields
-            .binary_search_by_key(&field_id, |binding| binding.field_id)
-            .ok()
-            .map(|index| evaluate(&fields[index].series, mjd_days))
-            .transpose()
-    }
 }
 
 /// `series` at `mjd_days` ([`FieldEphemeris::sample`]).
-fn evaluate(
+pub(crate) fn evaluate(
     series: &FieldEphemeris,
     mjd_days: f64,
 ) -> Result<EvaluatedEphemerisSample, SelectedObservationEphemerisError> {
@@ -306,6 +263,97 @@ pub(crate) fn attached_ephemeris(
     ephemeris_id: i32,
 ) -> Result<FieldEphemeris, SelectedObservationEphemerisError> {
     EphemerisSeriesPreflight::open(&find_field_ephemeris(root, ephemeris_id)?)?.load()
+}
+
+/// The `EPHEMERIS_ID` each FIELD row of `measurement_set` follows: `None`
+/// for none (an id below zero or no column) and for a row whose `NUM_POLY`
+/// is above zero, whose direction casacore's `phaseDirMeas` takes from its
+/// polynomial whatever its `EPHEMERIS_ID`.
+///
+/// The cells are read without filling the table's caches, so a retained
+/// read of a locked MeasurementSet keeps its byte accounting.
+pub(crate) fn field_ephemeris_ids(
+    measurement_set: &MeasurementSet,
+) -> Result<Vec<Option<i32>>, MsError> {
+    let field = measurement_set.field()?;
+    let table = field.table();
+    let rows = (0..table.row_count()).collect::<Vec<_>>();
+    if !table
+        .schema()
+        .is_some_and(|schema| schema.contains_column("EPHEMERIS_ID"))
+    {
+        return Ok(vec![None; rows.len()]);
+    }
+    let ids = table
+        .column_accessor("EPHEMERIS_ID")?
+        .scalar_cells_owned_for_rows(&rows)?;
+    let polynomials = table
+        .column_accessor("NUM_POLY")?
+        .scalar_cells_owned_for_rows(&rows)?;
+    Ok(ids
+        .into_iter()
+        .zip(polynomials)
+        .map(|(id, polynomial)| match (id, polynomial) {
+            (Some(ScalarValue::Int32(id)), Some(ScalarValue::Int32(0))) if id >= 0 => Some(id),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The ephemeris each FIELD row of `measurement_set` follows
+/// ([`field_ephemeris_ids`]), each table read once however many rows share
+/// it ([`attached_ephemeris`]).
+///
+/// # Errors
+///
+/// A field follows an ephemeris of an in-memory MeasurementSet, or one
+/// whose table is missing or is not one an ephemeris is read from.
+pub(crate) fn field_ephemerides(
+    measurement_set: &MeasurementSet,
+) -> Result<Box<[Option<Arc<FieldEphemeris>>]>, SelectedObservationEphemerisError> {
+    let ids = field_ephemeris_ids(measurement_set)?;
+    let mut read: BTreeMap<i32, Arc<FieldEphemeris>> = BTreeMap::new();
+    ids.iter()
+        .map(|id| {
+            let Some(id) = *id else {
+                return Ok(None);
+            };
+            if let Some(series) = read.get(&id) {
+                return Ok(Some(Arc::clone(series)));
+            }
+            let root = measurement_set
+                .path()
+                .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
+            let series = Arc::new(attached_ephemeris(root, id)?);
+            read.insert(id, Arc::clone(&series));
+            Ok(Some(series))
+        })
+        .collect()
+}
+
+/// At most the bytes [`field_ephemerides`] holds for `measurement_set`,
+/// from each table's row count, before any row is read.
+pub(crate) fn field_ephemerides_bytes(
+    measurement_set: &MeasurementSet,
+) -> Result<usize, SelectedObservationEphemerisError> {
+    let ids = field_ephemeris_ids(measurement_set)?
+        .into_iter()
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    let slots = measurement_set
+        .field()?
+        .row_count()
+        .checked_mul(size_of::<Option<Arc<FieldEphemeris>>>())
+        .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+    ids.into_iter().try_fold(slots, |bytes, id| {
+        let root = measurement_set
+            .path()
+            .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
+        let table = EphemerisSeriesPreflight::open(&find_field_ephemeris(root, id)?)?;
+        bytes
+            .checked_add(table.retained_bytes)
+            .ok_or(SelectedObservationEphemerisError::ByteOverflow)
+    })
 }
 
 impl EphemerisSeriesPreflight {
@@ -583,9 +631,6 @@ pub enum SelectedObservationEphemerisError {
     /// Named targets are evaluated by the bound Measures provider.
     #[error("named moving-source evaluation requires the bound Measures provider")]
     NamedSampleRequiresMeasures,
-    /// FIELD phase-centre attachment requires a TRACKFIELD binding.
-    #[error("attached FIELD ephemerides require a TRACKFIELD binding")]
-    AttachedFieldsRequired,
     /// Immutable reference data exceeds its selected-content-derived ceiling.
     #[error(
         "ephemeris reference data requires {required_bytes} retained bytes but the explicit budget has {available_bytes} bytes"

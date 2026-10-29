@@ -73,7 +73,7 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
         if samples != SELECTED_SAMPLE_COUNT {
             failures.push(format!(
                 "{label}: {samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal \
-                 must retain all 1,024 channels and both parallel hands"
+                 must retain all 1,024 channels and both parallel hands (#986)"
             ));
         }
         assert_matching_wcs(&rust_prefix, &casa_prefix)?;
