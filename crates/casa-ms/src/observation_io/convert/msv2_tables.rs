@@ -743,6 +743,11 @@ mod tests {
             phase_centre: offset.clone(),
             reference_epoch: None,
             source_name: Some("comet".to_string()),
+            source: None,
+            code: None,
+            delay_centre: None,
+            reference_centre: None,
+            flagged: None,
             ephemeris: Some(Arc::new(ephemeris)),
         };
         let close = |found: [f64; 2], expected: [f64; 2]| {

@@ -262,6 +262,11 @@ struct Gathered {
     last_time: Option<u64>,
     baselines: BTreeSet<OrderedBaseline>,
     processors: BTreeSet<i32>,
+    /// The `STATE_ID`s of its rows (#937).
+    states: BTreeSet<i32>,
+    /// The last row's `STATE_ID`: rows of one state usually follow each
+    /// other.
+    last_state: Option<i32>,
     rows: usize,
 }
 
@@ -269,7 +274,7 @@ impl Gathered {
     /// At most the bytes a new partition's sets hold for their roots.
     const ROOTS: usize = node_bytes(size_of::<u64>())
         + node_bytes(size_of::<OrderedBaseline>())
-        + node_bytes(size_of::<i32>());
+        + 2 * node_bytes(size_of::<i32>());
 
     /// The bytes the partition's grid holds while its rows are placed: a
     /// cell a time and baseline, each time's and baseline's tables, and its
@@ -281,6 +286,7 @@ impl Gathered {
             .saturating_mul(size_of::<u32>())
             .saturating_add(times * PLACING_TIME_BYTES)
             .saturating_add(baselines * size_of::<OrderedBaseline>())
+            .saturating_add(self.states.len() * size_of::<i32>())
             .saturating_add(size_of::<Placing>() + size_of::<RowKey>())
     }
 }
@@ -332,6 +338,11 @@ impl Survey {
                 * entry_bytes(size_of::<OrderedBaseline>());
             added += usize::from(partition.processors.insert(columns.processor[i]))
                 * entry_bytes(size_of::<i32>());
+            if partition.last_state != Some(columns.state[i]) {
+                added += usize::from(partition.states.insert(columns.state[i]))
+                    * entry_bytes(size_of::<i32>());
+                partition.last_state = Some(columns.state[i]);
+            }
             partition.rows += 1;
             let scan = (columns.scan_number[i], columns.state[i]);
             if last_scan != Some(scan) {
@@ -383,6 +394,9 @@ struct Placing {
     rows: usize,
     /// The last row's `TIME` bits and time index.
     last_time: Option<(u64, usize)>,
+    /// The partition's `STATE_ID`s, ascending, and its one `PROCESSOR_ID`.
+    states: Vec<i32>,
+    processor: Option<i32>,
 }
 
 impl Placing {
@@ -410,6 +424,8 @@ impl Placing {
             baselines,
             rows: gathered.rows,
             last_time: None,
+            states: gathered.states.into_iter().collect(),
+            processor: gathered.processors.first().copied(),
         })
     }
 
@@ -485,6 +501,8 @@ impl Placing {
             baselines: self.baselines,
             cells: self.cells,
             rows: self.rows,
+            states: self.states,
+            processor: self.processor,
         }
     }
 }
@@ -615,6 +633,10 @@ pub(super) struct Grid {
     pub(super) cells: Vec<u32>,
     /// Rows placed: cells that are not padding.
     pub(super) rows: usize,
+    /// Its rows' `STATE_ID`s, ascending (−1 for rows without a state).
+    pub(super) states: Vec<i32>,
+    /// Its rows' one `PROCESSOR_ID`.
+    pub(super) processor: Option<i32>,
 }
 
 impl Grid {
@@ -661,7 +683,9 @@ mod tests {
         .expect("unpack");
         let ms = MeasurementSet::open_retained_read(root.path().join("ms_trial.ms")).expect("open");
         let modes = catalogue::read_state_modes(&ms).expect("modes");
-        let ephemerides = catalogue::fields_and_uvw(&ms).expect("fields").ephemerides;
+        let ephemerides = catalogue::fields_and_uvw(&ms, &BTreeMap::new())
+            .expect("fields")
+            .ephemerides;
         let main = ms.main_table();
         assert!(main.row_count() > 64, "several chunks of 7 and 64");
         for scheme in [

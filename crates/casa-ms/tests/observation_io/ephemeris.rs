@@ -543,9 +543,24 @@ fn uncovered_and_polynomial_moving_fields_are_refused() {
     let polynomial_root = tempfile::tempdir().expect("root");
     let polynomial = fixture(polynomial_root.path(), "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&polynomial).expect("ms");
-    ms.field_mut()
-        .and_then(|mut fields| fields.set_i32(0, "NUM_POLY", 1))
-        .expect("a polynomial");
+    let mut fields = ms.field_mut().expect("FIELD");
+    fields.set_i32(0, "NUM_POLY", 1).expect("a polynomial");
+    // Each direction a polynomial of NUM_POLY + 1 terms: its constant
+    // term, and no motion.
+    for column in ["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] {
+        let ArrayValue::Float64(constant) =
+            fields.as_ref().phase_dir(0).expect("PHASE_DIR").clone()
+        else {
+            panic!("a Float64 direction");
+        };
+        let terms = ndarray::ArrayD::from_shape_fn(vec![2, 2], |index| match index[1] {
+            0 => constant[[index[0], 0]],
+            _ => 0.0,
+        });
+        fields
+            .set_array(0, column, ArrayValue::Float64(terms))
+            .expect("two terms");
+    }
     ms.save().expect("save");
     drop(ms);
     let out = polynomial_root.path().join("moving.ps.zarr");
