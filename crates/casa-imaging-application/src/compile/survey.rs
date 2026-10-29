@@ -17,10 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{CorrelationProduct, PartitionSelection, RowSelection, UvSelection};
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
-use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{
-    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, PartitionEntry,
-    ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
+    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, Observation,
+    PartitionEntry, ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use casa_types::measures::MjdHighPrec;
 
@@ -110,11 +109,20 @@ impl Survey {
     pub(super) fn window_epochs(&self, spw_id: usize) -> &[Epoch] {
         self.epochs.get(&spw_id).map_or(&[], Vec::as_slice)
     }
+
+    /// The earliest selected time of field `field_id`, if it has one.
+    pub(super) fn first_time_of(&self, field_id: i32) -> Option<f64> {
+        self.epochs
+            .values()
+            .filter_map(|epochs| epochs.iter().find(|epoch| epoch.field_id == field_id))
+            .map(|epoch| epoch.time_mjd_seconds)
+            .reduce(f64::min)
+    }
 }
 
 /// What the survey reads, and the observation it reads it from.
 pub(super) struct SurveyPlan<'a> {
-    pub(super) observation: &'a Msv2Observation,
+    pub(super) observation: &'a dyn Observation,
     pub(super) candidates: Candidates,
     pub(super) row_selection: RowSelection,
     /// Whether the survey reads UVW for the W range, besides a UV-distance

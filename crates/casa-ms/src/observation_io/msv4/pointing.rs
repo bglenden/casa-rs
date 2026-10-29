@@ -41,6 +41,29 @@ const SEARCH_TIMES: u64 = 4096;
 const MOST_SEARCH_TIMES: u64 = 16_384;
 
 impl Msv4Observation {
+    /// The most bytes a pointing query reads and holds
+    /// ([`casa_observation::Observation::pointing_bytes`]): over the
+    /// datasets, a query spanning every pointing time of every antenna, or
+    /// one that also searches outward from a span, whichever reads more,
+    /// and the series it gives every antenna of the catalogue.
+    pub(super) fn pointing_bound(&self) -> Result<usize, ObservationError> {
+        let mut most = 0;
+        for dataset in &self.datasets {
+            let path = format!("{}/pointing_xds/POINTING_BEAM", dataset.path);
+            if !has_node(&self.store, &path)? {
+                continue;
+            }
+            let shape = open_array(&self.store, &path)?.shape().to_vec();
+            let [times, antennas] = [shape[0], shape.get(1).copied().unwrap_or(0)]
+                .map(|extent| usize::try_from(extent).unwrap_or(usize::MAX));
+            let search = times.min(MOST_SEARCH_TIMES as usize);
+            let read = (times + (times + search) * antennas * 2) * size_of::<f64>();
+            let held = self.catalogue.antennas.len() * (times + 2) * 4 * size_of::<f64>();
+            most = most.max(read.saturating_add(held));
+        }
+        Ok(most)
+    }
+
     /// [`casa_observation::Observation::pointing`] on one dataset: each
     /// antenna's samples within the span and its nearest one each side.
     pub(super) fn read_pointing(

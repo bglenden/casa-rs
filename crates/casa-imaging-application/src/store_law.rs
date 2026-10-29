@@ -29,6 +29,7 @@ use casa_observation::{
 };
 use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
+use crate::compile::OpenedStore;
 use crate::native::OpenedObservation;
 use crate::{ApplicationError, ImagingRequest, RunContext, compile_run};
 
@@ -147,7 +148,7 @@ pub fn compare_stores(
         measures,
         phase_table,
     } = input.observation;
-    let observation = &store.value;
+    let observation = measurement_set(&store.value)?;
     let inputs = PlanInputs {
         measures,
         phase_table,
@@ -215,7 +216,7 @@ pub fn row_pointing(
         measures,
         phase_table,
     } = input.observation;
-    let observation = &store.value;
+    let observation = measurement_set(&store.value)?;
     let found = batch_rows(
         &problem,
         observation,
@@ -232,6 +233,14 @@ pub fn row_pointing(
         .into_iter()
         .map(|(row, geometry)| (row, (geometry.time_mjd_days, geometry.pointing.antenna1)))
         .collect())
+}
+
+/// The MeasurementSet `store` holds: the law's reference, whose samples are
+/// MAIN rows.
+fn measurement_set(store: &OpenedStore) -> Result<&Msv2Observation, ApplicationError> {
+    store
+        .msv2()
+        .ok_or_else(|| "the store law's reference must be a MeasurementSet".into())
 }
 
 /// The MAIN row of `sample` of `batch`; `None` for padding.

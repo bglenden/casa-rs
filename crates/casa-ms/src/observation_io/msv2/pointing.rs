@@ -28,23 +28,15 @@ pub(crate) fn scan_rows(budget: usize) -> usize {
 
 impl Msv2Observation {
     /// The most bytes a pointing query of this observation holds while it
-    /// is read and once it is answered, whatever its antennas and times:
-    /// every `POINTING` row taken as a candidate at four polynomial terms
-    /// (the production source's bound), with one scan block of at most
-    /// every row, and the series it gives. A [`PointingRequest`] with this
-    /// budget is never refused for its size, and reads `POINTING` in blocks
-    /// as large as a query may scan. Zero without a `POINTING` table.
-    ///
-    /// # Errors
-    ///
-    /// When `POINTING` cannot be read.
-    pub fn pointing_bytes(&self) -> Result<usize, ObservationError> {
-        Ok(self.pointing_bound()?.0)
-    }
-
-    /// [`Self::pointing_bytes`], and the rows of the scan block it holds:
-    /// `POINTING`'s, up to [`SCAN_ROWS`].
-    fn pointing_bound(&self) -> Result<(usize, usize), ObservationError> {
+    /// is read and once it is answered, whatever its antennas and times
+    /// ([`casa_observation::Observation::pointing_bytes`]): every `POINTING`
+    /// row taken as a candidate at four polynomial terms (the production
+    /// source's bound), with one scan block of at most every row, and the
+    /// series it gives. A [`PointingRequest`] with this budget is never
+    /// refused for its size, and reads `POINTING` in blocks as large as a
+    /// query may scan. Zero without a `POINTING` table. Also the rows of the
+    /// scan block it holds: `POINTING`'s, up to [`SCAN_ROWS`].
+    pub(super) fn pointing_bound(&self) -> Result<(usize, usize), ObservationError> {
         let mut domain = SelectedPointingQueryDomain::builder();
         for antenna in 0..self.catalogue.antennas.len() {
             let id = i32::try_from(antenna).map_err(|_| ObservationError::InvalidStore {

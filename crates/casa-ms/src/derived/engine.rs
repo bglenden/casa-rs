@@ -8,7 +8,7 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
-use casa_observation::FieldEphemeris;
+use casa_observation::{Catalogue, FieldEphemeris};
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
@@ -57,6 +57,9 @@ pub struct MsCalEngine {
     /// What each field follows, once attached
     /// ([`Self::with_field_ephemerides`]); empty until then.
     field_motions: Box<[FieldMotion]>,
+    /// The epoch each field's `PHASE_DIR` is stated at (MSv2 `FIELD.TIME`),
+    /// when the store states one.
+    field_reference_epochs: Box<[Option<MEpoch>]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
@@ -147,6 +150,7 @@ impl MsCalEngine {
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
         let mut field_phase_offsets = Vec::with_capacity(n_field);
+        let mut field_reference_epochs = Vec::with_capacity(n_field);
         for row in 0..n_field {
             let (longitude, latitude) = phase_dir_constant(field.phase_dir(row)?)?;
             field_phase_offsets.push([longitude, latitude]);
@@ -156,6 +160,7 @@ impl MsCalEngine {
                 &observatory_position,
                 Arc::clone(&measures),
             )?);
+            field_reference_epochs.push(field_reference_epoch(ms, row).ok());
         }
         let time_reference = detect_time_reference(ms);
 
@@ -165,6 +170,7 @@ impl MsCalEngine {
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: Box::new([]),
+            field_reference_epochs: field_reference_epochs.into_boxed_slice(),
             observatory_position,
             time_reference,
             measures: Some(measures),
@@ -191,6 +197,94 @@ impl MsCalEngine {
     pub fn with_field_ephemerides(mut self, ms: &MeasurementSet) -> MsResult<Self> {
         self.field_motions = crate::ephemeris::field_motions(ms)?;
         Ok(self)
+    }
+
+    /// An engine over the observation `catalogue` describes, whatever its
+    /// store, evaluating every frame conversion with `measures`: what
+    /// [`Self::with_measures`] and [`Self::with_field_ephemerides`] read from
+    /// a MeasurementSet's subtables, read from the catalogue. Its antennas
+    /// and their mounts, the observatory its first observation's telescope
+    /// names (else its first antenna, as CASA's array reference), its
+    /// fields' phase centres, the epochs they are stated at and the
+    /// ephemerides they follow, and the time scale of its partitions' times
+    /// (`UTC` without a partition).
+    ///
+    /// For a MeasurementSet's catalogue this is the engine
+    /// [`Self::with_measures`] builds, field ephemerides attached: the MSv2
+    /// adapter reads the same subtables the same way (law
+    /// `the_catalogue_engine_is_the_measurement_set_engine`).
+    ///
+    /// # Errors
+    ///
+    /// A field's phase centre that cannot be converted to J2000.
+    pub fn from_catalogue(
+        catalogue: &Catalogue,
+        measures: Arc<dyn MeasuresProvider>,
+    ) -> MsResult<Self> {
+        let antenna_positions = catalogue
+            .antennas
+            .iter()
+            .map(|antenna| {
+                let [x, y, z] = antenna.position.as_itrf();
+                MPosition::new_itrf(x, y, z)
+            })
+            .collect::<Vec<_>>();
+        let antenna_mount_alt_az = catalogue
+            .antennas
+            .iter()
+            .map(casa_observation::AntennaEntry::alt_az)
+            .collect::<Vec<_>>();
+        let observatory_position = MPosition::casa_array_reference(
+            catalogue
+                .observations
+                .first()
+                .map(|observation| observation.telescope.as_str()),
+            antenna_positions.first(),
+            measures.as_ref(),
+        );
+        let mut field_directions = Vec::with_capacity(catalogue.fields.len());
+        let mut field_phase_offsets = Vec::with_capacity(catalogue.fields.len());
+        let mut field_reference_epochs = Vec::with_capacity(catalogue.fields.len());
+        let mut field_motions = Vec::with_capacity(catalogue.fields.len());
+        for field in &catalogue.fields {
+            let (longitude, latitude) = field.phase_centre.as_angles();
+            field_phase_offsets.push([longitude, latitude]);
+            field_directions.push(if field.phase_centre.refer() == DirectionRef::J2000 {
+                field.phase_centre.clone()
+            } else {
+                let frame = MeasFrame::new()
+                    .with_position(observatory_position.clone())
+                    .with_measures(Arc::clone(&measures));
+                let frame = match &field.reference_epoch {
+                    Some(epoch) => frame.with_epoch(epoch.clone()),
+                    None => frame,
+                };
+                field.phase_centre.convert_to(DirectionRef::J2000, &frame)?
+            });
+            field_reference_epochs.push(field.reference_epoch.clone());
+            field_motions.push(match &field.ephemeris {
+                Some(ephemeris) => FieldMotion::Ephemeris(Arc::clone(ephemeris)),
+                None => FieldMotion::Fixed,
+            });
+        }
+        let time_reference = catalogue
+            .partitions
+            .first()
+            .map_or(EpochRef::UTC, |partition| partition.time_scale);
+        Ok(Self {
+            antenna_positions: antenna_positions.into_boxed_slice(),
+            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            field_directions: field_directions.into_boxed_slice(),
+            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+            field_motions: field_motions.into_boxed_slice(),
+            field_reference_epochs: field_reference_epochs.into_boxed_slice(),
+            observatory_position,
+            time_reference,
+            measures: Some(measures),
+            azel_cache: RwLock::new(HashMap::new()),
+            hadec_cache: RwLock::new(HashMap::new()),
+            parallactic_angle_cache: RwLock::new(HashMap::new()),
+        })
     }
 
     /// Whether `field_id` follows an attached ephemeris
@@ -224,6 +318,7 @@ impl MsCalEngine {
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
             field_motions: Box::new([]),
+            field_reference_epochs: Box::new([]),
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
@@ -428,11 +523,14 @@ impl MsCalEngine {
     }
 
     /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,
-    /// for a field of `ms` that follows an attached ephemeris
+    /// for a field that follows an attached ephemeris
     /// ([`Self::with_field_ephemerides`]): the body's geocentric direction at
-    /// the field row's `TIME` in UTC, shifted by `PHASE_DIR`'s true angle in
-    /// the ephemeris's frame. `None` for a fixed field, whose direction is
-    /// its `PHASE_DIR`.
+    /// the field's reference epoch (MSv2 `FIELD.TIME`) in UTC, shifted by
+    /// `PHASE_DIR`'s true angle in the ephemeris's frame. `None` for a fixed
+    /// field, whose direction is its `PHASE_DIR`. A store that states no
+    /// reference epoch (MSv4) is taken at `first_time_mjd_sec`, in the
+    /// engine's time scale: the field's first time, which is the `TIME` the
+    /// MSv4 → MSv2 conversion writes for it.
     ///
     /// CASA's `tclean` centres an image there when its phase centre is left
     /// empty (#987). Geocentric and at no row's time, it is not the direction
@@ -440,12 +538,12 @@ impl MsCalEngine {
     ///
     /// # Errors
     ///
-    /// An unknown field, an unreadable FIELD `TIME`, an ephemeris that
-    /// cannot be read or does not cover that time, or a failed conversion.
+    /// An unknown field, an ephemeris that cannot be read or does not cover
+    /// that time, or a failed conversion.
     pub fn moving_field_reference_direction(
         &self,
-        ms: &MeasurementSet,
         field_id: usize,
+        first_time_mjd_sec: f64,
     ) -> MsResult<Option<MDirection>> {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(None);
@@ -455,7 +553,12 @@ impl MsCalEngine {
             Some(measures) => frame.with_measures(Arc::clone(measures)),
             None => frame,
         };
-        let origin = field_reference_epoch(ms, field_id)?;
+        let origin = self
+            .field_reference_epochs
+            .get(field_id)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| MEpoch::from_mjd_seconds(first_time_mjd_sec, self.time_reference));
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
         crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset).map(Some)
     }

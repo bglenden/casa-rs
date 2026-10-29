@@ -8,8 +8,8 @@ use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
 };
-use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
+use casa_observation::{AntennaId, Catalogue};
+use casa_types::quanta::Unit;
 
 use super::spectral::PreparedSpectralAxis;
 use super::survey::{FirstCrossSample, Survey};
@@ -33,7 +33,7 @@ pub(super) fn resolve(
     else {
         unreachable!("native AW resolves only a native cache");
     };
-    let surface = evla_dish(surveyed.ms, first_cross, evla_surface)?;
+    let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface)?;
     let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
     // AW projection images square grids of square cells (the availability
     // gate refuses others), so x stands for both axes.
@@ -52,8 +52,8 @@ pub(super) fn resolve(
         0,
     )? as f32;
     let feed_angle = receptor_zero_angle(
-        surveyed.ms,
-        first_cross.time_mjd_seconds,
+        surveyed.catalogue,
+        surveyed.survey,
         frequencies[0].spectral_window,
     )? as f32;
     Ok(NativeAwRequestInput {
@@ -85,27 +85,22 @@ pub(super) fn resolve(
 /// The EVLA dish surface, after checking that the observation is EVLA with
 /// the homogeneous 25 m dishes the native model describes.
 fn evla_dish(
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     first_cross: FirstCrossSample,
     evla_surface: &std::path::Path,
 ) -> Result<EvlaDishSurface, PrepareError> {
-    let observation = ms.observation()?;
-    if observation
-        .string(
-            usize::try_from(first_cross.observation_id)
-                .expect("a surveyed observation is an OBSERVATION row"),
-            "TELESCOPE_NAME",
-        )?
-        .trim()
-        != "EVLA"
-    {
+    let telescope = catalogue
+        .observations
+        .get(usize::try_from(first_cross.observation_id).expect("an observation is a row"))
+        .map(|observation| observation.telescope.trim());
+    if telescope != Some("EVLA") {
         return Err(PrepareError::NativeAwTelescope);
     }
-    let antenna = ms.antenna()?;
-    for row in 0..antenna.row_count() {
-        if antenna.dish_diameter(row)? != 25.0 {
-            return Err(PrepareError::NativeAwDishes);
-        }
+    if super::instrument::dish_diameters(catalogue)
+        .iter()
+        .any(|diameter| *diameter != 25.0)
+    {
+        return Err(PrepareError::NativeAwDishes);
     }
     // The reference data is an explicit input with bounded acquisition, never
     // discovered through a CASA installation or downloaded during execution.
@@ -187,29 +182,30 @@ fn mueller_elements(stokes: &[PolarizationCoordinate]) -> Result<Vec<usize>, Pre
     }
 }
 
-fn receptor_zero_angle(ms: &MeasurementSet, time: f64, spw: u32) -> Result<f64, PrepareError> {
-    let feed = ms.feed()?;
+/// Antenna 0's first receptor angle, radians, in the selected partitions
+/// of window `spw`: the feed angle CASA's AW projection adds to the
+/// parallactic angle. The partitions state their receptors as the store
+/// gives them (MSv2 `FEED`, the row applying to the partition's window and
+/// feed), and must agree.
+fn receptor_zero_angle(
+    catalogue: &Catalogue,
+    survey: &Survey,
+    spw: u32,
+) -> Result<f64, PrepareError> {
+    let radians = Unit::new("rad").expect("radians are a unit");
     let mut angle = None;
-    for row in 0..feed.row_count() {
-        if feed.i32(row, "ANTENNA_ID")? != 0 || feed.i32(row, "FEED_ID")? != 0 {
+    for selected in &survey.partitions {
+        if selected.spectral_window_id() != spw {
             continue;
         }
-        let spectral_window = feed.i32(row, "SPECTRAL_WINDOW_ID")?;
-        if spectral_window != -1 && spectral_window != spw as i32 {
+        let entry = catalogue.partition(selected.partition());
+        let Some(receptors) = entry.receptors.get(&AntennaId(0)) else {
             continue;
-        }
-        let center = feed.f64(row, "TIME")?;
-        let interval = feed.f64(row, "INTERVAL")?;
-        if interval != 0.0 && (time - center).abs() > interval / 2.0 {
-            continue;
-        }
-        let ArrayValue::Float64(values) = feed.array(row, "RECEPTOR_ANGLE")? else {
-            return Err(PrepareError::FeedAngleType);
         };
-        let value = values
-            .iter()
-            .next()
-            .copied()
+        let value = receptors
+            .angles
+            .first()
+            .and_then(|angle| angle.get_value_in(&radians).ok())
             .filter(|value| value.is_finite())
             .ok_or(PrepareError::FeedAngleNotFinite)?;
         if angle.is_some_and(|previous: f64| previous.to_bits() != value.to_bits()) {

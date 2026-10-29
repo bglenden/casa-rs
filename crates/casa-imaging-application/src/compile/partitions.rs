@@ -2,10 +2,10 @@
 //! The selection resolved to the observation's partitions (#932).
 //!
 //! Compile names the partitions that hold the request's samples
-//! ([`candidates`]): a partition's data description must be selected, its
-//! fields must include a selected one, and, under an intent selection, its
-//! `OBS_MODE` must be a selected state's. The survey then keeps those that
-//! hold a selected sample, and the compiled problem names them
+//! ([`candidates`]): a partition's window must be selected, its fields must
+//! include a selected one, and, under an intent selection, its observing
+//! mode must be a selected one ([`super::intents`]). The survey then keeps
+//! those that hold a selected sample, and the compiled problem names them
 //! ([`casa_imaging_model::PartitionSelection`]). The run reads the same
 //! partitions ([`resolve_partitions`]).
 
@@ -14,11 +14,14 @@ use std::collections::BTreeSet;
 use casa_imaging_model::{
     CompiledProblem, IdSelection, IntentSelection, RowSelection, VisibilityColumn, WeightColumn,
 };
-use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{
     Catalogue, Correlation, FieldId, FieldSelection, Observation, PartitionEntry, PartitionId,
+    StateId,
 };
 
+use super::intents;
+use super::opening::OpenedStore;
+use super::selection::{WindowChoice, data_group};
 use crate::imaging::{PartitionSelection, SelectedPartition};
 
 /// Speed of light in m/s, for a window's reference wavelength.
@@ -39,7 +42,8 @@ pub enum PartitionSelectionError {
 /// One partition the request selects, before the survey reads its samples.
 pub(super) struct Candidate {
     pub(super) id: PartitionId,
-    /// Its spectral window number (MSv2 `SPECTRAL_WINDOW` row).
+    /// Its spectral window number (the catalogue's window; an MSv2
+    /// `SPECTRAL_WINDOW` row).
     pub(super) spectral_window: usize,
     /// Its window's reference wavelength, when a UV-distance interval is in
     /// wavelengths.
@@ -53,66 +57,62 @@ pub(super) struct Candidates {
     pub(super) partitions: Vec<Candidate>,
 }
 
-/// The partitions of `observation` holding samples of the data descriptions
-/// `ddids` that `rows` may select, in partition order, with the data group
-/// holding `visibility`. A partition's fields must include a selected one;
-/// its UV distances and times are the survey's to test.
+/// The partitions of `store` in the windows `windows` selects that `rows`
+/// may select, in partition order, with the data group holding
+/// `visibility`: a partition's fields must include a selected one and, under
+/// an intent selection, its observing mode must be a selected one. A state
+/// number in the selection (`states`) must select every state of its
+/// partition. A partition's UV distances and times are the survey's to
+/// test.
 ///
 /// # Errors
 ///
 /// [`PartitionSelectionError::Unsupported`] for what the passes do not
-/// read: `FLOAT_DATA` (no request names it), partitions whose column
-/// belongs to different data groups, and an intent selection by state that
-/// splits an `OBS_MODE`. [`PartitionSelectionError::Inconsistent`] for a
-/// window without a positive reference frequency under a UV-distance
-/// interval in wavelengths.
+/// read: `FLOAT_DATA` (no request names it), a partition without the data
+/// group, and an intent selection by state that splits an `OBS_MODE`.
+/// [`PartitionSelectionError::Inconsistent`] for a window without a
+/// positive reference frequency under a UV-distance interval in
+/// wavelengths.
 pub(super) fn candidates(
-    observation: &Msv2Observation,
-    ddids: &[i32],
-    rows: &RowSelection,
+    store: &OpenedStore,
+    windows: &WindowChoice,
+    (rows, states): (&RowSelection, &BTreeSet<StateId>),
     visibility: VisibilityColumn,
 ) -> Result<Candidates, PartitionSelectionError> {
-    let visibilities = match visibility {
-        VisibilityColumn::FloatData => {
-            return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
-        }
-        visibility => column_name(visibility),
-    };
+    if visibility == VisibilityColumn::FloatData {
+        return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
+    }
+    let group = data_group(visibility);
     let fields = field_selection(rows.fields());
     let modes = match rows.intents() {
         IntentSelection::All => None,
-        IntentSelection::Only(intents) => Some(selected_modes(observation, intents)?),
+        IntentSelection::Only(modes) => Some(modes.iter().cloned().collect::<BTreeSet<_>>()),
     };
-    let catalogue = observation.catalogue();
-    let mut data_group = None;
+    let catalogue = store.catalogue();
     let mut partitions = Vec::new();
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);
-        let ddid = observation.data_description_id(id);
-        if !ddids
-            .iter()
-            .any(|selected| i64::from(*selected) == i64::from(ddid))
-        {
+        if !windows.holds(store, id) {
             continue;
         }
-        if modes
-            .as_ref()
-            .is_some_and(|modes| !modes.contains(observation.obs_mode(id)))
-        {
-            continue;
+        if let Some(modes) = &modes {
+            if !modes.contains(&intents::observing_mode(catalogue, entry)) {
+                continue;
+            }
+            if intents::split_state(entry, states) {
+                return Err(PartitionSelectionError::Unsupported(
+                    "an intent selection that takes some of the states sharing an OBS_MODE (the \
+                     MSv2 adapter partitions their rows together)",
+                ));
+            }
         }
         if !entry.fields.iter().any(|field| fields.holds(*field)) {
             continue;
         }
-        let group = group_of(entry, visibilities)?;
-        match &data_group {
-            None => data_group = Some(group.to_string()),
-            Some(name) if name == group => {}
-            Some(_) => {
-                return Err(PartitionSelectionError::Unsupported(
-                    "partitions whose column belongs to different data groups",
-                ));
-            }
+        if entry.data_group(group).is_none() {
+            return Err(PartitionSelectionError::Unsupported(
+                "a selected partition without the imaged data group",
+            ));
         }
         partitions.push(Candidate {
             id,
@@ -121,7 +121,7 @@ pub(super) fn candidates(
         });
     }
     Ok(Candidates {
-        data_group: data_group.unwrap_or_default(),
+        data_group: group.to_string(),
         partitions,
     })
 }
@@ -149,27 +149,20 @@ pub(crate) fn resolve_partitions(
         ));
     };
     let selection = source.selection();
-    let visibilities = match source.selected_columns().visibility() {
-        VisibilityColumn::FloatData => {
-            return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
-        }
-        visibility => column_name(visibility),
-    };
+    let visibility = source.selected_columns().visibility();
+    if visibility == VisibilityColumn::FloatData {
+        return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
+    }
+    let group = data_group(visibility);
     let catalogue = observation.catalogue();
     let rows = selection.rows_filter();
-    let mut data_group = None;
     let mut partitions = Vec::with_capacity(selection.partitions().len());
     for selected in selection.partitions() {
         let entry = catalogue.partition(selected.partition());
-        let group = group_of(entry, visibilities)?;
-        match &data_group {
-            None => data_group = Some(group.to_string()),
-            Some(name) if name == group => {}
-            Some(_) => {
-                return Err(PartitionSelectionError::Unsupported(
-                    "partitions whose column belongs to different data groups",
-                ));
-            }
+        if entry.data_group(group).is_none() {
+            return Err(PartitionSelectionError::Unsupported(
+                "a selected partition without the imaged data group",
+            ));
         }
         let window = selected.spectral_window_id();
         let channels = selection
@@ -204,10 +197,13 @@ pub(crate) fn resolve_partitions(
             wavelength_m: wavelength(catalogue, entry, rows)?,
         });
     }
-    Ok(PartitionSelection {
-        data_group: data_group.ok_or(PartitionSelectionError::Unsupported(
+    if partitions.is_empty() {
+        return Err(PartitionSelectionError::Unsupported(
             "a selection no partition holds",
-        ))?,
+        ));
+    }
+    Ok(PartitionSelection {
+        data_group: group.to_string(),
         partitions,
         fields: field_selection(rows.fields()),
         uv: rows.uv_distances().clone(),
@@ -220,21 +216,6 @@ pub(super) fn field_selection(fields: &IdSelection) -> FieldSelection {
         IdSelection::All => FieldSelection::All,
         IdSelection::Only(ids) => FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
     }
-}
-
-/// The name of `entry`'s data group whose visibilities are `visibilities`.
-fn group_of<'e>(
-    entry: &'e PartitionEntry,
-    visibilities: &str,
-) -> Result<&'e str, PartitionSelectionError> {
-    entry
-        .data_groups
-        .iter()
-        .find(|group| group.visibilities == visibilities)
-        .map(|group| group.name.as_str())
-        .ok_or(PartitionSelectionError::Unsupported(
-            "a visibility column without its data group",
-        ))
 }
 
 /// `entry`'s window's reference wavelength, when `rows` tests a UV distance
@@ -262,73 +243,29 @@ fn wavelength(
         })
 }
 
-/// MAIN's column that holds `visibility`.
-fn column_name(visibility: VisibilityColumn) -> &'static str {
-    match visibility {
-        VisibilityColumn::Data => "DATA",
-        VisibilityColumn::CorrectedData => "CORRECTED_DATA",
-        VisibilityColumn::FloatData => "FLOAT_DATA",
-    }
-}
-
-/// The weights the partitions `ids` of `observation` hold beside
-/// `visibility`: `WEIGHT_SPECTRUM` when any of them reads it, else
+/// The weights the partitions `ids` of `store` hold beside `visibility`:
+/// `WEIGHT_SPECTRUM` when any of them reads per-channel weights, else
 /// `WEIGHT`. The MSv2 adapter decides each partition's by CASA's rule, at
-/// the first of its rows, and the passes read each partition's own
-/// weights; this names them in the problem's manifest.
+/// the first of its rows; an MSv4's weights are per channel. The passes
+/// read each partition's own weights; this names them in the problem's
+/// manifest.
 pub(super) fn stored_weights(
-    catalogue: &Catalogue,
+    store: &OpenedStore,
     ids: impl IntoIterator<Item = PartitionId>,
     visibility: VisibilityColumn,
 ) -> WeightColumn {
-    let column = column_name(visibility);
-    let spectral = ids.into_iter().any(|id| {
-        catalogue
-            .partition(id)
-            .data_groups
-            .iter()
-            .any(|group| group.visibilities == column && group.weights == "WEIGHT_SPECTRUM")
-    });
+    let group = data_group(visibility);
+    let catalogue = store.catalogue();
+    let spectral = store.msv2().is_none()
+        || ids.into_iter().any(|id| {
+            catalogue
+                .partition(id)
+                .data_group(group)
+                .is_some_and(|(_, entry)| entry.weights == "WEIGHT_SPECTRUM")
+        });
     if spectral {
         WeightColumn::WeightSpectrum
     } else {
         WeightColumn::Weight
     }
-}
-
-/// The `OBS_MODE`s the MSv2 adapter partitions the rows of the states
-/// `selected` names by ([`Msv2Observation::state_mode`]): a partition is
-/// read when its mode ([`Msv2Observation::obs_mode`]) is one of them.
-///
-/// The adapter keys partitions by the whole `OBS_MODE` string, not by
-/// `STATE_ID`, so a partition holds the rows of every state with its mode,
-/// and the rows without a state (`STATE_ID` -1 or beyond `STATE`) share the
-/// empty mode. A selection is refused unless the partitions it reads hold
-/// its states' rows alone: no state that MAIN's rows hold and the selection
-/// leaves out has a selected state's mode.
-fn selected_modes(
-    observation: &Msv2Observation,
-    selected: &[casa_imaging_model::ResolvedIntent],
-) -> Result<BTreeSet<String>, PartitionSelectionError> {
-    let chosen = selected
-        .iter()
-        .map(|intent| i64::from(intent.state_id()))
-        .collect::<BTreeSet<_>>();
-    let modes = selected
-        .iter()
-        .map(|intent| {
-            let state = i32::try_from(intent.state_id()).unwrap_or(-1);
-            observation.state_mode(state).to_string()
-        })
-        .collect::<BTreeSet<_>>();
-    let shared = observation.main_states().iter().any(|state| {
-        !chosen.contains(&i64::from(*state)) && modes.contains(observation.state_mode(*state))
-    });
-    if shared {
-        return Err(PartitionSelectionError::Unsupported(
-            "an intent selection that takes some of the states sharing an OBS_MODE (the MSv2 \
-             adapter partitions their rows together)",
-        ));
-    }
-    Ok(modes)
 }

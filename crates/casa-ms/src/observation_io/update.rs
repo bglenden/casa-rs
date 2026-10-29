@@ -250,6 +250,23 @@ impl UpdateSession {
         Self::with(store, targets, intent)
     }
 
+    /// An update session over `observation`, an MSv4 processing set opened
+    /// already, writing `targets`: [`open_update`]'s session, without
+    /// opening the processing set a second time.
+    ///
+    /// # Errors
+    ///
+    /// As [`open_update`].
+    #[cfg(all(unix, feature = "msv4"))]
+    pub fn over_msv4(
+        observation: super::Msv4Observation,
+        targets: &[UpdateTarget],
+    ) -> Result<Self, ObservationError> {
+        let intent = Intent::take(observation.path())?;
+        let store = Store::V4(Msv4Update::over(observation));
+        Self::with(store, targets, intent)
+    }
+
     /// The session of `store`, its `targets` resolved, under `intent`.
     fn with(
         store: Store,

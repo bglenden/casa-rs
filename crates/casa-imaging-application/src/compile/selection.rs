@@ -1,25 +1,27 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The selection a request names, resolved against its MeasurementSet: the
-//! data descriptions, spectral windows and channels, the per-sample
-//! predicates, the visibility column, and the observation selection the
-//! survey's partitions make of them.
+//! The selection a request names, resolved against its observation's
+//! catalogue: the spectral windows (or an MSv2 data description) and
+//! channels, the per-sample predicates, the visibility column, and the
+//! observation selection the survey's partitions make of them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    IdSelection, IntentSelection, ObservationSelection, ResolvedIntent, RowSelection,
-    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn as OwnerVisibilityColumn,
+    IdSelection, IntentSelection, ObservationSelection, RowSelection, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
-    MeasurementSet, UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
+    UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
     parse_uv_distance_intervals, resolve_channel_selector_selection,
 };
+use casa_observation::{Catalogue, StateId};
 use casa_types::measures::frequency::FrequencyRef;
 
-use super::PrepareError;
+use super::opening::OpenedStore;
 use super::survey::Survey;
+use super::{PrepareError, intents};
 use crate::{DataColumn, ImagingRequest};
 
 /// One selected spectral window's frequency axis.
@@ -34,12 +36,12 @@ pub(super) struct SourceSpectralWindow {
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
 /// The request's per-sample predicates: its fields, UV-distance intervals
-/// and scan intents (the `STATE` rows its `intent` selector names, with
-/// their `OBS_MODE`s).
+/// and the observing modes its `intent` selector names
+/// ([`intents::resolve`]), with the states a state number named.
 pub(super) fn row_selection(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
-) -> Result<RowSelection, PrepareError> {
+    catalogue: &Catalogue,
+) -> Result<(RowSelection, BTreeSet<StateId>), PrepareError> {
     let fields = match &request.field {
         Some(ids) => IdSelection::Only(
             ids.iter()
@@ -62,28 +64,14 @@ pub(super) fn row_selection(
         ),
         None => UvSelection::All,
     };
-    let intents = match request.intent.as_deref() {
+    let (intents, states) = match request.intent.as_deref() {
         Some(text) => {
-            let state = ms.state()?;
-            IntentSelection::Only(
-                ms.selected_state_ids(text)?
-                    .into_iter()
-                    .map(|id| {
-                        let row = usize::try_from(id).map_err(|_| PrepareError::NegativeId {
-                            selector: "intent",
-                            value: id,
-                        })?;
-                        Ok(ResolvedIntent::new(
-                            u32::try_from(id).expect("a nonnegative i32 fits u32"),
-                            state.string(row, "OBS_MODE")?,
-                        ))
-                    })
-                    .collect::<Result<_, PrepareError>>()?,
-            )
+            let resolved = intents::resolve(text, catalogue)?;
+            (resolved.selection, resolved.states)
         }
-        None => IntentSelection::All,
+        None => (IntentSelection::All, BTreeSet::new()),
     };
-    Ok(RowSelection::new(fields, uv_distances, intents))
+    Ok((RowSelection::new(fields, uv_distances, intents), states))
 }
 
 /// One `uvrange` interval as the model states it.
@@ -106,25 +94,28 @@ fn uv_range(interval: UvDistanceInterval) -> UvDistanceRange {
     )
 }
 
-/// The frequency axes of the spectral windows `spw_ids`.
+/// The frequency axes of the catalogue's windows `spw_ids`, each as the
+/// first of its partitions states it.
 pub(super) fn spectral_windows(
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     spw_ids: impl IntoIterator<Item = usize>,
-) -> Result<Vec<SourceSpectralWindow>, PrepareError> {
-    let spectral_window = ms.spectral_window()?;
+) -> Vec<SourceSpectralWindow> {
     spw_ids
         .into_iter()
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|spw_id| {
-            let code = spectral_window.meas_freq_ref(spw_id)?;
-            Ok(SourceSpectralWindow {
+            let entry = catalogue
+                .partitions
+                .iter()
+                .find(|entry| entry.window.0 as usize == spw_id)
+                .expect("a candidate's window is a partition's");
+            SourceSpectralWindow {
                 spw_id,
-                frequency_reference: FrequencyRef::from_casacore_code(code)
-                    .ok_or(PrepareError::UnknownSourceFrame { spw_id, code })?,
-                frequencies_hz: spectral_window.chan_freq(spw_id)?,
-                channel_widths_hz: spectral_window.chan_width(spw_id)?,
-            })
+                frequency_reference: entry.frequency_frame,
+                frequencies_hz: entry.frequencies_hz.clone(),
+                channel_widths_hz: entry.channel_widths_hz.clone(),
+            }
         })
         .collect()
 }
@@ -158,14 +149,48 @@ pub(super) fn one_window<'a>(
     }
 }
 
-/// The data descriptions the request selects: its `ddid`, else those of
-/// the windows its `spw` selector names (every window without one) that
-/// bind a spectral window and a polarization.
-pub(super) fn selected_data_descriptions(
+/// The spectral windows a request selects: the catalogue's windows its
+/// `spw` selector numbers (a MeasurementSet's `SPECTRAL_WINDOW` rows; an
+/// MSv4's windows in the order its datasets name them), or every window, or
+/// the one MSv2 data description its `ddid` names.
+pub(super) enum WindowChoice {
+    /// Every window.
+    All,
+    /// These windows.
+    Windows(BTreeSet<u32>),
+    /// The partitions of one MSv2 `DATA_DESCRIPTION` row.
+    DataDescription(u32),
+}
+
+impl WindowChoice {
+    /// Whether partition `id` of `store` is in a selected window.
+    pub(super) fn holds(&self, store: &OpenedStore, id: casa_observation::PartitionId) -> bool {
+        match self {
+            Self::All => true,
+            Self::Windows(windows) => windows.contains(&store.catalogue().partition(id).window.0),
+            Self::DataDescription(ddid) => store
+                .msv2()
+                .is_some_and(|observation| observation.data_description_id(id) == *ddid),
+        }
+    }
+}
+
+/// The windows `request` selects in `store` ([`WindowChoice`]).
+///
+/// # Errors
+///
+/// A `ddid` of an MSv4, which has no data descriptions, or one that is not
+/// a `DATA_DESCRIPTION` row binding a window and a polarization; an `spw`
+/// selector that does not parse.
+pub(super) fn window_choice(
     request: &ImagingRequest,
-    table: &casa_ms::MsDataDescription<'_>,
-) -> Result<Vec<i32>, PrepareError> {
+    store: &OpenedStore,
+) -> Result<WindowChoice, PrepareError> {
     if let Some(ddid) = request.ddid {
+        let observation = store
+            .msv2()
+            .ok_or(PrepareError::NoDataDescriptions { ddid })?;
+        let table = observation.measurement_set().data_description()?;
         let binds = usize::try_from(ddid)
             .ok()
             .filter(|row| *row < table.row_count())
@@ -179,32 +204,22 @@ pub(super) fn selected_data_descriptions(
         if !binds {
             return Err(PrepareError::InvalidDataDescription { ddid });
         }
-        return Ok(vec![ddid]);
+        return Ok(WindowChoice::DataDescription(
+            u32::try_from(ddid).expect("a bound DATA_DESC_ID is nonnegative"),
+        ));
     }
-    let selected_spws = request
-        .spw
-        .as_deref()
-        .map(parse_spw_selector)
-        .transpose()?
-        .unwrap_or_default()
+    let Some(text) = request.spw.as_deref() else {
+        return Ok(WindowChoice::All);
+    };
+    let windows = parse_spw_selector(text)?
         .into_iter()
-        .map(|selector| selector.spw_id)
+        .filter_map(|selector| u32::try_from(selector.spw_id).ok())
         .collect::<BTreeSet<_>>();
-    let mut ddids = Vec::new();
-    for row in 0..table.row_count() {
-        let spw = table.spectral_window_id(row)?;
-        let polarization = table.polarization_id(row)?;
-        if spw >= 0
-            && polarization >= 0
-            && (selected_spws.is_empty() || selected_spws.contains(&spw))
-        {
-            ddids.push(i32::try_from(row).expect("DATA_DESCRIPTION rows are addressed by i32 ids"));
-        }
-    }
-    if ddids.is_empty() {
-        return Err(PrepareError::NoSelectedDataDescriptions);
-    }
-    Ok(ddids)
+    Ok(if windows.is_empty() {
+        WindowChoice::All
+    } else {
+        WindowChoice::Windows(windows)
+    })
 }
 
 /// The channels of `spw_id` the request selects: those its `spw`
@@ -296,7 +311,7 @@ pub(super) fn observation_selection(
 }
 
 /// The visibility column imaged: `DATA` when asked for, else
-/// `CORRECTED_DATA` when present, else `DATA`.
+/// `CORRECTED_DATA` when the observation `holds` it, else `DATA`.
 ///
 /// `datacolumn='corrected'` on a MeasurementSet without `CORRECTED_DATA`
 /// therefore images `DATA`, as CASA's `tclean` does (simulation plan §3,
@@ -317,14 +332,13 @@ pub(super) fn observation_selection(
 /// `TiledShapeStMan` columns, and one probe would not reproduce CASA's
 /// per-chunk rule.
 pub(super) fn visibility_column(
-    ms: &MeasurementSet,
+    holds: impl Fn(OwnerVisibilityColumn) -> bool,
     requested: Option<DataColumn>,
 ) -> Result<OwnerVisibilityColumn, PrepareError> {
-    let present = |column| ms.data_column(column).is_ok();
     Ok(match requested {
         Some(DataColumn::Data) => OwnerVisibilityColumn::Data,
-        _ if present(VisibilityDataColumn::CorrectedData) => OwnerVisibilityColumn::CorrectedData,
-        _ if !present(VisibilityDataColumn::Data) => return Err(PrepareError::NoVisibilityColumn),
+        _ if holds(OwnerVisibilityColumn::CorrectedData) => OwnerVisibilityColumn::CorrectedData,
+        _ if !holds(OwnerVisibilityColumn::Data) => return Err(PrepareError::NoVisibilityColumn),
         Some(DataColumn::Corrected) => {
             tracing::warn!("CORRECTED_DATA column does not exist. Using DATA column instead");
             OwnerVisibilityColumn::Data
@@ -333,11 +347,44 @@ pub(super) fn visibility_column(
     })
 }
 
+/// The data group holding `visibility` in both stores: `base` for the data
+/// (MSv2 `DATA`, MSv4 `VISIBILITY`), `corrected` for the corrected data.
+pub(super) fn data_group(visibility: OwnerVisibilityColumn) -> &'static str {
+    match visibility {
+        OwnerVisibilityColumn::Data => "base",
+        OwnerVisibilityColumn::CorrectedData => "corrected",
+        OwnerVisibilityColumn::FloatData => "float",
+    }
+}
+
+/// Whether `store` holds `visibility`: a MeasurementSet when MAIN has its
+/// column (its adapter states the `base` group whether or not MAIN has
+/// `DATA`), an MSv4 when one of its partitions has the column's data group.
+pub(super) fn holds(store: &OpenedStore, visibility: OwnerVisibilityColumn) -> bool {
+    match store.msv2() {
+        Some(observation) => {
+            let column = match visibility {
+                OwnerVisibilityColumn::Data => VisibilityDataColumn::Data,
+                OwnerVisibilityColumn::CorrectedData => VisibilityDataColumn::CorrectedData,
+                OwnerVisibilityColumn::FloatData => return false,
+            };
+            observation.measurement_set().data_column(column).is_ok()
+        }
+        None => {
+            let group = data_group(visibility);
+            store
+                .catalogue()
+                .partitions
+                .iter()
+                .any(|entry| entry.data_group(group).is_some())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use casa_ms::{MeasurementSetBuilder, OptionalMainColumn};
     use serde_json::json;
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -379,28 +426,22 @@ mod tests {
         }
     }
 
-    /// The column `requested` images in a MeasurementSet with `columns`, and
-    /// the warnings choosing it logs.
+    /// The column `requested` images in an observation holding `columns`,
+    /// and the warnings choosing it logs.
     fn chosen(
-        columns: &[OptionalMainColumn],
+        columns: &[OwnerVisibilityColumn],
         requested: Option<DataColumn>,
     ) -> (Result<OwnerVisibilityColumn, PrepareError>, Vec<String>) {
-        let builder = columns
-            .iter()
-            .fold(MeasurementSetBuilder::new(), |builder, column| {
-                builder.with_main_column(*column)
-            });
-        let ms = MeasurementSet::create_memory(builder).expect("an in-memory MeasurementSet");
         let warnings = Warnings::default();
         let chosen = tracing::subscriber::with_default(
             tracing_subscriber::registry().with(warnings.clone()),
-            || visibility_column(&ms, requested),
+            || visibility_column(|column| columns.contains(&column), requested),
         );
         (chosen, warnings.0.lock().expect("warnings").clone())
     }
 
     #[test]
-    fn a_measurement_set_without_visibilities_has_no_column_to_image() {
+    fn an_observation_without_visibilities_has_no_column_to_image() {
         for requested in [None, Some(DataColumn::Corrected)] {
             assert!(matches!(
                 chosen(&[], requested).0,
@@ -417,7 +458,8 @@ mod tests {
 
     #[test]
     fn corrected_falls_back_to_data_with_a_warning_when_the_ms_has_no_corrected_data() {
-        let (column, warnings) = chosen(&[OptionalMainColumn::Data], Some(DataColumn::Corrected));
+        let (column, warnings) =
+            chosen(&[OwnerVisibilityColumn::Data], Some(DataColumn::Corrected));
         assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
         assert_eq!(
             warnings,
@@ -427,14 +469,17 @@ mod tests {
 
     #[test]
     fn an_unspecified_column_falls_back_to_data_without_a_warning() {
-        let (column, warnings) = chosen(&[OptionalMainColumn::Data], None);
+        let (column, warnings) = chosen(&[OwnerVisibilityColumn::Data], None);
         assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
     fn corrected_images_corrected_data_when_the_ms_has_it() {
-        let both = [OptionalMainColumn::Data, OptionalMainColumn::CorrectedData];
+        let both = [
+            OwnerVisibilityColumn::Data,
+            OwnerVisibilityColumn::CorrectedData,
+        ];
         for requested in [None, Some(DataColumn::Corrected)] {
             let (column, warnings) = chosen(&both, requested);
             assert!(matches!(column, Ok(OwnerVisibilityColumn::CorrectedData)));

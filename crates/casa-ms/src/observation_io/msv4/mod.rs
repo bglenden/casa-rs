@@ -13,6 +13,7 @@ mod ephemeris;
 mod metadata;
 mod pointing;
 mod read;
+mod sources;
 pub(super) mod store;
 pub(super) mod update;
 mod window;

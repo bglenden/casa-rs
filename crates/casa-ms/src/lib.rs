@@ -146,8 +146,8 @@ pub(crate) use selected_pointing::{
     PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
-    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
-    parse_spw_selector,
+    ChannelSelection, ChannelSelectionSegment, IntentSelector, SpwSelector, parse_intent_selector,
+    parse_numeric_id_selector, parse_spw_selector,
 };
 pub use selection::{
     MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,

@@ -56,43 +56,20 @@ impl IdSelection {
     }
 }
 
-/// One intent pattern resolved to an exact `STATE_ID` and `OBS_MODE` value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedIntent {
-    state_id: u32,
-    observation_mode: String,
-}
-
-impl ResolvedIntent {
-    /// Construct one resolved intent.
-    #[must_use]
-    pub const fn new(state_id: u32, observation_mode: String) -> Self {
-        Self {
-            state_id,
-            observation_mode,
-        }
-    }
-
-    /// Return the selected `STATE_ID`.
-    #[must_use]
-    pub const fn state_id(&self) -> u32 {
-        self.state_id
-    }
-
-    /// Return the exact selected `OBS_MODE` metadata value.
-    #[must_use]
-    pub fn observation_mode(&self) -> &str {
-        &self.observation_mode
-    }
-}
-
-/// Exact resolved scan-intent selection.
+/// Exact resolved scan-intent selection: the observing modes of the
+/// selected partitions.
+///
+/// An observing mode is a whole MSv2 `STATE::OBS_MODE`, a comma-separated
+/// list of intents, or an MSv4 partition's intents joined by commas, which
+/// is how XRADIO splits the `OBS_MODE` it converts. A partition's samples
+/// share one mode, so the partitions the selection reads are those of the
+/// selected modes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentSelection {
-    /// Select every state/intent.
+    /// Select every observing mode.
     All,
-    /// Select exactly these resolved state rows.
-    Only(Vec<ResolvedIntent>),
+    /// Select exactly these observing modes, in canonical (sorted) order.
+    Only(Vec<String>),
 }
 
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
@@ -144,22 +121,12 @@ impl RowSelection {
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}
-            IntentSelection::Only(intents) => {
-                for intent in intents.iter() {
-                    if intent.observation_mode.trim().is_empty() {
-                        return Err(CompileObservationError::InvalidIntent);
-                    }
-                }
-                intents.sort_unstable_by_key(|intent| intent.state_id);
-                if intents.is_empty() {
+            IntentSelection::Only(modes) => {
+                if modes.is_empty() || modes.iter().any(|mode| mode.trim().is_empty()) {
                     return Err(CompileObservationError::InvalidIntent);
                 }
-                if intents
-                    .windows(2)
-                    .any(|pair| pair[0].state_id == pair[1].state_id)
-                {
-                    return Err(CompileObservationError::DuplicateIntentState);
-                }
+                modes.sort_unstable();
+                modes.dedup();
             }
         }
         Ok(())
@@ -791,12 +758,9 @@ pub enum CompileObservationError {
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,
-    /// Resolved intent metadata was empty.
-    #[error("resolved intent must contain a non-empty OBS_MODE value")]
+    /// An intent selection named no observing mode, or an empty one.
+    #[error("an intent selection names a non-empty observing mode, at least one")]
     InvalidIntent,
-    /// More than one intent mapping was supplied for one state.
-    #[error("more than one resolved intent was supplied for one STATE_ID")]
-    DuplicateIntentState,
     /// One partition appeared more than once.
     #[error("duplicate selection of partition {partition}")]
     DuplicatePartition {

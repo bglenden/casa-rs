@@ -769,6 +769,10 @@ impl Observation for Msv2Observation {
         self.read_pointing(request)
     }
 
+    fn pointing_bytes(&self) -> Result<usize, ObservationError> {
+        Ok(self.pointing_bound()?.0)
+    }
+
     fn group_keys(
         &self,
         id: PartitionId,

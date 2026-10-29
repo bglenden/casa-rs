@@ -20,7 +20,8 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
-casa-ms = { path = "../casa-ms" }
+# An MSv4 processing set images as a MeasurementSet does (#932, 6c).
+casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-observation = { path = "../casa-observation" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true
@@ -31,7 +32,6 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
-casa-ms = { path = "../casa-ms", features = ["msv4"] }
 flate2 = "1"
 tar = "0.4"
 casa-imaging-metal = { path = "../casa-imaging-metal" }

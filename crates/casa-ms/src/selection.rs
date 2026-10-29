@@ -196,18 +196,6 @@ pub fn parse_uv_distance_intervals(text: &str) -> MsResult<Vec<UvDistanceInterva
         .collect())
 }
 
-impl MeasurementSet {
-    /// The `STATE_ID`s the CASA `intent` selector `text` names: patterns
-    /// matched against `STATE::OBS_MODE`, and state numbers and ranges.
-    ///
-    /// # Errors
-    ///
-    /// When `STATE` cannot be read or `text` is not `intent` syntax.
-    pub fn selected_state_ids(&self, text: &str) -> MsResult<Vec<i32>> {
-        parser::parse_state_selector(self, text)
-    }
-}
-
 /// Explicit resource inputs for deterministic selected-row block planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MsSelectionIoBudget {
