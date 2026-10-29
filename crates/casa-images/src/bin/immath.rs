@@ -20,7 +20,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImmathRequest {
-        imagename: task.paths("imagename")?,
+        imagename: task.input_paths("imagename")?,
         outfile: task.path("outfile")?,
         expr: task.required_text("expr")?,
         overwrite: task.flag("overwrite")?,

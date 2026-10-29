@@ -18,7 +18,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let result = export_fits(
-        task.path("imagename")?,
+        task.input_path("imagename")?,
         task.path("fitsimage")?,
         task.flag("velocity")?,
         task.flag("overwrite")?,

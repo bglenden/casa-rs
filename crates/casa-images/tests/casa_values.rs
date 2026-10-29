@@ -347,17 +347,163 @@ fn immath_takes_casas_spellings_of_its_defaults() {
     refused(json!({"mode": "poli", "sigma": "5mJy/beam"}), "mode");
 }
 
+/// CASA's default call, `imregrid('in.image')`, is `template='get'`, which
+/// writes nothing and so needs no `output`: it reaches the refusal of
+/// `get`, on the command line and in a request.
 #[test]
 fn imregrid_refuses_casas_default_template_get() {
     let workspace = tempfile::tempdir().unwrap();
     let root = workspace.path();
     write_image(&root.join("in.image"), 1.0);
-    let reply = json_run(
-        env!("CARGO_BIN_EXE_imregrid"),
-        "imregrid",
+    let imregrid = env!("CARGO_BIN_EXE_imregrid");
+    for values in [
+        json!({"imagename": "in.image"}),
         json!({"imagename": "in.image", "output": "out.im"}),
+    ] {
+        let reply = json_run(imregrid, "imregrid", values.clone(), root);
+        assert_refuses(reply, "template", "#977");
+    }
+    assert!(!root.join("out.im").exists());
+    assert_refused(&run(imregrid, &["--imagename", "in.image"], root), "#977");
+    // A writing regrid still needs its output.
+    write_image(&root.join("template.image"), 1.0);
+    let reply = json_run(
+        imregrid,
+        "imregrid",
+        json!({"imagename": "in.image", "template": "template.image"}),
         root,
     );
-    assert_refuses(reply, "template", "#977");
-    assert!(!root.join("out.im").exists());
+    assert!(
+        matches!(&reply, TaskReply::Failed { parameter: Some(name), .. } if name == "output"),
+        "{reply:?}"
+    );
+}
+
+/// impbcor's selection controls are CASA parameters casa-rs takes only at
+/// their defaults: anything else is refused before the task starts, naming
+/// its parameter and #977, as is CASA's numeric-array `pbimage`.
+#[test]
+fn impbcor_refuses_its_selection_controls_before_it_starts() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    write_image(&root.join("in.image"), 2.0);
+    write_image(&root.join("pb.image"), 1.0);
+    let impbcor = env!("CARGO_BIN_EXE_impbcor");
+    let base = || json!({"imagename": "in.image", "pbimage": "pb.image", "outfile": "out.im"});
+    for (parameter, value) in [
+        ("box", json!("0,0,1,1")),
+        ("region", json!("box[[0pix,0pix],[1pix,1pix]]")),
+        ("chans", json!("0")),
+        ("stokes", json!("I")),
+        ("mask", json!("in.image > 0")),
+    ] {
+        let mut values = base();
+        values[parameter] = value;
+        assert_refuses(
+            json_run(impbcor, "impbcor", values, root),
+            parameter,
+            "#977",
+        );
+    }
+    // stretch is read only with a mask, as CASA reads it.
+    let mut stretched = base();
+    stretched["stretch"] = json!(true);
+    let reply = json_run(impbcor, "impbcor", stretched, root);
+    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    assert!(root.join("out.im").exists());
+    let box_line = [
+        "--imagename",
+        "in.image",
+        "--pbimage",
+        "pb.image",
+        "--outfile",
+        "o.im",
+        "--box",
+        "0,0,1,1",
+    ];
+    assert_refused(&run(impbcor, &box_line, root), "#977");
+    assert!(!root.join("o.im").exists());
+    // CASA's pbimage may be the beam's pixels; casa-rs takes its name only.
+    let mut pixels = base();
+    pixels["pbimage"] = json!([[1.0, 1.0], [1.0, 1.0]]);
+    pixels["outfile"] = json!("pixels.im");
+    let reply = json_run(impbcor, "impbcor", pixels, root);
+    assert!(
+        matches!(&reply, TaskReply::Failed { parameter: Some(name), .. } if name == "pbimage"),
+        "{reply:?}"
+    );
+    assert!(!root.join("pixels.im").exists());
+}
+
+/// A missing input is a refusal naming its parameter (exit 2), before the
+/// task starts, as CASA's `imstat('does-not-exist.im')` is; an error the
+/// task meets once it runs stays an execution failure.
+#[test]
+fn a_missing_input_image_is_refused_naming_its_parameter() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    write_image(&root.join("in.image"), 1.0);
+    for (binary, surface, values, parameter) in [
+        (
+            env!("CARGO_BIN_EXE_immoments"),
+            "immoments",
+            json!({"imagename": "missing.im", "outfile": "m.im"}),
+            "imagename",
+        ),
+        (
+            env!("CARGO_BIN_EXE_immath"),
+            "immath",
+            json!({"imagename": ["in.image", "missing.im"], "expr": "IM0+IM1", "outfile": "m.im"}),
+            "imagename",
+        ),
+        (
+            env!("CARGO_BIN_EXE_impbcor"),
+            "impbcor",
+            json!({"imagename": "in.image", "pbimage": "missing.im", "outfile": "m.im"}),
+            "pbimage",
+        ),
+        (
+            env!("CARGO_BIN_EXE_exportfits"),
+            "exportfits",
+            json!({"imagename": "missing.im", "fitsimage": "m.fits"}),
+            "imagename",
+        ),
+        (
+            env!("CARGO_BIN_EXE_importfits"),
+            "importfits",
+            json!({"fitsimage": "missing.fits", "imagename": "m.im"}),
+            "fitsimage",
+        ),
+    ] {
+        let reply = json_run(binary, surface, values, root);
+        let TaskReply::Failed {
+            message,
+            parameter: named,
+            ..
+        } = &reply
+        else {
+            panic!("{surface}: {reply:?}");
+        };
+        assert_eq!(named.as_deref(), Some(parameter), "{surface}: {message}");
+        assert!(message.contains("does not exist"), "{surface}: {message}");
+    }
+    assert!(!root.join("m.im").exists());
+    let output = run(
+        env!("CARGO_BIN_EXE_immoments"),
+        &["missing.im", "--outfile", "m.im"],
+        root,
+    );
+    assert_refused(&output, "missing.im");
+    // An image that exists but cannot be read fails as the task runs.
+    std::fs::create_dir(root.join("empty.im")).unwrap();
+    let reply = json_run(
+        env!("CARGO_BIN_EXE_immoments"),
+        "immoments",
+        json!({"imagename": "empty.im", "outfile": "e.im"}),
+        root,
+    );
+    let TaskReply::Failed { parameter, .. } = &reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(parameter, &None, "{reply:?}");
 }

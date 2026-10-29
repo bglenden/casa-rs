@@ -27659,7 +27659,8 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {"issue": 977}
         },
         {
           "name": "region",
@@ -27709,7 +27710,8 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {"issue": 977}
         },
         {
           "name": "chans",
@@ -27759,7 +27761,8 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {"issue": 977}
         },
         {
           "name": "stokes",
@@ -27809,7 +27812,8 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {"issue": 977}
         },
         {
           "name": "mask",
@@ -27859,7 +27863,8 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {"issue": 977}
         },
         {
           "name": "mode",
@@ -28012,7 +28017,11 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         }
       ],
       "migrations": [
@@ -29730,7 +29739,12 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "not",
+            "predicate": {
+              "kind": "equals",
+              "parameter": "template",
+              "value": {"kind": "string", "value": "get"}
+            }
           },
           "active_when": {
             "kind": "always"

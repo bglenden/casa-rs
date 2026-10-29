@@ -924,7 +924,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
 | <code>template</code> | <code>parameter.template@r1</code> | <code>path (image)</code> | <code>"get"</code>; required | Input | Template CASA image path |
-| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output CASA image path |
+| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required when not (template="get") | Output | Output CASA image path |
 | <code>asvelocity</code> | <code>imregrid.asvelocity@r1</code> | <code>bool</code> | <code>true</code>; optional | Regrid | Regrid the spectral axis in velocity rather than frequency. |
 | <code>axes</code> | <code>regrid.axes@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Pixel axes to regrid; [-1] regrids them all. |
 | <code>shape</code> | <code>imregrid.shape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Output image shape; [-1] takes the template's along the regridded axes. |

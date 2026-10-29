@@ -649,13 +649,25 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
     );
 }
 
+/// An absent or missing `imagename` is a refusal naming it (exit 2), as
+/// CASA's `imstat('does-not-exist.im')` is a parameter error.
 #[test]
 fn imagename_is_checked_when_the_task_runs() {
     let workspace = tempfile::tempdir().unwrap();
-    let (output, reply) = json_run(workspace.path(), "imstat", json!({}));
-    assert_eq!(output.status.code(), Some(2));
-    let Some(TaskReply::Failed { parameter, .. }) = reply else {
-        panic!("{reply:?}");
-    };
-    assert_eq!(parameter.as_deref(), Some("imagename"));
+    for (surface, values) in [
+        ("imstat", json!({})),
+        ("imstat", json!({"imagename": "does-not-exist.im"})),
+        ("imhead", json!({"imagename": "does-not-exist.im"})),
+    ] {
+        let (output, reply) = json_run(workspace.path(), surface, values.clone());
+        assert_eq!(output.status.code(), Some(2), "{surface} {values}");
+        let Some(TaskReply::Failed { parameter, .. }) = reply else {
+            panic!("{reply:?}");
+        };
+        assert_eq!(
+            parameter.as_deref(),
+            Some("imagename"),
+            "{surface} {values}"
+        );
+    }
 }

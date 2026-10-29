@@ -22,8 +22,8 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = FeatherRequest {
         imagename: task.path("imagename")?,
-        highres: task.path("highres")?,
-        lowres: task.path("lowres")?,
+        highres: task.input_path("highres")?,
+        lowres: task.input_path("lowres")?,
         sdfactor: task.number("sdfactor")? as f32,
         overwrite: task.flag("overwrite")?,
     };

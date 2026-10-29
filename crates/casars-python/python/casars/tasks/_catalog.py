@@ -685,6 +685,8 @@ def impbcor(
     """Apply primary-beam correction to a CASA image
 
     CASA's ``impbcor``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``box``, ``region``, ``chans``, ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impbcor, locals())
 

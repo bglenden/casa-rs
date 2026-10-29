@@ -34,7 +34,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 /// CASA's `imhead` returns its header record for `summary` and `list`, and
 /// `None` for `put`; `imstat` returns its statistics record.
 fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     let summary = match mode.as_str() {
         "summary" | "list" => imhead(&path).map_err(|error| image_error("imhead", &path, error))?,
@@ -73,7 +73,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let summary = imstat(
         &path,
         task.text("box")?.as_deref(),

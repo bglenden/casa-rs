@@ -3261,7 +3261,7 @@
     {
       "id": "impbcor",
       "contract_version": 5,
-      "fingerprint": "83415ed493f9da47de937125762acaa3045a7ef9318516b94f9255059db5062c"
+      "fingerprint": "c792e1310184bbbed7f5e35c89fc0869e776765e8145485f79fe8e99ade383d3"
     },
     {
       "id": "importfits",
@@ -3356,7 +3356,7 @@
     {
       "id": "imregrid",
       "contract_version": 5,
-      "fingerprint": "3ee57dff700083960df8cdc91bbb28d5f598e85447f5dd016b72340878a3d1e7"
+      "fingerprint": "977687498084f087a9a031c7393d263c90eefc801c3ba3167e58f9ad43663850"
     },
     {
       "id": "imstat",

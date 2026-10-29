@@ -5159,7 +5159,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Primary-beam CASA image path; CASA's [] default means it must be given",
-        "details": null,
+        "details": "CASA's pbimage is an image name or the beam itself as a numeric pixel array. casa-rs takes the name only: an array of numbers is refused, before the task starts, until #977.",
         "examples": []
       },
       "persistence_class": "profile"

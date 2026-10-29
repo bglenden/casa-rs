@@ -21,7 +21,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImmomentsRequest {
-        imagename: task.path("imagename")?,
+        imagename: task.input_path("imagename")?,
         outfile: task.path("outfile")?,
         moments: one_moment(&task.integers("moments")?)?,
         chans: task.text("chans")?,
