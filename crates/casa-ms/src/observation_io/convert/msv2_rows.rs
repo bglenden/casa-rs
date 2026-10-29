@@ -47,6 +47,9 @@ pub(super) struct Spans {
     /// Each session's grids' span, by session: from the start of the
     /// first integration to the end of the last.
     pub(super) observation_ranges: Vec<[f64; 2]>,
+    /// Each catalogue field's first time in any grid, MJD seconds; `None`
+    /// for a field no grid names.
+    pub(super) field_first: Vec<Option<f64>>,
 }
 
 /// Whether a sample's weights (`[channel, correlation]`) are an

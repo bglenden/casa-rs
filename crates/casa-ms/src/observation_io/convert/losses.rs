@@ -15,10 +15,11 @@
 //! antennas no partition's baselines name. What pointing carries is
 //! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
-//! spectral window's resolution) are not inventoried. Fields that follow
-//! an ephemeris, or whose direction is a polynomial in time, are refused:
-//! the catalogue would hold an offset or a constant term as the phase
-//! centre.
+//! spectral window's resolution) are not inventoried, but an ephemeris
+//! table's are ([`ephemeris_tables`]), since the catalogue carries only the
+//! body's directions, distances and velocities. Fields whose direction is a
+//! polynomial in time are refused: the catalogue would hold a constant term
+//! as the phase centre.
 
 use std::path::Path;
 
@@ -199,7 +200,8 @@ fn msv2(
     losses: &mut Vec<Loss>,
 ) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
-    refuse_moving_fields(&ms, catalogue, destination)?;
+    refuse_polynomial_fields(&ms, catalogue, destination)?;
+    ephemeris_tables(source, &ms, catalogue, destination, losses)?;
     let main = ms.main_table();
     let columns: Vec<String> = main
         .schema()
@@ -242,39 +244,109 @@ fn msv2(
     subtables(&ms, losses)
 }
 
-/// Refuse fields whose direction moves, among those `destination` writes:
-/// every `FIELD` row into an MSv2, and into an MSv4 those `catalogue`'s
-/// partitions name (an MSv2 catalogue's fields are its `FIELD` rows), as
-/// XRADIO's converter refuses the fields it converts. A field moves when it
-/// follows an ephemeris, whose directions casacore reads as offsets from
-/// it, or when its directions are polynomials in time (`NUM_POLY` above
-/// 0); the catalogue holds one constant direction.
-fn refuse_moving_fields(
-    ms: &crate::MeasurementSet,
-    catalogue: &Catalogue,
-    destination: Destination,
-) -> Result<(), ObservationError> {
-    let fields = ms.field().map_err(storage)?;
-    let mut named = vec![destination == Destination::Msv2; fields.row_count()];
+/// The fields `destination` writes: every `FIELD` row into an MSv2, and
+/// into an MSv4 those `catalogue`'s partitions name (an MSv2 catalogue's
+/// fields are its `FIELD` rows).
+fn written_fields(catalogue: &Catalogue, destination: Destination, rows: usize) -> Vec<bool> {
+    let mut named = vec![destination == Destination::Msv2; rows];
     for field in catalogue.partitions.iter().flat_map(|entry| &entry.fields) {
         if let Some(named) = named.get_mut(field.0 as usize) {
             *named = true;
         }
     }
+    named
+}
+
+/// Refuse fields whose directions are polynomials in time (`NUM_POLY` above
+/// 0) among those `destination` writes, as XRADIO's converter refuses the
+/// fields it converts: the catalogue holds one constant direction.
+fn refuse_polynomial_fields(
+    ms: &crate::MeasurementSet,
+    catalogue: &Catalogue,
+    destination: Destination,
+) -> Result<(), ObservationError> {
+    let fields = ms.field().map_err(storage)?;
+    let named = written_fields(catalogue, destination, fields.row_count());
     for row in (0..fields.row_count()).filter(|row| named[*row]) {
-        if fields
-            .ephemeris_id(row)
-            .map_err(storage)?
-            .is_some_and(|id| id >= 0)
-        {
-            return Err(ObservationError::Unsupported {
-                what: "converting fields that follow an ephemeris (FIELD EPHEMERIS_ID)",
-            });
-        }
         if fields.num_poly(row).map_err(storage)? > 0 {
             return Err(ObservationError::Unsupported {
                 what: "converting fields whose direction is a polynomial in time (FIELD NUM_POLY)",
             });
+        }
+    }
+    Ok(())
+}
+
+/// What the ephemeris tables of the fields `destination` writes hold that
+/// the catalogue does not carry: columns other than `MJD`, `RA`, `DEC`,
+/// `Rho` and `RadVel`, and keywords other than those an MSv2 destination
+/// writes. Into an MSv4, also the tables' `NAME` (an MSv4 ephemeris is
+/// named by its source) and the fields' `TIME`, at which an image without a
+/// phase centre is centred on the body (#987).
+fn ephemeris_tables(
+    source: &Path,
+    ms: &crate::MeasurementSet,
+    catalogue: &Catalogue,
+    destination: Destination,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
+    let ids = crate::ephemeris::field_ephemeris_ids(ms).map_err(storage)?;
+    let named = written_fields(catalogue, destination, ids.len());
+    let mut followed: Vec<i32> = ids
+        .iter()
+        .zip(&named)
+        .filter_map(|(id, named)| id.filter(|_| *named))
+        .collect();
+    followed.sort_unstable();
+    followed.dedup();
+    if !followed.is_empty() && destination == Destination::Msv4 {
+        losses.push(Loss::Column(
+            "FIELD TIME of fields that follow an ephemeris (when an image without a phase \
+             centre is centred on the body)"
+                .to_string(),
+        ));
+    }
+    for id in followed {
+        let path = crate::ephemeris::find_field_ephemeris(source, id).map_err(storage)?;
+        let table =
+            casa_tables::Table::open(casa_tables::TableOptions::new(&path)).map_err(storage)?;
+        let name = path
+            .strip_prefix(source)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let columns: Vec<String> = table
+            .schema()
+            .map(|schema| {
+                schema
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .filter(|column| {
+                        !["MJD", "RA", "DEC", "Rho", "RadVel"].contains(&column.as_str())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !columns.is_empty() {
+            losses.push(Loss::Column(format!("{name} {}", columns.join(", "))));
+        }
+        let mut keywords: Vec<String> = table
+            .keywords()
+            .fields()
+            .iter()
+            .map(|field| field.name.clone())
+            .filter(|keyword| {
+                !super::msv2_ephemeris::KEYWORDS.contains(&keyword.as_str())
+                    || (destination == Destination::Msv4 && keyword == "NAME")
+            })
+            .collect();
+        keywords.sort();
+        if !keywords.is_empty() {
+            losses.push(Loss::Column(format!(
+                "{name} keywords {}",
+                keywords.join(", ")
+            )));
         }
     }
     Ok(())
@@ -456,7 +528,9 @@ fn msv4(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
             if is_group {
                 if name == "pointing_xds" {
                     pointing_variables(&child, losses)?;
-                } else if name != "antenna_xds" && !name.starts_with("field_and_source_") {
+                } else if name.starts_with("field_and_source_") {
+                    ephemeris_variables(&child, losses)?;
+                } else if name != "antenna_xds" {
                     losses.push(Loss::Table(name));
                 }
             } else if !CARRIED_VARIABLES.contains(&name.as_str()) && !name.starts_with("VISIBILITY")
@@ -464,6 +538,52 @@ fn msv4(source: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
                 losses.push(Loss::Column(name));
             }
         }
+    }
+    Ok(())
+}
+
+/// The optional variables of XRADIO's `field_and_source_ephemeris`
+/// (from the table's `NP_ang`, `NP_dist`, `DiskLong`, `DiskLat`, `Sl_lon`,
+/// `Sl_lat`, `r`, `rdot` and `phang`), which the catalogue does not carry.
+const EPHEMERIS_EXTRAS: [&str; 7] = [
+    "NORTH_POLE_POSITION_ANGLE",
+    "NORTH_POLE_ANGULAR_DISTANCE",
+    "SUB_OBSERVER_DIRECTION",
+    "SUB_SOLAR_DIRECTION",
+    "SUB_SOLAR_DISTANCE",
+    "HELIOCENTRIC_RADIAL_VELOCITY",
+    "OBSERVER_PHASE_ANGLE",
+];
+
+/// A field dataset's ephemeris variables a conversion does not carry
+/// ([`EPHEMERIS_EXTRAS`]), as one column loss.
+fn ephemeris_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+    let mut lost = Vec::new();
+    for child in std::fs::read_dir(path).map_err(storage)? {
+        let name = child
+            .map_err(storage)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if EPHEMERIS_EXTRAS.contains(&name.as_str()) {
+            lost.push(name);
+        }
+    }
+    if !lost.is_empty() {
+        lost.sort();
+        let dataset = path
+            .parent()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let group = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        losses.push(Loss::Column(format!(
+            "{dataset}/{group} {}",
+            lost.join(", ")
+        )));
     }
     Ok(())
 }

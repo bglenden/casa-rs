@@ -14,11 +14,15 @@ use casa_observation::{
     AntennaId, Catalogue, Correlation, ObservationError, PartitionEntry, Receptors,
 };
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_types::measures::EpochRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
 use super::msv2_rows::Spans;
+
+/// Seconds per day, for MSv2 `TIME` (MJD seconds).
+const SECONDS_PER_DAY: f64 = 86_400.0;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
@@ -127,7 +131,7 @@ pub(super) fn populate(
 ) -> Result<Layout, ObservationError> {
     let time_range = spans.time_range;
     antennas(ms, catalogue)?;
-    let named_sources = fields(ms, catalogue, time_range[0])?;
+    let named_sources = fields(ms, catalogue, time_range[0], &spans.field_first)?;
     observations(ms, catalogue, &spans.observation_ranges)?;
     let scan_number = scan_numbers(catalogue)?;
     let mut windows: Vec<&PartitionEntry> = Vec::new();
@@ -427,15 +431,30 @@ fn feed_row(
 }
 
 /// The fields, and the sources they name: each name once, at its first
-/// field's direction.
+/// field's direction. A field's `TIME` is `time`, the observation's first,
+/// but a moving field's is the epoch its catalogue entry states (an
+/// MSv2's), or else its own first time in `first`: an image without a
+/// phase centre is centred on its body at that time (#987).
 fn fields(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
     time: f64,
+    first: &[Option<f64>],
 ) -> Result<Vec<(String, [f64; 2])>, ObservationError> {
     let mut sources: Vec<(String, [f64; 2])> = Vec::new();
     // Fields are J2000 (refused otherwise before the conversion begins).
-    for field in &catalogue.fields {
+    for (index, field) in catalogue.fields.iter().enumerate() {
+        let field_time = if field.ephemeris.is_some() {
+            field
+                .reference_epoch
+                .as_ref()
+                .filter(|epoch| epoch.refer() == EpochRef::UTC)
+                .map(|epoch| epoch.value().as_mjd() * SECONDS_PER_DAY)
+                .or(first.get(index).copied().flatten())
+                .unwrap_or(time)
+        } else {
+            time
+        };
         let (longitude, latitude) = field.phase_centre.as_angles();
         let source = field.source_name.as_deref().map_or(-1, |name| {
             sources
@@ -457,7 +476,7 @@ fn fields(
                 ("PHASE_DIR", direction.clone()),
                 ("REFERENCE_DIR", direction),
                 ("SOURCE_ID", i(source)),
-                ("TIME", f(time)),
+                ("TIME", f(field_time)),
                 ("FLAG_ROW", b(false)),
             ],
         );

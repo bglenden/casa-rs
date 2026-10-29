@@ -20,6 +20,7 @@ use zarrs::filesystem::FilesystemStore;
 use zarrs::group::Group;
 
 use super::cursor::Msv4Cursor;
+use super::ephemeris;
 use super::metadata::{
     DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
     invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
@@ -83,7 +84,11 @@ pub(super) struct Dataset {
 /// Fields come from each data group's own `field_and_source` dataset and
 /// are distinct unless name, phase centre and source all agree: two groups
 /// with different phase centres keep their own fields and UVW frames, and a
-/// traversal of either delivers its own. Opening checks every variable's
+/// traversal of either delivers its own. A `field_and_source_ephemeris`
+/// dataset's fields follow its ephemeris, in either of XRADIO's layouts
+/// (`msv4/ephemeris.rs`), and are one field across datasets when their
+/// offsets agree and their samples agree where both hold them: the
+/// field then follows the samples of both. Opening checks every variable's
 /// data type and dimensions, and every unit and frame, against the profile
 /// and refuses others rather than reinterpreting or rescaling them.
 pub struct Msv4Observation {
@@ -150,6 +155,7 @@ impl Msv4Observation {
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
         }
+        share_ephemerides(&mut observation.catalogue_mut().fields);
         Ok(observation)
     }
 
@@ -259,21 +265,27 @@ impl Msv4Observation {
         ];
         let mut groups = Vec::new();
         let mut entries = Vec::new();
-        let mut contexts = BTreeMap::<String, (Vec<FieldId>, DirectionRef)>::new();
+        // Each field dataset's fields, by the dataset and its groups' UVW
+        // frame.
+        let mut contexts: Vec<((String, DirectionRef), Vec<FieldId>)> = Vec::new();
         for record in data_groups(attributes)? {
-            let context = match contexts.get(&record.field_and_source) {
-                Some(context) => context.clone(),
+            let uvw = format!("{path}/{}", record.uvw);
+            let uvw_frame = direction_frame(open_array(store, &uvw)?.attributes(), "UVW")?;
+            let key = (record.field_and_source.clone(), uvw_frame);
+            let fields = match contexts.iter().find(|(known, _)| *known == key) {
+                Some((_, fields)) => fields.clone(),
                 None => {
-                    let context = self.fields(
+                    let fields = self.fields(
                         store,
                         &format!("{path}/{}", record.field_and_source),
-                        &field_names,
+                        (&times, &field_names),
+                        uvw_frame,
                     )?;
-                    contexts.insert(record.field_and_source.clone(), context.clone());
-                    context
+                    contexts.push((key, fields.clone()));
+                    fields
                 }
             };
-            let arrays = open_group(store, path, record, cube, context)?;
+            let arrays = open_group(store, path, record, cube, fields, uvw_frame)?;
             entries.push(DataGroupEntry {
                 name: arrays.record.name.clone(),
                 visibilities: arrays.record.correlated_data.clone(),
@@ -495,20 +507,34 @@ impl Msv4Observation {
         Ok((Some(ids), intents))
     }
 
-    /// The catalogue field of each of `per_time`'s names, read from the
-    /// `field_and_source` dataset at `path`, and the phase centres' frame.
+    /// The catalogue field at each of the dataset's `times` (Unix seconds)
+    /// of `per_time`'s names, read from the field dataset at `path` of a
+    /// data group whose UVW is in `uvw_frame`: a `field_and_source`
+    /// dataset's phase centres, in that frame, or a
+    /// `field_and_source_ephemeris` dataset's moving fields
+    /// ([`super::ephemeris`]).
     fn fields(
         &mut self,
         store: &Arc<FilesystemStore>,
         path: &str,
-        per_time: &[String],
-    ) -> Result<(Vec<FieldId>, DirectionRef), ObservationError> {
+        (times, per_time): (&[f64], &[String]),
+        uvw_frame: DirectionRef,
+    ) -> Result<Vec<FieldId>, ObservationError> {
+        let group = Group::open(store.clone(), path).map_err(storage)?;
+        if text(group.attributes(), "type", path)? == ephemeris::EPHEMERIS_DATASET {
+            return self.moving_fields(store, path, (times, per_time), uvw_frame);
+        }
         let names = strings(store, &format!("{path}/field_name"))?;
         let sources = strings(store, &format!("{path}/source_name"))?;
         let (centres, attributes) =
             numbers::<f64>(store, &format!("{path}/FIELD_PHASE_CENTER_DIRECTION"))?;
         require_units(&attributes, "rad", "FIELD_PHASE_CENTER_DIRECTION")?;
         let frame = direction_frame(&attributes, "FIELD_PHASE_CENTER_DIRECTION")?;
+        if frame != uvw_frame {
+            return Err(ObservationError::Unsupported {
+                what: "an MSv4 data group whose UVW frame is not its phase centres' frame",
+            });
+        }
         if centres.len() != 2 * names.len() {
             return Err(invalid(format!("{path} has one phase centre per field")));
         }
@@ -540,7 +566,7 @@ impl Msv4Observation {
                 });
             indices.push(FieldId(u32::try_from(index).expect("few fields")));
         }
-        let per_time = per_time
+        per_time
             .iter()
             .map(|name| {
                 names
@@ -549,18 +575,93 @@ impl Msv4Observation {
                     .map(|row| indices[row])
                     .ok_or_else(|| invalid(format!("field {name} is not in {path}")))
             })
-            .collect::<Result<_, _>>()?;
-        Ok((per_time, frame))
+            .collect()
+    }
+
+    /// [`Self::fields`] for a `field_and_source_ephemeris` dataset. A field
+    /// is one with a catalogue field of its name, source and offset (to the
+    /// store's resolution) whose ephemeris holds the same samples at the
+    /// times both hold; the catalogue field then follows the samples of
+    /// both ([`ephemeris::union`]), since each dataset holds only those its
+    /// own times need. The offset is labelled with the data group's UVW
+    /// frame: casacore applies a moving field's offset in its ephemeris's
+    /// frame whatever `PHASE_DIR`'s own (`MSFieldColumns::extractDirMeas`).
+    fn moving_fields(
+        &mut self,
+        store: &Arc<FilesystemStore>,
+        path: &str,
+        (times, per_time): (&[f64], &[String]),
+        uvw_frame: DirectionRef,
+    ) -> Result<Vec<FieldId>, ObservationError> {
+        let moving = ephemeris::read(store, path, times, per_time)?;
+        let mut indices = Vec::with_capacity(moving.fields.len());
+        for field in &moving.fields {
+            let offset = (field.offset_rad[0], field.offset_rad[1]);
+            let source_name =
+                (!super::is_unknown_source(&field.source_name)).then(|| field.source_name.clone());
+            let fields = &mut self.catalogue_mut().fields;
+            let found = fields.iter().enumerate().find_map(|(index, known)| {
+                let followed = known.ephemeris.as_ref()?;
+                let one = known.name == field.name
+                    && known.source_name == source_name
+                    && known.phase_centre.refer() == uvw_frame
+                    && ephemeris::same_offset(known.phase_centre.as_angles(), offset);
+                one.then(|| ephemeris::union(followed, &moving.ephemeris))
+                    .flatten()
+                    .map(|united| (index, united))
+            });
+            let index = match found {
+                Some((index, united)) => {
+                    fields[index].ephemeris = Some(united);
+                    index
+                }
+                None => {
+                    fields.push(FieldEntry {
+                        name: field.name.clone(),
+                        phase_centre: MDirection::from_angles(offset.0, offset.1, uvw_frame),
+                        reference_epoch: None,
+                        source_name,
+                        ephemeris: Some(Arc::new(moving.ephemeris.clone())),
+                    });
+                    fields.len() - 1
+                }
+            };
+            indices.push(FieldId(u32::try_from(index).expect("few fields")));
+        }
+        Ok(moving
+            .per_time
+            .iter()
+            .map(|field| indices[*field])
+            .collect())
     }
 }
 
-/// Whether two field entries are one field: the same name, phase centre
-/// (frame and angles) and source. A shared display name alone is not.
+/// Whether two fixed field entries are one field: the same name, phase
+/// centre (frame and angles) and source. A shared display name alone is
+/// not.
 fn same_field(a: &FieldEntry, b: &FieldEntry) -> bool {
-    a.name == b.name
+    a.ephemeris.is_none()
+        && b.ephemeris.is_none()
+        && a.name == b.name
         && a.source_name == b.source_name
         && a.phase_centre.refer() == b.phase_centre.refer()
         && a.phase_centre.as_angles() == b.phase_centre.as_angles()
+}
+
+/// Make fields whose ephemerides hold the same samples share one, as the
+/// fields of one MSv2 `EPHEMERIS_ID` do, so that the catalogue counts it
+/// once ([`Catalogue::ephemeris_bytes`]).
+fn share_ephemerides(fields: &mut [FieldEntry]) {
+    let mut shared: Vec<Arc<casa_observation::FieldEphemeris>> = Vec::new();
+    for ephemeris in fields
+        .iter_mut()
+        .filter_map(|field| field.ephemeris.as_mut())
+    {
+        match shared.iter().find(|known| ***known == **ephemeris) {
+            Some(known) => *ephemeris = Arc::clone(known),
+            None => shared.push(Arc::clone(ephemeris)),
+        }
+    }
 }
 
 /// Whether the processing set at `root` has node `variable`.
@@ -571,13 +672,15 @@ fn exists(root: &Path, variable: &str) -> bool {
 }
 
 /// Open data group `record`'s variables, checking their types, dimensions
-/// and shapes, and its UVW frame against its phase centres'.
+/// and shapes; `fields` are its times' fields and `effective` its UVW
+/// frame, checked against its fields' already.
 fn open_group(
     store: &Arc<FilesystemStore>,
     path: &str,
     record: DataGroupRecord,
     cube: [usize; 4],
-    (fields, phase_frame): (Vec<FieldId>, DirectionRef),
+    fields: Vec<FieldId>,
+    effective: DirectionRef,
 ) -> Result<GroupArrays, ObservationError> {
     let open = |name: &str, data_type: &str, dimensions: &[&str], shape: &[usize]| {
         let variable = format!("{path}/{name}");
@@ -597,12 +700,6 @@ fn open_group(
     let weights = open(&record.weight, "float32", &CUBE, &cube)?;
     let uvw = open(&record.uvw, "float64", &UVW, &[cube[0], cube[1], 3])?;
     require_units(uvw.attributes(), "m", "UVW")?;
-    let effective = direction_frame(uvw.attributes(), "UVW")?;
-    if effective != phase_frame {
-        return Err(ObservationError::Unsupported {
-            what: "an MSv4 data group whose UVW frame is not its phase centres' frame",
-        });
-    }
     Ok(GroupArrays {
         record,
         values,

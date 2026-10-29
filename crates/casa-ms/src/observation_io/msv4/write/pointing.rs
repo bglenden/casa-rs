@@ -64,6 +64,9 @@ pub(super) fn write_pointing(
     let unix_times: Vec<f64> = (0..times.len())
         .map(|time| view.seconds_since(time, unix))
         .collect();
+    // XRADIO's schema types the axis by its name.
+    let mut time = time_attributes(scale)?;
+    time.insert("type".into(), "time_pointing".into());
     coordinate(
         store,
         &format!("{path}/time_pointing"),
@@ -71,7 +74,7 @@ pub(super) fn write_pointing(
         json!("NaN"),
         "time_pointing",
         &unix_times,
-        serde_json::Value::Object(time_attributes(scale)?),
+        serde_json::Value::Object(time),
     )?;
     let names: Vec<String> = columns
         .iter()

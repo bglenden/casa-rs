@@ -19,8 +19,8 @@ use ndarray::Axis;
 use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
 use super::pointing_plan::{self, PointingPlan};
 use super::{
-    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_pointing,
-    msv2_tables,
+    ConversionOptions, ConversionReport, Loss, PaddingRows, lockstep, losses, msv2_ephemeris,
+    msv2_pointing, msv2_tables,
 };
 use crate::observation_io::update::{request_error, storage};
 use crate::observation_io::{OpenOptions, open};
@@ -54,7 +54,11 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
 /// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
-/// row, which reproduces an original sparse MSv2. `SIGMA` is derived
+/// row, which reproduces an original sparse MSv2. A field that follows an
+/// ephemeris gets the table casacore reads (`FIELD/EPHEM<id>_<name>.tab`,
+/// `convert/msv2_ephemeris.rs`) and its `EPHEMERIS_ID`, its `PHASE_DIR`
+/// the offset from the body and its `TIME` the epoch its catalogue entry
+/// states, or else its first time. `SIGMA` is derived
 /// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
 /// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the source's: an
 /// MSv4 converted from an MSv2 holds XRADIO's suffixed names
@@ -69,8 +73,10 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// # Errors
 ///
 /// Before anything is written: a loss not accepted
-/// ([`ObservationError::InvalidRequest`]); fields that follow an ephemeris
-/// or whose direction is a polynomial in time;
+/// ([`ObservationError::InvalidRequest`]); fields whose direction is a
+/// polynomial in time, or that follow an ephemeris whose samples are not
+/// evenly spaced (casacore's `MeasComet` reads no other) or whose radial
+/// velocities are not geocentric;
 /// a data group without an MSv2 column, or selected twice; times in another
 /// scale than UTC; feeds other than 0; a window without channels; fields in
 /// another frame than J2000; a scan without a casacore number; feeds whose
@@ -187,14 +193,15 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
             });
         }
     }
-    msv2_tables::refuse_unwritable(catalogue)
+    msv2_tables::refuse_unwritable(catalogue)?;
+    msv2_ephemeris::refuse_unwritable(catalogue)
 }
 
 /// The times the grids of `group` span: the whole observation's, and each
 /// session's edge to edge, as fillers write `TIME_RANGE`.
 pub(super) fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
-    let mut spanned = Spanning::new(catalogue.observations.len());
+    let mut spanned = Spanning::new(catalogue);
     for id in catalogue.partition_ids() {
         spanned.add(
             &observation.grid(id, group)?,
@@ -208,15 +215,18 @@ pub(super) fn spans(observation: &dyn Observation, group: &str) -> Result<Spans,
 struct Spanning {
     range: [f64; 2],
     sessions: Vec<[f64; 2]>,
+    fields: Vec<Option<f64>>,
 }
 
 impl Spanning {
     const EMPTY: [f64; 2] = [f64::INFINITY, f64::NEG_INFINITY];
 
-    fn new(sessions: usize) -> Self {
+    /// No span yet, for `catalogue`'s sessions and fields.
+    fn new(catalogue: &Catalogue) -> Self {
         Self {
             range: Self::EMPTY,
-            sessions: vec![Self::EMPTY; sessions],
+            sessions: vec![Self::EMPTY; catalogue.observations.len()],
+            fields: vec![None; catalogue.fields.len()],
         }
     }
 
@@ -234,6 +244,12 @@ impl Spanning {
             ]
         };
         self.range = span(self.range, 0.0);
+        for (time, field) in grid.times_s.iter().zip(&grid.field_per_time) {
+            if let Some(first) = self.fields.get_mut(field.0 as usize) {
+                let time = origin + time;
+                *first = Some(first.map_or(time, |known: f64| known.min(time)));
+            }
+        }
         // A session's TIME_RANGE spans its integrations, edge to edge, as
         // fillers write it.
         let half = if grid.interval_s.is_finite() {
@@ -257,6 +273,7 @@ impl Spanning {
         Spans {
             time_range: spanned(self.range),
             observation_ranges: self.sessions.into_iter().map(spanned).collect(),
+            field_first: self.fields,
         }
     }
 }
@@ -273,7 +290,7 @@ fn occupancy(
     let groups = [group.to_string()];
     let mut rows = Vec::with_capacity(catalogue.partitions.len());
     let mut intervals = Vec::with_capacity(catalogue.partitions.len());
-    let mut spanned = Spanning::new(catalogue.observations.len());
+    let mut spanned = Spanning::new(catalogue);
     for id in catalogue.partition_ids() {
         let grid = observation.grid(id, group)?;
         spanned.add(&grid, catalogue.partition(id).observation);
@@ -332,6 +349,7 @@ pub(crate) fn catalogue_subtables(
         None => Spans {
             time_range: [0.0, 0.0],
             observation_ranges: vec![[0.0, 0.0]; catalogue.observations.len()],
+            field_first: vec![None; catalogue.fields.len()],
         },
     };
     let mut ms =
@@ -365,6 +383,7 @@ fn create(
         }
     }
     let layout = msv2_tables::populate(&mut ms, catalogue, &occupancy.spans)?;
+    msv2_ephemeris::mark_fields(&mut ms, catalogue)?;
     msv2_pointing::write(&mut ms, observation, pointing)?;
     let names = optional.iter().map(|column| column.name()).collect();
     let mut main = MainRows::start(
@@ -390,6 +409,7 @@ fn create(
         report.samples += read.samples;
     }
     report.rows = main.finish(&mut ms)?;
+    msv2_ephemeris::write_tables(staging, catalogue, &options.creation_date)?;
     Ok(report)
 }
 

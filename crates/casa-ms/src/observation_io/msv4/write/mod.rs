@@ -17,7 +17,9 @@
 //! `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME`, an `antenna_xds` of the
 //! antennas the dataset's baselines name (as XRADIO's converter writes it),
 //! and a `field_and_source_<group>_xds` of the first group, which every
-//! group names. It writes no
+//! group names: the fields' phase centres, or, when they follow an
+//! ephemeris, the ephemeris's samples and each time's phase centre
+//! (`field_and_source_ephemeris`, `write/fields.rs`). It writes no
 //! pointing, system-calibration, weather or phase-calibration datasets and
 //! no `EFFECTIVE_CHANNEL_WIDTH`. Every time must be written exactly once,
 //! from batches whose coordinates and context match the declaration
@@ -28,17 +30,19 @@
 //! only by [`Msv4ProcessingSetWriter::finish`].
 
 mod chunks;
+mod fields;
 mod payload;
 mod pointing;
 mod set;
 
+pub(in crate::observation_io) use fields::kept_samples;
 pub use set::Msv4ProcessingSetWriter;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use casa_observation::{
-    AntennaEntry, AntennaId, Catalogue, DataGroupEntry, FieldId, ObservationError, PartitionEntry,
+    AntennaEntry, AntennaId, Catalogue, DataGroupEntry, ObservationError, PartitionEntry,
     PartitionId, Receptors, ScanId, TimeBaselineGrid, VisibilityUnits,
 };
 use casa_types::measures::position::PositionRef;
@@ -480,7 +484,14 @@ impl Msv4Writer {
             &writer.target.entry.receptors,
             &observation.telescope,
         )?;
-        writer.write_fields(store, &format!("{root}/{fields_xds}"), catalogue)?;
+        fields::write_fields(
+            store,
+            &format!("{root}/{fields_xds}"),
+            catalogue,
+            &writer.target.grid,
+            &unix_times,
+            writer.target.groups[0].uvw_frame.effective,
+        )?;
         writer.payload = Some(writer.create_payload(store, &root, options)?);
         Ok(writer)
     }
@@ -778,86 +789,6 @@ impl Msv4Writer {
                 json!({"type": "quantity", "units": "s", "coordinates": coordinates}),
             )?,
         })
-    }
-
-    fn write_fields(
-        &self,
-        store: &Arc<FilesystemStore>,
-        path: &str,
-        catalogue: &Catalogue,
-    ) -> Result<(), ObservationError> {
-        create_group(store, path, json!({"type": "field_and_source"}))?;
-        // The fields the grid uses, in catalogue order.
-        let mut used: Vec<FieldId> = self.target.grid.field_per_time.clone();
-        used.sort();
-        used.dedup();
-        let fields: Vec<_> = used
-            .iter()
-            .map(|field| &catalogue.fields[field.0 as usize])
-            .collect();
-        let frame = self.target.groups[0].uvw_frame.effective;
-        if fields
-            .iter()
-            .any(|field| field.phase_centre.refer() != frame)
-        {
-            return Err(ObservationError::Unsupported {
-                what: "writing phase centres in another frame than the data group's UVW",
-            });
-        }
-        let count = fields.len() as u64;
-        let column = |f: &dyn Fn(&casa_observation::FieldEntry) -> String| {
-            fields.iter().map(|field| f(field)).collect::<Vec<_>>()
-        };
-        strings(
-            store,
-            &format!("{path}/field_name"),
-            &[count],
-            &["field_name"],
-            &column(&|f| f.name.clone()),
-        )?;
-        // XRADIO names an absent source "Unknown".
-        strings(
-            store,
-            &format!("{path}/source_name"),
-            &[count],
-            &["field_name"],
-            &column(&|f| {
-                f.source_name
-                    .clone()
-                    .unwrap_or_else(|| super::UNKNOWN_SOURCE.to_string())
-            }),
-        )?;
-        strings(
-            store,
-            &format!("{path}/sky_dir_label"),
-            &[2],
-            &["sky_dir_label"],
-            &["ra", "dec"].map(String::from),
-        )?;
-        let centres: Vec<f64> = fields
-            .iter()
-            .flat_map(|field| {
-                let (longitude, latitude) = field.phase_centre.as_angles();
-                [longitude, latitude]
-            })
-            .collect();
-        let shape = [count, 2];
-        let array = create_array(
-            store,
-            &format!("{path}/FIELD_PHASE_CENTER_DIRECTION"),
-            ArraySpec {
-                shape: &shape,
-                chunks: &shape,
-                data_type: json!("float64"),
-                codecs: codecs(Msv4Codec::Zstd, 8),
-                fill: json!("NaN"),
-                dimensions: &["field_name", "sky_dir_label"],
-                attributes: json!({"type": "sky_coord", "units": "rad", "frame": super::metadata::direction_name(frame)?, "coordinates": "source_name"}),
-            },
-        )?;
-        array
-            .store_array_subset(&ArraySubset::new_with_shape(shape.to_vec()), &centres)
-            .map_err(storage)
     }
 
     /// Write the dataset's `pointing_xds`: `series`, the partition's
