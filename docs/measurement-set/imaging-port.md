@@ -177,10 +177,12 @@ no imager parameter names. It sees only `&dyn Observation`.
   gapped selection's fine grid can depend on the window delivered, on
   either route (#964).
 - **Batches and admission.** Each partition's times per batch are sized as
-  today's rows per block: at least one time of each partition and at most
-  all its selected times (as today's blocks hold at most the selected
-  rows), and growth up to the bootstrap budget or the source's share of a
-  quarter of free memory. The charge holds the largest batch with its
+  today's rows per block: at least one time of each partition, and growth
+  up to the bootstrap budget or the source's share of a quarter of free
+  memory. A batch also holds at most one part in `OVERLAPPED_BLOCKS`
+  (eight) of its partition's selected times, so a pass streams in several
+  blocks and reads the next while it grids one; with all its times in one
+  batch, a pass read and then gridded (section 5, "Preview"). The charge holds the largest batch with its
   decode scratch, its geometry over the widest native span a batch
   delivers, the parallactic cache at every selected (time, field), the
   pointing charge when geometry reads pointing, the survey's batch and
@@ -362,9 +364,12 @@ Evidence:
 - T1 (`casars-imager` T1 `ephemeris`): the track's field attached to a
   distant body, imaged with `TRACKFIELD` (MFS, Stokes IV, and a
   four-channel `cubesource` cube in the rest frame), with the body's table
-  as `phasecenter`, and with a fixed J2000 centre. Every geometry quantity
-  of the two routes is bit-identical on all 52,650 rows, parallactic
-  angles included, and every product is bit-identical on both routes.
+  as `phasecenter`, with a fixed J2000 centre, and without a phase centre
+  (centred on the body at the FIELD row's `TIME`, to 1e-12 rad of the
+  table). Every geometry quantity of the two routes is bit-identical on all
+  52,650 rows, parallactic angles included, and every product holds the
+  route law (bit-identical until 2faaa18f53 split a pass into several
+  batches).
 - T1.5 on the Mac mini: the T41 oracle on `alma_ephemobj_icrs.ms`
   (`TRACKFIELD` cubesource, 512 × 512 × 16), now on both routes, against
   CASA 6.7.5's `tclean`: PSF NRMS 1.10e-7, residual and image 1.06e-7,
@@ -373,6 +378,17 @@ Evidence:
   `TRACKFIELD` direction oracle agrees with CASA to 9.4e-13 rad at three
   row times. The oracle's recorded sample count (3,317,760) is stale on
   `main` too (1,087,560 on both routes; #986).
+- T1.5, without and with a fixed centre over the moving field (Uranus,
+  MFS 256 × 256, CPU f64), against CASA's `tclean` with `phasecenter=''`:
+  - without a phase centre, the image centre equals CASA's to 1.8e-15 rad,
+    in ICRS, on both routes;
+  - with CASA's centre given as a fixed J2000 direction, the products agree
+    with CASA's to PSF NRMS 8.2e-8 and residual 1.4e-7;
+  - CASA's `''` image differs from its `TRACKFIELD` image by 5.6e-2, so
+    the comparison sees whether rows are rotated to the fixed centre;
+  - the field's `TIME` is 0.288 s before its first row, and the first row's
+    direction misses CASA's centre by the 0.2 mas Uranus moves in that
+    time.
 - `casa-imaging-model`'s `batch_geometry_ephemeris` checks the same
   arithmetic on a hand-made catalogue, and `casa-ms`'s
   `fields_carry_the_ephemerides_they_follow` the adapter against today's
@@ -714,6 +730,25 @@ summarized on the PR. Inputs are not copied off the Mac mini.
 - A workload outside its thresholds (decision 4) blocks the cutover, whatever
   correctness says.
 - A faster route is recorded, not a reason to change thresholds.
+
+**Preview (2026-10-29, before step 6).** The blocking comparison ran on the
+six workloads of step 1's baseline, one and four workers, with today's route
+as the baseline and the same commit with the batch route as its default as
+the candidate. At 8b35089888, eight of the twelve failed:
+- standard MFS took up to 11% longer with one worker;
+- four workers used 12–48% more memory (MFS and the ALMA mosaic);
+- the mosaic with four workers took 51% longer.
+
+The cause was the stream, not the source's work. Both routes read and grid
+the same samples in the same time, but a batch held all of a partition's
+times, so a pass was one block and read before it gridded. Capping batches
+at one part in eight (`OVERLAPPED_BLOCKS`, 2faaa18f53) made all twelve pass:
+- wall time from 11% shorter to 1% longer, every one within its band;
+- peak memory 42–80% of today's;
+- products within 3.4e-12.
+
+Receipts are on the NAS under `casa-rs/issue-932/step6-preview-20261029/`.
+The cutover's own comparison is still due, at its branch point.
 
 ## 6. Risks
 
