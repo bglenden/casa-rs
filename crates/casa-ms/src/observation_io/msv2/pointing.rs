@@ -97,8 +97,15 @@ impl Msv2Observation {
                 domain.observe_row(id, id, time, time).map_err(storage)?;
             }
         }
+        let store_has_pointing = self
+            .ms
+            .subtable(crate::SubtableId::Pointing)
+            .is_some_and(|table| table.row_count() > 0);
         let Some(domain) = domain.finish().map_err(storage)? else {
-            return Ok(PointingSeries::empty(DirectionRef::J2000));
+            return Ok(PointingSeries {
+                store_has_pointing,
+                ..PointingSeries::empty(DirectionRef::J2000)
+            });
         };
         let column = match request.direction {
             PointingDirection::Beam => PointingDirectionColumn::Direction,
@@ -136,6 +143,10 @@ impl Msv2Observation {
                 },
             })?
             .series()
+            .map(|series| PointingSeries {
+                store_has_pointing,
+                ..series
+            })
     }
 }
 

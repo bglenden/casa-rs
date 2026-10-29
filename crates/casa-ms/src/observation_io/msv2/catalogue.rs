@@ -18,7 +18,6 @@ use casa_types::quanta::Quantity;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
-use crate::columns::direction_columns::DirectionColumn;
 use crate::derived::engine::resolve_direction_reference_selected;
 use crate::{MeasurementSet, SubtableId};
 
@@ -138,8 +137,38 @@ pub(crate) fn phase_frames(table: &Table) -> Result<Vec<DirectionRef>, Observati
         .collect()
 }
 
-/// The fields, their ephemerides, and the UVW convention.
-pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationError> {
+/// The constant term of FIELD `column` at `row`, a direction polynomial of
+/// shape `[2, NUM_POLY + 1]` (the row's `num_poly`), refused at any other
+/// shape; `None` where the column is absent or the cell undefined.
+fn field_angles(
+    table: &Table,
+    column: &str,
+    row: usize,
+    num_poly: i32,
+) -> Result<Option<(f64, f64)>, ObservationError> {
+    let Some(value) = crate::subtables::optional_array(table, row, column).map_err(storage)? else {
+        return Ok(None);
+    };
+    let ArrayValue::Float64(values) = value else {
+        return Err(invalid(format!("FIELD {column} is not a Float64 array")));
+    };
+    let terms = usize::try_from(num_poly).ok().map(|order| order + 1);
+    if values.shape() != [2, terms.unwrap_or(0)] || terms.is_none() {
+        return Err(invalid(format!(
+            "FIELD {column} of row {row} has shape {:?}; NUM_POLY {num_poly} makes it [2, {}]",
+            values.shape(),
+            i64::from(num_poly) + 1
+        )));
+    }
+    Ok(Some((values[[0, 0]], values[[1, 0]])))
+}
+
+/// The fields, their ephemerides, and the UVW convention; `sources` gives
+/// each stored `SOURCE_ID`'s logical source.
+pub(super) fn fields_and_uvw(
+    ms: &MeasurementSet,
+    sources: &BTreeMap<i32, casa_observation::SourceId>,
+) -> Result<Fields, ObservationError> {
     let field = ms.field().map_err(storage)?;
     let field_table = ms
         .subtable(SubtableId::Field)
@@ -179,10 +208,23 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
             }
         })
         .collect::<Result<Vec<_>, ObservationError>>()?;
-    let phase_dir = DirectionColumn::phase_dir(field_table);
+    for column in ["DELAY_DIR", "REFERENCE_DIR"] {
+        require_units(field_table, column, "rad")?;
+    }
+    // A delay or reference centre the row leaves undefined is unstated.
+    let centre = |row: usize, column: &str, num_poly: i32| {
+        let Some((longitude, latitude)) = field_angles(field_table, column, row, num_poly)? else {
+            return Ok(None);
+        };
+        let frame = resolve_direction_reference_selected(field_table, "FIELD", column, row)
+            .map_err(storage)?;
+        Ok::<_, ObservationError>(Some(MDirection::from_angles(longitude, latitude, frame)))
+    };
     let fields = (0..field.row_count())
         .map(|row| {
-            let (longitude, latitude) = phase_dir.get_angles(row).map_err(storage)?;
+            let num_poly = field.num_poly(row).map_err(storage)?;
+            let (longitude, latitude) = field_angles(field_table, "PHASE_DIR", row, num_poly)?
+                .ok_or_else(|| invalid(format!("FIELD PHASE_DIR of row {row} is undefined")))?;
             let source = field.source_id(row).map_err(storage)?;
             let time_s = field.time(row).map_err(storage)?;
             Ok(FieldEntry {
@@ -190,6 +232,13 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
                 phase_centre: MDirection::from_angles(longitude, latitude, frames[row]),
                 reference_epoch: Some(MEpoch::from_mjd(time_s / 86_400.0, epoch_scale)),
                 source_name: source_name(ms, source)?,
+                source: sources.get(&source).copied(),
+                code: crate::subtables::optional_string(field_table, row, "CODE")
+                    .map_err(storage)?,
+                delay_centre: centre(row, "DELAY_DIR", num_poly)?,
+                reference_centre: centre(row, "REFERENCE_DIR", num_poly)?,
+                flagged: crate::subtables::optional_bool(field_table, row, "FLAG_ROW")
+                    .map_err(storage)?,
                 ephemeris: attached[row].clone(),
             })
         })
@@ -233,6 +282,9 @@ pub(super) fn read_observations(
     if observation.row_count() == 0 {
         return Ok(vec![ObservationEntry::default()]);
     }
+    let table = observation.table();
+    let range_scale = super::metadata::epoch_scale(table, "TIME_RANGE")?;
+    let release_scale = super::metadata::epoch_scale(table, "RELEASE_DATE")?;
     (0..observation.row_count())
         .map(|row| {
             let schedule: Vec<String> = match observation
@@ -255,6 +307,30 @@ pub(super) fn read_observations(
                 execution_block: uid(1, "ExecBlock"),
                 session_reference: None,
                 scheduling_block: uid(0, "SchedulingBlock"),
+                time_range: super::metadata::floats(
+                    observation
+                        .optional_array(row, "TIME_RANGE")
+                        .map_err(storage)?,
+                    "TIME_RANGE",
+                )?
+                .map(|range| match range.as_slice() {
+                    [start, end] => Ok([
+                        MEpoch::from_mjd_seconds(*start, range_scale),
+                        MEpoch::from_mjd_seconds(*end, range_scale),
+                    ]),
+                    _ => Err(invalid(format!(
+                        "OBSERVATION TIME_RANGE holds {} values, not 2",
+                        range.len()
+                    ))),
+                })
+                .transpose()?,
+                release_date: observation
+                    .optional_f64(row, "RELEASE_DATE")
+                    .map_err(storage)?
+                    .map(|seconds| MEpoch::from_mjd_seconds(seconds, release_scale)),
+                flagged: observation
+                    .optional_bool(row, "FLAG_ROW")
+                    .map_err(storage)?,
             })
         })
         .collect()
@@ -319,6 +395,8 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
                 position: MPosition::new_itrf(x, y, z),
                 mount: antenna.mount(row).map_err(storage)?,
                 dish_diameter: metres(antenna.dish_diameter(row).map_err(storage)?),
+                flagged: crate::subtables::optional_bool(antenna_table, row, "FLAG_ROW")
+                    .map_err(storage)?,
             })
         })
         .collect()

@@ -84,7 +84,8 @@ fn extract_direction_constant(arr: &ArrayValue, col_name: &str) -> MsResult<(f64
     match arr {
         ArrayValue::Float64(a) => {
             let shape = a.shape();
-            if shape.len() != 2 || shape[0] != 2 {
+            // A polynomial of no terms (N = 0) has no constant term to read.
+            if shape.len() != 2 || shape[0] != 2 || shape[1] == 0 {
                 return Err(MsError::ColumnTypeMismatch {
                     column: col_name.to_string(),
                     table: "FIELD".to_string(),
