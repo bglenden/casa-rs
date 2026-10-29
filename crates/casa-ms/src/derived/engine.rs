@@ -9,6 +9,7 @@
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
 use casa_imaging_model::{AntennaResponseClass, GridFtProjection};
+use casa_observation::FieldEphemeris;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
@@ -630,8 +631,60 @@ impl MsCalEngine {
 
     /// [`Self::observation_direction_j2000`], borrowed for a fixed field.
     fn direction_at(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<Cow<'_, MDirection>> {
+        let Some((ephemeris, offset)) = self.field_series(field_id)? else {
+            return Ok(Cow::Borrowed(self.field_dir(field_id)?));
+        };
+        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let direction = self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)?;
+        Ok(Cow::Owned(
+            casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
+        ))
+    }
+
+    /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,
+    /// for a field that follows an attached ephemeris
+    /// ([`Self::with_field_ephemerides`]): the body's geocentric direction at
+    /// `origin`, the field row's `TIME` ([`field_reference_epoch`]), in UTC,
+    /// shifted by `PHASE_DIR`'s true angle in the ephemeris's frame. `None`
+    /// for a fixed field, whose direction is its `PHASE_DIR`.
+    ///
+    /// CASA's `tclean` centres an image there when its phase centre is left
+    /// empty (#987). Geocentric and at no row's time, it is not the direction
+    /// rows are observed towards ([`Self::observation_direction_j2000`]).
+    ///
+    /// # Errors
+    ///
+    /// An unknown field, an ephemeris that cannot be read or does not cover
+    /// `origin`, or a failed conversion.
+    pub fn moving_field_reference_direction(
+        &self,
+        field_id: usize,
+        origin: &MEpoch,
+    ) -> MsResult<Option<MDirection>> {
+        let Some((ephemeris, offset)) = self.field_series(field_id)? else {
+            return Ok(None);
+        };
+        let frame = MeasFrame::new().with_position(self.observatory_position.clone());
+        let frame = match &self.measures {
+            Some(measures) => frame.with_measures(Arc::clone(measures)),
+            None => frame,
+        };
+        let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
+        let sample = crate::ephemeris::evaluate(ephemeris, mjd_utc)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let body =
+            MDirection::from_cosines(sample.geocentric_position_metres, sample.position_reference);
+        Ok(Some(casa_types::measures::ephemeris::offset_true_angle(
+            &body, offset,
+        )?))
+    }
+
+    /// The ephemeris `field_id` follows and its `PHASE_DIR` offset, or
+    /// `None` for a fixed field.
+    fn field_series(&self, field_id: usize) -> MsResult<Option<(&FieldEphemeris, [f64; 2])>> {
         let ephemeris = match self.field_motions.get(field_id) {
-            None | Some(FieldMotion::Fixed) => return Ok(Cow::Borrowed(self.field_dir(field_id)?)),
+            None | Some(FieldMotion::Fixed) => return Ok(None),
             Some(FieldMotion::Ephemeris(ephemeris)) => ephemeris,
             Some(FieldMotion::Unreadable(reason)) => {
                 return Err(MsError::InvalidInput(format!(
@@ -639,16 +692,11 @@ impl MsCalEngine {
                 )));
             }
         };
-        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let direction = self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)?;
         let offset = *self
             .field_phase_offsets
             .get(field_id)
             .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        Ok(Cow::Owned(
-            casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
-        ))
+        Ok(Some((ephemeris.as_ref(), offset)))
     }
 
     /// Get the field direction for the given field_id.
@@ -1289,6 +1337,19 @@ pub fn raw_field_phase_direction(ms: &MeasurementSet, field_id: usize) -> MsResu
     Ok(MDirection::from_angles(longitude, latitude, reference))
 }
 
+/// The epoch of `field_id`'s FIELD row, its `TIME` in that column's
+/// reference (UTC when it names none): the origin of its direction
+/// polynomial and the time casacore evaluates its ephemeris at when asked
+/// for its direction at no time
+/// ([`MsCalEngine::moving_field_reference_direction`]).
+pub fn field_reference_epoch(ms: &MeasurementSet, field_id: usize) -> MsResult<MEpoch> {
+    let field = ms.field()?;
+    Ok(MEpoch::from_mjd(
+        selected_f64_value(field.table(), field_id, "TIME")? / 86_400.0,
+        detect_epoch_reference(field.table(), "TIME", EpochRef::UTC),
+    ))
+}
+
 enum BorrowedMeasureReference<'a> {
     Fixed(&'a str),
     VariableInt {
@@ -1498,13 +1559,8 @@ fn resolve_field_phase_direction_selected(
     if source_ref == DirectionRef::J2000 {
         return Ok(direction);
     }
-    let epoch_ref = detect_epoch_reference(field.table(), "TIME", EpochRef::UTC);
-    let epoch = MEpoch::from_mjd(
-        selected_f64_value(field.table(), field_id, "TIME")? / 86_400.0,
-        epoch_ref,
-    );
     let frame = MeasFrame::new()
-        .with_epoch(epoch)
+        .with_epoch(field_reference_epoch(ms, field_id)?)
         .with_position(observatory_position.clone())
         .with_measures(measures);
     Ok(direction.convert_to(DirectionRef::J2000, &frame)?)

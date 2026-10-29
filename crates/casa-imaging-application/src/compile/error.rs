@@ -203,17 +203,6 @@ pub enum PrepareError {
     /// A moving source's fields are only partly attached to ephemerides.
     #[error("moving-source selection mixes FIELD rows with and without attached ephemerides")]
     MixedEphemerisFields,
-    /// No `phasecenter` over a selected field that follows an ephemeris:
-    /// the image centre would be read from its `PHASE_DIR`, which is an
-    /// offset from the body, not a direction (#987).
-    #[error(
-        "FIELD_ID {field_id} follows an ephemeris; give phasecenter TRACKFIELD, a direction, \
-         a body or an ephemeris table"
-    )]
-    EphemerisFieldWithoutCentre {
-        /// The field.
-        field_id: i32,
-    },
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,

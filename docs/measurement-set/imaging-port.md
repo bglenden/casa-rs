@@ -339,10 +339,15 @@ envelope and cube density padding. Before #942, today's route read
 reprojection, envelope and padding read the offset under any centre:
 `MsCalEngine::with_field_ephemerides` gives the engines imaging builds each
 field's ephemeris, whatever the phase centre. A request without
-`phasecenter` over such a field is refused on both routes, since its image
-centre would be read from the offset (CASA appears to centre such an
-image on the body: #987). An analytic primary beam over such a field is
-refused, as for a moving centre.
+`phasecenter` is centred where CASA's `tclean` centres it
+(`SynthesisParamsImage::buildCoordinateSystem`): on casacore's
+`phaseDirMeas` of its first selected field asked at no time, which for a
+field that follows an ephemeris is the body's geocentric direction at the
+FIELD row's `TIME` (UTC), offset by `PHASE_DIR` in the ephemeris's frame
+(`MsCalEngine::moving_field_reference_direction`, #987). The image stays
+fixed while the field moves; before, today's route centred it on the
+offset. An analytic primary beam over such a field is refused, as for a
+moving centre.
 
 The MSv2 adapter refuses to open a MeasurementSet whose attached table
 today's reader refuses (no table or several for an id, a non-geocentric

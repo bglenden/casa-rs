@@ -80,10 +80,10 @@ pub fn topocentric_j2000(
     .convert_to(DirectionRef::J2000, frame)
 }
 
-/// `direction` (J2000) offset by `offset_rad` (longitude, latitude), as
-/// casacore reads a moving field's `PHASE_DIR`: the latitude offset is
-/// added along the meridian, then the longitude offset turns the result
-/// about the pole by its true angle.
+/// `direction` offset by `offset_rad` (longitude, latitude) in its own
+/// frame, as casacore reads a moving field's `PHASE_DIR`: the latitude
+/// offset is added along the meridian, then the longitude offset turns the
+/// result about the pole by its true angle.
 ///
 /// # Errors
 ///
@@ -110,6 +110,6 @@ pub fn offset_true_angle(
     Ok(MDirection::from_angles(
         y.atan2(x).rem_euclid(std::f64::consts::TAU),
         z.atan2(x.hypot(y)),
-        DirectionRef::J2000,
+        direction.refer(),
     ))
 }
