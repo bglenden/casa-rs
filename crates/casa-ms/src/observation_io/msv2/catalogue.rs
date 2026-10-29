@@ -294,19 +294,14 @@ pub(super) fn read_observations(
                 Some(ArrayValue::String(lines)) => lines.iter().cloned().collect(),
                 _ => Vec::new(),
             };
-            let uid = |line: usize, label: &str| {
-                schedule
-                    .get(line)
-                    .filter(|_| schedule.len() == 2)
-                    .and_then(|line| scheduled_uid(line, label))
-            };
+            let (scheduling_block, execution_block) = schedule_identifiers(&schedule);
             Ok(ObservationEntry {
                 telescope: observation.string(row, "TELESCOPE_NAME").map_err(storage)?,
                 observers: vec![observation.string(row, "OBSERVER").map_err(storage)?],
                 project: observation.string(row, "PROJECT").map_err(storage)?,
-                execution_block: uid(1, "ExecBlock"),
+                execution_block,
                 session_reference: None,
-                scheduling_block: uid(0, "SchedulingBlock"),
+                scheduling_block,
                 time_range: super::metadata::floats(
                     observation
                         .optional_array(row, "TIME_RANGE")
@@ -334,6 +329,32 @@ pub(super) fn read_observations(
             })
         })
         .collect()
+}
+
+/// The scheduling and execution block UIDs a `SCHEDULE` cell states: those
+/// of its two lines, as importasdm writes them ([`scheduled_uid`]); none
+/// for a cell of another length.
+pub(crate) fn schedule_identifiers(lines: &[String]) -> (Option<String>, Option<String>) {
+    match lines {
+        [scheduling, execution] => (
+            scheduled_uid(scheduling, "SchedulingBlock"),
+            scheduled_uid(execution, "ExecBlock"),
+        ),
+        _ => (None, None),
+    }
+}
+
+/// The `SCHEDULE` cell importasdm writes for block UIDs `scheduling` and
+/// `execution`, which [`schedule_identifiers`] reads back: its two lines,
+/// or no line without both.
+pub(crate) fn schedule_lines(scheduling: Option<&str>, execution: Option<&str>) -> Vec<String> {
+    match (scheduling, execution) {
+        (Some(scheduling), Some(execution)) => vec![
+            format!("[SchedulingBlock {scheduling},"),
+            format!("ExecBlock {execution}]"),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 /// The UID after `label` in a `SCHEDULE` line, as XRADIO's converter reads

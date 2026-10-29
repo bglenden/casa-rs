@@ -6,18 +6,20 @@
 //! - allowlisted, and rewritten as the writer states it (`FEED`'s `TIME`
 //!   and `INTERVAL`, the observation span, which covers every row);
 //! - anything else: a declared loss ([`Loss::Column`]) when a row holds a
-//!   value other than the one written (MSv2's default, or the writer's own
+//!   value other than the one written (MSv2's default, the writer's own
 //!   constant: an antenna `TYPE` of `GROUND-BASED`, a feed's `BEAM_ID` of
-//!   -1 and identity `POL_RESPONSE`).
+//!   -1 and identity `POL_RESPONSE`, or what it rebuilds: an observation's
+//!   `SCHEDULE` from the block identifiers its lines state).
 //!
-//! A column outside the MSv2 schema holding a value is a loss too.
-//! `POINTING` is inventoried by the pointing plan, and MAIN by the losses'
-//! inventory.
+//! A column outside the MSv2 schema is a loss whenever its table has rows,
+//! whatever they hold. `POINTING` is inventoried by the pointing plan, and
+//! MAIN by the losses' inventory.
 
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::Loss;
 use crate::MeasurementSet;
+use crate::observation_io::msv2::catalogue::{schedule_identifiers, schedule_lines};
 use crate::schema::{SubtableId, optional_columns, required_columns};
 
 /// What the writer writes of a subtable's columns.
@@ -78,16 +80,17 @@ const WRITTEN: &[Written] = &[
             "TIME_RANGE",
             "RELEASE_DATE",
             "FLAG_ROW",
-            "SCHEDULE",
         ],
     },
+    // The writer writes these tables' FLAG_ROW false, so a flag set is a
+    // loss.
     Written {
         id: SubtableId::Polarization,
-        carried: &["NUM_CORR", "CORR_TYPE", "CORR_PRODUCT", "FLAG_ROW"],
+        carried: &["NUM_CORR", "CORR_TYPE", "CORR_PRODUCT"],
     },
     Written {
         id: SubtableId::DataDescription,
-        carried: &["SPECTRAL_WINDOW_ID", "POLARIZATION_ID", "FLAG_ROW"],
+        carried: &["SPECTRAL_WINDOW_ID", "POLARIZATION_ID"],
     },
     Written {
         id: SubtableId::SpectralWindow,
@@ -143,10 +146,17 @@ const WRITTEN: &[Written] = &[
 ];
 
 /// Whether `value` is the one the writer writes in `table`'s `column`:
-/// its own constant there, or else MSv2's default (zero, false, empty, or
-/// -1 for an identifier that names nothing).
+/// its own constant there, what it rebuilds from the catalogue (an
+/// observation's `SCHEDULE`, from the block identifiers its lines state),
+/// or else MSv2's default (zero, false, empty, or -1 for an identifier that
+/// names nothing).
 fn as_written(table: SubtableId, column: &str, value: &Value) -> bool {
     match (table, column, value) {
+        (SubtableId::Observation, "SCHEDULE", Value::Array(ArrayValue::String(lines))) => {
+            let lines: Vec<String> = lines.iter().cloned().collect();
+            let (scheduling, execution) = schedule_identifiers(&lines);
+            schedule_lines(scheduling.as_deref(), execution.as_deref()) == lines
+        }
         (SubtableId::Antenna, "TYPE", Value::Scalar(ScalarValue::String(kind))) => {
             kind.is_empty() || kind == "GROUND-BASED"
         }
@@ -215,6 +225,16 @@ pub(super) fn inventory(ms: &MeasurementSet, losses: &mut Vec<Loss>) {
             if written.carried.contains(&name) {
                 continue;
             }
+            // A column outside the schema is not written whatever it holds.
+            if !known(name) {
+                if rows.row_count() > 0 {
+                    losses.push(Loss::Column(format!(
+                        "{} {name} (outside the MSv2 schema)",
+                        written.id.name()
+                    )));
+                }
+                continue;
+            }
             let held = (0..rows.row_count()).any(|row| {
                 rows.row(row)
                     .ok()
@@ -222,15 +242,7 @@ pub(super) fn inventory(ms: &MeasurementSet, losses: &mut Vec<Loss>) {
                     .is_some_and(|value| !as_written(written.id, name, value))
             });
             if held {
-                let outside = if known(name) {
-                    ""
-                } else {
-                    " (outside the MSv2 schema)"
-                };
-                losses.push(Loss::Column(format!(
-                    "{} {name}{outside}",
-                    written.id.name()
-                )));
+                losses.push(Loss::Column(format!("{} {name}", written.id.name())));
             }
         }
     }

@@ -861,10 +861,14 @@ fn a_new_session_is_offset_and_weights_take_their_inputs_scale() {
 
 /// A subtable column the catalogue does not carry is a declared loss when
 /// a row holds a value other than the one the writer writes: an antenna's
-/// offset is, its type `GROUND-BASED` is not; refused until accepted.
+/// offset is, its type `GROUND-BASED` is not; so is an observation's
+/// `SCHEDULE` the writer does not rebuild, a polarization's or data
+/// description's `FLAG_ROW` set (written false), and a column outside the
+/// schema whatever it holds; refused until accepted.
 #[test]
 fn uncarried_subtable_columns_are_declared() {
     let root = tempfile::tempdir().expect("root");
+    let flagged = Value::Scalar(ScalarValue::Bool(true));
     let path = edited(root.path(), "offset", 0..0, |ms| {
         set(
             subtable(ms, SubtableId::Antenna),
@@ -873,6 +877,27 @@ fn uncarried_subtable_columns_are_declared() {
                 ("OFFSET", floats(&[0.0, 0.0, 1.5], vec![3])),
                 ("TYPE", text("GROUND-BASED")),
             ],
+        );
+        subtable(ms, SubtableId::Antenna)
+            .add_column(
+                ColumnSchema::scalar("EXTRA", PrimitiveType::Int32),
+                Some(int(0)),
+            )
+            .expect("a column outside the schema, all zero");
+        set(
+            subtable(ms, SubtableId::Observation),
+            0,
+            &[("SCHEDULE", texts(&["science schedule"]))],
+        );
+        set(
+            subtable(ms, SubtableId::Polarization),
+            0,
+            &[("FLAG_ROW", flagged.clone())],
+        );
+        set(
+            subtable(ms, SubtableId::DataDescription),
+            0,
+            &[("FLAG_ROW", flagged.clone())],
         );
     });
     let plan = CreationPlan::new(
@@ -886,21 +911,25 @@ fn uncarried_subtable_columns_are_declared() {
         .iter()
         .filter(|loss| matches!(loss, Loss::Column(_)))
         .collect();
-    assert_eq!(
-        columns,
-        [
-            &Loss::Column("ANTENNA OFFSET".to_string()),
-            &Loss::Column("OBSERVATION LOG".to_string()),
-            &Loss::Column("OBSERVATION SCHEDULE_TYPE".to_string())
-        ]
-    );
+    let expected: Vec<Loss> = [
+        "ANTENNA EXTRA (outside the MSv2 schema)",
+        "ANTENNA OFFSET",
+        "DATA_DESCRIPTION FLAG_ROW",
+        "OBSERVATION LOG",
+        "OBSERVATION SCHEDULE",
+        "OBSERVATION SCHEDULE_TYPE",
+        "POLARIZATION FLAG_ROW",
+    ]
+    .map(|column| Loss::Column(column.to_string()))
+    .to_vec();
+    assert_eq!(columns, expected.iter().collect::<Vec<_>>());
     let strict = CreationOptions {
         accept: vec![LossKind::Sigma, LossKind::Tables],
         ..options()
     };
     let refused = CreationPlan::new(&[CreationInput::new(&path)], &strict, unused(root.path()));
     assert!(
-        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("ANTENNA OFFSET")),
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("ANTENNA EXTRA")),
         "{}",
         refused
             .err()
@@ -909,7 +938,6 @@ fn uncarried_subtable_columns_are_declared() {
     );
 }
 
-/// The entries of `directory` other than `kept`, by name.
 /// The name of this process's stage of `purpose` for a MeasurementSet named
 /// `name`, at `attempt`.
 fn stage_name(name: &str, purpose: &str, attempt: usize) -> String {
@@ -1005,6 +1033,7 @@ fn a_new_measurement_set_keeps_what_it_did_not_make() {
     );
 }
 
+/// The entries of `directory` other than `kept`, by name.
 fn others(directory: &Path, kept: &[&str]) -> Vec<String> {
     std::fs::read_dir(directory)
         .expect("dir")

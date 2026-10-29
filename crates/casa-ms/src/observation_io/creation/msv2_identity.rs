@@ -17,6 +17,7 @@ use super::msv2_sources::{self, NamedSources};
 use super::msv2_tables::Notes;
 use super::{HistoryRow, Loss};
 use crate::MeasurementSet;
+use crate::observation_io::msv2::catalogue::schedule_lines;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId, optional_columns};
 use crate::subtable_rows::{b, f, f64_array, i, row_from_defs, s, string_array, subtable_mut};
@@ -112,13 +113,10 @@ pub(super) fn observations(
     for (observation, span) in catalogue.observations.iter().zip(ranges) {
         // The archive identifiers as importasdm writes them, which is how
         // the MSv2 adapter and XRADIO's converter read them back.
-        let schedule = match (&observation.scheduling_block, &observation.execution_block) {
-            (Some(scheduling), Some(execution)) => vec![
-                format!("[SchedulingBlock {scheduling},"),
-                format!("ExecBlock {execution}]"),
-            ],
-            _ => Vec::new(),
-        };
+        let schedule = schedule_lines(
+            observation.scheduling_block.as_deref(),
+            observation.execution_block.as_deref(),
+        );
         let schedule: Vec<&str> = schedule.iter().map(String::as_str).collect();
         let time_range = observation
             .time_range
