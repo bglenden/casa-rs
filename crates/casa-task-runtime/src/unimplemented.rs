@@ -3,7 +3,8 @@
 //!
 //! A surface that mimics a CASA task takes every CASA parameter, so CASA's
 //! signature is exact. A parameter casa-rs does not implement yet carries
-//! [`UnimplementedParameter`] in the contract: resolution accepts it at its
+//! [`UnimplementedParameter`](casa_provider_contracts::UnimplementedParameter)
+//! in the contract: resolution accepts it at its
 //! default and refuses any other value before the task starts, on the
 //! command line and from Python alike.
 

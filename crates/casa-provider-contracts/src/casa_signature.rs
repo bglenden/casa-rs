@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The rules for a surface that mimics a CASA task (#931).
 //!
-//! A surface whose [`TaskDefinition::casa_task`] names a CASA task presents
-//! that task's signature: CASA's parameters, in CASA's order and with CASA's
-//! literal defaults, then casa-rs-only controls as keyword-only arguments
-//! ([`PythonParameterProjection::keyword_only`]). A CASA parameter that
+//! A surface whose [`casa_task`](super::TaskDefinition::casa_task) names a
+//! CASA task presents that task's signature: CASA's parameters, in CASA's
+//! order and with CASA's literal defaults, then casa-rs-only controls as
+//! keyword-only arguments
+//! ([`keyword_only`](super::PythonParameterProjection::keyword_only)). A CASA parameter that
 //! must be given (CASA's `imagename=''`) keeps CASA's default and is checked
 //! when the task runs, through its `required_when`.
 //!
