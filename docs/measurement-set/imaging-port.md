@@ -747,6 +747,8 @@ at one part in eight (`OVERLAPPED_BLOCKS`, 2faaa18f53) made all twelve pass:
 - peak memory 42–80% of today's;
 - products within 3.4e-12.
 
+The T1.5 route law holds at 2faaa18f53 on all 56 refim and kernels cases
+(worst NRMS 3.0e-9, a weight image of a native AW MT-MFS case).
 Receipts are on the NAS under `casa-rs/issue-932/step6-preview-20261029/`.
 The cutover's own comparison is still due, at its branch point.
 
