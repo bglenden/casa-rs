@@ -589,12 +589,12 @@
     {
       "id": "imstat.algorithm",
       "semantic_revision": 1,
-      "fingerprint": "849f3c386e8f48c64aa2d3564d93320d9f2ee9d463aeb03e8ec17217be5eb268"
+      "fingerprint": "728e7eb03268e24ba8a909f7f66a2f95bf4f41099504a17e6db038966fabab40"
     },
     {
       "id": "imstat.clmethod",
       "semantic_revision": 1,
-      "fingerprint": "8e8519fe3a1c3090209fa8228fac0e53403b95c446e6046afa671d742c87283f"
+      "fingerprint": "da16f099b4b4247f46dc9f97856d93b5ec4619501f4db511113565894dba82e2"
     },
     {
       "id": "imstat.listit",
@@ -3481,7 +3481,7 @@
     {
       "id": "exportfits",
       "contract_version": 5,
-      "fingerprint": "0b8f5f8629e171ec808e7d50571fa474ec8fce8fdf1f8deaa03dd97a7f84d70a"
+      "fingerprint": "e97b73784029b14ad488bc7e4b6f8e201e9bad7cc6a075c1f4c06f2748ee0fe6"
     },
     {
       "id": "feather",
@@ -3531,7 +3531,7 @@
     {
       "id": "flagdata",
       "contract_version": 5,
-      "fingerprint": "f299aa9dc031a428a794eb5a4d525a7015bf2790886528833f612dd34c158199"
+      "fingerprint": "419f6c9b43c9e99f55d2131ca3e544da1b2729e2fd05bb51e8110b370a8eb2a7"
     },
     {
       "id": "flagmanager",
@@ -3926,7 +3926,7 @@
     {
       "id": "immath",
       "contract_version": 5,
-      "fingerprint": "52527542b8bcc8694c0286f74784e5468a9fee3c823c2fc48748da6247d1c918"
+      "fingerprint": "8061489bda3f55028e0b545cb6a5d4643e46f3b4cd2cf14e844d12942843f3ba"
     },
     {
       "id": "immoments",
@@ -3951,7 +3951,7 @@
     {
       "id": "immoments",
       "contract_version": 5,
-      "fingerprint": "7d522c49fcfd745ba7c938930b7199233a3b474bc9e7f3368c24378eea88d5cb"
+      "fingerprint": "723ea7ba3f8cd7b052d336b3f442b99a065d0507f3cb94fd2642b19bf41a882f"
     },
     {
       "id": "impbcor",
@@ -3976,7 +3976,7 @@
     {
       "id": "impbcor",
       "contract_version": 5,
-      "fingerprint": "83415ed493f9da47de937125762acaa3045a7ef9318516b94f9255059db5062c"
+      "fingerprint": "b5bbd419c411dfb83f12113417d5db1e725b503ee61ae10ca19b9412b9fdf8d5"
     },
     {
       "id": "importfits",
@@ -4001,7 +4001,7 @@
     {
       "id": "importfits",
       "contract_version": 5,
-      "fingerprint": "d23483ec76cb83d14c4f50f08f83e6d1156e5b7bcc2a816b38f3ef77253fcfb8"
+      "fingerprint": "f5873f7ccc036e0dfd4de8b623a8542d1c7e1ebff3d66de9b4f553afa42e56b1"
     },
     {
       "id": "importvla",
@@ -4051,7 +4051,7 @@
     {
       "id": "impv",
       "contract_version": 5,
-      "fingerprint": "3feae99eee6bf84b75bce1704e9ff8474d08336f29ba32e9ef94eee1878c68fb"
+      "fingerprint": "6d9b21f8c779b4c3a986ea7348f2c3146170cc115a3b4707cb734ed7531fe617"
     },
     {
       "id": "imregrid",
@@ -4076,7 +4076,7 @@
     {
       "id": "imregrid",
       "contract_version": 5,
-      "fingerprint": "87246415a8c2e953abd3bf4dcc95e9d4f00fb3f2d2ad37271ea9b7c51c00d7d9"
+      "fingerprint": "977687498084f087a9a031c7393d263c90eefc801c3ba3167e58f9ad43663850"
     },
     {
       "id": "imstat",
@@ -4096,7 +4096,7 @@
     {
       "id": "imstat",
       "contract_version": 4,
-      "fingerprint": "3e199aa02af6775b462976ef6bbcd5663a21a2df367e42fe45b25b6f3abfcda1"
+      "fingerprint": "c3d1b3bd94e6a3ac0d60a37d2198ac6561a1985b61c714f667bcc558a7052330"
     },
     {
       "id": "imsubimage",
@@ -4121,7 +4121,7 @@
     {
       "id": "imsubimage",
       "contract_version": 5,
-      "fingerprint": "66172564a38a130bfd51d89ce299ed125543e7a3b4fc85d04c45e1d287e6382f"
+      "fingerprint": "378cffd6e74082b3d16148ee17431c2140c78fa26a7699c8ad0336644b74673a"
     },
     {
       "id": "msexplore",
@@ -4181,7 +4181,7 @@
     {
       "id": "mstransform",
       "contract_version": 5,
-      "fingerprint": "e2fa81683305602a4e8433e0cdf867ee69ec6c6a10d3fbf51d9999028e1c70e7"
+      "fingerprint": "fffc45c6f8962e3eb09889e99e7242ff6ee4c6a9d8759c5f0d7e9eae8203e976"
     },
     {
       "id": "plotcal",
@@ -4331,7 +4331,7 @@
     {
       "id": "split",
       "contract_version": 5,
-      "fingerprint": "d0d07ace885cc65cb5fa514a4510787d2ea973c39864038b1e619569b0471cec"
+      "fingerprint": "f5591eaddde40c542067640955c00ae380f567c8f9eee84c19a12fa38c4bddb2"
     },
     {
       "id": "statwt",

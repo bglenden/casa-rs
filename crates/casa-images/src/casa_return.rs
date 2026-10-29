@@ -13,13 +13,22 @@ use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamS
 
 /// `imstat`'s statistics record over the whole selection, as CASA returns
 /// it with `axes=[]`: each statistic a one-element `float64` array, and the
-/// corners and extremum positions `int64` pixel arrays.
+/// corners and extremum positions `int64` pixel arrays. A selection with no
+/// valid pixel has each statistic, `flux` among them, as an empty `float64`
+/// array and no extremum positions, as CASA 6.7.6.14 returns it.
 ///
 /// Not computed yet (#977): `blcf`, `trcf`, `minposf` and `maxposf` (the
 /// formatted world coordinates) and the robust statistics `medabsdevmed`,
 /// `q1`, `q3` and `quartile`.
 pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
-    let statistic = |value: f64| CasaValue::float64_vector([value]);
+    let empty = summary.npts == 0.0;
+    let statistic = |value: f64| {
+        if empty {
+            CasaValue::float64_vector([])
+        } else {
+            CasaValue::float64_vector([value])
+        }
+    };
     let mut entries = vec![
         ("blc", pixels(&summary.blc)),
         ("max", statistic(summary.max)),
@@ -36,11 +45,13 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
     if let Some(flux) = summary.flux {
         entries.push(("flux", statistic(flux)));
     }
-    if let Some(position) = &summary.maxpos {
-        entries.push(("maxpos", pixels(position)));
-    }
-    if let Some(position) = &summary.minpos {
-        entries.push(("minpos", pixels(position)));
+    if !empty {
+        if let Some(position) = &summary.maxpos {
+            entries.push(("maxpos", pixels(position)));
+        }
+        if let Some(position) = &summary.minpos {
+            entries.push(("minpos", pixels(position)));
+        }
     }
     sorted(entries)
 }
@@ -63,10 +74,11 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             "defaultmask",
             CasaValue::string(summary.default_mask.clone().unwrap_or_default()),
         ),
+        // Whether a mask applies: the default mask, not any stored one.
         (
             "hasmask",
             CasaValue::Bool {
-                value: !summary.masks.is_empty(),
+                value: summary.default_mask.is_some(),
             },
         ),
         ("imagetype", CasaValue::string(summary.image_type.clone())),

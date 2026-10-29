@@ -13,26 +13,91 @@
 //! [`UnimplementedParameter`]: it is accepted at its default, so CASA's
 //! signature is exact, and any other value is refused before the task
 //! starts, naming the issue that tracks it.
+//!
+//! Two checks hold this, and they guarantee different things. Contract
+//! validation here checks the rules' shape for the bindings a surface has:
+//! literal defaults, Python names, keyword-only extras last, markers only
+//! on CASA parameters. It does not know CASA's signature, so a deleted
+//! parameter or a changed but well-typed default passes it. Equality with
+//! CASA 6.7.6.14 itself, every parameter, its order, kind and default, is
+//! checked against the pinned inventory by the Python package's
+//! `test_task_signatures.py`, which also fails on a CASA-named task it
+//! neither checks nor lists as pending, and reported by
+//! `scripts/check-casa-inventory.py`.
+
+use std::collections::BTreeSet;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{ContractValidationError, DefaultSpec, ParameterValue, SurfaceDefinition};
+use super::{
+    ContractValidationError, DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle,
+    SurfaceDefinition,
+};
 
 /// A CASA parameter casa-rs accepts only at CASA's default until `issue`
 /// implements it (#931).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+///
+/// "CASA's default" is the default as CASA reads it, which is this law:
+///
+/// - Where [`applies_when`](Self::applies_when) is false over the resolved
+///   values, CASA ignores the parameter (immath's `sigma` outside its
+///   polarization modes, any task's `stretch` without a `mask`), and so
+///   does casa-rs: every value is accepted and none is used.
+/// - Elsewhere a value is accepted when it equals the binding's literal
+///   default or one of the [`equivalent`](Self::equivalent) values CASA
+///   reads as that default (immath's `varnames=[]` for `''`). Equality is
+///   the concept's semantic equality: both sides are first normalized by
+///   the concept's rule (text trimmed or lowercased, a quantity in its
+///   canonical unit, a scalar as a one-item list), then compared exactly,
+///   except that numbers agree within a relative 1e-12, so `-1` and `-1.0`
+///   are one value.
+///
+/// Any other value is refused before the task starts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct UnimplementedParameter {
     /// The casa-rs GitHub issue that tracks implementing the parameter.
     pub issue: u32,
+    /// Other values CASA reads exactly as the default, compared as the
+    /// default is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equivalent: Vec<ParameterValue>,
+    /// Where CASA reads the parameter at all; elsewhere it ignores the
+    /// value, and casa-rs accepts any value without using it.
+    #[serde(default = "always", skip_serializing_if = "is_always")]
+    pub applies_when: Predicate,
+}
+
+fn always() -> Predicate {
+    Predicate::Always
+}
+
+fn is_always(predicate: &Predicate) -> bool {
+    matches!(predicate, Predicate::Always)
 }
 
 impl UnimplementedParameter {
+    /// The marker for a parameter `issue` tracks, accepted at its default
+    /// alone wherever it is given.
+    pub fn new(issue: u32) -> Self {
+        Self {
+            issue,
+            equivalent: Vec::new(),
+            applies_when: Predicate::Always,
+        }
+    }
+
     /// The refusal for `name` set to anything but its `default`.
     pub fn refusal(&self, name: &str, default: &ParameterValue) -> String {
+        let equivalent = if self.equivalent.is_empty() {
+            String::new()
+        } else {
+            let values = self.equivalent.iter().map(python_repr).collect::<Vec<_>>();
+            format!(" (or {}, which CASA reads as it)", values.join(" or "))
+        };
         format!(
             "parameter {name:?} is not implemented by casa-rs yet (#{}); only CASA's default \
-             {} is accepted",
+             {}{equivalent} is accepted",
             self.issue,
             python_repr(default)
         )
@@ -136,6 +201,47 @@ pub(super) fn validate_casa_signature(
                  checked when the task runs"
                     .into(),
             ));
+        }
+    }
+}
+
+/// Check that every [`UnimplementedParameter`] of `bundle` gives equivalent
+/// defaults of its concept's type and an `applies_when` over the surface's
+/// parameters (`known`).
+pub(super) fn validate_unimplemented(
+    bundle: &SurfaceContractBundle,
+    known: &BTreeSet<String>,
+    errors: &mut Vec<ContractValidationError>,
+) {
+    let surface = bundle.surface.id();
+    for binding in bundle.surface.bindings() {
+        let Some(unimplemented) = &binding.unimplemented else {
+            continue;
+        };
+        super::validate_predicate_refs(
+            &unimplemented.applies_when,
+            known,
+            surface,
+            &binding.name,
+            errors,
+        );
+        let Some(concept) = bundle.catalog.concept(&binding.concept) else {
+            continue;
+        };
+        for value in &unimplemented.equivalent {
+            if let Err(reason) = super::validate_parameter_value(value, &concept.value_domain) {
+                errors.push(
+                    ContractValidationError::new(
+                        "unimplemented_equivalent",
+                        format!(
+                            "equivalent default {} is not a {} value: {reason}",
+                            python_repr(value),
+                            concept.id
+                        ),
+                    )
+                    .at(surface, Some(&binding.name)),
+                );
+            }
         }
     }
 }
@@ -274,12 +380,80 @@ mod tests {
     #[test]
     fn the_refusal_names_the_parameter_its_default_and_its_issue() {
         let message =
-            UnimplementedParameter { issue: 977 }.refusal("axes", &ParameterValue::Array(vec![]));
+            UnimplementedParameter::new(977).refusal("axes", &ParameterValue::Array(vec![]));
         assert_eq!(
             message,
             "parameter \"axes\" is not implemented by casa-rs yet (#977); only CASA's default [] \
              is accepted"
         );
+        let varnames = UnimplementedParameter {
+            equivalent: vec![ParameterValue::Array(vec![])],
+            ..UnimplementedParameter::new(977)
+        };
+        assert_eq!(
+            varnames.refusal("varnames", &ParameterValue::String(String::new())),
+            "parameter \"varnames\" is not implemented by casa-rs yet (#977); only CASA's \
+             default '' (or [], which CASA reads as it) is accepted"
+        );
+    }
+
+    #[test]
+    fn equivalent_defaults_are_the_concepts_values_and_applies_when_names_parameters() {
+        let sigma = json!({"unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "integer", "value": 0}, {"kind": "string", "value": "0"}],
+            "applies_when": {"kind": "equals", "parameter": "polmode",
+                             "value": {"kind": "string", "value": "poli"}}
+        }});
+        let bundle: SurfaceContractBundle = serde_json::from_value(json!({
+            "schema_version": 1,
+            "surface": {
+                "kind": "task",
+                "id": "example",
+                "contract_version": 1,
+                "display_name": "Example",
+                "category": "Test",
+                "summary": "Example",
+                "provider_family": "test",
+                "casa_task": "example",
+                "bindings": [
+                    binding("mode", 0, literal(), json!({})),
+                    binding("sigma", 1, literal(), sigma),
+                ],
+            },
+            "catalog": {
+                "schema_version": 1,
+                "concepts": [{
+                    "id": "example.text",
+                    "semantic_revision": 1,
+                    "casa_name": "text",
+                    "value_domain": {"kind": "string"},
+                    "normalization": {"kind": "trim"},
+                    "base_constraints": [],
+                    "unit_dimension": null,
+                    "semantic_role": "algorithm",
+                    "documentation": {"summary": "Text", "details": null, "examples": []},
+                    "persistence_class": "profile"
+                }]
+            }
+        }))
+        .unwrap();
+        let known = ["mode", "sigma"].map(String::from).into();
+        let mut errors = Vec::new();
+        validate_unimplemented(&bundle, &known, &mut errors);
+        let codes = errors
+            .iter()
+            .map(|error| error.code.as_str())
+            .collect::<Vec<_>>();
+        // The integer is not text; "0" is. `polmode` is not a parameter.
+        assert_eq!(
+            codes,
+            ["unknown_predicate_parameter", "unimplemented_equivalent"]
+        );
+        // Absent, the two fields are the plain marker, and it saves as one.
+        let plain: UnimplementedParameter = serde_json::from_value(json!({"issue": 977})).unwrap();
+        assert_eq!(plain, UnimplementedParameter::new(977));
+        assert_eq!(serde_json::to_value(&plain).unwrap(), json!({"issue": 977}));
     }
 
     #[test]

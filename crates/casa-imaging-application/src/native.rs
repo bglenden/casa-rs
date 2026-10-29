@@ -155,24 +155,25 @@ pub(crate) fn batch_route(
     (model_data, corrected_data): (bool, bool),
     runtime: &ApplicationRuntime,
 ) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
-    // Batch geometry follows a moving centre Measures names; a table named
-    // like a body (`Mars`) would be followed as the body.
-    if observation
-        .ephemeris()
-        .is_some_and(casa_ms::SelectedObservationEphemeris::is_table)
-    {
-        return Err(NativeError::Other(
-            "the observation-batch route does not follow an ephemeris table yet (#932)".into(),
-        ));
-    }
     let Admitted {
         value: opened,
         reservation: mut opening,
     } = open_observation(observation, runtime)?;
     let selection = resolve_partitions(problem, &opened)
         .map_err(|error| NativeError::Other(Box::new(error)))?;
-    let plan = GeometryPlan::compile(problem, opened.catalogue(), observation.measures_provider())
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    // A moving phase centre names a body and a table alike; the table, when
+    // it is one, was read when the request compiled.
+    let phase_table = observation
+        .ephemeris()
+        .and_then(casa_ms::SelectedObservationEphemeris::external_series)
+        .cloned();
+    let plan = GeometryPlan::compile(
+        problem,
+        opened.catalogue(),
+        observation.measures_provider(),
+        phase_table,
+    )
+    .map_err(|error| NativeError::Other(Box::new(error)))?;
     let pointing_budget = if plan.reads_pointing() {
         opened
             .pointing_bytes()
@@ -262,7 +263,9 @@ fn open_observation(
         Some(admission) => NativeError::Admission(admission),
         None => NativeError::Other(Box::new(error)),
     })?;
-    let index = opened.index_bytes() as u64;
+    // The catalogue's ephemerides are read with the subtables, before
+    // the index; they are charged with it.
+    let index = (opened.index_bytes() + opened.catalogue().ephemeris_bytes()) as u64;
     if index <= reservation.memory() {
         reservation.retain(index);
     } else {

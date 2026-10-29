@@ -67,7 +67,7 @@ if "FAKE_TASK_WAIT_FOR" in os.environ:
 print(f"{surface} completed", file=sys.stderr, flush=True)
 if reply == "succeeded":
     result = json.loads(os.environ.get("FAKE_TASK_RESULT", "{}"))
-    value = {"kind": "dict", "entries": [
+    value = json.loads(os.environ["FAKE_TASK_VALUE"]) if "FAKE_TASK_VALUE" in os.environ else {"kind": "dict", "entries": [
         {"key": "npts", "value": {"kind": "float_array", "dtype": "float64", "shape": [1], "data": [12.0]}},
         {"key": "blc", "value": {"kind": "int_array", "dtype": "int64", "shape": [2, 2], "data": [0, 1, 2, 3]}},
         {"key": "min", "value": {"kind": "float_array", "dtype": "float32", "shape": [1], "data": ["nan"]}},
@@ -431,6 +431,98 @@ def test_run_rejects_parameters_for_another_task(tmp_path: Path) -> None:
     other = TaskParameters.defaults("imstat", workspace=tmp_path)
     with pytest.raises(ValueError, match="not requested task"):
         tasks.run("flagmanager", other, workspace=tmp_path)
+
+
+def test_imstat_of_no_pixels_returns_empty_arrays_and_its_result(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reply imexplore gives for a selection with no valid pixel (#931
+    # PR 4b review): each statistic an empty float64 array, as CASA returns
+    # it, and the run's result with the undefined statistics as null.
+    fake("CASARS_IMEXPLORE_BIN")
+    empty = {"kind": "float_array", "dtype": "float64", "shape": [0], "data": []}
+    corner = {"kind": "int_array", "dtype": "int64", "shape": [4], "data": [0, 0, 0, 0]}
+    statistics = ["flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq"]
+    entries = [{"key": "blc", "value": corner}]
+    entries += [{"key": name, "value": empty} for name in statistics]
+    entries.append({"key": "trc", "value": corner})
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps({"kind": "dict", "entries": entries}))
+    result = {"Imstat": {"imagename": "masked.im", "npts": 0.0, "sum": 0.0, "mean": None,
+                         "min": None, "minpos": None, "flux": 0.0}}
+    monkeypatch.setenv("FAKE_TASK_RESULT", json.dumps(result))
+    monkeypatch.chdir(tmp_path)
+
+    record = tasks.imstat("masked.im")
+
+    assert list(record) == ["blc", *statistics, "trc"]
+    for name in statistics:
+        assert record[name].dtype == numpy.float64 and record[name].shape == (0,), name
+    assert "maxpos" not in record and "minpos" not in record
+    # The completion decodes the whole reply, null statistics included.
+    completion = tasks.run("imstat", imagename="masked.im")
+    assert completion.successful, completion.describe()
+    assert completion.result is not None and completion.result.surface_id == "imstat"
+
+
+def test_a_reply_value_decodes_to_casas_numpy_types(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every array the reply carries arrives as CASA's NumPy array (#931 PR
+    # 4b review): its dtype, string width included, its shape, rank zero
+    # and empty ones too, and column-major data in that shape.
+    fake("CASARS_FLAGMANAGER_BIN")
+    floats = {"kind": "float_array", "dtype": "float64", "shape": [3], "data": ["inf", "-inf", "nan"]}
+    entries = {
+        "int32": {"kind": "int_array", "dtype": "int32", "shape": [2],
+                  "data": [2147483647, -2147483648]},
+        "complex64": {"kind": "complex_array", "dtype": "complex64", "shape": [2],
+                      "data": [[1.0, 2.0], [3.0, -4.0]]},
+        "complex128": {"kind": "complex_array", "dtype": "complex128", "shape": [1, 2],
+                       "data": [[1.0, "inf"], [0.0, -1.0]]},
+        "infinities": floats,
+        "scalar": {"kind": "int_array", "dtype": "int64", "shape": [], "data": [7]},
+        "empty": {"kind": "float_array", "dtype": "float32", "shape": [0, 3], "data": []},
+        "names": {"kind": "str_array", "shape": [2], "data": ["Right Ascension", "Dec"]},
+        "masks": {"kind": "str_array", "shape": [0], "data": []},
+        "grid": {"kind": "str_array", "shape": [2, 2], "data": ["a", "b", "cc", "d"]},
+    }
+    value = {"kind": "dict", "entries": [{"key": key, "value": item} for key, item in entries.items()]}
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps(value))
+    record = tasks.run("flagmanager", workspace=tmp_path, vis="a.ms").value
+
+    assert record["int32"].dtype == numpy.int32
+    assert record["int32"].tolist() == [2147483647, -2147483648]
+    assert record["complex64"].dtype == numpy.complex64
+    assert record["complex64"].tolist() == [1 + 2j, 3 - 4j]
+    assert record["complex128"].dtype == numpy.complex128 and record["complex128"].shape == (1, 2)
+    assert record["complex128"][0, 0] == complex(1, numpy.inf)
+    infinities = record["infinities"]
+    assert infinities[0] == numpy.inf and infinities[1] == -numpy.inf and numpy.isnan(infinities[2])
+    assert record["scalar"].shape == () and record["scalar"] == 7
+    assert record["empty"].dtype == numpy.float32 and record["empty"].shape == (0, 3)
+    # casatools' string widths: the longest string's, and <U5 when empty.
+    assert record["names"].dtype == numpy.dtype("<U15")
+    assert record["masks"].dtype == numpy.dtype("<U5") and record["masks"].shape == (0,)
+    assert record["grid"].dtype == numpy.dtype("<U2")
+    assert record["grid"].tolist() == [["a", "cc"], ["b", "d"]]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"kind": "int_array", "dtype": "int32", "shape": [1], "data": [2147483648]},
+        {"kind": "float_array", "dtype": "float64", "shape": [2, 2], "data": [1.0, 2.0, 3.0]},
+        {"kind": "str_array", "shape": [3], "data": ["a"]},
+    ],
+)
+def test_a_reply_value_that_does_not_fit_its_type_is_rejected(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, item: dict
+) -> None:
+    fake("CASARS_FLAGMANAGER_BIN")
+    value = {"kind": "dict", "entries": [{"key": "bad", "value": item}]}
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps(value))
+    with pytest.raises(tasks.TaskResultError):
+        tasks.run("flagmanager", workspace=tmp_path, vis="a.ms")
 
 
 def test_a_successful_process_with_a_malformed_result_is_rejected(

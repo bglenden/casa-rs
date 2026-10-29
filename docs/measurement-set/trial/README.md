@@ -1456,12 +1456,15 @@ whatever the budget (#950); the reads themselves fit the budget.
 
 A converted store therefore has no covering sample, and imaging's law
 chooses between the samples either side; step 3b measures what that
-changes. Field ephemerides are not carried yet; the converter still refuses
-fields that follow one (#942).
+changes. The MSv2 adapter carries field ephemerides (#942): each field's
+entry holds the table its `EPHEMERIS_ID` names, its phase centre the
+offset from the body. The MSv4 store does not carry them yet, so the
+converter still refuses fields that follow one.
 
 | Law | What it shows |
 | --- | --- |
 | `field_directions_resolve_variable_frames_and_carry_reference_epochs` | A mosaic whose `PHASE_DIR` has a variable reference resolves each field's frame and keeps its angles; `FIELD.TIME` is each field's reference epoch; fields in two frames are refused; the MSv4 conversion's fields have no epoch. |
+| `fields_carry_the_ephemerides_they_follow` | Two fields of one `EPHEMERIS_ID` share the attached table's samples, equal to today's imaging reading of the table; a field with none has none; every phase centre keeps `PHASE_DIR`'s angles; the catalogue counts the shared ephemeris once; an `EPHEMERIS_ID` whose table is missing refuses opening. |
 | `brackets_are_the_selected_observation_reading` (casa-ms unit) | The MSv2 adapter's brackets equal today's imaging reader's (`direction_brackets`) bit for bit, for rows with a rate term, rows of no interval and overlapping rows. Of two rows equally near a time, the boundary takes the earlier and today's reader the lower row: the same wherever an antenna's rows are in time order. |
 | `pointing_brackets_hold_each_stores_samples_and_survive_conversion` | On the MSv2, every (antenna, time) bracket holds the rows today's reader names (the nearest row whose positive `INTERVAL` covers the time, the last before and the first after); the MSv4 conversion holds the same samples at the same instants with nothing covering; converting back writes the same rows with `INTERVAL` 0. |
 | `msv4_pointing_finds_each_antennas_own_nearest_samples` | With one antenna sampled a second after the others (NaN between on MSv4's grid) and one with no pointing, a request between samples gives each antenna its own nearest sample either side, as the MSv2 does, and the antenna without pointing none. |

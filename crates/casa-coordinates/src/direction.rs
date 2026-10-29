@@ -64,6 +64,10 @@ pub struct DirectionCoordinate {
     /// Celestial coordinates of the native pole [alpha_p, delta_p] in radians.
     /// Computed from crval, longpole, latpole, and theta_0.
     native_pole: [f64; 2],
+    /// The angle units the coordinate is stored and presented in, as
+    /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
+    /// it computes in radians whatever they are.
+    world_units: [String; 2],
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
@@ -178,7 +182,37 @@ impl DirectionCoordinate {
             longpole,
             latpole,
             native_pole,
+            world_units: ["rad".into(), "rad".into()],
         }
+    }
+
+    /// The angle units the coordinate is stored and presented in: those of
+    /// the record it was read from, else radians. Its values, `to_world`
+    /// among them, are radians whatever these are.
+    pub fn world_units(&self) -> &[String; 2] {
+        &self.world_units
+    }
+
+    /// Stores and presents the coordinate in the angle units `units`, as
+    /// casacore's `setWorldAxisUnits` does. Returns `self` for chaining.
+    ///
+    /// # Errors
+    ///
+    /// A unit that is not an angle.
+    pub fn with_world_units(mut self, units: [&str; 2]) -> Result<Self, CoordinateError> {
+        for unit in units {
+            convert_value_to_unit(0.0, "rad", unit, "units")?;
+        }
+        self.world_units = units.map(String::from);
+        Ok(self)
+    }
+
+    /// `values` in radians, one per axis, in the world units.
+    pub fn in_world_units(&self, values: [f64; 2]) -> [f64; 2] {
+        [0, 1].map(|axis| {
+            convert_value_to_unit(values[axis], "rad", &self.world_units[axis], "world value")
+                .expect("world units are angles")
+        })
     }
 
     /// Sets the PC rotation/coupling matrix. Returns `self` for chaining.
@@ -328,6 +362,7 @@ impl DirectionCoordinate {
             cdelt,
             [crpix[0], crpix[1]],
         );
+        coord.world_units = [axis_units[0].clone(), axis_units[1].clone()];
 
         if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
             if pc_flat.len() != 4 {
@@ -705,9 +740,13 @@ impl DirectionCoordinate {
                 self.projection.parameters().to_vec(),
             )),
         );
+        // In the world units, as casacore's `DirectionCoordinate::save`
+        // writes them.
         rec.upsert(
             "crval",
-            Value::Array(ArrayValue::from_f64_vec(self.crval.to_vec())),
+            Value::Array(ArrayValue::from_f64_vec(
+                self.in_world_units(self.crval).to_vec(),
+            )),
         );
         rec.upsert(
             "crpix",
@@ -715,7 +754,9 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "cdelt",
-            Value::Array(ArrayValue::from_f64_vec(self.cdelt.to_vec())),
+            Value::Array(ArrayValue::from_f64_vec(
+                self.in_world_units(self.cdelt).to_vec(),
+            )),
         );
         // casacore's matrix, the PC's transpose (see `from_record`).
         rec.upsert(
@@ -731,7 +772,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "units",
-            Value::Array(ArrayValue::from_string_vec(self.axis_units())),
+            Value::Array(ArrayValue::from_string_vec(self.world_units.to_vec())),
         );
         rec.upsert(
             "conversionSystem",
@@ -950,6 +991,38 @@ mod tests {
             [0.0, 0.0],
         );
         assert_eq!(coord.axis_names(), vec!["Longitude", "Latitude"]);
+    }
+
+    /// A coordinate stored in arcminutes (CASA's `fromshape` default)
+    /// computes in radians, presents and saves itself in arcminutes, as
+    /// casacore's does.
+    #[test]
+    fn stored_world_units_are_kept() {
+        let arcmin = PI / 180.0 / 60.0;
+        let stored = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-arcmin, arcmin],
+            [2.0, 2.0],
+        )
+        .with_world_units(["'", "'"])
+        .unwrap();
+        let record = stored.to_record();
+        assert_eq!(get_optional_vec_f64(&record, "cdelt").unwrap(), [-1.0, 1.0]);
+        assert_eq!(
+            get_optional_vec_string(&record, "units").unwrap(),
+            ["'", "'"]
+        );
+        let restored = DirectionCoordinate::from_record(&record).unwrap();
+        assert_eq!(restored.world_units(), &["'".to_string(), "'".to_string()]);
+        let increment = restored.increment();
+        assert!((increment[0] + arcmin).abs() < 1e-18 && (increment[1] - arcmin).abs() < 1e-18);
+        assert_eq!(
+            restored.in_world_units([increment[0], increment[1]]),
+            [-1.0, 1.0]
+        );
+        assert!(stored.clone().with_world_units(["Hz", "'"]).is_err());
     }
 
     #[test]

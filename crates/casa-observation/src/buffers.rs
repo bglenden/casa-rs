@@ -782,6 +782,7 @@ pub(crate) mod tests {
                 ),
                 reference_epoch: None,
                 source_name: None,
+                ephemeris: None,
             }],
             scans: vec![ScanEntry {
                 name: "1".to_string(),
