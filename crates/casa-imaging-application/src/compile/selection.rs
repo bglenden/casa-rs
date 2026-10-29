@@ -504,15 +504,20 @@ pub(super) fn observation_selection(
 /// therefore images `DATA`, as CASA's `tclean` does (simulation plan §3,
 /// decision 6): `SIMapperCollection::grid` and `FTMachine::makeImage` turn a
 /// `CORRECTED` request into `OBSERVED` when the column is missing. CASA 6.x
-/// falls back silently, since the message `SynthesisImager::selectData` once
-/// logged is commented out. casa-rs logs that message as a warning, because
-/// the column imaged is not the one asked for; an unspecified column falls
-/// back without one.
+/// logs no message for the fallback, since the one `SynthesisImager::selectData`
+/// once logged is commented out. casa-rs logs that message as a warning,
+/// because the column imaged is not the one asked for; an unspecified column
+/// falls back without one.
 ///
-/// CASA's VisibilityIterator2 also counts a column whose first cell is
-/// undefined as missing (`existsColumn` tests `isDefined(0)`). casa-rs tests
-/// presence only: casa-tables knows whether a cell is defined only after
-/// loading the whole main table, which compile never does.
+/// CASA's VisibilityIterator2 also counts the column as missing in an
+/// iteration chunk whose first row's cell is undefined (`existsColumn` tests
+/// `isDefined(0)` on the chunk's attached table), so a partly written
+/// `CORRECTED_DATA` can image `DATA` chunk by chunk. casa-rs decides by the
+/// column's presence alone and images an existing `CORRECTED_DATA` as before:
+/// a deliberate scope limit, not full parity. casa-tables' metadata-only
+/// probe (`array_cell_is_defined_uncached`) answers only for lazy, disk-backed
+/// `TiledShapeStMan` columns, and one probe would not reproduce CASA's
+/// per-chunk rule.
 pub(super) fn visibility_column(
     ms: &MeasurementSet,
     requested: Option<DataColumn>,
@@ -608,6 +613,12 @@ mod tests {
                 Err(PrepareError::NoVisibilityColumn)
             ));
         }
+        // An explicit DATA is not checked here; reading the missing column
+        // refuses it later, as before.
+        assert!(matches!(
+            chosen(&[], Some(DataColumn::Data)).0,
+            Ok(OwnerVisibilityColumn::Data)
+        ));
     }
 
     #[test]

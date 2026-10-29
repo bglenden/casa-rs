@@ -487,15 +487,22 @@ visibilities, `SIMapperCollection::grid` and `FTMachine::makeImage` switch
 to `OBSERVED`, so `tclean` images `DATA` (less the model in a major cycle).
 `SynthesisImager::selectData` once logged "CORRECTED_DATA column does not
 exist. Using DATA column instead"; that block is commented out, and CASA
-6.7.6's `libcasacpp_synthesis` does not contain the message, so CASA falls
-back silently.
+6.7.6's `libcasacpp_synthesis` does not contain the message, so CASA logs
+no message for the fallback.
 
 casa-rs's simulator writes `DATA` only, so its imager follows the fallback
 and logs CASA's old message as a warning, since the column imaged is not
-the one asked for. VisibilityIterator2's `existsColumn` also counts a
-`CORRECTED_DATA` whose first cell is undefined as missing; casa-rs decides
-by the column's presence alone, because casa-tables knows whether a cell is
-defined only after loading the whole main table.
+the one asked for.
+
+VisibilityIterator2's `existsColumn` also counts `CORRECTED_DATA` as
+missing in an iteration chunk whose first row's cell is undefined
+(`isDefined(0)` on the chunk's attached table), so CASA can image `DATA`
+chunk by chunk from a partly written column. casa-rs decides by the
+column's presence alone and images an existing `CORRECTED_DATA` as before.
+That is a deliberate scope limit, not full parity: casa-tables'
+metadata-only probe (`array_cell_is_defined_uncached`) answers only for
+lazy, disk-backed `TiledShapeStMan` columns, and one probe would not
+reproduce the per-chunk rule.
 
 ## The Airy beam's blockage term uses the inverse length ratio
 

@@ -44,8 +44,8 @@ pub struct ImagingRequest {
     pub cell: [f64; 2],
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
-    /// MeasurementSet without it images `DATA` with a warning, as CASA's
-    /// `tclean` does.
+    /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
+    /// casa-rs also logs a warning.
     #[serde(deserialize_with = "optional")]
     pub datacolumn: Option<DataColumn>,
     /// Whether the final model's prediction is written to `MODEL_DATA`.
