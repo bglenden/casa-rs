@@ -45,8 +45,11 @@ fn record(catalogue: &Catalogue, window: WindowId) -> &SourceRecord {
         .expect("a record of the field's source for the window")
 }
 
+/// A line: its transition, rest frequency (Hz) and systemic velocity (m/s).
+type Line = (String, f64, f64);
+
 /// What `record` states of its lines, and its velocities' frames.
-fn lines(record: &SourceRecord) -> (Vec<(String, f64, f64)>, Vec<Option<RadialVelocityRef>>) {
+fn lines(record: &SourceRecord) -> (Vec<Line>, Vec<Option<RadialVelocityRef>>) {
     let transitions = record.transitions.as_ref().expect("transitions");
     let rest = record.rest_frequencies.as_ref().expect("rest frequencies");
     let velocities = record.systemic_velocities.as_ref().expect("velocities");
@@ -83,7 +86,7 @@ fn both_stores_state_a_fields_source_and_its_lines_by_window() {
             record(ours, window_at(ours, first_hz)),
             record(theirs, window_at(theirs, first_hz)),
         );
-        let expected: Vec<(String, f64, f64)> = expected
+        let expected: Vec<Line> = expected
             .iter()
             .map(|(name, rest, velocity)| (name.to_string(), *rest, *velocity))
             .collect();

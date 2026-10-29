@@ -24,9 +24,8 @@ use std::sync::Arc;
 use casa_observation::{
     ObservationError, SourceEntry, SourceId, SourceRecord, SourceWindow, Velocity, WindowId,
 };
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::MFrequency;
-use serde_json::{Map, Value};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use zarrs::filesystem::FilesystemStore;
 
 use super::metadata::{
@@ -47,130 +46,173 @@ pub(super) fn records(
     rows: usize,
     window: WindowId,
 ) -> Result<Vec<Option<SourceRecord>>, ObservationError> {
-    let optional = |name: &str| -> Result<Option<(Vec<f64>, Map<String, Value>)>, _> {
-        let variable = format!("{path}/{name}");
-        if has_node(store, &variable)? {
-            numbers::<f64>(store, &variable).map(Some)
+    let stated = Stated::read(store, path, rows)?;
+    Ok((0..rows).map(|row| stated.record(row, window)).collect())
+}
+
+/// What a `field_and_source` dataset states of its fields' sources, each
+/// variable flattened field by field (by line within a field).
+struct Stated {
+    lines: usize,
+    directions: Option<(Vec<f64>, DirectionRef)>,
+    rest: Option<(Vec<f64>, FrequencyRef)>,
+    velocities: Option<Vec<f64>>,
+    names: Option<Vec<String>>,
+}
+
+impl Stated {
+    /// The source variables of the dataset at `path`, of `rows` fields.
+    fn read(
+        store: &Arc<FilesystemStore>,
+        path: &str,
+        rows: usize,
+    ) -> Result<Self, ObservationError> {
+        let lines = if has_node(store, &format!("{path}/line_label"))? {
+            strings(store, &format!("{path}/line_label"))?.len()
         } else {
-            Ok(None)
-        }
-    };
-    let lines = if has_node(store, &format!("{path}/line_label"))? {
-        strings(store, &format!("{path}/line_label"))?.len()
-    } else {
-        0
-    };
-    let shaped = |name: &str, values: &[f64], per_row: usize| {
-        if values.len() == rows * per_row {
-            Ok(())
-        } else {
-            Err(invalid(format!(
-                "{path}/{name} holds {} values for {rows} fields of {per_row}",
-                values.len()
-            )))
-        }
-    };
-    let directions = optional("SOURCE_DIRECTION")?
-        .map(|(values, attributes)| {
-            shaped("SOURCE_DIRECTION", &values, 2)?;
-            require_units(&attributes, "rad", "SOURCE_DIRECTION")?;
-            Ok::<_, ObservationError>((values, direction_frame(&attributes, "SOURCE_DIRECTION")?))
-        })
-        .transpose()?;
-    let rest = optional("LINE_REST_FREQUENCY")?
-        .map(|(values, attributes)| {
-            shaped("LINE_REST_FREQUENCY", &values, lines)?;
-            Ok::<_, ObservationError>((
-                values,
-                frequency_frame(&attributes, "LINE_REST_FREQUENCY")?,
-            ))
-        })
-        .transpose()?;
-    let velocities = optional("LINE_SYSTEMIC_VELOCITY")?
-        .map(|(values, attributes)| {
-            shaped("LINE_SYSTEMIC_VELOCITY", &values, lines)?;
-            require_units(&attributes, "m/s", "LINE_SYSTEMIC_VELOCITY")?;
-            Ok::<_, ObservationError>(values)
-        })
-        .transpose()?;
-    let mut named = None;
-    for coordinate in ["line_name", "line_names"] {
-        if named.is_none() && has_node(store, &format!("{path}/{coordinate}"))? {
-            named = Some(coordinate);
-        }
-    }
-    let names = if let Some(coordinate) = named {
-        let names = strings(store, &format!("{path}/{coordinate}"))?;
-        if names.len() != rows * lines {
-            return Err(invalid(format!(
-                "{path}/{coordinate} holds {} names for {rows} fields of {lines} lines",
-                names.len()
-            )));
-        }
-        Some(names)
-    } else {
-        None
-    };
-    Ok((0..rows)
-        .map(|row| {
-            let line = |values: &[f64], index: usize| values[row * lines + index];
-            // A line is stated when any of its variables is: XRADIO pads a
-            // source's lines to the dataset's most with NaN and "".
-            let stated = (0..lines)
-                .rev()
-                .find(|index| {
-                    rest.as_ref()
-                        .is_some_and(|(values, _)| !line(values, *index).is_nan())
-                        || velocities
-                            .as_ref()
-                            .is_some_and(|values| !line(values, *index).is_nan())
-                        || names
-                            .as_ref()
-                            .is_some_and(|names| !names[row * lines + index].is_empty())
-                })
-                .map_or(0, |last| last + 1);
-            let direction = directions
-                .as_ref()
-                .map(|(values, frame)| (values[2 * row], values[2 * row + 1], *frame))
-                .filter(|(longitude, latitude, _)| !longitude.is_nan() && !latitude.is_nan())
-                .map(|(longitude, latitude, frame)| {
-                    MDirection::from_angles(longitude, latitude, frame)
-                });
-            if direction.is_none() && stated == 0 {
-                return None;
+            0
+        };
+        let variable = |name: &str, per_row: usize| {
+            let variable = format!("{path}/{name}");
+            if !has_node(store, &variable)? {
+                return Ok(None);
             }
-            let has_lines = stated > 0;
-            Some(SourceRecord {
-                window: SourceWindow::Window(window),
-                time: None,
-                interval_s: None,
-                code: None,
-                calibration_group: None,
-                direction,
-                proper_motion_rad_s: None,
-                position: None,
-                pulsar_id: None,
-                num_lines: u32::try_from(stated).expect("few lines"),
-                transitions: names
+            let (values, attributes) = numbers::<f64>(store, &variable)?;
+            if values.len() != rows * per_row {
+                return Err(invalid(format!(
+                    "{variable} holds {} values for {rows} fields of {per_row}",
+                    values.len()
+                )));
+            }
+            Ok(Some((values, attributes)))
+        };
+        let directions = variable("SOURCE_DIRECTION", 2)?
+            .map(|(values, attributes)| {
+                require_units(&attributes, "rad", "SOURCE_DIRECTION")?;
+                Ok::<_, ObservationError>((
+                    values,
+                    direction_frame(&attributes, "SOURCE_DIRECTION")?,
+                ))
+            })
+            .transpose()?;
+        let rest = variable("LINE_REST_FREQUENCY", lines)?
+            .map(|(values, attributes)| {
+                Ok::<_, ObservationError>((
+                    values,
+                    frequency_frame(&attributes, "LINE_REST_FREQUENCY")?,
+                ))
+            })
+            .transpose()?;
+        let velocities = variable("LINE_SYSTEMIC_VELOCITY", lines)?
+            .map(|(values, attributes)| {
+                require_units(&attributes, "m/s", "LINE_SYSTEMIC_VELOCITY")?;
+                Ok::<_, ObservationError>(values)
+            })
+            .transpose()?;
+        let mut names = None;
+        for coordinate in ["line_name", "line_names"] {
+            let coordinate = format!("{path}/{coordinate}");
+            if names.is_none() && has_node(store, &coordinate)? {
+                let stated = strings(store, &coordinate)?;
+                if stated.len() != rows * lines {
+                    return Err(invalid(format!(
+                        "{coordinate} holds {} names for {rows} fields of {lines} lines",
+                        stated.len()
+                    )));
+                }
+                names = Some(stated);
+            }
+        }
+        Ok(Self {
+            lines,
+            directions,
+            rest,
+            velocities,
+            names,
+        })
+    }
+
+    /// How many of field `row`'s lines are stated: a line is when any of
+    /// its variables is, since XRADIO pads a source's lines to the
+    /// dataset's most with `NaN` and `""`.
+    fn stated_lines(&self, row: usize) -> usize {
+        let at = |index: usize| row * self.lines + index;
+        (0..self.lines)
+            .rev()
+            .find(|index| {
+                self.rest
                     .as_ref()
-                    .filter(|_| has_lines)
-                    .map(|names| names[row * lines..row * lines + stated].to_vec()),
-                rest_frequencies: rest.as_ref().filter(|_| has_lines).map(|(values, frame)| {
-                    (0..stated)
-                        .map(|index| MFrequency::new(line(values, index), *frame))
+                    .is_some_and(|(values, _)| !values[at(*index)].is_nan())
+                    || self
+                        .velocities
+                        .as_ref()
+                        .is_some_and(|values| !values[at(*index)].is_nan())
+                    || self
+                        .names
+                        .as_ref()
+                        .is_some_and(|names| !names[at(*index)].is_empty())
+            })
+            .map_or(0, |last| last + 1)
+    }
+
+    /// Field `row`'s record for `window`, or `None` when nothing of its
+    /// source is stated.
+    fn record(&self, row: usize, window: WindowId) -> Option<SourceRecord> {
+        let stated = self.stated_lines(row);
+        let direction = self
+            .directions
+            .as_ref()
+            .map(|(values, frame)| (values[2 * row], values[2 * row + 1], *frame))
+            .filter(|(longitude, latitude, _)| !longitude.is_nan() && !latitude.is_nan())
+            .map(|(longitude, latitude, frame)| {
+                MDirection::from_angles(longitude, latitude, frame)
+            });
+        if direction.is_none() && stated == 0 {
+            return None;
+        }
+        let lines = row * self.lines..row * self.lines + stated;
+        let has_lines = stated > 0;
+        Some(SourceRecord {
+            window: SourceWindow::Window(window),
+            time: None,
+            interval_s: None,
+            code: None,
+            calibration_group: None,
+            direction,
+            proper_motion_rad_s: None,
+            position: None,
+            pulsar_id: None,
+            num_lines: u32::try_from(stated).expect("few lines"),
+            transitions: self
+                .names
+                .as_ref()
+                .filter(|_| has_lines)
+                .map(|names| names[lines.clone()].to_vec()),
+            rest_frequencies: self
+                .rest
+                .as_ref()
+                .filter(|_| has_lines)
+                .map(|(values, frame)| {
+                    values[lines.clone()]
+                        .iter()
+                        .map(|hz| MFrequency::new(*hz, *frame))
                         .collect()
                 }),
-                systemic_velocities: velocities.as_ref().filter(|_| has_lines).map(|values| {
-                    (0..stated)
-                        .map(|index| Velocity {
-                            value_m_s: line(values, index),
+            systemic_velocities: self
+                .velocities
+                .as_ref()
+                .filter(|_| has_lines)
+                .map(|values| {
+                    values[lines.clone()]
+                        .iter()
+                        .map(|value| Velocity {
+                            value_m_s: *value,
                             frame: None,
                         })
                         .collect()
                 }),
-            })
         })
-        .collect())
+    }
 }
 
 /// The source named `name` in `sources`, added if new, with `record` added

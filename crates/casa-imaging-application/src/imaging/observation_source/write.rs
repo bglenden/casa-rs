@@ -109,7 +109,7 @@ impl WriteBack {
         }
         Ok(Self {
             session: match observation {
-                OpenedStore::V2(observation) => UpdateSession::over_msv2(observation, &targets)?,
+                OpenedStore::V2(observation) => UpdateSession::over_msv2(*observation, &targets)?,
                 OpenedStore::V4(observation) => UpdateSession::over_msv4(observation, &targets)?,
             },
             model,

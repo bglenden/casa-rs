@@ -18,8 +18,8 @@ use super::PrepareError;
 /// The observation compile and the run read, in its store.
 pub(crate) enum OpenedStore {
     /// A MeasurementSet v2, assembled into the boundary's partitions at
-    /// opening.
-    V2(Msv2Observation),
+    /// opening (boxed: it holds MAIN's index and subtables).
+    V2(Box<Msv2Observation>),
     /// An MSv4 processing set (XRADIO's schema on local Zarr v3).
     V4(Msv4Observation),
 }
@@ -28,7 +28,7 @@ impl OpenedStore {
     /// The observation, whatever its store.
     pub(crate) fn observation(&self) -> &dyn Observation {
         match self {
-            Self::V2(observation) => observation,
+            Self::V2(observation) => observation.as_ref(),
             Self::V4(observation) => observation,
         }
     }
@@ -41,7 +41,7 @@ impl OpenedStore {
     /// The observation, owned, for a run that only reads it.
     pub(crate) fn into_observation(self) -> Box<dyn Observation> {
         match self {
-            Self::V2(observation) => Box::new(observation),
+            Self::V2(observation) => observation,
             Self::V4(observation) => Box::new(observation),
         }
     }
@@ -50,7 +50,7 @@ impl OpenedStore {
     /// descriptions and its `PHASE_DIR` polynomials.
     pub(crate) fn msv2(&self) -> Option<&Msv2Observation> {
         match self {
-            Self::V2(observation) => Some(observation),
+            Self::V2(observation) => Some(observation.as_ref()),
             Self::V4(_) => None,
         }
     }
@@ -81,7 +81,7 @@ pub(crate) fn open_observation(
     let ms = MeasurementSet::open_retained_read(path)?;
     let Admitted { value, reservation } = open_measurement_set(ms, (host, policy))?;
     Ok(Admitted {
-        value: OpenedStore::V2(value),
+        value: OpenedStore::V2(Box::new(value)),
         reservation,
     })
 }

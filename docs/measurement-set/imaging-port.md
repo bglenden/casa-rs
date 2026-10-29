@@ -586,7 +586,9 @@ for bit on the trial's fixed, ICRS-variable and moving fields (the law
 - **Fields and sources.** A fixed field's direction is the catalogue's
   phase centre, in its stored frame. A moving field with no reference epoch
   (an MSv4's) is evaluated, when asked at no time, at its first selected
-  time, as the MSv4 → MSv2 converter writes its `FIELD.TIME`. The cube's
+  time, as the MSv4 → MSv2 converter writes its `FIELD.TIME`, which an MSv4
+  does not carry (the conversion reports it lost): an image centred there
+  moves with the body between the two times. The cube's
   default rest frequency is the first line of each of the field's source
   records for a selected window (`Catalogue::source_records`), which must
   agree: MSv2 `SOURCE::REST_FREQUENCY`, MSv4 `LINE_REST_FREQUENCY` (#976).
