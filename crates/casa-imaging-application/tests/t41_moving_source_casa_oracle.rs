@@ -68,11 +68,14 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
         }));
         request.source_route = route;
         let result = execute(&request, imaging::context(request.resource_policy()))?;
-        assert_eq!(
-            result.scientific().normal_state().sample_count(),
-            SELECTED_SAMPLE_COUNT,
-            "{label}: production traversal must retain all 1,024 channels and both parallel hands",
-        );
+        let samples = result.scientific().normal_state().sample_count();
+        eprintln!("t41 {label} samples={samples}");
+        if samples != SELECTED_SAMPLE_COUNT {
+            failures.push(format!(
+                "{label}: {samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal \
+                 must retain all 1,024 channels and both parallel hands"
+            ));
+        }
         assert_matching_wcs(&rust_prefix, &casa_prefix)?;
         failures.extend(
             compare_with_casa(&rust_prefix, &casa_prefix)?
@@ -80,8 +83,8 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
                 .map(|failure| format!("{label}: {failure}")),
         );
         if route == SourceRoute::SelectedRows {
-            let geometry =
-                compare_geometry(&request, &imaging::context(request.resource_policy()))?;
+            let geometry = compare_geometry(&request, &imaging::context(request.resource_policy()))
+                .map_err(|error| error as Box<dyn Error>)?;
             eprintln!("t41 geometry law {geometry:?}");
             if !geometry.holds() || geometry.unmatched > 0 || geometry.duplicates > 0 {
                 failures.push(format!("the geometry law fails: {geometry:?}"));
