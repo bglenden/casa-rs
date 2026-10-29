@@ -41,6 +41,11 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    #[link_name = "cpp_ms_write_optional_subtables_fixture"]
+    fn ffi_cpp_ms_write_optional_subtables_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_ms_write_heterogeneous_tiled_shape_fixture"]
     fn ffi_cpp_ms_write_heterogeneous_tiled_shape_fixture(
         path: *const std::ffi::c_char,
@@ -138,6 +143,27 @@ impl MeasurementSetOracle {
             unsafe {
                 CasacoreOracleRuntime::cpp_status(
                     "measurement_set.write_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Write an empty MeasurementSet using C++ casacore, with its default
+    /// subtables and the five optional ones (DOPPLER, FREQ_OFFSET, SOURCE,
+    /// SYSCAL, WEATHER), each laid out from casacore's required description.
+    pub fn write_optional_subtables_fixture(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.write_optional_subtables_fixture", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc =
+                unsafe { ffi_cpp_ms_write_optional_subtables_fixture(c_path.as_ptr(), &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_optional_subtables_fixture",
                     rc,
                     error,
                     cpp_table_free_error,

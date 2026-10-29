@@ -103,9 +103,10 @@ fn ms_data_column_rust_to_cpp_round_trip() {
 /// C++ write → Rust read: Rust must be able to open a MeasurementSet created
 /// with casacore's `MeasurementSet` and read back the same typed structure.
 /// casa-rs lays out each subtable it creates as casacore does
-/// (`MeasurementSet::createDefaultSubtables`): the same columns in the same
-/// order, which CASA's `concat` needs to append to it (`TableRow::put`
-/// compares the names in order).
+/// (`MeasurementSet::createDefaultSubtables`, and each optional subtable
+/// from its `requiredTableDesc`): the same columns in the same order, which
+/// CASA's `concat` needs to append to it (`TableRow::put` compares the names
+/// in order).
 #[test]
 fn created_subtables_are_laid_out_as_casacore_lays_them_out() {
     if !casacore_oracle_available() {
@@ -114,9 +115,14 @@ fn created_subtables_are_laid_out_as_casacore_lays_them_out() {
     }
     let dir = tempfile::tempdir().unwrap();
     let cpp = dir.path().join("cpp.ms");
-    MeasurementSetOracle::write_basic_fixture(&cpp).expect("C++ should write fixture MS");
+    MeasurementSetOracle::write_optional_subtables_fixture(&cpp).expect("C++ should write the MS");
     let rust = dir.path().join("rust.ms");
-    MeasurementSet::create(&rust, MeasurementSetBuilder::new())
+    let builder = SubtableId::ALL_OPTIONAL
+        .iter()
+        .fold(MeasurementSetBuilder::new(), |builder, id| {
+            builder.with_optional_subtable(*id)
+        });
+    MeasurementSet::create(&rust, builder)
         .and_then(|mut ms| ms.save().map(|()| ms))
         .expect("Rust should create an MS");
     let (cpp, rust) = (
@@ -132,7 +138,10 @@ fn created_subtables_are_laid_out_as_casacore_lays_them_out() {
             .map(|column| column.name().to_string())
             .collect()
     };
-    for id in SubtableId::ALL_REQUIRED {
+    for id in SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL)
+    {
         assert_eq!(names(&rust, *id), names(&cpp, *id), "{}", id.name());
     }
 }

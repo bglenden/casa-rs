@@ -1097,6 +1097,34 @@ void add_second_spectral_window(casacore::MeasurementSet& ms)
     ddFlagRow.put(ddrow, false);
 }
 
+// Add the optional subtable `keyword` names to `ms`, laid out from its
+// required description as casacore lays it out.
+template <class Subtable>
+void add_optional_subtable(casacore::MeasurementSet& ms, casacore::MS::PredefinedKeywords keyword)
+{
+    const casacore::String name = casacore::MS::keywordName(keyword);
+    casacore::SetupNewTable setup(
+        ms.tableName() + "/" + name, Subtable::requiredTableDesc(), casacore::Table::New);
+    ms.rwKeywordSet().defineTable(name, casacore::Table(setup));
+}
+
+// An empty MeasurementSet with its default subtables and the five optional
+// ones (DOPPLER, FREQ_OFFSET, SOURCE, SYSCAL, WEATHER), each from casacore's
+// required description.
+void write_optional_subtables_fixture_impl(const std::string& path)
+{
+    casacore::TableDesc td(casacore::MS::requiredTableDesc());
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::MeasurementSet ms(setup, 0);
+    ms.createDefaultSubtables(casacore::Table::New);
+    add_optional_subtable<casacore::MSDoppler>(ms, casacore::MS::DOPPLER);
+    add_optional_subtable<casacore::MSFreqOffset>(ms, casacore::MS::FREQ_OFFSET);
+    add_optional_subtable<casacore::MSSource>(ms, casacore::MS::SOURCE);
+    add_optional_subtable<casacore::MSSysCal>(ms, casacore::MS::SYSCAL);
+    add_optional_subtable<casacore::MSWeather>(ms, casacore::MS::WEATHER);
+    ms.flush(true);
+}
+
 void write_heterogeneous_tiled_shape_fixture_impl(const std::string& path)
 {
     casacore::TableDesc td(casacore::MS::requiredTableDesc());
@@ -1343,6 +1371,20 @@ int32_t cpp_ms_write_basic_fixture(const char* path, char** out_error)
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in cpp_ms_write_basic_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_write_optional_subtables_fixture(const char* path, char** out_error)
+{
+    try {
+        write_optional_subtables_fixture_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_write_optional_subtables_fixture");
         return -1;
     }
 }
