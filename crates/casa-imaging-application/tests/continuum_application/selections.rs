@@ -163,9 +163,9 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
 }
 
 /// `datacolumn='corrected'` on a MeasurementSet holding only `DATA` images
-/// `DATA`, as CASA's `tclean` does (simulation plan §3, decision 6): on
-/// both observation routes the compiled problem reads `DATA` and its
-/// products are those of `datacolumn='DATA'`.
+/// `DATA`, as CASA's `tclean` does (simulation plan §3, decision 6): the
+/// compiled problem reads `DATA` and its products are those of
+/// `datacolumn='DATA'`.
 #[test]
 fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -178,14 +178,13 @@ fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
             .is_err(),
         "the fixture holds DATA only"
     );
-    let image = |name: &str, datacolumn: &str, route: SourceRoute| {
+    let image = |name: &str, datacolumn: &str| {
         let image_name = root.path().join(name);
-        let mut imaging = request(
+        let imaging = request(
             &path,
             &image_name,
             json!({ "niter": 0, "datacolumn": datacolumn }),
         );
-        imaging.source_route = route;
         let outcome = execute(&imaging).unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             outcome.problem.observation().sources()[0]
@@ -196,20 +195,15 @@ fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
         );
         image_name
     };
-    let data = image("data", "DATA", SourceRoute::SelectedRows);
-    for (name, route) in [
-        ("corrected", SourceRoute::SelectedRows),
-        ("corrected-batches", SourceRoute::ObservationBatches),
-    ] {
-        let corrected = image(name, "corrected", route);
-        for suffix in [".psf", ".residual", ".sumwt"] {
-            let plane = |image_name: &Path| {
-                product_plane(image_name, suffix)
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>()
-            };
-            assert_real_agreement(&plane(&data), &plane(&corrected));
-        }
+    let data = image("data", "DATA");
+    let corrected = image("corrected", "corrected");
+    for suffix in [".psf", ".residual", ".sumwt"] {
+        let plane = |image_name: &Path| {
+            product_plane(image_name, suffix)
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_real_agreement(&plane(&data), &plane(&corrected));
     }
 }

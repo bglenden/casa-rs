@@ -4,8 +4,9 @@
 //! to a distant body's table, imaged tracking the body (`TRACKFIELD`),
 //! following the same body from a table given as the phase centre, as a
 //! cube in the body's rest frame, on a fixed centre, and without a phase
-//! centre. Each run holds the geometry law and the route law, so the
-//! observation-batch route images moving fields as today's route does.
+//! centre, each on the production route, whose batch geometry follows the
+//! body. The track's MSv4 conversion keeps that geometry to the store
+//! law's 1e-12.
 
 use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
