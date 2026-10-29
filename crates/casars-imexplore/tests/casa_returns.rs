@@ -54,6 +54,73 @@ fn write_ramp(path: &Path, beam: bool) {
     image.save().expect("save image");
 }
 
+/// CASA's `ia.fromshape(path, [4, 4, 1, 4])` image: its default direction
+/// (J2000 SIN at the origin, 1-arcminute pixels), Stokes I and spectral
+/// (LSRK 1.415 GHz, 1 kHz channels, rest 1.420405752 GHz) coordinates,
+/// every pixel 1, in `units`, with a 3' x 2' beam; `masked` gives it a
+/// default mask that excludes every pixel.
+fn write_fromshape(path: &Path, units: &str, masked: bool) {
+    use casa_coordinates::{
+        DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+        StokesType,
+    };
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
+    let arcmin = std::f64::consts::PI / 180.0 / 60.0;
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [0.0, 0.0],
+        [-arcmin, arcmin],
+        [2.0, 2.0],
+    ));
+    coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coords.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.415e9,
+        1.0e3,
+        2.0,
+        1.420_405_752e9,
+    ));
+    let shape = [4, 4, 1, 4];
+    let mut image = Image::create(shape.to_vec(), coords, path).expect("create image");
+    image.set_units(units).expect("set units");
+    image
+        .set_image_info(&ImageInfo {
+            image_type: ImageType::Intensity,
+            beam_set: ImageBeamSet::new(GaussianBeam::new(
+                3.0 * arcmin,
+                2.0 * arcmin,
+                10f64.to_radians(),
+            )),
+            ..ImageInfo::default()
+        })
+        .expect("set image info");
+    image
+        .put_slice(&ArrayD::from_elem(IxDyn(&shape), 1.0f32), &[0, 0, 0, 0])
+        .expect("write pixels");
+    if masked {
+        image.make_mask("none", true, false).expect("make mask");
+    }
+    image.save().expect("save image");
+}
+
+/// The one value of the one-element `float64` array `key` of `record`.
+fn statistic(record: &CasaValue, key: &str) -> f64 {
+    let CasaValue::Dict { entries } = record else {
+        panic!("not a record: {record:?}");
+    };
+    let entry = entries
+        .iter()
+        .find(|entry| entry.key == CasaKey::String(key.to_string()))
+        .unwrap_or_else(|| panic!("no {key}"));
+    match &entry.value {
+        CasaValue::FloatArray { data, shape, .. } if shape == &[1] => data[0].0,
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
 /// `imexplore SURFACE --json-run -` with `values`, in `workspace`.
 fn json_run(workspace: &Path, surface: &str, values: Value) -> (Output, Option<TaskReply>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_imexplore"))
@@ -210,6 +277,82 @@ fn imstat_returns_casas_statistics_record() {
             "trcf",
         ],
     );
+}
+
+/// `flux` is CASA's: integrated over the selected channels when there are
+/// several, whether or not `chans` names them. CASA 6.7.6.14's `imstat` on
+/// its own `fromshape` image gives these values.
+#[test]
+fn imstat_flux_is_casas_over_any_channel_selection() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("ones.im");
+    write_fromshape(&image, "Jy/beam", false);
+    for (chans, expected) in [
+        ("", 1.986_884_327_454_274_5),
+        ("0~3", 1.986_884_327_454_274_5),
+        ("0~1", 0.993_442_163_727_137_2),
+        ("1", 2.353_446_4),
+    ] {
+        let record = returned(
+            workspace.path(),
+            "imstat",
+            json!({"imagename": image, "chans": chans}),
+        );
+        let flux = statistic(&record, "flux");
+        assert!(
+            (flux - expected).abs() <= 1e-7 * expected,
+            "chans {chans:?}: {flux} against CASA's {expected}"
+        );
+    }
+    // A brightness in kelvin times the pixel area in square arcseconds.
+    let kelvin = workspace.path().join("kelvin.im");
+    write_fromshape(&kelvin, "K", false);
+    let flux = statistic(
+        &returned(workspace.path(), "imstat", json!({"imagename": kelvin})),
+        "flux",
+    );
+    assert!((flux - 48_628.486_793_74).abs() <= 1e-7 * flux, "{flux}");
+}
+
+/// With no valid pixel, every statistic is an empty `float64` array, and
+/// there are no extremum positions, as CASA 6.7.6.14 returns them.
+#[test]
+fn imstat_of_no_pixels_returns_empty_statistics() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("masked.im");
+    write_fromshape(&image, "Jy/beam", true);
+    let (output, reply) = json_run(workspace.path(), "imstat", json!({"imagename": image}));
+    let Some(TaskReply::Succeeded { value, .. }) = reply else {
+        panic!("{reply:?}\n{}", String::from_utf8_lossy(&output.stderr));
+    };
+    let CasaValue::Dict { entries } = &value else {
+        panic!("{value:?}");
+    };
+    let keys = entries
+        .iter()
+        .map(|entry| match &entry.key {
+            CasaKey::String(key) => key.as_str(),
+            CasaKey::Int(_) => panic!("an integer key"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        [
+            "blc", "flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq",
+            "trc"
+        ]
+    );
+    for entry in entries {
+        match &entry.value {
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape,
+                data,
+            } => assert!(shape == &[0] && data.is_empty(), "{:?}", entry.key),
+            CasaValue::IntArray { .. } => {}
+            other => panic!("{:?}: {other:?}", entry.key),
+        }
+    }
 }
 
 #[test]

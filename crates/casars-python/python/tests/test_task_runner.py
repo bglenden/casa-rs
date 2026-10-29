@@ -67,7 +67,7 @@ if "FAKE_TASK_WAIT_FOR" in os.environ:
 print(f"{surface} completed", file=sys.stderr, flush=True)
 if reply == "succeeded":
     result = json.loads(os.environ.get("FAKE_TASK_RESULT", "{}"))
-    value = {"kind": "dict", "entries": [
+    value = json.loads(os.environ["FAKE_TASK_VALUE"]) if "FAKE_TASK_VALUE" in os.environ else {"kind": "dict", "entries": [
         {"key": "npts", "value": {"kind": "float_array", "dtype": "float64", "shape": [1], "data": [12.0]}},
         {"key": "blc", "value": {"kind": "int_array", "dtype": "int64", "shape": [2, 2], "data": [0, 1, 2, 3]}},
         {"key": "min", "value": {"kind": "float_array", "dtype": "float32", "shape": [1], "data": ["nan"]}},
@@ -429,6 +429,37 @@ def test_run_rejects_parameters_for_another_task(tmp_path: Path) -> None:
     other = TaskParameters.defaults("imstat", workspace=tmp_path)
     with pytest.raises(ValueError, match="not requested task"):
         tasks.run("flagmanager", other, workspace=tmp_path)
+
+
+def test_imstat_of_no_pixels_returns_empty_arrays_and_its_result(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reply imexplore gives for a selection with no valid pixel (#931
+    # PR 4b review): each statistic an empty float64 array, as CASA returns
+    # it, and the run's result with the undefined statistics as null.
+    fake("CASARS_IMEXPLORE_BIN")
+    empty = {"kind": "float_array", "dtype": "float64", "shape": [0], "data": []}
+    corner = {"kind": "int_array", "dtype": "int64", "shape": [4], "data": [0, 0, 0, 0]}
+    statistics = ["flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq"]
+    entries = [{"key": "blc", "value": corner}]
+    entries += [{"key": name, "value": empty} for name in statistics]
+    entries.append({"key": "trc", "value": corner})
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps({"kind": "dict", "entries": entries}))
+    result = {"Imstat": {"imagename": "masked.im", "npts": 0.0, "sum": 0.0, "mean": None,
+                         "min": None, "minpos": None, "flux": 0.0}}
+    monkeypatch.setenv("FAKE_TASK_RESULT", json.dumps(result))
+    monkeypatch.chdir(tmp_path)
+
+    record = tasks.imstat("masked.im")
+
+    assert list(record) == ["blc", *statistics, "trc"]
+    for name in statistics:
+        assert record[name].dtype == numpy.float64 and record[name].shape == (0,), name
+    assert "maxpos" not in record and "minpos" not in record
+    # The completion decodes the whole reply, null statistics included.
+    completion = tasks.run("imstat", imagename="masked.im")
+    assert completion.successful, completion.describe()
+    assert completion.result is not None and completion.result.surface_id == "imstat"
 
 
 def test_a_successful_process_with_a_malformed_result_is_rejected(

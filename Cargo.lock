@@ -751,6 +751,7 @@ dependencies = [
  "casa-images",
  "casa-provider-contracts",
  "casa-task-runtime",
+ "casa-types",
  "ndarray",
  "serde_json",
  "tempfile",

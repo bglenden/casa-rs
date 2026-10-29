@@ -1306,16 +1306,17 @@ where
     })
 }
 
+/// One statistic of the selection. With no valid pixel, a count or a sum
+/// is 0 and every other statistic NaN; CASA returns each as an empty array.
 fn scalar_stat<T: StatsElement>(
     stats: &LatticeStatistics<'_, T>,
     stat: Statistic,
 ) -> Result<f64, ImageError> {
     let values = stats.get_statistic(stat)?;
-    values
-        .iter()
-        .next()
-        .copied()
-        .ok_or_else(|| ImageError::InvalidMetadata("empty statistic result".to_string()))
+    Ok(values.iter().next().copied().unwrap_or(match stat {
+        Statistic::Npts | Statistic::Sum | Statistic::SumSq => 0.0,
+        _ => f64::NAN,
+    }))
 }
 
 fn offset_pos(start: &[usize], pos: Vec<usize>) -> Vec<usize> {
@@ -1872,29 +1873,57 @@ pub fn parse_image_channel_selection(
     Ok(indices)
 }
 
+/// CASA imstat's `flux` over the selection, as casacore's
+/// `ImageStatistics::_flux` computes it: a brightness in kelvin times the
+/// pixel area in square arcseconds; a brightness per beam divided by the
+/// beam's area in pixels (one beam; per-plane beams are not computed). Over
+/// a selection of more than one channel the flux is integrated along the
+/// spectral axis: times the channel width in km/s (radio, casacore's default
+/// velocity) when the axis has a rest frequency, else its frequency
+/// increment in Hz.
 fn image_flux<T: ImagePixel>(
     image: &PagedImage<T>,
     sum: f64,
     selection: &Selection,
 ) -> Option<f64> {
-    if !image.units().eq_ignore_ascii_case("Jy/beam") {
-        return None;
-    }
+    let units = image.units();
     let pixel_area = direction_pixel_area(image.coordinates())?;
-    let beam_area = image.image_info().ok()?.beam_set.single_beam()?.area();
-    if beam_area <= 0.0 {
+    let flux = if units.contains('K') {
+        let arcsec_per_rad = 180.0 * 3600.0 / std::f64::consts::PI;
+        sum * pixel_area * arcsec_per_rad * arcsec_per_rad
+    } else if units.contains("/beam") {
+        let beam_area = image.image_info().ok()?.beam_set.single_beam()?.area();
+        if beam_area <= 0.0 {
+            return None;
+        }
+        sum * pixel_area / beam_area
+    } else {
+        return None;
+    };
+    Some(flux * spectral_integration(image, selection).unwrap_or(1.0))
+}
+
+/// The width casacore integrates `flux` over: one channel of the selected
+/// spectral axis, when the selection holds more than one.
+fn spectral_integration<T: ImagePixel>(
+    image: &PagedImage<T>,
+    selection: &Selection,
+) -> Option<f64> {
+    let axis = image.find_axis(CoordinateType::Spectral)?;
+    if selection.shape[axis] <= 1 {
         return None;
     }
-    let mut flux = sum * pixel_area / beam_area;
-    if selection
-        .channel_indices
-        .as_ref()
-        .is_some_and(|indices| indices.len() > 1)
-    {
-        // Match CASA imstat's reported Jy/beam flux for spectral-channel ranges.
-        flux /= 2.0;
+    let coordinate = coordinate_for_axis(image.coordinates(), axis)?;
+    let rest = spectral_rest_frequency(image.coordinates()).unwrap_or(0.0);
+    if rest > 0.0 {
+        // The selection's own first two channels, as casacore's sub-image.
+        let first = selection.start[axis] as f64;
+        let f0 = coordinate.to_world(&[first]).ok()?[0];
+        let f1 = coordinate.to_world(&[first + 1.0]).ok()?[0];
+        Some(SPEED_OF_LIGHT_KM_S * (f1 - f0).abs() / rest)
+    } else {
+        Some(coordinate.increment()[0])
     }
-    Some(flux)
 }
 
 fn direction_pixel_area(coords: &CoordinateSystem) -> Option<f64> {
@@ -3953,6 +3982,10 @@ mod tests {
         assert_eq!(stats.npts, 8.0);
         assert_eq!(stats.units, "Jy/beam");
         let source = PagedImage::<f32>::open(&source_path).unwrap();
+        // casacore integrates the two selected channels' flux density over
+        // one channel's radio velocity width: 2 MHz at a 372 GHz rest
+        // frequency.
+        let channel_km_s = SPEED_OF_LIGHT_KM_S * 2.0e6 / 372.0e9;
         let expected_flux = stats.sum * direction_pixel_area(source.coordinates()).unwrap()
             / source
                 .image_info()
@@ -3961,8 +3994,8 @@ mod tests {
                 .single_beam()
                 .unwrap()
                 .area()
-            / 2.0;
-        assert!((stats.flux.unwrap() - expected_flux).abs() < 1e-12);
+            * channel_km_s;
+        assert!((stats.flux.unwrap() - expected_flux).abs() < 1e-12 * expected_flux);
 
         let moment_result =
             run_image_analysis_task(ImageAnalysisTaskRequest::Immoments(ImmomentsRequest {
