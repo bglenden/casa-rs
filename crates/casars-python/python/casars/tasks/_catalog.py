@@ -299,53 +299,101 @@ def simobserve(
     """Simulate an observation of a sky model: CASA's simobserve
 
     CASA's ``simobserve``: its parameters, defaults and return value.
-    ``docs/reference/casa-compatibility.md`` lists the parameters casa-rs
-    accepts only at their defaults.
     """
     return _call_casa(simobserve, locals())
 
 def imhead(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    mode: Literal['list', 'put', 'summary'] | object = _UNSET,
-    hdkey: str | object = _UNSET,
-    hdvalue: str | object = _UNSET,
-) -> TaskCompletion:
-    """Inspect or update CASA image header metadata."""
-    return _run("imhead", _explicit(locals(), ('imagename', 'mode', 'hdkey', 'hdvalue')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    mode: Literal['list', 'put', 'summary'] = 'summary',
+    hdkey: str = '',
+    hdvalue: str = '',
+    verbose: bool = False,
+) -> Any:
+    """Inspect or update CASA image header metadata.
+
+    CASA's ``imhead``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``verbose``.
+    """
+    return _call_casa(imhead, locals())
 
 def imstat(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    box: str | object = _UNSET,
-    region: str | object = _UNSET,
-    chans: str | object = _UNSET,
-) -> TaskCompletion:
-    """Compute CASA image statistics over optional pixel, region, and channel selections."""
-    return _run("imstat", _explicit(locals(), ('imagename', 'box', 'region', 'chans')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    axes: int | list[int] | tuple[int, ...] = [],
+    region: str = '',
+    box: str = '',
+    chans: str = '',
+    stokes: str = '',
+    listit: bool = True,
+    verbose: bool = True,
+    mask: str = '',
+    stretch: bool = False,
+    logfile: StrPath = '',
+    append: bool = True,
+    algorithm: str = 'classic',
+    fence: float = -1.0,
+    center: Literal['mean', 'median', 'zero'] = 'mean',
+    lside: bool = True,
+    zscore: float = -1.0,
+    maxiter: int = -1,
+    clmethod: str = 'auto',
+    niter: int = 3,
+) -> Any:
+    """Compute CASA image statistics over optional pixel, region, and channel selections.
+
+    CASA's ``imstat``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``axes``, ``stokes``,
+    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``,
+    ``algorithm``, ``fence``, ``center``, ``lside``, ``zscore``,
+    ``maxiter``, ``clmethod``, ``niter``.
+    """
+    return _call_casa(imstat, locals())
 
 def immoments(
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    moments: int | list[int] | tuple[int, ...] = [0],
+    axis: str = 'spectral',
+    region: str = '',
+    box: str = '',
+    chans: str = '',
+    stokes: str = '',
+    mask: str = '',
+    includepix: float | list[float] | tuple[float, ...] = -1,
+    excludepix: float | list[float] | tuple[float, ...] = -1,
+    outfile: StrPath = '',
+    stretch: bool = False,
     *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outfile: StrPath | object = _UNSET,
-    moments: Literal['-1', '0', '1', '2', '3'] | object = _UNSET,
-    chans: str | object = _UNSET,
-    includepix: str | object = _UNSET,
-    mask: str | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Create CASA-style image moment maps"""
-    return _run("immoments", _explicit(locals(), ('imagename', 'outfile', 'moments', 'chans', 'includepix', 'mask', 'overwrite')))
+    overwrite: bool = False,
+) -> Any:
+    """Create CASA-style image moment maps
+
+    CASA's ``immoments``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``axis``, ``region``,
+    ``box``, ``stokes``, ``excludepix``, ``stretch``.
+    """
+    return _call_casa(immoments, locals())
 
 def exportfits(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    fitsimage: StrPath | object = _UNSET,
-    velocity: bool | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Export CASA images to FITS"""
-    return _run("exportfits", _explicit(locals(), ('imagename', 'fitsimage', 'velocity', 'overwrite')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    fitsimage: StrPath = '',
+    velocity: bool = False,
+    optical: bool = False,
+    bitpix: int = -32,
+    minpix: float = 0,
+    maxpix: float = -1,
+    overwrite: bool = False,
+    dropstokes: bool = False,
+    stokeslast: bool = True,
+    history: bool = True,
+    dropdeg: bool = False,
+) -> Any:
+    """Export CASA images to FITS
+
+    CASA's ``exportfits``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``optical``, ``bitpix``,
+    ``minpix``, ``maxpix``, ``dropstokes``, ``stokeslast``, ``history``,
+    ``dropdeg``.
+    """
+    return _call_casa(exportfits, locals())
 
 def mstransform(
     *,
@@ -618,87 +666,158 @@ def flagmanager(
     return _run("flagmanager", _explicit(locals(), ('vis', 'mode', 'versionname', 'oldname', 'comment', 'merge')))
 
 def impbcor(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    pbimage: StrPath | object = _UNSET,
-    outfile: StrPath | object = _UNSET,
-    cutoff: float | object = _UNSET,
-    box: str | object = _UNSET,
-    region: str | object = _UNSET,
-    chans: str | object = _UNSET,
-    stokes: str | object = _UNSET,
-    mask: str | object = _UNSET,
-    mode: Literal['divide', 'multiply'] | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    stretch: str | object = _UNSET,
-) -> TaskCompletion:
-    """Apply primary-beam correction to a CASA image"""
-    return _run("impbcor", _explicit(locals(), ('imagename', 'pbimage', 'outfile', 'cutoff', 'box', 'region', 'chans', 'stokes', 'mask', 'mode', 'overwrite', 'stretch')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    pbimage: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    box: str = '',
+    region: str = '',
+    chans: str = '',
+    stokes: str = '',
+    mask: str = '',
+    mode: Literal['divide', 'multiply'] = 'divide',
+    cutoff: float = -1.0,
+    stretch: bool = False,
+) -> Any:
+    """Apply primary-beam correction to a CASA image
+
+    CASA's ``impbcor``: its parameters, defaults and return value.
+    """
+    return _call_casa(impbcor, locals())
 
 def impv(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outfile: StrPath | object = _UNSET,
-    start: str | object = _UNSET,
-    end: str | object = _UNSET,
-    width: int | object = _UNSET,
-    chans: str | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Extract a CASA-style position-velocity image"""
-    return _run("impv", _explicit(locals(), ('imagename', 'outfile', 'start', 'end', 'width', 'chans', 'overwrite')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    outfile: StrPath = '',
+    mode: Literal['coords', 'length'] = 'coords',
+    start: str = '',
+    end: str = '',
+    center: str | list[str] | tuple[str, ...] = '',
+    length: str = '',
+    pa: str = '',
+    width: int = 1,
+    unit: str = 'arcsec',
+    overwrite: bool = False,
+    region: str = '',
+    chans: str = '',
+    stokes: str = '',
+    mask: str = '',
+    stretch: bool = False,
+) -> Any:
+    """Extract a CASA-style position-velocity image
+
+    CASA's ``impv``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``mode``, ``center``,
+    ``length``, ``pa``, ``unit``, ``region``, ``stokes``, ``mask``,
+    ``stretch``.
+    """
+    return _call_casa(impv, locals())
 
 def imsubimage(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outfile: StrPath | object = _UNSET,
-    box: str | object = _UNSET,
-    chans: str | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Extract a CASA-style image section"""
-    return _run("imsubimage", _explicit(locals(), ('imagename', 'outfile', 'box', 'chans', 'overwrite')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    outfile: StrPath = '',
+    box: str = '',
+    region: str = '',
+    chans: str = '',
+    stokes: str = '',
+    mask: str = '',
+    dropdeg: bool = False,
+    overwrite: bool = False,
+    verbose: bool = True,
+    stretch: bool = False,
+    keepaxes: int | list[int] | tuple[int, ...] = [],
+) -> Any:
+    """Extract a CASA-style image section
+
+    CASA's ``imsubimage``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``region``, ``stokes``,
+    ``mask``, ``dropdeg``, ``verbose``, ``stretch``, ``keepaxes``.
+    """
+    return _call_casa(imsubimage, locals())
 
 def immath(
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    mode: Literal['evalexpr', 'lpoli', 'pola', 'poli', 'spix', 'tpoli'] = 'evalexpr',
+    outfile: StrPath = 'immath_results.im',
+    expr: str = 'IM0',
+    varnames: str | list[str] | tuple[str, ...] = '',
+    sigma: str = '0.0mJy/beam',
+    polithresh: str = '',
+    mask: str = '',
+    region: str = '',
+    box: str = '',
+    chans: str = '',
+    stokes: str = '',
+    stretch: bool = False,
+    imagemd: str = '',
+    prec: str = 'float',
     *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    expr: str | object = _UNSET,
-    outfile: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Evaluate tutorial image arithmetic expressions"""
-    return _run("immath", _explicit(locals(), ('imagename', 'expr', 'outfile', 'overwrite')))
+    overwrite: bool = False,
+) -> Any:
+    """Evaluate tutorial image arithmetic expressions
+
+    CASA's ``immath``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``mode``, ``varnames``,
+    ``sigma``, ``polithresh``, ``mask``, ``region``, ``box``, ``chans``,
+    ``stokes``, ``stretch``, ``imagemd``, ``prec``.
+    """
+    return _call_casa(immath, locals())
 
 def imregrid(
-    *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    template: StrPath | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    interpolation: Literal['linear', 'nearest'] | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Regrid a CASA image onto a template image"""
-    return _run("imregrid", _explicit(locals(), ('imagename', 'template', 'output', 'interpolation', 'overwrite')))
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    template: StrPath = 'get',
+    output: StrPath = '',
+    asvelocity: bool = True,
+    axes: int | list[int] | tuple[int, ...] = [-1],
+    shape: int | list[int] | tuple[int, ...] = [-1],
+    interpolation: Literal['linear', 'nearest'] = 'linear',
+    decimate: int = 10,
+    replicate: bool = False,
+    overwrite: bool = False,
+) -> Any:
+    """Regrid a CASA image onto a template image
+
+    CASA's ``imregrid``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``asvelocity``, ``axes``,
+    ``shape``, ``decimate``, ``replicate``.
+    """
+    return _call_casa(imregrid, locals())
 
 def feather(
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    highres: StrPath = '',
+    lowres: StrPath = '',
+    sdfactor: float = 1.0,
+    effdishdiam: float = -1.0,
+    lowpassfiltersd: bool = False,
     *,
-    imagename: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    highres: StrPath | object = _UNSET,
-    lowres: StrPath | object = _UNSET,
-    sdfactor: float | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Combine high-resolution and low-resolution images in the Fourier domain"""
-    return _run("feather", _explicit(locals(), ('imagename', 'highres', 'lowres', 'sdfactor', 'overwrite')))
+    overwrite: bool = False,
+) -> Any:
+    """Combine high-resolution and low-resolution images in the Fourier domain
+
+    CASA's ``feather``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``effdishdiam``,
+    ``lowpassfiltersd``.
+    """
+    return _call_casa(feather, locals())
 
 def importfits(
-    *,
-    fitsimage: StrPath | object = _UNSET,
-    imagename: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Import a FITS primary image into a CASA image"""
-    return _run("importfits", _explicit(locals(), ('fitsimage', 'imagename', 'overwrite')))
+    fitsimage: StrPath = '',
+    imagename: StrPath = '',
+    whichrep: int = 0,
+    whichhdu: int = -1,
+    zeroblanks: bool = True,
+    overwrite: bool = False,
+    defaultaxes: bool = False,
+    defaultaxesvalues: str | list[str] | tuple[str, ...] = [],
+    beam: str | list[str] | tuple[str, ...] = [],
+) -> Any:
+    """Import a FITS primary image into a CASA image
+
+    CASA's ``importfits``: its parameters, defaults and return value.
+    Accepted only at CASA's default until #977: ``whichrep``, ``whichhdu``,
+    ``zeroblanks``, ``defaultaxes``, ``defaultaxesvalues``, ``beam``.
+    """
+    return _call_casa(importfits, locals())
 
 TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
 

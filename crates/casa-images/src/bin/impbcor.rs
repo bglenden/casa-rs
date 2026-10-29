@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageAnalysisTaskResult, ImpbcorRequest, image_task_bool_text, image_task_front_end,
-    image_task_success, impbcor,
+    ImageAnalysisTaskResult, ImpbcorRequest, image_task_front_end, image_task_success, impbcor,
 };
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
@@ -33,7 +32,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         chans: task.text("chans")?,
         stokes: task.text("stokes")?,
         mask: task.text("mask")?,
-        stretch: image_task_bool_text(task, "stretch")?,
+        stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };
     image_task_success(impbcor(&request).map(ImageAnalysisTaskResult::Impbcor))

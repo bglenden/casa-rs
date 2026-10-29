@@ -55,7 +55,10 @@ pub enum CasaValue {
         data: Vec<[CasaFloat; 2]>,
     },
     /// A NumPy array of `str`.
-    StrArray { shape: Vec<usize>, data: Vec<String> },
+    StrArray {
+        shape: Vec<usize>,
+        data: Vec<String>,
+    },
 }
 
 /// One dictionary entry.
@@ -255,7 +258,9 @@ impl CasaValue {
             Self::ComplexArray { shape, data, .. } => nest(shape, data, |[re, im]| {
                 Value::Array(vec![plain_float(*re), plain_float(*im)])
             }),
-            Self::StrArray { shape, data } => nest(shape, data, |value| Value::String(value.clone())),
+            Self::StrArray { shape, data } => {
+                nest(shape, data, |value| Value::String(value.clone()))
+            }
         }
     }
 
@@ -301,7 +306,9 @@ fn nest<T>(shape: &[usize], data: &[T], element: impl Fn(&T) -> Value + Copy) ->
             None => data.get(offset).map_or(Value::Null, element),
             Some((&count, rest)) => Value::Array(
                 (0..count)
-                    .map(|index| level(rest, offset + index * stride, stride * count, data, element))
+                    .map(|index| {
+                        level(rest, offset + index * stride, stride * count, data, element)
+                    })
                     .collect(),
             ),
         }
@@ -320,11 +327,16 @@ mod tests {
         let value = CasaValue::dict([
             ("npts", CasaValue::float64_vector([12.0])),
             ("blc", CasaValue::int64_vector([0, 0, 0, 0])),
-            ("blcf", CasaValue::string("00:00:00.000, +00.00.00.000, I, 1.415e+09Hz")),
+            (
+                "blcf",
+                CasaValue::string("00:00:00.000, +00.00.00.000, I, 1.415e+09Hz"),
+            ),
             ("min", CasaValue::float64_vector([f64::NAN])),
         ]);
         let text = serde_json::to_string(&value).unwrap();
-        assert!(text.contains(r#"{"kind":"float_array","dtype":"float64","shape":[1],"data":[12.0]}"#));
+        assert!(
+            text.contains(r#"{"kind":"float_array","dtype":"float64","shape":[1],"data":[12.0]}"#)
+        );
         assert!(text.contains(r#""data":["nan"]"#));
         let back: CasaValue = serde_json::from_str(&text).unwrap();
         // NaN is not equal to itself; compare the wire form.
@@ -354,7 +366,9 @@ mod tests {
         let value = CasaValue::FloatArray {
             dtype: FloatDtype::Float32,
             shape: vec![2, 3],
-            data: [1.0, 2.0, 3.0, 4.0, 5.0, f64::INFINITY].map(CasaFloat).to_vec(),
+            data: [1.0, 2.0, 3.0, 4.0, 5.0, f64::INFINITY]
+                .map(CasaFloat)
+                .to_vec(),
         };
         assert!(value.is_consistent());
         assert_eq!(
@@ -382,7 +396,12 @@ mod tests {
             value,
             CasaValue::dict([
                 ("n", CasaValue::Int { value: 3 }),
-                ("names", CasaValue::List { items: vec![CasaValue::string("a")] }),
+                (
+                    "names",
+                    CasaValue::List {
+                        items: vec![CasaValue::string("a")]
+                    }
+                ),
                 ("none", CasaValue::None),
                 ("x", CasaValue::float(0.5)),
             ])

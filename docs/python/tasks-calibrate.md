@@ -14,8 +14,9 @@ the surface as its first word (`calibrate gaincal`), and sends one
 `TaskRunRequest` on `--json-run -`: the values the call set, resolved inside
 the executable against the same contract as its own command line (#931). Its
 log lines reach `sys.stderr` as they arrive. Python projects no flags and
-builds no Rust request. A refused value names its parameter, and a run that
-does not succeed raises `TaskExecutionError`, whose `.completion` has its
+builds no Rust request. A refused value names its parameter: the task's
+refusal raises `TaskParameterError`, a `ValueError`, and a run that does not
+succeed raises `TaskExecutionError`; the `.completion` of either has its
 `status`, `message` and `parameter`.
 
 `gaintables` and `summary_paths` are lists of calibration-table paths: a list,

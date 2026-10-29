@@ -4,9 +4,9 @@
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageAnalysisTaskResult, ImmathRequest, image_task_front_end, image_task_success, immath,
+    ImageAnalysisTaskResult, ImmathRequest, image_task_front_end, image_task_returning, immath,
 };
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
     image_task_front_end("immath", &["immath"], run).main(
@@ -25,5 +25,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         expr: task.required_text("expr")?,
         overwrite: task.flag("overwrite")?,
     };
-    image_task_success(immath(&request).map(ImageAnalysisTaskResult::Immath))
+    // CASA's immath returns True.
+    image_task_returning(
+        CasaValue::Bool { value: true },
+        immath(&request).map(ImageAnalysisTaskResult::Immath),
+    )
 }

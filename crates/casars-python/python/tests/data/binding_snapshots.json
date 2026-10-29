@@ -29,6 +29,16 @@
            },
            "elements": {
             "list": {
+             "dict[float](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[integer](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[path](kind,resource_kind)": {
               "kind": {
                "str": null
@@ -879,6 +889,16 @@
            },
            "elements": {
             "list": {
+             "dict[float](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[integer](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[path](kind,resource_kind)": {
               "kind": {
                "str": null
@@ -1141,6 +1161,7 @@
    "float": null,
    "int": null,
    "list": {
+    "float": null,
     "int": null,
     "str": null
    },

@@ -70,7 +70,10 @@ mod tests {
         let bundle = builtin_surface_bundle("flagmanager").unwrap();
         let values = BTreeMap::from([
             ("comment".to_string(), ParameterValue::Array(Vec::new())),
-            ("mode".to_string(), ParameterValue::String("frobnicate".into())),
+            (
+                "mode".to_string(),
+                ParameterValue::String("frobnicate".into()),
+            ),
         ]);
         let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &values)
         else {

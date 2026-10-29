@@ -181,9 +181,8 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let success = if task.surface() == "plotms" {
         TaskSuccess::new(CasaValue::None, &outcome.result)?
     } else {
-        let summary = serde_json::to_value(&outcome.result.summary).map_err(|error| {
-            TaskFailure::execution(format!("serialize the summary: {error}"))
-        })?;
+        let summary = serde_json::to_value(&outcome.result.summary)
+            .map_err(|error| TaskFailure::execution(format!("serialize the summary: {error}")))?;
         TaskSuccess::new(CasaValue::from_plain_json(&summary), &outcome.result)?
     };
     let success = success.with_text(outcome.text);

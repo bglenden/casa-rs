@@ -109,8 +109,8 @@ object API. See the [data API](docs/python/data.md) for the exact scope.
 ```python
 from casars import tasks
 
-result = tasks.imstat(imagename="target.image")
-print(result.status)
+stats = tasks.imstat("target.image")
+print(stats["rms"])
 ```
 
 Named wrappers take CASA's parameters and run in the current directory;
@@ -118,7 +118,11 @@ Named wrappers take CASA's parameters and run in the current directory;
 any catalog task from a draft, in a chosen workspace. Each call resolves its
 parameters through the shared Rust contracts and starts the task's own
 executable, whose log reaches `sys.stderr` as it runs. They do not call CASA.
-A task that does not succeed raises `casars.tasks.TaskExecutionError`.
+A task whose surface names its CASA task (the image tasks and `simobserve` so
+far) has CASA's signature and returns CASA's value, such as `imstat`'s
+statistics dictionary. A task that refuses its parameters raises
+`casars.tasks.TaskParameterError`, a `ValueError`; one that does not succeed
+raises `casars.tasks.TaskExecutionError`.
 Parameters can also be loaded, edited, validated, and saved as sparse TOML
 profiles:
 

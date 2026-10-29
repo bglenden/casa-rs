@@ -45,10 +45,16 @@ pub fn python_repr(value: &ParameterValue) -> String {
         ParameterValue::Bool(false) => "False".into(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => format!("{value:?}"),
-        ParameterValue::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
+        ParameterValue::String(value) => {
+            format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
         ParameterValue::Array(values) => format!(
             "[{}]",
-            values.iter().map(python_repr).collect::<Vec<_>>().join(", ")
+            values
+                .iter()
+                .map(python_repr)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         ParameterValue::Table(values) => format!(
             "{{{}}}",
@@ -76,7 +82,8 @@ pub(super) fn validate_casa_signature(
         };
         let python = binding.projections.python.as_ref();
         let keyword_only = python.is_some_and(|python| python.keyword_only);
-        if binding.unimplemented.is_some() && !matches!(binding.default, DefaultSpec::Literal { .. })
+        if binding.unimplemented.is_some()
+            && !matches!(binding.default, DefaultSpec::Literal { .. })
         {
             errors.push(error(
                 "unimplemented_default",
@@ -115,7 +122,10 @@ pub(super) fn validate_casa_signature(
         if let Some(extra) = first_keyword_only {
             errors.push(error(
                 "keyword_only_order",
-                format!("CASA parameter {:?} follows the keyword-only {extra:?}", binding.name),
+                format!(
+                    "CASA parameter {:?} follows the keyword-only {extra:?}",
+                    binding.name
+                ),
             ));
         }
         if !matches!(binding.default, DefaultSpec::Literal { .. }) {
@@ -184,7 +194,12 @@ mod tests {
     fn a_casa_signature_has_literal_defaults_then_keyword_only_extras() {
         let bindings = vec![
             binding("imagename", 0, literal(), json!({})),
-            binding("axes", 1, literal(), json!({"unimplemented": {"issue": 977}})),
+            binding(
+                "axes",
+                1,
+                literal(),
+                json!({"unimplemented": {"issue": 977}}),
+            ),
             binding("overwrite", 2, literal(), json!({"keyword_only": true})),
         ];
         assert!(codes(Some("imstat"), bindings).is_empty());

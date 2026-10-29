@@ -183,20 +183,31 @@ mod tests {
                 else {
                     continue;
                 };
-                if default == "none" {
+                // A surface that mimics a CASA task takes CASA's absence,
+                // `''`; the others spell it `none` (#931). Either way the
+                // provider omits it.
+                let absence = if surface.casa_task().is_some() {
+                    ""
+                } else {
+                    "none"
+                };
+                let adapter = binding
+                    .projections
+                    .provider
+                    .as_ref()
+                    .map(|projection| &projection.adapter);
+                if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
-                        binding
-                            .projections
-                            .provider
-                            .as_ref()
-                            .map(|projection| &projection.adapter),
+                        adapter,
                         Some(&crate::ValueAdapter::OmitNone),
                         "{}.{}",
                         surface.id(),
                         binding.name
                     );
                 }
-                assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                if surface.casa_task().is_none() {
+                    assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                }
             }
         }
     }
@@ -609,7 +620,9 @@ mod tests {
                 "flagdata.mode",
                 "flagmanager.mode",
                 "imhead.mode",
+                "immath.mode",
                 "impbcor.mode",
+                "impv.mode",
             ]
             .into_iter()
             .map(str::to_string)

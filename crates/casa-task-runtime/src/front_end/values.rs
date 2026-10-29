@@ -130,6 +130,35 @@ impl TaskInvocation<'_> {
             None => Err(missing(name)),
         }
     }
+
+    /// `name` as a list of numbers, such as CASA's `includepix=[0.1, 10]`;
+    /// one number is a list of one, and integers are read as numbers.
+    pub fn numbers(&self, name: &str) -> Result<Vec<f64>, TaskFailure> {
+        let number = |value: &ParameterValue| match value {
+            ParameterValue::Float(value) => Ok(*value),
+            ParameterValue::Integer(value) => Ok(*value as f64),
+            other => Err(mismatch(name, "a list of numbers", other)),
+        };
+        match self.value(name) {
+            Some(ParameterValue::Array(items)) => items.iter().map(number).collect(),
+            Some(value) => Ok(vec![number(value)?]),
+            None => Err(missing(name)),
+        }
+    }
+
+    /// `name` as a list of integers, such as CASA's `moments=[0]`; one
+    /// integer is a list of one.
+    pub fn integers(&self, name: &str) -> Result<Vec<i64>, TaskFailure> {
+        let integer = |value: &ParameterValue| match value {
+            ParameterValue::Integer(value) => Ok(*value),
+            other => Err(mismatch(name, "a list of integers", other)),
+        };
+        match self.value(name) {
+            Some(ParameterValue::Array(items)) => items.iter().map(integer).collect(),
+            Some(value) => Ok(vec![integer(value)?]),
+            None => Err(missing(name)),
+        }
+    }
 }
 
 fn missing(name: &str) -> TaskFailure {

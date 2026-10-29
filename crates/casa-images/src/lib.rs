@@ -92,8 +92,8 @@ pub use analysis::{
     parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
-pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
+pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
 pub use fits_read::{FitsImage, read_fits_image};
@@ -109,5 +109,5 @@ pub use image_info::{ImageInfo, ImageType};
 pub use regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
-pub use task_front_end::{image_task_bool_text, image_task_front_end, image_task_success};
+pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};
 pub use temp_image::TempImage;

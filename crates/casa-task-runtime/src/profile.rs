@@ -9,10 +9,10 @@ use casa_provider_contracts::{
 use thiserror::Error;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-use crate::overrides::normalize_overrides;
 use crate::normalize::{
     NormalizationError, normalize_quantity_unit, normalize_value, semantic_eq, validate_value,
 };
+use crate::overrides::normalize_overrides;
 
 /// Current human-profile document format.
 pub const PROFILE_FORMAT_VERSION: u32 = 1;
@@ -629,6 +629,7 @@ fn transform_value(
                 "migration expected a string for {parameter:?}, got {other:?}"
             ))),
         },
+        MigrationTransform::NumberList => crate::normalize::number_list(value, parameter),
     }
 }
 

@@ -107,27 +107,60 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
 /// `reffreqtype`, `restfreq` and `telescope`.
 pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
     let mut entries = vec![
-        ("bunit".to_string(), CasaValue::string(summary.units.clone())),
-        ("imtype".to_string(), CasaValue::string(summary.image_type.clone())),
-        ("masks".to_string(), CasaValue::str_vector(summary.masks.clone())),
-        ("object".to_string(), CasaValue::string(summary.object_name.clone())),
+        (
+            "bunit".to_string(),
+            CasaValue::string(summary.units.clone()),
+        ),
+        (
+            "imtype".to_string(),
+            CasaValue::string(summary.image_type.clone()),
+        ),
+        (
+            "masks".to_string(),
+            CasaValue::str_vector(summary.masks.clone()),
+        ),
+        (
+            "object".to_string(),
+            CasaValue::string(summary.object_name.clone()),
+        ),
         ("shape".to_string(), pixels(&summary.shape)),
     ];
     for (index, axis) in summary.axes.iter().enumerate() {
         let number = index + 1;
         entries.extend([
             (format!("cdelt{number}"), CasaValue::float(axis.increment)),
-            (format!("crpix{number}"), CasaValue::float(axis.reference_pixel)),
-            (format!("crval{number}"), CasaValue::float(axis.reference_value)),
-            (format!("ctype{number}"), CasaValue::string(axis.name.clone())),
-            (format!("cunit{number}"), CasaValue::string(axis.unit.clone())),
+            (
+                format!("crpix{number}"),
+                CasaValue::float(axis.reference_pixel),
+            ),
+            (
+                format!("crval{number}"),
+                CasaValue::float(axis.reference_value),
+            ),
+            (
+                format!("ctype{number}"),
+                CasaValue::string(axis.name.clone()),
+            ),
+            (
+                format!("cunit{number}"),
+                CasaValue::string(axis.unit.clone()),
+            ),
         ]);
     }
     if let Some(beam) = &summary.restoring_beam {
         entries.extend([
-            ("beammajor".to_string(), quantity(beam.major_arcsec, "arcsec")),
-            ("beamminor".to_string(), quantity(beam.minor_arcsec, "arcsec")),
-            ("beampa".to_string(), quantity(beam.position_angle_deg, "deg")),
+            (
+                "beammajor".to_string(),
+                quantity(beam.major_arcsec, "arcsec"),
+            ),
+            (
+                "beamminor".to_string(),
+                quantity(beam.minor_arcsec, "arcsec"),
+            ),
+            (
+                "beampa".to_string(),
+                quantity(beam.position_angle_deg, "deg"),
+            ),
         ]);
     }
     sorted(entries)
@@ -216,7 +249,10 @@ mod tests {
                 minor_arcsec: 2.0,
                 position_angle_deg: 10.0,
             }),
-            axes: vec![axis(0, "Right Ascension", "rad"), axis(1, "Declination", "rad")],
+            axes: vec![
+                axis(0, "Right Ascension", "rad"),
+                axis(1, "Declination", "rad"),
+            ],
         }
     }
 
@@ -288,9 +324,24 @@ mod tests {
         assert_eq!(
             keys(&list),
             [
-                "beammajor", "beamminor", "beampa", "bunit", "cdelt1", "cdelt2", "crpix1",
-                "crpix2", "crval1", "crval2", "ctype1", "ctype2", "cunit1", "cunit2", "imtype",
-                "masks", "object", "shape"
+                "beammajor",
+                "beamminor",
+                "beampa",
+                "bunit",
+                "cdelt1",
+                "cdelt2",
+                "crpix1",
+                "crpix2",
+                "crval1",
+                "crval2",
+                "ctype1",
+                "ctype2",
+                "cunit1",
+                "cunit2",
+                "imtype",
+                "masks",
+                "object",
+                "shape"
             ]
         );
         assert_eq!(list.to_plain_json()["ctype2"], "Declination");

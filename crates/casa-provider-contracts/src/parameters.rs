@@ -907,12 +907,19 @@ pub enum MigrationStep {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MigrationTransform {
-    ScalarToArray { length: usize },
+    ScalarToArray {
+        length: usize,
+    },
     SingletonArrayToScalar,
     IntegerToString,
-    QuantityUnit { canonical_unit: String },
+    QuantityUnit {
+        canonical_unit: String,
+    },
     Lowercase,
     Trim,
+    /// Comma-separated numbers (`"0.1,10"`) as a list of numbers, and the
+    /// old explicit absence (`"none"` or empty) as CASA's `-1` (#931).
+    NumberList,
 }
 
 /// One-shot surface definition.

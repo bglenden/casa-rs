@@ -20,39 +20,63 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let moments = task.required_text("moments")?;
     let request = ImmomentsRequest {
         imagename: task.path("imagename")?,
         outfile: task.path("outfile")?,
-        moments: moments.parse().map_err(|error| {
-            TaskFailure::validation(format!("invalid moments {moments:?}: {error}")).at("moments")
-        })?,
+        moments: one_moment(&task.integers("moments")?)?,
         chans: task.text("chans")?,
-        includepix: task
-            .text("includepix")?
-            .map(|text| parse_range(&text))
-            .transpose()?,
+        includepix: include_range(&task.numbers("includepix")?)?,
         mask: task.text("mask")?,
         overwrite: task.flag("overwrite")?,
     };
     image_task_success(immoments(&request).map(ImageAnalysisTaskResult::Immoments))
 }
 
-/// `min,max` as a pixel range.
-fn parse_range(text: &str) -> Result<[f64; 2], TaskFailure> {
-    let invalid = |reason: String| {
-        TaskFailure::validation(format!("invalid includepix {text:?}: {reason}")).at("includepix")
-    };
-    let values = text
-        .split(',')
-        .map(|part| {
-            part.trim()
-                .parse::<f64>()
-                .map_err(|error| invalid(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    match values[..] {
-        [min, max] => Ok([min, max]),
-        _ => Err(invalid("expected min,max".to_string())),
+/// The one moment casa-rs computes per run: CASA's `moments` takes several,
+/// each written beside `outfile`, which is #977.
+fn one_moment(moments: &[i64]) -> Result<i32, TaskFailure> {
+    let refused = |message: String| TaskFailure::validation(message).at("moments");
+    match moments {
+        [moment @ -1..=3] => Ok(*moment as i32),
+        [moment] => Err(refused(format!(
+            "moment {moment} is not implemented by casa-rs yet (#977); it computes -1 through 3"
+        ))),
+        _ => Err(refused(format!(
+            "{} moments in one run are not implemented by casa-rs yet (#977); give one",
+            moments.len()
+        ))),
+    }
+}
+
+/// CASA's `includepix`: `-1` includes every pixel, `[min, max]` a range.
+fn include_range(values: &[f64]) -> Result<Option<[f64; 2]>, TaskFailure> {
+    match values {
+        [] => Ok(None),
+        [value] if *value < 0.0 => Ok(None),
+        [min, max] => Ok(Some([*min, *max])),
+        _ => Err(TaskFailure::validation(format!(
+            "includepix {values:?} is not implemented by casa-rs yet (#977); give -1 or [min, max]"
+        ))
+        .at("includepix")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_moment_from_minus_one_to_three_is_computed() {
+        assert_eq!(one_moment(&[0]).unwrap(), 0);
+        assert_eq!(one_moment(&[-1]).unwrap(), -1);
+        assert!(one_moment(&[8]).unwrap_err().message.contains("#977"));
+        assert!(one_moment(&[0, 1]).unwrap_err().message.contains("#977"));
+    }
+
+    #[test]
+    fn includepix_is_minus_one_or_a_range() {
+        assert_eq!(include_range(&[-1.0]).unwrap(), None);
+        assert_eq!(include_range(&[0.1, 10.0]).unwrap(), Some([0.1, 10.0]));
+        assert!(include_range(&[5.0]).is_err());
     }
 }

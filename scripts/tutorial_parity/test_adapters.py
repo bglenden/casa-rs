@@ -12,7 +12,7 @@ from tutorial_parity.adapters.base import AdapterPlan, execute_plan
 from tutorial_parity.adapters.cli import CliAdapter, build_operation_argv
 from tutorial_parity.model import Operation, RuntimeResources
 from tutorial_parity.schema import load_section
-from tutorial_parity.workers.native_tasks import python_parameters
+from tutorial_parity.workers.native_tasks import json_safe, python_parameters
 
 SECTIONS = Path(__file__).resolve().parent / "sections"
 
@@ -88,6 +88,24 @@ class CliPlanningTests(unittest.TestCase):
             python_parameters("imager", {"cell_arcsec": 0.1, "threshold_jy": 0.015, "field": 3, "phasecenter_field": 3, "overwrite": True}),
             {"cell": "0.1arcsec", "threshold": "0.015Jy", "field": "3", "phasecenter_field": "3"},
         )
+
+    def test_python_projection_passes_casas_image_values_through(self) -> None:
+        # The image wrappers have CASA's signatures (#931).
+        values = {"imagename": "in.image", "moments": [0], "includepix": [0.03, 100.0]}
+        self.assertEqual(python_parameters("immoments", values), values)
+
+    def test_a_casa_return_value_with_arrays_is_captured_as_json(self) -> None:
+        class Array:
+            """What json_safe needs of a NumPy array or scalar."""
+
+            def __init__(self, values: list[object]) -> None:
+                self.values = values
+
+            def tolist(self) -> list[object]:
+                return self.values
+
+        value = {"npts": Array([16.0]), "maxpos": Array([3, 3, 0, 7])}
+        self.assertEqual(json_safe(value), {"npts": [16.0], "maxpos": [3, 3, 0, 7]})
 
 
 class ExecutionTests(unittest.TestCase):

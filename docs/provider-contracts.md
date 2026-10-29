@@ -354,10 +354,25 @@ resolver names, the surface's `fixed_args`, then `--json-run -` with the
 values the call set on stdin. Python passes the task's log lines to
 `sys.stderr` as they arrive and classifies the reply through `casars._core`.
 A success returns a `TaskCompletion` carrying the reply's `value` and the
-products the decoder projects; anything else raises `TaskExecutionError`,
-whose completion's `status` is `refused` (a `validation` reply), `failed`,
-`interrupted`, `signalled` or `malformed_reply`. A value the contract refuses
-when Python resolves the call raises `ValueError` before anything starts.
+products the decoder projects. A `validation` reply raises
+`TaskParameterError`, a `ValueError` whose completion's `status` is
+`refused`; anything else raises `TaskExecutionError`, whose completion's
+`status` is `failed`, `interrupted`, `signalled` or `malformed_reply`. A
+value the contract refuses when Python resolves the call raises `ValueError`
+before anything starts, or `TypeError` for a value of the wrong type.
+
+A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
+(`casa-provider-contracts`): `none`, `bool`, `int`, `float` (non-finite
+values as `"nan"`, `"inf"` and `"-inf"`), `string`, `list`, an ordered
+`dict` whose keys are strings or integers, and typed arrays (`bool_array`,
+`int_array` with dtype `int32` or `int64`, `float_array` with `float32` or
+`float64`, `complex_array`, `str_array`) that carry their shape and their
+data in column-major (Fortran) order. `casars._core` rebuilds Python's
+types and NumPy arrays from it, so a CASA-signature wrapper returns what
+CASA returns. `tools/casa-compat/record_casa_returns.py` records the
+structure of CASA's own return values
+(`resources/casa-compat/casa-6.7.6.14/returns.json`), which the image task
+tests compare against.
 
 ## Shared Versioned Component Schemas
 

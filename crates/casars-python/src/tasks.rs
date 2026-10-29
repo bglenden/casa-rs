@@ -8,8 +8,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    CasaValue, RunProductKind, RunProductRole, builtin_application_catalog,
-    builtin_surface_bundle, installed_suite_root, resolve_task_executable,
+    CasaValue, RunProductKind, RunProductRole, builtin_application_catalog, builtin_surface_bundle,
+    installed_suite_root, resolve_task_executable,
 };
 use casa_task_runtime::{
     TaskExit, TaskOutcome, TaskOutputValue, classify_task_exit, decode_task_completion,

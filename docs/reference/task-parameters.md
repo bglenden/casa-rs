@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 349
+- Concepts: 387
 - Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 520
+- Surface bindings: 592
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -20,11 +20,11 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 4 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 27 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
-| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 7 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
-| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 4 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
-| [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
-| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 4 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
-| [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 4 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
+| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
+| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
+| [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
+| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
+| [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 4 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 4 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 5 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
@@ -35,13 +35,13 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 4 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 4 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
-| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 4 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
-| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 4 | <code>image_analysis</code> | 7 | Extract a CASA-style position-velocity image |
-| [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 4 | <code>image_analysis</code> | 5 | Extract a CASA-style image section |
-| [Image Math](#surface-immath)<br><code>immath</code> | task | 4 | <code>image_analysis</code> | 4 | Evaluate tutorial image arithmetic expressions |
-| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 4 | <code>image_analysis</code> | 5 | Regrid a CASA image onto a template image |
-| [Feather](#surface-feather)<br><code>feather</code> | task | 4 | <code>image_analysis</code> | 5 | Combine high-resolution and low-resolution images in the Fourier domain |
-| [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 4 | <code>image_analysis</code> | 3 | Import a FITS primary image into a CASA image |
+| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
+| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
+| [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
+| [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate tutorial image arithmetic expressions |
+| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
+| [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
+| [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
 
 <a id="surface-msexplore"></a>
 
@@ -312,7 +312,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimObserve (<code>simobserve</code>)
 
 - Kind: `task`
-- Contract version: `7`
+- Contract version: `8`
 - Category: Simulation
 - Provider family: `simobserve`
 - Summary: Simulate an observation of a sky model: CASA's simobserve
@@ -363,71 +363,102 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Header (<code>imhead</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Inspect or update CASA image header metadata.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path. |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path. |
 | <code>mode</code> | <code>imhead.mode@r1</code> | <code>choice (3 values)</code> | <code>"summary"</code>; optional | Header | Header operation mode. |
-| <code>hdkey</code> | <code>parameter.hdkey@r1</code> | <code>string</code> | <code>"none"</code>; optional | Header | Header keyword to update when mode is put. |
-| <code>hdvalue</code> | <code>parameter.hdvalue@r1</code> | <code>string</code> | <code>"none"</code>; optional | Header | Header value to write when mode is put. |
+| <code>hdkey</code> | <code>parameter.hdkey@r1</code> | <code>string</code> | <code>""</code>; optional | Header | Header keyword to update when mode is put. |
+| <code>hdvalue</code> | <code>parameter.hdvalue@r1</code> | <code>string</code> | <code>""</code>; optional | Header | Header value to write when mode is put. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Verbose logging. |
 
 <a id="surface-imstat"></a>
 
 ## Image Statistics (<code>imstat</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Compute CASA image statistics over optional pixel, region, and channel selections.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path. |
-| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Pixel box. |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Region file or expression. |
-| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Channel selector. |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path. |
+| <code>axes</code> | <code>parameter.axes@r2</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Statistics | Pixel axes to compute statistics over; [] means every axis. |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>listit</code> | <code>imstat.listit@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Print the statistics and bounding box to the log. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Verbose logging. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
+| <code>logfile</code> | <code>parameter.logfile@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Output | Fit log output. |
+| <code>append</code> | <code>parameter.append@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Append to logfile. |
+| <code>algorithm</code> | <code>imstat.algorithm@r1</code> | <code>string</code> | <code>"classic"</code>; optional | Statistics | Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match. |
+| <code>fence</code> | <code>parameter.fence@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Outlier fence. |
+| <code>center</code> | <code>parameter.center@r2</code> | <code>choice (3 values)</code> | <code>"mean"</code>; optional | Statistics | Center of the fit-half statistics algorithm: mean, median or zero. |
+| <code>lside</code> | <code>parameter.lside@r1</code> | <code>bool</code> | <code>true</code>; optional | Statistics | Use left side for fit-half. |
+| <code>zscore</code> | <code>parameter.zscore@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Z-score cutoff. |
+| <code>maxiter</code> | <code>parameter.maxiter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Statistics | Maximum iterations. |
+| <code>clmethod</code> | <code>imstat.clmethod@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Statistics | How the classic algorithm computes its statistics: auto, tiled or framework. |
+| <code>niter</code> | <code>statistics.niter@r1</code> | <code>integer</code> | <code>3</code>; optional | Statistics | Maximum biweight iterations; a negative value makes the fast, simple computation. |
 
 <a id="surface-immoments"></a>
 
 ## Image Moments (<code>immoments</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Create CASA-style image moment maps
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | no default; required | Output | Output image. |
-| <code>moments</code> | <code>parameter.moments@r1</code> | <code>choice (5 values)</code> | <code>"0"</code>; optional | Moment | CASA moment number: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity |
-| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Channel selector. |
-| <code>includepix</code> | <code>parameter.includepix@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Pixel include range. |
-| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Mask expression. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>moments</code> | <code>parameter.moments@r2</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Moment | CASA moment numbers: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity |
+| <code>axis</code> | <code>moments.axis@r1</code> | <code>string</code> | <code>"spectral"</code>; optional | Moments | Moment axis: ra, dec, lat, long, spectral or stokes. |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>includepix</code> | <code>parameter.includepix@r2</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Selection | Range of pixel values to include, [min, max]; -1 includes all. |
+| <code>excludepix</code> | <code>parameter.excludepix@r2</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Moments | Range of pixel values to exclude, [min, max]; -1 excludes none. |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's immoments has no overwrite parameter. |
 
 <a id="surface-exportfits"></a>
 
 ## Export FITS (<code>exportfits</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Export CASA images to FITS
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>fitsimage</code> | <code>file.output.fitsimage@r1</code> | <code>path (file)</code> | no default; required | Output | Output FITS path |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>fitsimage</code> | <code>file.output.fitsimage@r1</code> | <code>path (file)</code> | <code>""</code>; required | Output | Output FITS path |
 | <code>velocity</code> | <code>parameter.velocity@r1</code> | <code>bool</code> | <code>false</code>; optional | FITS | Write spectral axis as velocity where possible |
+| <code>optical</code> | <code>fits.optical@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Use the optical velocity convention rather than the radio one. |
+| <code>bitpix</code> | <code>fits.bitpix@r1</code> | <code>integer</code> | <code>-32</code>; optional | Output | Bits per pixel: -32 for floating point, 16 for scaled integers. |
+| <code>minpix</code> | <code>fits.minpix@r1</code> | <code>float</code> | <code>0</code>; optional | Output | Minimum pixel value of 16-bit scaling; a minpix above maxpix finds both from the data. |
+| <code>maxpix</code> | <code>fits.maxpix@r1</code> | <code>float</code> | <code>-1</code>; optional | Output | Maximum pixel value of 16-bit scaling. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>dropstokes</code> | <code>fits.dropstokes@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Drop the Stokes axis. |
+| <code>stokeslast</code> | <code>fits.stokeslast@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Put the Stokes axis last in the FITS header. |
+| <code>history</code> | <code>fits.history@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Write the image history to the FITS file. |
+| <code>dropdeg</code> | <code>image.output.dropdeg@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Drop the degenerate axes from the output. |
 
 <a id="surface-mstransform"></a>
 
@@ -774,97 +805,130 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Primary Beam Correction (<code>impbcor</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Apply primary-beam correction to a CASA image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>pbimage</code> | <code>parameter.pbimage@r1</code> | <code>path (image)</code> | no default; required | Input | Primary-beam CASA image path |
-| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | no default; required | Output | Output image. |
-| <code>cutoff</code> | <code>parameter.cutoff@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Correction | Minimum PB value to keep; negative disables cutoff masking |
-| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Pixel box. |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Region file or expression. |
-| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Channel selector. |
-| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Stokes selector. |
-| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Mask expression. |
-| <code>mode</code> | <code>impbcor.mode@r1</code> | <code>choice (2 values)</code> | <code>"divide"</code>; optional | Correction | Correction mode |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>pbimage</code> | <code>parameter.pbimage@r2</code> | <code>array&lt;path (image)&gt;</code> | <code>[]</code>; required | Input | Primary-beam CASA image path; CASA's [] default means it must be given |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>stretch</code> | <code>parameter.stretch@r1</code> | <code>string</code> | <code>"false"</code>; optional | Selection | Stretch mask. |
+| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>mode</code> | <code>impbcor.mode@r1</code> | <code>choice (2 values)</code> | <code>"divide"</code>; optional | Correction | Correction mode |
+| <code>cutoff</code> | <code>parameter.cutoff@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Correction | Minimum PB value to keep; negative disables cutoff masking |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
 
 <a id="surface-impv"></a>
 
 ## Position Velocity (<code>impv</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style position-velocity image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | no default; required | Output | Output image. |
-| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | no default; required | Slice | Cube-axis start channel, frequency, or velocity |
-| <code>end</code> | <code>parameter.end@r1</code> | <code>string</code> | no default; required | Slice | End pixel coordinate |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
+| <code>mode</code> | <code>impv.mode@r1</code> | <code>choice (2 values)</code> | <code>"coords"</code>; optional | Slice | How the slice is given: by start and end, or by center, length and position angle. |
+| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>""</code>; required | Slice | Cube-axis start channel, frequency, or velocity |
+| <code>end</code> | <code>parameter.end@r1</code> | <code>string</code> | <code>""</code>; required | Slice | End pixel coordinate |
+| <code>center</code> | <code>pv.center@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Slice | Center of the slice in the direction plane, given with length and pa. |
+| <code>length</code> | <code>impv.length@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Length of the slice in the direction plane, given with center and pa. |
+| <code>pa</code> | <code>impv.pa@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Position angle of the slice, north through east, given with center and length. |
 | <code>width</code> | <code>impv.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Slice | Averaging width in pixels |
-| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Channel selector. |
+| <code>unit</code> | <code>impv.unit@r1</code> | <code>string</code> | <code>"arcsec"</code>; optional | Output | Angular unit of the output's offset axis. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
 
 <a id="surface-imsubimage"></a>
 
 ## Subimage (<code>imsubimage</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style image section
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | no default; required | Output | Output image. |
-| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Pixel box. |
-| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Channel selector. |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
+| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>dropdeg</code> | <code>image.output.dropdeg@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Drop the degenerate axes from the output. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Verbose logging. |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
+| <code>keepaxes</code> | <code>imsubimage.keepaxes@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Output | Degenerate axes to keep when dropdeg drops the others. |
 
 <a id="surface-immath"></a>
 
 ## Image Math (<code>immath</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Evaluate tutorial image arithmetic expressions
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>expr</code> | <code>parameter.expr@r1</code> | <code>string</code> | no default; required | Math | Expression such as IM0 * IM1 or IM0 / IM1 |
-| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | no default; required | Output | Output image. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>mode</code> | <code>immath.mode@r1</code> | <code>choice (6 values)</code> | <code>"evalexpr"</code>; optional | Math | Image math: an expression, a spectral index, or a polarization angle or intensity. |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>"immath_results.im"</code>; optional | Output | Output image. |
+| <code>expr</code> | <code>parameter.expr@r1</code> | <code>string</code> | <code>"IM0"</code>; optional | Math | Expression such as IM0 * IM1 or IM0 / IM1 |
+| <code>varnames</code> | <code>immath.varnames@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Math | Names the expression gives the input images, in their order. |
+| <code>sigma</code> | <code>immath.sigma@r1</code> | <code>string</code> | <code>"0.0mJy/beam"</code>; optional | Polarization | Noise standard deviation for debiasing polarized intensity. |
+| <code>polithresh</code> | <code>immath.polithresh@r1</code> | <code>string</code> | <code>""</code>; optional | Polarization | Linearly polarized intensity below which the polarization angle masks pixels. |
+| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
+| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
+| <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
+| <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
+| <code>imagemd</code> | <code>immath.imagemd@r1</code> | <code>string</code> | <code>""</code>; optional | Output | Image whose header metadata the output copies. |
+| <code>prec</code> | <code>immath.prec@r1</code> | <code>string</code> | <code>"float"</code>; optional | Output | Output pixel precision for evalexpr and spix: float or double, minimum match. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's immath has no overwrite parameter. |
 
 <a id="surface-imregrid"></a>
 
 ## Image Regrid (<code>imregrid</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Regrid a CASA image onto a template image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Input | Input CASA image path |
-| <code>template</code> | <code>parameter.template@r1</code> | <code>path (image)</code> | no default; required | Input | Template CASA image path |
-| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | no default; required | Output | Output CASA image path |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>template</code> | <code>parameter.template@r1</code> | <code>path (image)</code> | <code>"get"</code>; required | Input | Template CASA image path |
+| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output CASA image path |
+| <code>asvelocity</code> | <code>imregrid.asvelocity@r1</code> | <code>bool</code> | <code>true</code>; optional | Regrid | Regrid the spectral axis in velocity rather than frequency. |
+| <code>axes</code> | <code>regrid.axes@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Pixel axes to regrid; [-1] regrids them all. |
+| <code>shape</code> | <code>imregrid.shape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Output image shape; [-1] takes the template's along the regridded axes. |
 | <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (2 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Regrid | Spectral interpolation mode for cube gridding |
+| <code>decimate</code> | <code>imregrid.decimate@r1</code> | <code>integer</code> | <code>10</code>; optional | Regrid | Decimation factor of the coordinate grid computation. |
+| <code>replicate</code> | <code>imregrid.replicate@r1</code> | <code>bool</code> | <code>false</code>; optional | Regrid | Replicate the image rather than regrid it. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 <a id="surface-feather"></a>
@@ -872,33 +936,41 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Feather (<code>feather</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Combine high-resolution and low-resolution images in the Fourier domain
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | no default; required | Output | Input CASA image path |
-| <code>highres</code> | <code>parameter.highres@r1</code> | <code>path (image)</code> | no default; required | Input | High-resolution CASA image path |
-| <code>lowres</code> | <code>parameter.lowres@r1</code> | <code>path (image)</code> | no default; required | Input | Low-resolution CASA image path |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Output | Input CASA image path |
+| <code>highres</code> | <code>parameter.highres@r1</code> | <code>path (image)</code> | <code>""</code>; required | Input | High-resolution CASA image path |
+| <code>lowres</code> | <code>parameter.lowres@r1</code> | <code>path (image)</code> | <code>""</code>; required | Input | Low-resolution CASA image path |
 | <code>sdfactor</code> | <code>parameter.sdfactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Feather | Single-dish scaling factor |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>effdishdiam</code> | <code>feather.effdishdiam@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Feather | Effective single-dish diameter in metres; a negative value keeps the image's beam. |
+| <code>lowpassfiltersd</code> | <code>feather.lowpassfiltersd@r1</code> | <code>bool</code> | <code>false</code>; optional | Feather | Filter the single-dish image's high spatial frequencies out. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's feather has no overwrite parameter. |
 
 <a id="surface-importfits"></a>
 
 ## Import FITS (<code>importfits</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Import a FITS primary image into a CASA image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>fitsimage</code> | <code>file.input.fitsimage@r1</code> | <code>path (file)</code> | no default; required | Input | Input FITS image path |
-| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | no default; required | Output | Output CASA image prefix |
+| <code>fitsimage</code> | <code>file.input.fitsimage@r1</code> | <code>path (file)</code> | <code>""</code>; required | Input | Input FITS image path |
+| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output CASA image prefix |
+| <code>whichrep</code> | <code>fits.whichrep@r1</code> | <code>integer</code> | <code>0</code>; optional | Input | Coordinate representation to read when the FITS image has several. |
+| <code>whichhdu</code> | <code>fits.whichhdu@r1</code> | <code>integer</code> | <code>-1</code>; optional | Input | HDU to read when the FITS file holds several images; -1 reads the first. |
+| <code>zeroblanks</code> | <code>fits.zeroblanks@r1</code> | <code>bool</code> | <code>true</code>; optional | Input | Set blanked pixels to zero rather than NaN. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>defaultaxes</code> | <code>fits.defaultaxes@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Add CASA's default four axes where the FITS image lacks them. |
+| <code>defaultaxesvalues</code> | <code>fits.defaultaxesvalues@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Output | Values of the degenerate axes defaultaxes adds. |
+| <code>beam</code> | <code>fits.beam@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Output | Restoring beam to set: major axis, minor axis and position angle. |
 
 _End of generated reference._

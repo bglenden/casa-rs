@@ -9,6 +9,7 @@ import json
 import keyword
 from pathlib import Path
 import sys
+import textwrap
 from typing import Any
 
 
@@ -336,13 +337,26 @@ def casa_signature_lines(
         return [*lines, "    ...", ""]
     summary = str(surface.get("summary", "Run the catalog task.")).replace('"""', "")
     casa_task = surface["casa_task"]
+    pending: dict[int, list[str]] = {}
+    for binding in bindings:
+        if binding.get("unimplemented"):
+            pending.setdefault(int(binding["unimplemented"]["issue"]), []).append(
+                f"``{binding['name']}``"
+            )
+    notes = [
+        f"Accepted only at CASA's default until #{issue}: {', '.join(names)}."
+        for issue, names in sorted(pending.items())
+    ]
     return [
         *lines,
         f'    """{summary}',
         "",
         f"    CASA's ``{casa_task}``: its parameters, defaults and return value.",
-        "    ``docs/reference/casa-compatibility.md`` lists the parameters casa-rs",
-        "    accepts only at their defaults.",
+        *(
+            f"    {line}"
+            for note in notes
+            for line in textwrap.wrap(note, width=72, break_on_hyphens=False)
+        ),
         '    """',
         f"    return _call_casa({surface_id}, locals())",
         "",

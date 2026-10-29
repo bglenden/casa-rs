@@ -1480,10 +1480,16 @@
     },
     {
       "id": "parameter.axes",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "axes",
       "value_domain": {
-        "kind": "integer"
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
         "kind": "identity"
@@ -1492,7 +1498,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Axes to collapse, e.g. [2].",
+        "summary": "Pixel axes to compute statistics over; [] means every axis.",
         "details": null,
         "examples": [
           "[]"
@@ -1682,13 +1688,14 @@
     },
     {
       "id": "parameter.center",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "center",
       "value_domain": {
         "kind": "choice",
         "values": [
           "mean",
-          "median"
+          "median",
+          "zero"
         ]
       },
       "normalization": {
@@ -1698,7 +1705,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Center estimator.",
+        "summary": "Center of the fit-half statistics algorithm: mean, median or zero.",
         "details": null,
         "examples": [
           "mean"
@@ -2412,22 +2419,28 @@
     },
     {
       "id": "parameter.excludepix",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "excludepix",
       "value_domain": {
-        "kind": "string"
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Pixel exclude range.",
+        "summary": "Range of pixel values to exclude, [min, max]; -1 excludes none.",
         "details": null,
         "examples": [
-          "[]"
+          "[-0.1, 0.1]"
         ]
       },
       "persistence_class": "profile"
@@ -3844,22 +3857,28 @@
     },
     {
       "id": "parameter.includepix",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "includepix",
       "value_domain": {
-        "kind": "string"
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Pixel include range.",
+        "summary": "Range of pixel values to include, [min, max]; -1 includes all.",
         "details": null,
         "examples": [
-          "[]"
+          "[0.002, 100.0]"
         ]
       },
       "persistence_class": "profile"
@@ -4606,17 +4625,16 @@
     },
     {
       "id": "parameter.moments",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "moments",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "-1",
-          "0",
-          "1",
-          "2",
-          "3"
-        ]
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
         "kind": "identity"
@@ -4625,10 +4643,10 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA moment number: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity",
+        "summary": "CASA moment numbers: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity",
         "details": null,
         "examples": [
-          "0"
+          "[0]"
         ]
       },
       "persistence_class": "profile"
@@ -5119,11 +5137,17 @@
     },
     {
       "id": "parameter.pbimage",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "pbimage",
       "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
+        "kind": "array",
+        "element": {
+          "kind": "path",
+          "resource_kind": "image"
+        },
+        "min_items": 0,
+        "max_items": 1,
+        "allow_scalar": true
       },
       "normalization": {
         "kind": "path"
@@ -5132,7 +5156,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Primary-beam CASA image path",
+        "summary": "Primary-beam CASA image path; CASA's [] default means it must be given",
         "details": null,
         "examples": []
       },
@@ -6617,23 +6641,22 @@
     },
     {
       "id": "parameter.stretch",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "stretch",
       "value_domain": {
-        "kind": "string"
+        "kind": "bool"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Stretch mask.",
+        "summary": "Stretch the mask along the image's other axes if necessary and possible.",
         "details": null,
         "examples": [
-          "false",
-          "percentile99"
+          "false"
         ]
       },
       "persistence_class": "profile"
@@ -8354,6 +8377,462 @@
           "pbcor"
         ]
       },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imstat.listit",
+      "semantic_revision": 1,
+      "casa_name": "listit",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Print the statistics and bounding box to the log.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imstat.algorithm",
+      "semantic_revision": 1,
+      "casa_name": "algorithm",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match.", "details": null, "examples": ["classic"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imstat.clmethod",
+      "semantic_revision": 1,
+      "casa_name": "clmethod",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "How the classic algorithm computes its statistics: auto, tiled or framework.", "details": null, "examples": ["auto"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "statistics.niter",
+      "semantic_revision": 1,
+      "casa_name": "niter",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Maximum biweight iterations; a negative value makes the fast, simple computation.", "details": null, "examples": ["3"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "moments.axis",
+      "semantic_revision": 1,
+      "casa_name": "axis",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Moment axis: ra, dec, lat, long, spectral or stokes.", "details": null, "examples": ["spectral"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.mode",
+      "semantic_revision": 1,
+      "casa_name": "mode",
+      "value_domain": {"kind": "choice", "values": ["evalexpr", "lpoli", "pola", "poli", "spix", "tpoli"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Image math: an expression, a spectral index, or a polarization angle or intensity.", "details": null, "examples": ["evalexpr"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.varnames",
+      "semantic_revision": 1,
+      "casa_name": "varnames",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Names the expression gives the input images, in their order.", "details": null, "examples": ["['line', 'cont']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.sigma",
+      "semantic_revision": 1,
+      "casa_name": "sigma",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Noise standard deviation for debiasing polarized intensity.", "details": null, "examples": ["0.0mJy/beam"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.polithresh",
+      "semantic_revision": 1,
+      "casa_name": "polithresh",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Linearly polarized intensity below which the polarization angle masks pixels.", "details": null, "examples": ["0.1mJy/beam"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.imagemd",
+      "semantic_revision": 1,
+      "casa_name": "imagemd",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Image whose header metadata the output copies.", "details": null, "examples": ["line.image"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "immath.prec",
+      "semantic_revision": 1,
+      "casa_name": "prec",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Output pixel precision for evalexpr and spix: float or double, minimum match.", "details": null, "examples": ["float"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.whichrep",
+      "semantic_revision": 1,
+      "casa_name": "whichrep",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Coordinate representation to read when the FITS image has several.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.whichhdu",
+      "semantic_revision": 1,
+      "casa_name": "whichhdu",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "HDU to read when the FITS file holds several images; -1 reads the first.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.zeroblanks",
+      "semantic_revision": 1,
+      "casa_name": "zeroblanks",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Set blanked pixels to zero rather than NaN.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.defaultaxes",
+      "semantic_revision": 1,
+      "casa_name": "defaultaxes",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Add CASA's default four axes where the FITS image lacks them.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.defaultaxesvalues",
+      "semantic_revision": 1,
+      "casa_name": "defaultaxesvalues",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Values of the degenerate axes defaultaxes adds.", "details": null, "examples": ["['19h30m00', '-02d30m00', '88.5GHz', 'Q']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.beam",
+      "semantic_revision": 1,
+      "casa_name": "beam",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Restoring beam to set: major axis, minor axis and position angle.", "details": null, "examples": ["['0.35arcsec', '0.24arcsec', '25deg']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.optical",
+      "semantic_revision": 1,
+      "casa_name": "optical",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Use the optical velocity convention rather than the radio one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.bitpix",
+      "semantic_revision": 1,
+      "casa_name": "bitpix",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Bits per pixel: -32 for floating point, 16 for scaled integers.", "details": null, "examples": ["-32"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.minpix",
+      "semantic_revision": 1,
+      "casa_name": "minpix",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Minimum pixel value of 16-bit scaling; a minpix above maxpix finds both from the data.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.maxpix",
+      "semantic_revision": 1,
+      "casa_name": "maxpix",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Maximum pixel value of 16-bit scaling.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.dropstokes",
+      "semantic_revision": 1,
+      "casa_name": "dropstokes",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Drop the Stokes axis.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.stokeslast",
+      "semantic_revision": 1,
+      "casa_name": "stokeslast",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Put the Stokes axis last in the FITS header.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "fits.history",
+      "semantic_revision": 1,
+      "casa_name": "history",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Write the image history to the FITS file.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "image.output.dropdeg",
+      "semantic_revision": 1,
+      "casa_name": "dropdeg",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Drop the degenerate axes from the output.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.mode",
+      "semantic_revision": 1,
+      "casa_name": "mode",
+      "value_domain": {"kind": "choice", "values": ["coords", "length"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "How the slice is given: by start and end, or by center, length and position angle.", "details": null, "examples": ["coords"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "pv.center",
+      "semantic_revision": 1,
+      "casa_name": "center",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": 2, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Center of the slice in the direction plane, given with length and pa.", "details": null, "examples": ["['14:35:00', '-30.00.00']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.length",
+      "semantic_revision": 1,
+      "casa_name": "length",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Length of the slice in the direction plane, given with center and pa.", "details": null, "examples": ["30arcsec"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.pa",
+      "semantic_revision": 1,
+      "casa_name": "pa",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Position angle of the slice, north through east, given with center and length.", "details": null, "examples": ["45deg"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.unit",
+      "semantic_revision": 1,
+      "casa_name": "unit",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Angular unit of the output's offset axis.", "details": null, "examples": ["arcsec"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regrid.axes",
+      "semantic_revision": 1,
+      "casa_name": "axes",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Pixel axes to regrid; [-1] regrids them all.", "details": null, "examples": ["[-1]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imregrid.shape",
+      "semantic_revision": 1,
+      "casa_name": "shape",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Output image shape; [-1] takes the template's along the regridded axes.", "details": null, "examples": ["[-1]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imregrid.decimate",
+      "semantic_revision": 1,
+      "casa_name": "decimate",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Decimation factor of the coordinate grid computation.", "details": null, "examples": ["10"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imregrid.replicate",
+      "semantic_revision": 1,
+      "casa_name": "replicate",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Replicate the image rather than regrid it.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imregrid.asvelocity",
+      "semantic_revision": 1,
+      "casa_name": "asvelocity",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Regrid the spectral axis in velocity rather than frequency.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "imsubimage.keepaxes",
+      "semantic_revision": 1,
+      "casa_name": "keepaxes",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Degenerate axes to keep when dropdeg drops the others.", "details": null, "examples": ["[]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "feather.effdishdiam",
+      "semantic_revision": 1,
+      "casa_name": "effdishdiam",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Effective single-dish diameter in metres; a negative value keeps the image's beam.", "details": null, "examples": ["-1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "feather.lowpassfiltersd",
+      "semantic_revision": 1,
+      "casa_name": "lowpassfiltersd",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Filter the single-dish image's high spatial frequencies out.", "details": null, "examples": ["false"]},
       "persistence_class": "profile"
     }
   ]

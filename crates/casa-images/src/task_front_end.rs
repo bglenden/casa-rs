@@ -24,30 +24,22 @@ where
     .expect("the image-analysis contract carries every image surface")
 }
 
-/// A product-writing image task's reply: its summary as the result, which a
-/// command line prints as JSON.
-///
-/// The return value is `None` until the CASA compatibility work gives each
-/// task CASA's own (#931 PR 4b).
+/// A product-writing image task's reply: CASA's return value `None`, and
+/// its summary as the result, which a command line prints as JSON.
 pub fn image_task_success(
+    result: Result<ImageAnalysisTaskResult, ImageError>,
+) -> Result<TaskSuccess, TaskFailure> {
+    image_task_returning(CasaValue::None, result)
+}
+
+/// A product-writing image task's reply that returns CASA's `value`, as
+/// `immath` returns `True`.
+pub fn image_task_returning(
+    value: CasaValue,
     result: Result<ImageAnalysisTaskResult, ImageError>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let result = result.map_err(|error| TaskFailure::execution(error.to_string()))?;
     let text = serde_json::to_string_pretty(&result)
         .map_err(|error| TaskFailure::execution(format!("serialize the result: {error}")))?;
-    Ok(TaskSuccess::new(CasaValue::None, &result)?.with_text(text + "\n"))
-}
-
-/// Read `name`, a CASA boolean held as text (`"true"`, `"false"`, `"T"`,
-/// `"F"`, any case).
-pub fn image_task_bool_text(task: &TaskInvocation<'_>, name: &str) -> Result<bool, TaskFailure> {
-    let text = task.required_text(name)?;
-    match text.to_ascii_lowercase().as_str() {
-        "true" | "t" => Ok(true),
-        "false" | "f" => Ok(false),
-        _ => Err(TaskFailure::validation(format!(
-            "parameter {name:?} must be true or false, found {text:?}"
-        ))
-        .at(name)),
-    }
+    Ok(TaskSuccess::new(value, &result)?.with_text(text + "\n"))
 }
