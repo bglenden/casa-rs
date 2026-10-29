@@ -186,9 +186,10 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
 /// MSv2's samples interpolated linearly in angle (and in distance) at each
 /// time. The test interpolates in MJD days, whose rounding (0.6 µs) moves
 /// this body by up to 2e-12 rad and 1e-4 m; XRADIO interpolates in Unix
-/// seconds. One sample is extrapolated past the last time, which the
-/// samples end at, to reach its TDB. The store converts into an MSv4 with
-/// every sample, the interpolation and the extrapolation reported.
+/// seconds. The samples end at the last time, so their grid is
+/// extrapolated to reach its TDB. The store converts into an MSv4 with
+/// every stated sample, the interpolation reported, and reads back
+/// extrapolated alike; into an MSv2, with the extrapolated rows.
 #[test]
 fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     let root = tempfile::tempdir().expect("root");
@@ -204,9 +205,11 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     assert_close("offset", offset.0, reference_offset.0, 1.0e-15);
     assert_close("offset", offset.1, reference_offset.1, 1.0e-15);
     let (times, _) = times(&store);
-    // One sample past the times is extrapolated, to reach the last's TDB.
-    assert_eq!(ephemeris.times_mjd().len(), times.len() + 1);
-    assert_eq!(ephemeris.extrapolated(), 1);
+    // The times' grid is extrapolated to reach the last's TDB.
+    let extrapolated = ephemeris.extrapolated();
+    let step = times[times.len() - 1] - times[times.len() - 2];
+    assert_eq!(ephemeris.times_mjd().len(), times.len() + extrapolated);
+    assert_eq!(extrapolated, (72.0 / DAY_S / step).ceil() as usize);
     assert!(
         ephemeris
             .sample(times[times.len() - 1] + 72.0 / DAY_S)
@@ -246,7 +249,7 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
             1.0e-12 * distance,
         );
     }
-    // Converted into an MSv4, the store keeps every sample, the
+    // Converted into an MSv4, the store keeps every stated sample, the
     // interpolation reported: a sample at a visibility time comes back
     // from its MJD within a microsecond of it, so at it.
     let ours = root.path().join("ours.ps.zarr");
@@ -259,20 +262,46 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
         "{:?}",
         report.losses
     );
+    // It holds the stated samples only, and reading it extrapolates the
+    // same ones again.
     assert!(
-        report
+        !report
             .losses
             .iter()
-            .any(|loss| loss.to_string().contains("last sample is extrapolated")),
+            .any(|loss| loss.to_string().contains("extrapolated")),
         "{:?}",
         report.losses
     );
-    // The extrapolated sample is the converted store's own.
     let converted = catalogue(&ours);
     let (_, again) = moving_field(&converted);
-    assert_eq!(again.extrapolated(), 0);
+    assert_eq!(again.extrapolated(), extrapolated);
     assert_eq!(again.times_mjd().len(), ephemeris.times_mjd().len());
     assert_samples(again, ephemeris, 0);
+    for index in times.len()..again.times_mjd().len() {
+        for axis in 0..2 {
+            assert_close(
+                "extrapolated",
+                again.directions_rad()[index][axis],
+                ephemeris.directions_rad()[index][axis],
+                1.0e-15,
+            );
+        }
+    }
+    // Into an MSv2 the extrapolated samples are table rows on the grid,
+    // reported, and no gap.
+    let table = root.path().join("theirs.ms");
+    let report = to_msv2(&store, &table, &super::convert::options(&ACCEPT)).expect("to MSv2");
+    let losses: Vec<String> = report.losses.iter().map(ToString::to_string).collect();
+    assert!(
+        losses
+            .iter()
+            .any(|loss| loss.contains(&format!("last {extrapolated} samples are extrapolated"))),
+        "{losses:?}"
+    );
+    assert!(
+        !losses.iter().any(|loss| loss.contains("gaps")),
+        "{losses:?}"
+    );
 }
 
 /// The converter carries a moving field both ways: into an MSv4 the

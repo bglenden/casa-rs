@@ -334,10 +334,13 @@ pub(in crate::observation_io) fn kept_samples(
     kept(&unix_seconds(ephemeris), times_s)
 }
 
-/// `ephemeris`'s sample times, Unix seconds.
+/// The times of `ephemeris`'s samples its source states, Unix seconds: a
+/// dataset holds no extrapolated sample
+/// ([`FieldEphemeris::extrapolated`]), which reading it extrapolates
+/// again.
 fn unix_seconds(ephemeris: &FieldEphemeris) -> Vec<f64> {
-    ephemeris
-        .times_mjd()
+    let stated = ephemeris.times_mjd().len() - ephemeris.extrapolated();
+    ephemeris.times_mjd()[..stated]
         .iter()
         .map(|mjd| (mjd - UNIX_EPOCH_MJD) * SECONDS_PER_DAY)
         .collect()

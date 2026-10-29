@@ -151,6 +151,8 @@ pub fn to_msv4(
 /// ephemeris: a dataset holds those from the last before its first time to
 /// the first that reaches past its last time's TDB ([`kept_samples`]),
 /// much as XRADIO's converter keeps those either side of a dataset's times.
+/// Only the samples the source states count: an extrapolated one is not
+/// written, and reading the destination extrapolates it again.
 fn preflight_fields(
     observation: &dyn Observation,
     group: &str,
@@ -172,7 +174,8 @@ fn preflight_fields(
                 .iter()
                 .position(|(known, _)| Arc::ptr_eq(known, ephemeris))
                 .unwrap_or_else(|| {
-                    followed.push((ephemeris, vec![false; ephemeris.times_mjd().len()]));
+                    let stated = ephemeris.times_mjd().len() - ephemeris.extrapolated();
+                    followed.push((ephemeris, vec![false; stated]));
                     followed.len() - 1
                 });
             for held in &mut followed[index].1[kept_samples(ephemeris, &times)] {
@@ -182,17 +185,16 @@ fn preflight_fields(
     }
     Ok(followed
         .into_iter()
-        .flat_map(|(ephemeris, held)| {
+        .filter_map(|(ephemeris, held)| {
             let lost = held.iter().filter(|held| !**held).count();
-            let unkept = (lost > 0).then(|| {
+            (lost > 0).then(|| {
                 Loss::Table(format!(
                     "the ephemeris of {}: samples no dataset keeps ({lost}; a dataset keeps \
                      those from the last before its first time to the first 120 s or more past \
                      its last)",
                     ephemeris.name()
                 ))
-            });
-            unkept.into_iter().chain(losses::extrapolated(ephemeris))
+            })
         })
         .collect())
 }

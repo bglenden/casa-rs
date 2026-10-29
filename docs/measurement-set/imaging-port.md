@@ -406,9 +406,10 @@ cutover, and the owner decided both (2026-10-29, on #995):
 - XRADIO brackets a dataset's UTC times, but imaging reads a body's
   direction at each time's TDB, 69.2 s later. Its stores can therefore end
   before the last times' TDB, and its interpolated layout always does.
-  The reader extends such an ephemeris by one sample on its grid, on the
-  line through its last two, counted as extrapolated and reported when
-  converting, rather than refusing those rows (`EphemerisCoverage`). The
+  The reader extends such an ephemeris by its grid's points up to the
+  last time's TDB, on the line through its last two, counted as
+  extrapolated and reported when converting into an MSv2, rather than
+  refusing those rows (`EphemerisCoverage`). The
   writer here keeps samples two minutes past the last time.
 - XRADIO's optional ephemeris variables (`NORTH_POLE_*`, `SUB_*`, and the
   rest) and the table's columns beyond the five `MeasComet` reads are

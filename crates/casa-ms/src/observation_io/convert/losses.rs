@@ -576,10 +576,11 @@ const EPHEMERIS_EXTRAS: [&str; 7] = [
 
 /// A field dataset's ephemeris variables a conversion does not carry
 /// ([`EPHEMERIS_EXTRAS`]), as one column loss; and an ephemeris in XRADIO's
-/// interpolated layout (no `time_ephemeris`), whose samples stop at the
-/// dataset's last time, so that no time's TDB after it is covered and an
-/// MSv2 written from them cannot be evaluated at that time
-/// (`MeasComet::fillMeas` refuses a table's last row).
+/// interpolated layout (no `time_ephemeris`), whose samples start at the
+/// dataset's first time, so that an MSv2 written from them cannot be
+/// evaluated there (`MeasComet::fillMeas` puts a time on a table's first
+/// row at row −1 for some roundings). Their end, the last time, the
+/// reader extends ([`extrapolated`]).
 fn ephemeris_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
     let name = |path: &Path| {
         path.file_name()
@@ -596,9 +597,8 @@ fn ephemeris_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), Observ
     if moving && !path.join("time_ephemeris").join("zarr.json").is_file() {
         losses.push(Loss::Column(format!(
             "{label} ephemeris samples (interpolated by XRADIO onto the visibility times; the \
-             table's own samples are not in the store, nor any before the first time or past \
-             the last, so casacore's MeasComet cannot evaluate the first time and the body \
-             cannot be found at the TDB of the last 69 s of times)"
+             table's own samples are not in the store, nor any before the first time, so \
+             casacore's MeasComet cannot evaluate the first time)"
         )));
     }
     let mut lost = Vec::new();

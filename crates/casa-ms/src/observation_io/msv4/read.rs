@@ -162,20 +162,23 @@ impl Msv4Observation {
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
         }
-        let last_mjd: Vec<Option<f64>> = observation
+        // Share first, so that fields of one body in different datasets are
+        // extended together, to the latest of their last times.
+        share_ephemerides(&mut observation.catalogue_mut().fields);
+        let last_times: Vec<(Vec<FieldId>, f64)> = observation
             .datasets
             .iter()
             .zip(&observation.catalogue.partitions)
-            .map(|(dataset, entry)| {
+            .filter_map(|(dataset, entry)| {
                 let origin = entry.time_origin.day() + entry.time_origin.frac();
-                dataset
-                    .times
-                    .last()
-                    .map(|time| origin + time / ephemeris::SECONDS_PER_DAY)
+                let last = dataset.times.last()?;
+                Some((
+                    entry.fields.clone(),
+                    origin + last / ephemeris::SECONDS_PER_DAY,
+                ))
             })
             .collect();
-        ephemeris::reach_last_tdb(observation.catalogue_mut(), &last_mjd)?;
-        share_ephemerides(&mut observation.catalogue_mut().fields);
+        ephemeris::reach_last_tdb(&mut observation.catalogue_mut().fields, &last_times)?;
         Ok(observation)
     }
 

@@ -25,7 +25,7 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::Arc;
 
-use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
+use casa_observation::{FieldEntry, FieldEphemeris, FieldId, ObservationError};
 use casa_types::measures::radial_velocity::RadialVelocityRef;
 use zarrs::filesystem::FilesystemStore;
 
@@ -95,7 +95,8 @@ pub(super) fn read(
         tracing::warn!(
             "{path}: the ephemeris is interpolated onto the visibility times \
              (ephemeris_interpolate=True): its table's own samples are not in the store, and the \
-             body's direction is evaluated from these, which end at the last time"
+             body's direction is evaluated from these, which start at the first time and end at \
+             the last"
         );
         (times_s.to_vec(), "time")
     };
@@ -338,36 +339,35 @@ type Sample = (f64, [f64; 2], f64, f64);
 /// bounds the TDB rather than computing it.
 const TDB_LEAD_S: f64 = 72.0;
 
-/// Extend each ephemeris the catalogue's fields follow whose samples cover
-/// the last time of a partition one of its fields is in but end less than
-/// [`TDB_LEAD_S`] after it, by one sample on the samples' grid at or past
-/// that ([`FieldEphemeris::extrapolated_to`]), with a warning. Imaging
-/// reads a body's direction at each time's TDB, and XRADIO keeps only the
-/// samples that bracket a dataset's UTC times; the owner chose extending
-/// them over refusing those times (#995). `last_mjd` is each partition's
-/// last time, MJD UTC. An ephemeris that does not cover a last time is
-/// left as it is.
+/// Extend each ephemeris `fields` follow whose samples cover the last time
+/// of every partition one of its fields is in but end less than
+/// [`TDB_LEAD_S`] after the latest of them, with the samples' grid up to
+/// that, each sample on the straight line through the last two
+/// ([`FieldEphemeris::extrapolated_to`]), and a warning. Imaging reads a
+/// body's direction at each time's TDB, and XRADIO keeps only the samples
+/// that bracket a dataset's UTC times; the owner chose extending them over
+/// refusing those times (#995). `last_times` holds each partition's fields
+/// and last time, MJD UTC.
 ///
 /// # Errors
 ///
 /// An extension [`FieldEphemeris`] refuses.
 pub(super) fn reach_last_tdb(
-    catalogue: &mut Catalogue,
-    last_mjd: &[Option<f64>],
+    fields: &mut [FieldEntry],
+    last_times: &[(Vec<FieldId>, f64)],
 ) -> Result<(), ObservationError> {
     let mut needed: Vec<(Arc<FieldEphemeris>, f64)> = Vec::new();
-    for (entry, last) in catalogue.partitions.iter().zip(last_mjd) {
-        let Some(last) = *last else { continue };
-        for field in &entry.fields {
-            let Some(ephemeris) = &catalogue.fields[field.0 as usize].ephemeris else {
+    for (ids, last) in last_times {
+        for field in ids {
+            let Some(ephemeris) = &fields[field.0 as usize].ephemeris else {
                 continue;
             };
             match needed
                 .iter_mut()
                 .find(|(known, _)| Arc::ptr_eq(known, ephemeris))
             {
-                Some((_, end)) => *end = end.max(last),
-                None => needed.push((Arc::clone(ephemeris), last)),
+                Some((_, end)) => *end = end.max(*last),
+                None => needed.push((Arc::clone(ephemeris), *last)),
             }
         }
     }
@@ -375,25 +375,35 @@ pub(super) fn reach_last_tdb(
         let times = ephemeris.times_mjd();
         let (before, end) = (times[times.len() - 2], times[times.len() - 1]);
         let tdb = last + TDB_LEAD_S / SECONDS_PER_DAY;
-        if end >= tdb || end < last - SAMPLE_TIME_RESOLUTION_DAYS {
+        // `read` refuses a dataset whose own samples do not cover its times,
+        // and uniting only adds samples, so the first test is a defence.
+        if end < last - SAMPLE_TIME_RESOLUTION_DAYS || end >= tdb {
             continue;
         }
         let step = end - before;
-        let at = end + ((tdb - end) / step).ceil() * step;
-        let extended = Arc::new(ephemeris.extrapolated_to(at).map_err(|error| {
-            invalid(format!(
-                "extending the ephemeris of {}: {error}",
-                ephemeris.name()
-            ))
-        })?);
+        let mut extended = FieldEphemeris::clone(&ephemeris);
+        let (mut added, mut at) = (0_u32, end);
+        while at < tdb {
+            added += 1;
+            at = end + f64::from(added) * step;
+            extended = extended.extrapolated_to(at).map_err(|error| {
+                invalid(format!(
+                    "extending the ephemeris of {}: {error}",
+                    ephemeris.name()
+                ))
+            })?;
+        }
         tracing::warn!(
             "the ephemeris of {}: its samples end {:.1} s after the last time, short of its TDB; \
-             one sample is extrapolated, {:.1} s after it, along the line through the last two",
+             {} samples extrapolated on its grid, to {:.1} s after it, along the line through \
+             the last two",
             ephemeris.name(),
             (end - last) * SECONDS_PER_DAY,
+            added,
             (at - last) * SECONDS_PER_DAY
         );
-        for field in &mut catalogue.fields {
+        let extended = Arc::new(extended);
+        for field in fields.iter_mut() {
             if field
                 .ephemeris
                 .as_ref()
@@ -593,5 +603,73 @@ mod tests {
         )
         .expect("an ephemeris");
         assert!(union(&known, &moved).is_none());
+    }
+
+    /// A field following `ephemeris`.
+    fn following(name: &str, ephemeris: &Arc<FieldEphemeris>) -> FieldEntry {
+        FieldEntry {
+            name: name.to_string(),
+            phase_centre: casa_types::measures::direction::MDirection::from_angles(
+                0.0,
+                0.0,
+                DirectionRef::ICRS,
+            ),
+            reference_epoch: None,
+            source_name: None,
+            source: None,
+            code: None,
+            delay_centre: None,
+            reference_centre: None,
+            flagged: None,
+            ephemeris: Some(Arc::clone(ephemeris)),
+        }
+    }
+
+    #[test]
+    fn an_ephemeris_short_of_the_latest_last_times_tdb_is_extended_on_its_grid() {
+        let day = |seconds: f64| 60_000.0 + seconds / SECONDS_PER_DAY;
+        // One-minute samples to 300 s; field A's partition ends at 200 s,
+        // B's at 280 s. Only B's needs more: a sample at 360 s, past 352 s.
+        let samples: Vec<f64> = (0..=5)
+            .map(|minute| day(60.0 * f64::from(minute)))
+            .collect();
+        let body = Arc::new(ephemeris(&samples));
+        let mut fields = vec![following("A", &body), following("B", &body)];
+        let last_times = [
+            (vec![FieldId(0)], day(200.0)),
+            (vec![FieldId(1)], day(280.0)),
+        ];
+        reach_last_tdb(&mut fields, &last_times).expect("extended");
+        let extended = fields[0].ephemeris.as_ref().expect("an ephemeris");
+        assert!(Arc::ptr_eq(
+            extended,
+            fields[1].ephemeris.as_ref().expect("an ephemeris")
+        ));
+        assert_eq!(extended.extrapolated(), 1);
+        let last = extended.times_mjd()[6];
+        assert!((last - day(360.0)).abs() * SECONDS_PER_DAY < 1.0e-6);
+        // Ten-second samples ending at the last time: each grid point to 72 s
+        // past it, eight samples and no gap.
+        let samples: Vec<f64> = (0..=3).map(|step| day(10.0 * f64::from(step))).collect();
+        let body = Arc::new(ephemeris(&samples));
+        let mut fields = vec![following("A", &body)];
+        reach_last_tdb(&mut fields, &[(vec![FieldId(0)], day(30.0))]).expect("extended");
+        let extended = fields[0].ephemeris.as_ref().expect("an ephemeris");
+        assert_eq!(extended.extrapolated(), 8);
+        assert!(
+            extended
+                .times_mjd()
+                .windows(2)
+                .all(|pair| ((pair[1] - pair[0]) * SECONDS_PER_DAY - 10.0).abs() < 1.0e-6)
+        );
+        // Samples that end before a last time, or reach its TDB, are left.
+        for last in [day(40.0), day(30.0 - 72.0)] {
+            let mut fields = vec![following("A", &body)];
+            reach_last_tdb(&mut fields, &[(vec![FieldId(0)], last)]).expect("left");
+            assert!(Arc::ptr_eq(
+                fields[0].ephemeris.as_ref().expect("an ephemeris"),
+                &body
+            ));
+        }
     }
 }
