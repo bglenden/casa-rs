@@ -19,11 +19,9 @@ mod window;
 mod write;
 
 pub use cursor::Msv4Cursor;
-pub(in crate::observation_io) use ephemeris::SECONDS_PER_DAY;
-pub(in crate::observation_io) use metadata::UNIX_EPOCH_MJD;
 pub(crate) use pointing::POINTING_FRAMES;
 pub use read::Msv4Observation;
-pub(in crate::observation_io) use write::{check_fields, kept_samples};
+pub(in crate::observation_io) use write::{check_fields, kept_samples, unix_times};
 
 /// XRADIO's name for an absent source, which the writer writes for a field
 /// without one and the reader reads as none.

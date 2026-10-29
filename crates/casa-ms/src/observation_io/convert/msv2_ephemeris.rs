@@ -98,7 +98,8 @@ pub(super) fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), Observation
         if table_grid(ephemeris).is_none() {
             return Err(ObservationError::Unsupported {
                 what: "writing an MSv2 ephemeris whose samples are not on one evenly spaced \
-                       grid of times (casacore's MeasComet reads only evenly spaced tables)",
+                       grid of times, or need more than a million rows on it (casacore's \
+                       MeasComet reads only evenly spaced tables)",
             });
         }
     }

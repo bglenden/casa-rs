@@ -315,6 +315,19 @@ fn value_in(quantity: &Quantity, unit: &str) -> Result<f64, ObservationError> {
 const PAYLOAD_COORDINATES: &str =
     "baseline_antenna1_name baseline_antenna2_name field_name scan_name";
 
+/// `grid`'s times as the Unix seconds a dataset states them in.
+pub(in crate::observation_io) fn unix_times(grid: &TimeBaselineGrid) -> Vec<f64> {
+    let view = EpochView::new(
+        grid.time_scale,
+        grid.time_origin,
+        ArrayView1::from(&grid.times_s[..]),
+    );
+    let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
+    (0..grid.times_s.len())
+        .map(|t| view.seconds_since(t, unix))
+        .collect()
+}
+
 fn request_error(reason: impl Into<String>) -> ObservationError {
     ObservationError::InvalidRequest {
         reason: reason.into(),
@@ -415,13 +428,7 @@ fn destination(
             what: "writing channels of unequal width",
         });
     }
-    let view = EpochView::new(
-        grid.time_scale,
-        grid.time_origin,
-        ArrayView1::from(&grid.times_s[..]),
-    );
-    let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
-    let unix_times: Vec<f64> = (0..times).map(|t| view.seconds_since(t, unix)).collect();
+    let unix_times = unix_times(grid);
     Ok((
         Destination {
             partition,

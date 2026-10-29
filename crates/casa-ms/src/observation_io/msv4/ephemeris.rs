@@ -38,7 +38,7 @@ use super::metadata::{
 pub(super) const EPHEMERIS_DATASET: &str = "field_and_source_ephemeris";
 
 /// Seconds per day.
-pub(in crate::observation_io) const SECONDS_PER_DAY: f64 = 86_400.0;
+pub(super) const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// How far two recovered offsets of one field may differ, radians. The
 /// store holds the offset only within its sum with the body's direction,
@@ -277,19 +277,23 @@ fn moving_fields(
 
 /// `values` (at `sample_times`) at each of `times`, interpolated linearly
 /// (in angle, for directions) as XRADIO interpolates them (numpy's
-/// `interp`), or `None` for a time outside the samples.
+/// `interp`), or `None` for a time outside the samples. Times are Unix
+/// seconds; one within [`TIME_RESOLUTION_S`] of an end sample is at it, as
+/// a sample at a visibility time comes back from its MJD.
 pub(super) fn at_times<const N: usize>(
     sample_times: &[f64],
     values: &[[f64; N]],
     times: &[f64],
 ) -> Option<Vec<[f64; N]>> {
     let last = sample_times.len().checked_sub(1)?;
+    let (first_sample, last_sample) = (sample_times[0], sample_times[last]);
     times
         .iter()
         .map(|time| {
-            if !(sample_times[0]..=sample_times[last]).contains(time) {
+            if *time < first_sample - TIME_RESOLUTION_S || *time > last_sample + TIME_RESOLUTION_S {
                 return None;
             }
+            let time = &time.clamp(first_sample, last_sample);
             let upper = sample_times.partition_point(|sample| sample <= time);
             if upper > last {
                 return Some(values[last]);
@@ -310,10 +314,15 @@ pub(super) fn wrap_to_pi(angle: f64) -> f64 {
     (angle + PI).rem_euclid(TAU) - PI
 }
 
-/// How far apart two datasets' samples of one body may be stated and still
-/// be one sample, days: 1 ms. Converters state a table's `MJD` as Unix
-/// seconds by their own arithmetic, which rounds differently.
-const SAMPLE_TIME_RESOLUTION_DAYS: f64 = 1.0e-3 / SECONDS_PER_DAY;
+/// How far apart two statements of one time may be, seconds: 1 ms.
+/// Converters state a table's `MJD` as Unix seconds by their own
+/// arithmetic, which rounds differently, and a time read back as MJD days
+/// moves by up to a microsecond.
+pub(super) const TIME_RESOLUTION_S: f64 = 1.0e-3;
+
+/// [`TIME_RESOLUTION_S`] in days: how far apart two datasets' samples of
+/// one body may be stated and still be one sample.
+const SAMPLE_TIME_RESOLUTION_DAYS: f64 = TIME_RESOLUTION_S / SECONDS_PER_DAY;
 
 /// How far two datasets' values of one sample may differ, relative to
 /// the larger: their converters' unit conversions round differently, by
@@ -453,6 +462,9 @@ mod tests {
         );
         assert!(at_times(&times, &directions, &[20.5]).is_none());
         assert!(at_times(&times, &directions, &[-0.5]).is_none());
+        // A time a rounding outside an end sample is at it.
+        let ends = at_times(&times, &directions, &[-1.0e-7, 20.0 + 1.0e-7]).expect("at the ends");
+        assert_eq!(ends, [directions[0], directions[directions.len() - 1]]);
     }
 
     fn ephemeris(times: &[f64]) -> FieldEphemeris {

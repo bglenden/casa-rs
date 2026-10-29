@@ -1540,11 +1540,14 @@ converter carries it both ways.
   when it interpolates onto a dataset of one time.
 
   Datasets of one field (same name, source, offset) whose samples agree
-  where both hold them are one catalogue field. The union is a body's, not
-  a field's: every field that follows the body follows the one union,
-  including fields only some datasets hold. A sample counts as both
-  datasets' when their times agree to 1 ms and their values to 1e-12,
-  since converters round differently.
+  where both hold them are one catalogue field. The union spreads through
+  the fields datasets share: every field following an ephemeris that a
+  dataset's fields match follows the one union, including fields only
+  some datasets hold. Fields of one body that never share a dataset (a
+  store XRADIO partitioned by field) keep their own ephemerides, and
+  become a table each in an MSv2. A sample counts as both datasets' when
+  their times agree to 1 ms and their values to 1e-12, since converters
+  round differently; a time within 1 ms of an end sample is at it.
 - **Writing** (`write/fields.rs`). The `time_ephemeris` layout, with the
   samples from the last before a dataset's first time to the first two
   minutes past its last, so the last time's TDB is covered. Also each
@@ -1561,11 +1564,12 @@ converter carries it both ways.
   `UNIT`s), and the field gets its `EPHEMERIS_ID`. A moving field's `TIME`
   is the epoch its catalogue entry states, or else its first time; its
   source's `DIRECTION` is the body at that time. `MeasComet` indexes rows
-  by `dMJD`, so the samples must lie on one evenly spaced grid. A union
-  with gaps on that grid (two sessions, or the interpolated layout across
-  scans) fills each gap's rows with the ephemeris's own interpolation, as
-  casacore and casa-rs would evaluate it there, and reports how many.
-  Samples on no one grid are refused.
+  by `dMJD`, so the samples must lie on one evenly spaced grid, to 1 ms.
+  A union with gaps on that grid (two sessions, say) fills each gap's rows
+  with the ephemeris's own interpolation, as casacore and casa-rs would
+  evaluate it there, and reports how many. Samples on no one grid are
+  refused. The interpolated layout's samples are the visibility times, so
+  a store of several scans is refused unless their times lie on one grid.
 - **Losses and refusals.** Each is found before anything is written; the
   writer's refusals are checked for every partition first:
   - into an MSv4, the samples no dataset keeps, the FIELD row's `TIME`
@@ -1581,10 +1585,10 @@ converter carries it both ways.
 | Law | What it shows |
 | --- | --- |
 | `xradios_ephemeris_samples_read_as_the_msv2_holds_them` | XRADIO's `time_ephemeris` layout reads as the MSv2's ephemeris: its samples from the last before the first time to the first after the last, equal to the table's (1e-15 rad, relative distance 1e-15); the offset to 1e-15 rad; J2000, geocentric velocities. |
-| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's interpolated layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there; the offset equals the MSv2's to 1e-15 rad. |
+| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's interpolated layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there; the offset equals the MSv2's to 1e-15 rad. Converted into an MSv4, the store keeps every sample, the interpolation reported. |
 | `a_moving_field_converts_both_ways` | Into an MSv4 the samples reach from the first time to two minutes past the last, the rest reported (with the FIELD `TIME`). Back into an MSv2 the same samples, the offset as `PHASE_DIR`, the field's first time as `TIME` and `EPHEM0_trial_0.tab`. An MSv2 into an MSv2 keeps every sample and the original `TIME`. |
 | `two_converters_datasets_of_one_field_are_one_field` | The converter's dataset and XRADIO's, in one processing set, are one field following one ephemeris. |
-| `one_bodys_fields_in_two_datasets_follow_their_united_samples` | Two sessions ten minutes apart, one field in both and another, west of the body, in the first only: into an MSv4 two datasets whose samples have a gap; read back, two catalogue fields (the west one's offset wrapping) following one shared union of the samples. Into an MSv2 one evenly spaced table, the gap's rows the ephemeris's interpolation (1e-14 rad), their number reported. |
+| `one_bodys_fields_in_two_datasets_follow_their_united_samples` | Two sessions ten minutes apart, one field, west of the body, in both and another in the first only: into an MSv4 two datasets whose samples have a gap; read back, two catalogue fields (the west one's offset wrapping) following one shared union of the samples. Into an MSv2 one evenly spaced table, the gap's rows the ephemeris's interpolation (1e-14 rad), their number reported. |
 | `uncovered_and_polynomial_moving_fields_are_refused` | An ephemeris that does not cover the times is refused before writing (`InvalidRequest`), as is a `NUM_POLY` 1 field (`Unsupported`). |
 | `an_unused_moving_field_is_written_only_where_every_field_is` | (Converter laws above.) |
 | `a_moving_field_keeps_its_geometry_in_msv4` (casars-imager T1) | The T1 track's moving field, converted to MSv4: on all 52,650 rows every geometry quantity equals the MeasurementSet's to 1.1e-15 (UVW; the phase shift 8.4e-16), tracking the body, following its table, and on a fixed centre. |

@@ -146,11 +146,11 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
 }
 
 /// XRADIO's interpolated layout (`ephemeris_interpolate=True`), the samples
-/// interpolated onto the visibility
-/// times, reads as those values: the MSv2's samples interpolated linearly
-/// in angle (and in distance) at each time. The test interpolates in MJD
-/// days, whose rounding (0.6 µs) moves this body by up to 2e-12 rad and
-/// 1e-4 m; XRADIO interpolates in Unix seconds.
+/// interpolated onto the visibility times, reads as those values: the
+/// MSv2's samples interpolated linearly in angle (and in distance) at each
+/// time. The test interpolates in MJD days, whose rounding (0.6 µs) moves
+/// this body by up to 2e-12 rad and 1e-4 m; XRADIO interpolates in Unix
+/// seconds. The store converts into an MSv4 with every sample.
 #[test]
 fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     let root = tempfile::tempdir().expect("root");
@@ -201,6 +201,23 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
             1.0e-12 * distance,
         );
     }
+    // Converted into an MSv4, the store keeps every sample, the
+    // interpolation reported: a sample at a visibility time comes back
+    // from its MJD within a microsecond of it, so at it.
+    let ours = root.path().join("ours.ps.zarr");
+    let report = to_msv4(&store, &ours, &super::convert::options(&ACCEPT)).expect("to MSv4");
+    assert!(
+        report
+            .losses
+            .iter()
+            .any(|loss| loss.to_string().contains("interpolated by XRADIO")),
+        "{:?}",
+        report.losses
+    );
+    let converted = catalogue(&ours);
+    let (_, again) = moving_field(&converted);
+    assert_eq!(again.times_mjd().len(), ephemeris.times_mjd().len());
+    assert_samples(again, ephemeris, 0);
 }
 
 /// The converter carries a moving field both ways: into an MSv4 the
@@ -332,14 +349,15 @@ fn copy_dir(from: &Path, to: &Path) {
 /// past the samples the first session's dataset keeps.
 const APART_S: f64 = 600.0;
 
-/// The second field's offset from the body, radians: west of it, so that
-/// its right ascension wraps.
+/// The fixture field's offset from the body in [`two_sessions_two_fields`],
+/// radians: west of it, so that its right ascension wraps.
 const WEST_RAD: [f64; 2] = [-2.0e-5, 3.0e-6];
 
-/// The ephemeris fixture with a second field, `west`, following the same
-/// body at [`WEST_RAD`] and observed at every other time of the first
-/// session, and its later times a second session moved [`APART_S`] later. The body's table is
-/// replaced by one, sampled as often, that moves linearly in angle and
+/// The ephemeris fixture with its field moved to [`WEST_RAD`] of the body,
+/// a second field, `east`, following the same body at the fixture's own
+/// offset and observed at every other time of the first session, and its
+/// later times a second session moved [`APART_S`] later. The body's table
+/// is replaced by one, sampled as often, that moves linearly in angle and
 /// reaches past the moved times.
 fn two_sessions_two_fields(root: &Path) -> PathBuf {
     let path = fixture(root, "ms_trial_ephemeris.ms");
@@ -363,24 +381,24 @@ fn two_sessions_two_fields(root: &Path) -> PathBuf {
     super::convert::split_sessions(&path, false);
 
     let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
-    let mut west = ms
+    let mut east = ms
         .subtable(casa_ms::SubtableId::Field)
         .and_then(|table| table.rows().ok()?.first().cloned())
         .expect("a field");
-    west.upsert(
+    east.upsert(
         "NAME",
-        Value::Scalar(ScalarValue::String("west".to_string())),
+        Value::Scalar(ScalarValue::String("east".to_string())),
     );
-    let offset = Value::Array(ArrayValue::Float64(
+    let fields = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
+    let west = Value::Array(ArrayValue::Float64(
         ndarray::ArrayD::from_shape_vec(vec![2, 1], WEST_RAD.to_vec()).expect("shape"),
     ));
     for column in ["PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"] {
-        west.upsert(column, offset.clone());
+        fields
+            .fill_column_range(column, casa_tables::RowRange::new(0, 1), west.clone())
+            .expect("west of the body");
     }
-    ms.subtable_mut(casa_ms::SubtableId::Field)
-        .expect("FIELD")
-        .add_row(west)
-        .expect("a second field");
+    fields.add_row(east).expect("a second field");
     let scalar = |ms: &casa_ms::MeasurementSet, row: usize, column: &str| {
         ms.main_table()
             .cell_accessor(row, column)
@@ -428,12 +446,12 @@ fn angle_between(a: f64, b: f64) -> f64 {
 }
 
 /// Two fields of one body in two datasets whose samples have a gap between
-/// them, one field in both and the other, west of the body, in the first
-/// only: the reader makes each one catalogue field, the one whose offset
-/// wraps as well as the other, and both follow one ephemeris, the union of
-/// the datasets' samples (a body's, not a field's). Into an MSv2 that union
-/// becomes one evenly spaced table, its gap filled by the ephemeris's
-/// interpolation and reported.
+/// them, one west of the body in both and the other in the first only: the
+/// reader makes each one catalogue field, the west one's offset wrapping,
+/// and both follow one ephemeris, the union of the datasets' samples (the
+/// body's, through the field they share). Into an MSv2 that union becomes
+/// one evenly spaced table, its gap filled by the ephemeris's interpolation
+/// and reported.
 #[test]
 fn one_bodys_fields_in_two_datasets_follow_their_united_samples() {
     let root = tempfile::tempdir().expect("root");

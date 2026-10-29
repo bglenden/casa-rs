@@ -577,7 +577,8 @@ fn ephemeris_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), Observ
     if moving && !path.join("time_ephemeris").join("zarr.json").is_file() {
         losses.push(Loss::Column(format!(
             "{label} ephemeris samples (interpolated by XRADIO onto the visibility times; the \
-             table's own samples are not in the store, nor any past the last time, so the body \
+             table's own samples are not in the store, nor any before the first time or past \
+             the last, so casacore's MeasComet cannot evaluate the first time and the body \
              cannot be found at the TDB of the last 69 s of times)"
         )));
     }

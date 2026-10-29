@@ -13,9 +13,7 @@ use casa_observation::{
 
 use super::pointing_plan::{self, PointingPlan};
 use super::{ConversionOptions, ConversionReport, Loss, lockstep, losses};
-use crate::observation_io::msv4::{
-    SECONDS_PER_DAY, STATION_NAMED, UNIX_EPOCH_MJD, check_fields, kept_samples,
-};
+use crate::observation_io::msv4::{STATION_NAMED, check_fields, kept_samples, unix_times};
 use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -59,13 +57,13 @@ struct Converted {
 ///
 /// # Errors
 ///
-/// [`ObservationError::InvalidRequest`] naming the first loss not accepted,
-/// and [`ObservationError::Unsupported`] for fields whose direction is a
-/// polynomial in time, both before anything is written; a dataset whose
-/// fields follow different ephemerides, or an ephemeris that does not cover
-/// its times ([`Msv4Writer`](crate::observation_io::Msv4Writer)); any error opening or
-/// reading the source or writing the destination, which then is not
-/// created.
+/// All before anything is written: [`ObservationError::InvalidRequest`]
+/// naming the first loss not accepted, or an ephemeris that does not cover
+/// a dataset's times; [`ObservationError::Unsupported`] for fields whose
+/// direction is a polynomial in time, a dataset whose fields follow
+/// different ephemerides (or only some one), or radial velocities that are
+/// not geocentric. Otherwise, any error opening or reading the source or
+/// writing the destination, which then is not created.
 pub fn to_msv4(
     source: &Path,
     destination: &Path,
@@ -161,9 +159,7 @@ fn preflight_fields(
     let mut followed: Vec<(&Arc<FieldEphemeris>, Vec<bool>)> = Vec::new();
     for id in catalogue.partition_ids() {
         let grid = observation.grid(id, group)?;
-        let origin =
-            ((grid.time_origin.day() - UNIX_EPOCH_MJD) + grid.time_origin.frac()) * SECONDS_PER_DAY;
-        let times: Vec<f64> = grid.times_s.iter().map(|time| origin + time).collect();
+        let times = unix_times(&grid);
         let entry = catalogue.partition(id);
         if let Some((_, data_group)) = entry.data_group(group) {
             check_fields(catalogue, &grid, &times, data_group.uvw_frame.effective)?;

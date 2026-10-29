@@ -17,7 +17,9 @@ use serde_json::{Value, json};
 use zarrs::array::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
 
-use super::super::ephemeris::{EPHEMERIS_DATASET, SECONDS_PER_DAY, at_times, wrap_to_pi};
+use super::super::ephemeris::{
+    EPHEMERIS_DATASET, SECONDS_PER_DAY, TIME_RESOLUTION_S, at_times, wrap_to_pi,
+};
 use super::super::metadata::{UNIX_EPOCH_MJD, direction_name, storage, time_attributes};
 use super::{ArraySpec, Msv4Codec, codecs, coordinate, create_array, create_group, strings};
 
@@ -345,14 +347,15 @@ fn unix_seconds(ephemeris: &FieldEphemeris) -> Vec<f64> {
 /// last before its first time to the first at or after
 /// [`EVALUATION_REACH_S`] past its last, and at least two. XRADIO keeps
 /// those either side of the times themselves (`project_min_max_sorted`):
-/// the last before the first time, and the first after the last.
+/// the last before the first time, and the first after the last. A sample
+/// within [`TIME_RESOLUTION_S`] of the first time is at it, not before it.
 fn kept(sample_times: &[f64], times: &[f64]) -> Range<usize> {
     let last = sample_times.len() - 1;
     let (Some(first), Some(end)) = (times.first(), times.last()) else {
         return 0..sample_times.len();
     };
     let start = sample_times
-        .partition_point(|time| time < first)
+        .partition_point(|time| *time < first - TIME_RESOLUTION_S)
         .saturating_sub(1)
         .min(last - 1);
     let end = sample_times
@@ -442,6 +445,8 @@ mod tests {
         // MeasComet indexes a time on a table's first row as row -1 for
         // some roundings.
         assert_eq!(kept(&samples, &[120.0, 130.0]), 1..6);
+        // So does one a rounding past a sample.
+        assert_eq!(kept(&samples, &[120.0 + 1.0e-7, 130.0]), 1..6);
         // Times beyond the samples keep the last two.
         assert_eq!(kept(&samples, &[1_000.0]), 8..10);
         // Times before them keep the first two, or as far as they reach.
