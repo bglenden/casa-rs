@@ -928,6 +928,33 @@ fn payload_files(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Inputs whose POINTING tables are each in one frame, but not the same
+/// one, are refused when the plan is made, not while it writes: one
+/// POINTING holds one frame.
+#[test]
+fn pointing_in_different_frames_is_refused_by_the_plan() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let late = edited(root.path(), "late", 0..60, |ms| {
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        TableMeasDesc::new_fixed("DIRECTION", MeasureType::Direction, "B1950")
+            .write(pointing)
+            .expect("B1950 directions");
+    });
+    let destination = root.path().join("whole.ms");
+    let refused = plan_of(&[&early, &late], Destination::New(destination.clone()));
+    assert!(
+        matches!(&refused, Err(ObservationError::Unsupported { what }) if what.contains("frames")),
+        "{:?}",
+        refused.err()
+    );
+    assert!(!destination.exists());
+    assert_eq!(
+        others(root.path(), &["early", "late"]),
+        Vec::<String>::new()
+    );
+}
+
 /// A new MeasurementSet passes over what occupies its stage's first name,
 /// which is kept, and is not published over a destination that appeared
 /// after the plan was made: that is kept, and the stage removed.

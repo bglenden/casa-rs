@@ -29,6 +29,7 @@ use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
 };
 use casa_tables::Table;
+use casa_types::measures::direction::DirectionRef;
 
 use super::Loss;
 use super::lockstep::{Sizing, WEIGHTS};
@@ -52,9 +53,17 @@ pub(crate) struct PointingPlan {
     /// An MSv2 destination: the most its gathering holds, the gathered
     /// samples beside the largest read.
     peak: usize,
+    /// The one frame of the directions an MSv2 destination's reads carry,
+    /// when they carry any.
+    frame: Option<DirectionRef>,
 }
 
 impl PointingPlan {
+    /// The one frame of the directions an MSv2 destination's reads carry.
+    pub(super) fn frame(&self) -> Option<DirectionRef> {
+        self.frame
+    }
+
     /// An MSv4 destination's read for `partition`'s dataset, if its
     /// pointing is carried.
     #[cfg(feature = "msv4")]
@@ -244,6 +253,7 @@ fn msv4(
             reads,
             gathered,
             peak: 0,
+            frame: None,
         };
         return Ok((plan, Vec::new()));
     }
@@ -262,6 +272,7 @@ fn msv4(
         reads,
         gathered: (samples, 2 * samples),
         peak: budget,
+        frame: frames.first().copied(),
     };
     Ok((plan, Vec::new()))
 }
@@ -300,6 +311,7 @@ fn msv2(
             reads: partition_reads(&scan, partitions, budget)?,
             gathered: (0, 0),
             peak: 0,
+            frame: None,
         },
         Store::Msv2 => {
             let samples: usize = scan.antenna_rows.values().sum();
@@ -307,6 +319,9 @@ fn msv2(
             let left = read_budget(samples, coefficients, budget)?;
             let (reads, largest) = antenna_reads(&scan, partitions, left)?;
             PointingPlan {
+                frame: (!reads.is_empty())
+                    .then(|| frames.first().copied())
+                    .flatten(),
                 reads,
                 gathered: (samples, coefficients),
                 peak: gathered_bytes(samples, coefficients) + largest,

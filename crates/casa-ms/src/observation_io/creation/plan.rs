@@ -166,6 +166,15 @@ impl CreationPlan {
             found.extend(lost);
             pointing.push(plan);
         }
+        // One POINTING holds one frame: the inputs' must agree.
+        let mut frames = pointing.iter().filter_map(PointingPlan::frame);
+        if let Some(first) = frames.next()
+            && frames.any(|frame| frame != first)
+        {
+            return Err(ObservationError::Unsupported {
+                what: "writing MSv2 pointing of inputs in different frames",
+            });
+        }
         found.sort();
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
