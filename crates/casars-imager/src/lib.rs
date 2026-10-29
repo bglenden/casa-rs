@@ -4,13 +4,16 @@
 //! The command-line and task surface of native CASA-RS imaging, on the
 //! shared task front end (#931).
 //!
-//! The front end resolves the imager's parameters through the provider-
-//! contracts catalog: command-line flags and a `--json-run` request become
-//! the same resolved values, and those values, and nothing else, make the
-//! [`ImagingRequest`] the application runs. A run's reply carries its
-//! [`ImagerRunTaskResult`]; the imager returns None, as CASA's `tclean` does
-//! unless asked for its history.
+//! The binary hosts CASA's `tclean` (the imager re-surfaced, #931). The
+//! front end resolves tclean's parameters through the provider-contracts
+//! catalog: command-line flags and a `--json-run` request become the same
+//! resolved values, and those values, and nothing else, make the
+//! [`ImagingRequest`] the application runs, read as CASA's modes read them
+//! ([`ImagingRequest::from_tclean`]). A run's reply carries its
+//! [`ImagerRunTaskResult`], and returns CASA's summary record
+//! ([`tclean_record`]).
 
+mod casa_return;
 pub mod interrupt;
 mod schema;
 mod task_contract;
@@ -24,32 +27,33 @@ use casa_task_runtime::{
 };
 use serde_json::{Map, Value};
 
+pub use casa_return::tclean_record;
 pub use schema::command_schema;
 pub use task_contract::*;
 
 fn imager_surface() -> Result<SurfaceContractBundle, String> {
-    casa_provider_contracts::builtin_surface_bundle("imager")
+    casa_provider_contracts::builtin_surface_bundle("tclean")
 }
 
 fn workspace() -> Result<PathBuf, String> {
     std::env::current_dir().map_err(|error| format!("the working directory: {error}"))
 }
 
-/// The request `resolved`, every active imager parameter, makes. A value the
-/// catalog accepts but the request's own read refuses (`scales = "0,x"`)
-/// is refused at its parameter.
+/// The request `resolved`, every tclean parameter, makes. A value the
+/// catalog accepts but casa-rs cannot honour in the request's modes, or that
+/// the request's own read refuses (`stokes = "IX"`), is refused at its
+/// parameter.
 fn request_from(
     resolved: Map<String, Value>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    let request = serde_path_to_error::deserialize(Value::Object(resolved.clone())).map_err(
-        |error: serde_path_to_error::Error<serde_json::Error>| match error.path().iter().next() {
-            Some(serde_path_to_error::Segment::Map { key }) => {
-                TaskFailure::validation(format!("imager parameter {key:?}: {}", error.inner()))
-                    .at(key.clone())
-            }
-            _ => TaskFailure::validation(format!("imager parameters: {}", error.inner())),
-        },
-    )?;
+    let request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
+        let failure = TaskFailure::validation(refusal.message);
+        if refusal.parameter.is_empty() {
+            failure
+        } else {
+            failure.at(refusal.parameter)
+        }
+    })?;
     Ok((ImagingParameters(resolved), request))
 }
 
@@ -59,7 +63,7 @@ pub fn resolve_request(
     parameters: &ImagingParameters,
 ) -> Result<(ImagingParameters, ImagingRequest), String> {
     let resolved = resolve_plain_values(imager_surface()?, workspace()?, &parameters.0)
-        .map_err(|error| format!("resolve imager parameters: {error}"))?;
+        .map_err(|error| format!("resolve tclean parameters: {error}"))?;
     request_from(resolved).map_err(|failure| failure.message)
 }
 
@@ -91,19 +95,19 @@ pub fn run(
     ))
 }
 
-/// The front end of the `casars-imager` binary, which hosts `imager`.
+/// The front end of the `casars-imager` binary, which hosts `tclean`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new(
         "casars-imager",
         imager_task_schema_bundle(),
-        &["imager"],
+        &["tclean"],
         run_task,
     )
     .expect("the imager contract carries its surface")
 }
 
-/// The resolved parameters of `task`, an imager run, and the request they
+/// The resolved parameters of `task`, a tclean run, and the request they
 /// make; a request they cannot make is refused.
 pub fn task_request(
     task: &TaskInvocation<'_>,
@@ -117,6 +121,8 @@ pub fn task_request(
 /// it was interrupted.
 pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (parameters, request) = task_request(task)?;
+    // The record echoes some of tclean's values as they were given.
+    let values = parameters.0.clone();
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
@@ -137,5 +143,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.actual_minor_iterations,
         result.run.clean_stop_reason,
     );
-    Ok(TaskSuccess::new(casa_task_runtime::CasaValue::None, &result)?.with_text(text))
+    let value = tclean_record(&request, &result.run, &values);
+    Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }

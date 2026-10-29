@@ -335,6 +335,7 @@ mod tests {
                 summary: "Test".into(),
                 provider_family: "test".into(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![SurfaceParameterBinding {
                     name: "niter".into(),

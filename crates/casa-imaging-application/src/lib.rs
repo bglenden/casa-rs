@@ -21,6 +21,7 @@ pub mod route_law;
 pub mod source_law;
 #[doc(hidden)]
 pub mod start_model_law;
+mod tclean;
 
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
@@ -37,6 +38,7 @@ pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
     InvalidRequest, NativeAwCachePolicy, SourceRoute, SpecMode, UseMask, Weighting,
 };
+pub use tclean::TcleanRefusal;
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 

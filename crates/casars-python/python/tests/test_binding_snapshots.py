@@ -433,7 +433,7 @@ def _error_snapshot(root: Path) -> dict[str, Any]:
 
     def malformed_imager() -> Any:
         with _task_override("CASARS_IMAGER_BIN", malformed):
-            return tasks.run("imager", workspace=root, vis="input.ms", imagename="dirty")
+            return tasks.run("tclean", workspace=root, vis="input.ms", imagename="dirty")
 
     cases: dict[str, Callable[[], Any]] = {
         "definition unknown surface": lambda: parameters.definition("nope"),

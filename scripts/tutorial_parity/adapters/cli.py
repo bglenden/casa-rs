@@ -16,7 +16,7 @@ BINARY_BY_TASK = {
     "immoments": "immoments",
     "exportfits": "exportfits",
     "msexplore": "msexplore",
-    "imager": "casars-imager",
+    "tclean": "casars-imager",
     "split": "mstransform",
     "impbcor": "impbcor",
 }
@@ -27,7 +27,7 @@ POSITIONAL: dict[str, tuple[str, ...]] = {
     "immoments": ("imagename",),
     "exportfits": ("imagename", "fitsimage"),
     "msexplore": ("vis",),
-    "imager": (),
+    "tclean": (),
     "split": (),
     "impbcor": (),
 }
@@ -44,12 +44,7 @@ FLAG_NAMES = {
     "outfile": "outfile",
     "outputvis": "outputvis",
     "vis": "ms",
-    "cell_arcsec": "cell-arcsec",
-    "phasecenter_field": "phasecenter-field",
-    "threshold_jy": "threshold-jy",
-    "mask_box": "mask-box",
     "write_pb": "write-pb",
-    "dirty_only": "dirty-only",
     "keepflags": "keepflags",
     "color_by": "color-by",
     "plot_output": "plot-output",
@@ -61,11 +56,6 @@ TASK_FLAG_NAMES = {
 }
 
 OMIT_FOR_CLI = {"json"}
-
-# The imager declares no `overwrite`, as the Python projection drops it.
-OMIT_FOR_TASK: dict[str, frozenset[str]] = {
-    "imager": frozenset({"overwrite"}),
-}
 
 
 def returns_value(operation: Operation) -> bool:
@@ -103,9 +93,8 @@ def build_operation_argv(
         if key not in parameters:
             raise ValueError(f"{task}: missing positional parameter {key}")
         argv.append(str(parameters[key]))
-    omitted = OMIT_FOR_CLI | OMIT_FOR_TASK.get(task, frozenset())
     for key, value in parameters.items():
-        if key in positional or key in omitted:
+        if key in positional or key in OMIT_FOR_CLI:
             continue
         flag_name = TASK_FLAG_NAMES.get(task, {}).get(
             key, FLAG_NAMES.get(key, key.replace("_", "-"))
@@ -114,7 +103,7 @@ def build_operation_argv(
         if isinstance(value, bool):
             if value:
                 argv.append(flag)
-            elif key in {"write_pb", "dirty_only", "keepflags", "overwrite", "pbcor"}:
+            elif key in {"write_pb", "keepflags", "overwrite", "pbcor"}:
                 argv.append("--no-" + flag[2:])
             continue
         if isinstance(value, list):

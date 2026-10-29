@@ -31,10 +31,9 @@ INVENTORY = REPO_ROOT / "resources" / "casa-compat" / f"casa-{CASA_VERSION}"
 SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
 
-# The CASA task each casa-rs surface mimics, when its contract does not name
-# it yet (`casa_task`): imager is CASA's tclean (#931 PR 4e). calibrate and
-# msexplore are casa-rs tasks with no CASA counterpart.
-CASA_TASK = {"imager": "tclean"}
+# The CASA task each casa-rs surface mimics is its contract's `casa_task`, or
+# its own name. calibrate and msexplore are casa-rs tasks with no CASA
+# counterpart.
 CASA_RS_ONLY = frozenset({"calibrate", "msexplore"})
 # plotms waits for its own decision (#931): casaplotms is a GUI program.
 PENDING = {"plotms": "plotms waits for its own decision (#931): CASA's is the casaplotms GUI"}
@@ -80,7 +79,7 @@ def load_surfaces() -> dict[str, dict[str, Any]]:
 def casa_task(surface: dict[str, Any]) -> str | None:
     if surface["id"] in CASA_RS_ONLY:
         return None
-    return surface.get("casa_task") or CASA_TASK.get(surface["id"], surface["id"])
+    return surface.get("casa_task") or surface["id"]
 
 
 def casa_default(text: str | None) -> Any:

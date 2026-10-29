@@ -89,6 +89,13 @@ fn migrate_once(
             } if step.fills_when_unset(parameter) && when.holds_for_overrides(parameters) => {
                 explicit.insert(parameter.clone());
             }
+            // A value removed as the absence it was is omitted.
+            MigrationStep::Remove {
+                parameter,
+                when: Some(when),
+            } if when.holds_for_overrides(parameters) => {
+                explicit.remove(parameter);
+            }
             _ => {}
         }
         apply_migration_step(step, parameters)?;
@@ -110,8 +117,13 @@ fn apply_migration_step(
                 )));
             }
         }
-        MigrationStep::Remove { parameter } => {
-            parameters.remove(parameter);
+        MigrationStep::Remove { parameter, when } => {
+            if when
+                .as_ref()
+                .is_none_or(|when| when.holds_for_overrides(parameters))
+            {
+                parameters.remove(parameter);
+            }
         }
         MigrationStep::ReplaceValue {
             parameter,

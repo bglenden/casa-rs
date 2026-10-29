@@ -33,7 +33,7 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 }
 
 /// The imager's schema bundle in the shared envelope; the catalog's
-/// `imager` surface defines the request's parameters.
+/// `tclean` surface defines the request's parameters.
 pub fn imager_task_schema_bundle() -> TaskProviderContract {
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
@@ -62,8 +62,8 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
             python: None,
         },
         parameter_surfaces: vec![
-            builtin_surface_bundle("imager")
-                .expect("built-in imager parameter surface must remain valid"),
+            builtin_surface_bundle("tclean")
+                .expect("built-in tclean parameter surface must remain valid"),
         ],
         domain_schemas: TaskProviderSchemas {
             request_schema,
@@ -73,7 +73,7 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Catalog-named imager parameters as plain JSON: sparse in a request,
+/// Catalog-named `tclean` parameters as plain JSON: sparse in a request,
 /// every active parameter once resolved (the run's request echo).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]

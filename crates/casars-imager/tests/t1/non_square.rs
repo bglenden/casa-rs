@@ -73,7 +73,7 @@ fn a_non_square_image_keeps_its_sources_psf_and_mask_on_their_own_axes() {
     // the west source is left in the residual.
     let [x, y] = GEOMETRY.pixel(EAST);
     let mut masked = controls;
-    masked["mask_box"] = json!(format!("{},{},{},{}", x - 6, y - 4, x + 6, y + 4));
+    masked["mask"] = json!(format!("{},{},{},{}", x - 6, y - 4, x + 6, y + 4));
     let (_, products) = observation.image("non-square-box", masked);
     let mask = &products.get(".mask").pixels;
     for ((mx, my), value) in mask.indexed_iter() {

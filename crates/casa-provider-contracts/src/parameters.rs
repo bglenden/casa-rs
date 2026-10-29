@@ -304,6 +304,10 @@ pub enum NormalizationRule {
     Quantity {
         canonical_unit: String,
     },
+    /// A number given for a text value is read as its text, as CASA's
+    /// variant parameters take one: `tclean`'s `phasecenter=3` names field
+    /// 3 and `width=2` two channels (#931).
+    NumberAsText,
     Sequence {
         rules: Vec<NormalizationRule>,
     },
@@ -894,6 +898,11 @@ pub struct TaskDefinition {
     /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub casa_task: Option<String>,
+    /// The ids this surface had before it was renamed, which a saved
+    /// profile may still name: `imager`, re-surfaced as CASA's `tclean`
+    /// (#931). Its migrations carry such a profile to the current contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub former_ids: Vec<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
     pub bindings: Vec<SurfaceParameterBinding>,
@@ -934,6 +943,16 @@ impl SurfaceDefinition {
     /// The CASA task the surface mimics, when it presents CASA's signature.
     pub fn casa_task(&self) -> Option<&str> {
         self.task().casa_task.as_deref()
+    }
+
+    /// The ids the surface had before it was renamed.
+    pub fn former_ids(&self) -> &[String] {
+        &self.task().former_ids
+    }
+
+    /// Whether `id` names this surface, now or before it was renamed.
+    pub fn answers_to(&self, id: &str) -> bool {
+        self.id() == id || self.former_ids().iter().any(|former| former == id)
     }
 
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
@@ -984,8 +1003,13 @@ pub struct SurfaceCatalogBundle {
 }
 
 impl SurfaceCatalogBundle {
+    /// The surface `id` names, now or, for a saved profile's header, before
+    /// it was renamed.
     pub fn surface(&self, id: &str) -> Option<&SurfaceDefinition> {
-        self.surfaces.iter().find(|surface| surface.id() == id)
+        self.surfaces
+            .iter()
+            .find(|surface| surface.id() == id)
+            .or_else(|| self.surfaces.iter().find(|surface| surface.answers_to(id)))
     }
 
     pub fn embedded_surface(&self, id: &str) -> Option<SurfaceContractBundle> {
@@ -1084,11 +1108,17 @@ fn validate_surface_bundles_internal(
                 ),
             ));
         }
-        if !surface_ids.insert(bundle.surface.id().to_string()) {
-            errors.push(ContractValidationError::new(
-                "duplicate_surface",
-                format!("duplicate surface {}", bundle.surface.id()),
-            ));
+        // A former id names the surface in saved profiles, so it may name no
+        // other surface, now or before.
+        for id in std::iter::once(bundle.surface.id())
+            .chain(bundle.surface.former_ids().iter().map(String::as_str))
+        {
+            if !surface_ids.insert(id.to_string()) {
+                errors.push(ContractValidationError::new(
+                    "duplicate_surface",
+                    format!("duplicate surface {id}"),
+                ));
+            }
         }
         for concept in &bundle.catalog.concepts {
             let key = (concept.id.clone(), concept.semantic_revision);
@@ -1515,6 +1545,12 @@ pub fn validate_parameter_value(
                 special_values,
             },
         ) => validate_quantity_value(value, *dimension, canonical_unit, special_values),
+        // A bare number is a quantity in its canonical unit, as CASA's
+        // `threshold=0.0` is in Jy (#931).
+        (ParameterValue::Integer(_), ParameterType::Quantity { .. }) => Ok(()),
+        (ParameterValue::Float(value), ParameterType::Quantity { .. }) if value.is_finite() => {
+            Ok(())
+        }
         (ParameterValue::Integer(_), ParameterType::Float)
         | (ParameterValue::Float(_), ParameterType::Float) => Ok(()),
         (ParameterValue::String(value), ParameterType::Choice { values }) => {
@@ -2094,6 +2130,7 @@ mod tests {
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![binding],
                 migrations: Vec::new(),
@@ -2724,6 +2761,7 @@ mod tests {
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![first_binding, second_binding],
                 migrations: Vec::new(),

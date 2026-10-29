@@ -192,7 +192,7 @@ inventory all project from this catalog.
 ## Parameter Catalog and Surface Definitions
 
 ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by imager and simobserve.
+current-only profile contract used by simobserve.
 
 `ParameterCatalog` entries describe reusable concepts:
 
@@ -250,7 +250,10 @@ its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
 changed defaults. An empty migration set declares a current-only surface: only
 the exact current contract and canonical parameter names are accepted. The
-imager and simobserve surfaces are current-only. Future, stale, and otherwise
+simobserve surface is current-only. A chain may start after contract 1:
+`tclean`, the imager's surface since contract 29 (#931), migrates profiles
+from contract 28, the `imager` surface's last, and answers to that former
+id. Future, stale, and otherwise
 unmigratable contracts are errors.
 
 Parameter documents do not support includes, environment or shell expansion,
@@ -449,7 +452,7 @@ a second default or migration implementation.
 ## Current Repo Mapping
 
 - `calibrate`: task surface
-- `casars-imager` (surface `imager`): task surface
+- `casars-imager` (surface `tclean`): task surface
 - `msexplore` and `plotms`: task surfaces served by `msexplore`
 - `imhead` and `imstat`: task surfaces served by `imexplore`
 - `casars.data.Image`: object surface

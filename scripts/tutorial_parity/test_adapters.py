@@ -76,18 +76,24 @@ class CliPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one-operation section"):
             build_operation_argv(operation, self.resources)
 
-    def test_the_imager_command_line_drops_overwrite(self) -> None:
-        operation = Operation("imager", {"vis": "in.ms", "imagename": "img", "write_pb": True, "overwrite": True}, ("img.image",))
+    def test_tclean_runs_casars_imager_with_casas_values(self) -> None:
+        operation = Operation(
+            "tclean",
+            {"vis": "in.ms", "imagename": "img", "imsize": [250, 250], "cell": ["0.1arcsec"], "pbcor": False, "write_pb": True},
+            ("img.image",),
+        )
         self.assertEqual(
             build_operation_argv(operation, self.resources),
-            ["/bin/casars-imager", "--ms", "in.ms", "--imagename", "img", "--write-pb"],
+            [
+                "/bin/casars-imager", "--ms", "in.ms", "--imagename", "img", "--imsize", "250,250",
+                "--cell", "0.1arcsec", "--no-pbcor", "--write-pb",
+            ],
         )
 
-    def test_python_projection_uses_generated_imager_contract(self) -> None:
-        self.assertEqual(
-            python_parameters("imager", {"cell_arcsec": 0.1, "threshold_jy": 0.015, "field": 3, "phasecenter_field": 3, "overwrite": True}),
-            {"cell": "0.1arcsec", "threshold": "0.015Jy", "field": "3", "phasecenter_field": "3"},
-        )
+    def test_python_projection_passes_casas_tclean_values_through(self) -> None:
+        # tclean has CASA's signature (#931 PR 4e).
+        values = {"vis": "in.ms", "cell": ["0.1arcsec"], "threshold": "15mJy", "field": "3"}
+        self.assertEqual(python_parameters("tclean", {**values, "json": True}), values)
 
     def test_python_projection_passes_casas_image_values_through(self) -> None:
         # The image wrappers have CASA's signatures (#931).

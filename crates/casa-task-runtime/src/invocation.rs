@@ -140,8 +140,9 @@ mod tests {
 
     #[test]
     fn a_vlass_awproject_profile_is_one_complete_request() {
-        let bundle = builtin_surface_bundle("imager").unwrap();
+        let bundle = builtin_surface_bundle("tclean").unwrap();
         let mut session = ParameterSession::defaults(bundle).unwrap();
+        let scales = [0, 5, 12].map(ParameterValue::Integer).to_vec();
         let set = [
             ("vis", ParameterValue::String("vlass.ms".into())),
             ("imagename", ParameterValue::String("products/vlass".into())),
@@ -153,7 +154,8 @@ mod tests {
             ("gridder", ParameterValue::String("awproject".into())),
             ("cfcache", ParameterValue::String("/cache/vlass".into())),
             ("deconvolver", ParameterValue::String("mtmfs".into())),
-            ("scales", ParameterValue::String("0,5,12".into())),
+            ("scales", ParameterValue::Array(scales)),
+            ("conjbeams", ParameterValue::Bool(true)),
             ("normtype", ParameterValue::String("flatnoise".into())),
             ("parallel", ParameterValue::Bool(false)),
             ("usepointing", ParameterValue::Bool(true)),
@@ -169,7 +171,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("set VLASS profile parameter {name}: {error}"));
         }
         let request = request(&session);
-        assert_eq!(request.surface, "imager");
+        assert_eq!(request.surface, "tclean");
         for (name, _) in &set {
             assert_eq!(
                 request.values.get(*name),

@@ -19,7 +19,7 @@ use casars_imager::ImagingParameters;
 fn sent_parameters(invocation: &ProviderInvocation) -> Result<ImagingParameters, Box<dyn Error>> {
     let request: TaskRunRequest =
         serde_json::from_str(invocation.stdin.as_deref().ok_or("missing task request")?)?;
-    assert_eq!(request.surface, "imager");
+    assert_eq!(request.surface, "tclean");
     Ok(ImagingParameters(request.values))
 }
 
@@ -82,15 +82,17 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
         ("cf_resident_mb".into(), ParameterValue::Integer(384)),
         (
             "pointingoffsetsigdev".into(),
-            ParameterValue::String("0.0".into()),
+            ParameterValue::Array(vec![ParameterValue::Float(0.0)]),
         ),
+        // casa-rs's AW projection is CASA's conjbeams=True.
+        ("conjbeams".into(), ParameterValue::Bool(true)),
         (
             "normtype".into(),
             ParameterValue::String("flatnoise".into()),
         ),
         ("parallel".into(), ParameterValue::Bool(false)),
     ]);
-    let bundle = builtin_surface_bundle("imager")?;
+    let bundle = builtin_surface_bundle("tclean")?;
     let mut open = OpenSessionRequest::defaults(bundle.clone(), staging.path());
     open.override_patch = ResolutionPatch {
         values: overrides,

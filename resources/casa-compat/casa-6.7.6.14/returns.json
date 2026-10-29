@@ -4458,6 +4458,1709 @@
       "returns": {
         "type": "None"
       }
+    },
+    "tclean niter0": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "float"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "int"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "float"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean niter100": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                11
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean fullsummary": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                11
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "startIterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startPeakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startModelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startPeakResNM",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakResNM",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleStartIters",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "masksum",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "mpiServer",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "stopCode",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean cube": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                3
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        1,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        2,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
     }
   }
 }
