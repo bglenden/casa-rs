@@ -874,3 +874,151 @@ fn a_store_says_whether_it_holds_pointing_whatever_the_times() {
         "no pointing_xds"
     );
 }
+
+/// casacore's `phaseDirMeas(field)` at no time, which CASA's `tclean`
+/// centres an image on when its phase centre is left empty (#987): for a
+/// field that follows an ephemeris, the body's geocentric direction at the
+/// FIELD row's `TIME`, read from the samples the boundary carries, offset
+/// by `PHASE_DIR` in the ephemeris's frame; nothing for a fixed field.
+#[test]
+fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
+    let root = tempfile::tempdir().expect("root");
+    let (v2, _) = mosaic(root.path(), 4);
+    super::follow_ephemerides(&v2, &[0, -1, -1]);
+    let field_time_mjd = 59_000.25;
+    let mut ms = MeasurementSet::open(&v2).expect("ms");
+    ms.subtable_mut(SubtableId::Field)
+        .expect("FIELD")
+        .fill_column_range(
+            "TIME",
+            casa_tables::RowRange::new(0, 1),
+            Value::Scalar(ScalarValue::Float64(field_time_mjd * 86_400.0)),
+        )
+        .expect("the field's time");
+    ms.save().expect("save");
+    drop(ms);
+
+    let observation = open(&v2, &OpenOptions::default()).expect("v2 with an ephemeris");
+    let moving = &observation.catalogue().fields[0];
+    let series = moving
+        .ephemeris
+        .as_ref()
+        .expect("field 0 follows the comet");
+    let sample = series
+        .sample(field_time_mjd)
+        .expect("the comet at the field's time");
+    let expected = casa_types::measures::ephemeris::offset_true_angle(
+        &casa_types::measures::direction::MDirection::from_cosines(
+            sample.position_m,
+            series.frame(),
+        ),
+        <[f64; 2]>::from(moving.phase_centre.as_angles()),
+    )
+    .expect("the offset direction");
+
+    let ms = MeasurementSet::open(&v2).expect("ms");
+    let engine = casa_ms::derived::engine::MsCalEngine::with_measures(
+        &ms,
+        casa_test_support::deterministic_measures_provider(),
+    )
+    .and_then(|engine| engine.with_field_ephemerides(&ms))
+    .expect("an engine");
+    let at_no_time = |field| {
+        engine
+            .moving_field_reference_direction(&ms, field)
+            .expect("a direction")
+    };
+    let actual = at_no_time(0).expect("field 0 moves");
+    assert_eq!(actual.refer(), DirectionRef::ICRS);
+    assert_eq!(actual.refer(), expected.refer());
+    let [actual, expected] = [actual.cosines(), expected.cosines()];
+    for axis in 0..3 {
+        assert!(
+            (actual[axis] - expected[axis]).abs() <= 1.0e-15,
+            "axis {axis}: {} against {}",
+            actual[axis],
+            expected[axis]
+        );
+    }
+    assert!(at_no_time(1).is_none(), "a fixed field has its PHASE_DIR");
+}
+
+/// A field that follows an ephemeris carries it (#942): the table its
+/// `EPHEMERIS_ID` names, read once however many fields share it and equal
+/// to the samples today's route reads from it, while its phase centre
+/// keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
+/// counts each shared ephemeris once. An `EPHEMERIS_ID` whose table is
+/// missing refuses opening.
+#[test]
+fn fields_carry_the_ephemerides_they_follow() {
+    let root = tempfile::tempdir().expect("root");
+    let (v2, _) = mosaic(root.path(), 4);
+    let stated = open(&v2, &OpenOptions::default())
+        .expect("v2")
+        .catalogue()
+        .fields
+        .clone();
+    super::follow_ephemerides(&v2, &[0, 0, -1]);
+    let observation = open(&v2, &OpenOptions::default()).expect("v2 with ephemerides");
+    let catalogue = observation.catalogue();
+    let table = v2.join("FIELD").join("EPHEM0_COMET0.tab");
+    let budget = casa_ms::SelectedObservationContentBudget::new(1 << 20, 1, 1);
+    let today =
+        casa_ms::SelectedObservationEphemeris::external(&table, budget.reference_data_budget())
+            .expect("today's reading");
+    let expected = today.external_series().expect("a table");
+    let [first, second, fixed] = &catalogue.fields[..] else {
+        panic!("three fields");
+    };
+    let (first_ephemeris, second_ephemeris) = (
+        first.ephemeris.as_ref().expect("field 0 follows the comet"),
+        second
+            .ephemeris
+            .as_ref()
+            .expect("field 1 follows the comet"),
+    );
+    assert_eq!(**first_ephemeris, **expected);
+    assert!(std::sync::Arc::ptr_eq(first_ephemeris, second_ephemeris));
+    assert!(fixed.ephemeris.is_none());
+    for (field, stated) in catalogue.fields.iter().zip(&stated) {
+        assert_eq!(
+            field.phase_centre.as_angles(),
+            stated.phase_centre.as_angles()
+        );
+    }
+    assert_eq!(
+        catalogue.ephemeris_bytes(),
+        2 * size_of::<usize>()
+            + size_of::<casa_observation::FieldEphemeris>()
+            + expected.held_bytes()
+    );
+    drop(observation);
+
+    std::fs::remove_dir_all(&table).expect("remove the table");
+    assert!(matches!(
+        open(&v2, &OpenOptions::default()).err(),
+        Some(ObservationError::InvalidStore { reason }) if reason.contains("ephemeris")
+    ));
+
+    // Today's imaging engine keeps casacore's leniency: it refuses
+    // only the direction of a field whose table cannot be read.
+    let ms = MeasurementSet::open(&v2).expect("ms");
+    let engine = casa_ms::derived::engine::MsCalEngine::with_measures(
+        &ms,
+        casa_test_support::deterministic_measures_provider(),
+    )
+    .and_then(|engine| engine.with_field_ephemerides(&ms))
+    .expect("an engine over a table it cannot read");
+    let time_s = 59_000.25 * 86_400.0;
+    assert!(engine.field_moves(0) && engine.field_moves(1) && !engine.field_moves(2));
+    let refused = engine.observation_direction_j2000(time_s, 0).err();
+    assert!(
+        refused
+            .as_ref()
+            .is_some_and(|error| error.to_string().contains("cannot be read")),
+        "{refused:?}"
+    );
+    engine
+        .observation_direction_j2000(time_s, 2)
+        .expect("the fixed field's direction");
+}

@@ -1167,6 +1167,82 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
     }
 }
 
+/// Rows whose source fails once it has filled `after` blocks.
+struct FailingRows {
+    rows: Rows,
+    after: usize,
+    filled: usize,
+}
+
+impl BoundedSource for FailingRows {
+    fn begin(
+        &mut self,
+        planes: PlaneRange,
+        restrict: bool,
+        content: SampleContent,
+    ) -> Result<(), SourceError> {
+        self.rows.begin(planes, restrict, content)
+    }
+
+    fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError> {
+        if self.filled == self.after {
+            return Err("the source failed".into());
+        }
+        let more = self.rows.fill(block)?;
+        self.filled += usize::from(more);
+        Ok(more)
+    }
+
+    fn maximum_block(&self) -> BlockShape {
+        self.rows.maximum_block()
+    }
+}
+
+/// A source that fails midway fails the pass, however far its producer
+/// read ahead of the pass: the failure is not taken for the source's end,
+/// and no wave hands back images of part of the data.
+#[test]
+fn a_source_failing_midway_fails_the_pass() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let weighting = WeightingGeneration::Natural { taper: None };
+    let domains = [planes(&operator, &resampler, 1)];
+    let pass = MajorCyclePass {
+        domains: &domains,
+        weighting: &weighting,
+        modes: ModeSet::DATA,
+        model: None,
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
+        weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
+    };
+    for workers in [1, 3] {
+        let mut rows = FailingRows {
+            // Nine blocks of the fixture's 37 rows.
+            rows: Rows::random(9 * 37, 41, operator.geometry()),
+            after: 3,
+            filled: 0,
+        };
+        let team = WorkerTeam::new(workers).expect("team");
+        let result = run_major_cycle(
+            &pass,
+            &mut rows,
+            &team,
+            &Cancel::new(),
+            &mut |_, _| panic!("a failed pass hands back no images"),
+            None,
+        );
+        assert!(
+            matches!(result, Err(PassError::Source(_))),
+            "{workers} workers: {result:?}"
+        );
+    }
+}
+
 #[test]
 fn the_point_source_is_flux_times_the_psf_through_the_pass() {
     // A unit-flux source at the phase centre observed with unit weights:

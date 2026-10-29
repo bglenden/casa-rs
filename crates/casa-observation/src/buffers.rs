@@ -788,6 +788,7 @@ pub(crate) mod tests {
                 delay_centre: None,
                 reference_centre: None,
                 flagged: None,
+                ephemeris: None,
             }],
             scans: vec![ScanEntry {
                 name: "1".to_string(),

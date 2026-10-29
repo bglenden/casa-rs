@@ -874,7 +874,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 }
 
 /// A cleaned run that writes its model to `MODEL_DATA`: its last pass
-/// predicts every selected sample and hands each block to the writer.
+/// predicts every selected sample and hands each block to the writer, on
+/// either route. The batch route runs first, so its first run creates and
+/// seeds `MODEL_DATA` (#932, step 5).
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
     if !alone("a_visibility_write_stays_within_its_admission") {
@@ -884,20 +886,198 @@ fn a_visibility_write_stays_within_its_admission() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for (imsize, workers) in [(256, 1), (1024, 4)] {
-        check(
-            &mut breaches,
-            &format!("savemodel {imsize} px {workers} workers"),
-            &request(
+    for route in [SourceRoute::ObservationBatches, SourceRoute::SelectedRows] {
+        for (imsize, workers) in [(256, 1), (1024, 4)] {
+            let mut savemodel = request(
                 &measurement_set,
-                &root.path().join(format!("savemodel-{imsize}")),
+                &root.path().join(format!("savemodel-{route:?}-{imsize}")),
                 imsize,
                 json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+            );
+            savemodel.source_route = route;
+            check(
+                &mut breaches,
+                &format!("savemodel {route:?} {imsize} px {workers} workers"),
+                &savemodel,
+                workers,
+                AMPLE,
+            );
+        }
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A start model (#841 Phase 6b) is read, zeroed where masked and
+/// regridded under its own admission before the initial pass, which then
+/// grids its residual with the model: on its own grid, regridded from
+/// 256² onto 1024² (where seeding holds about 45 MB, which the law
+/// resolves), and with no minor cycle while `MODEL_DATA` is written.
+#[test]
+fn a_start_model_stays_within_its_admission() {
+    if !alone("a_start_model_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    casa_imaging_application::execute(
+        &request(
+            &measurement_set,
+            &root.path().join("start"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("the run whose model starts the others");
+    let start_model = root.path().join("start.model");
+    let mut breaches = Vec::new();
+    for (label, imsize, workers, controls) in [
+        ("start model", 256, 1, json!({ "deconvolver": "hogbom" })),
+        (
+            "start model regridded",
+            1024,
+            4,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        (
+            "start model savemodel",
+            256,
+            1,
+            json!({ "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls["startmodel"] = json!(start_model);
+        check(
+            &mut breaches,
+            &format!("{label} {imsize} px {workers} workers"),
+            &request(
+                &measurement_set,
+                &root.path().join(label.replace(' ', "-")),
+                imsize,
+                controls,
             ),
             workers,
             AMPLE,
         );
     }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// #970 review (Astra, finding 2): a seeded cube's initial pass plans its
+/// waves in what seeding leaves. It took the largest wave that fitted and
+/// only then admitted the seeding beside it, so a cube whose one wave and
+/// seeding fitted was refused until every plane did. Just above what it
+/// needs, a cube seeded from a cleaned cube's model runs in waves and holds
+/// no more than it was admitted.
+#[test]
+fn a_seeded_cube_runs_in_waves_within_its_admission() {
+    if !alone("a_seeded_cube_runs_in_waves_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the cube whose model seeds the next",
+        &cube(&measurement_set, &root.path().join("start"), json!({})),
+        4,
+        AMPLE,
+    ));
+    let seeded = cube(
+        &measurement_set,
+        &root.path().join("seeded"),
+        json!({ "startmodel": root.path().join("start.model") }),
+    );
+    let waves = just_above(&mut breaches, "seeded cube", &seeded);
+    assert!(
+        waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
+        "the seeded cube runs in waves just above what it needs: {waves:?}"
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// #970 review: a mosaic's start model, in flat-noise units, is made
+/// physical with the weights of an initial pass without it and seeds a
+/// refresh of that pass's residual. The two passes, the seeding and its
+/// conversion beside the refresh, stay within their admission: cleaning
+/// on, with no minor cycle while `MODEL_DATA` is written, and as a cube
+/// just above what it needs, in waves.
+#[test]
+fn a_seeded_mosaic_stays_within_its_admission() {
+    if !alone("a_seeded_mosaic_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
+    warm(&alma, root.path());
+    let mosaic = json!({ "gridder": "mosaic", "deconvolver": "hogbom" });
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the mosaic whose model seeds the others",
+        &request(&alma, &root.path().join("start"), 256, mosaic.clone()),
+        2,
+        AMPLE,
+    ));
+    let start_model = root.path().join("start.model");
+    for (label, controls) in [
+        ("seeded mosaic", json!({ "startmodel": start_model })),
+        (
+            "seeded mosaic savemodel",
+            json!({ "startmodel": start_model, "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls
+            .as_object_mut()
+            .expect("controls")
+            .extend(mosaic.as_object().expect("mosaic").clone());
+        drop(check(
+            &mut breaches,
+            label,
+            &request(
+                &alma,
+                &root.path().join(label.replace(' ', "-")),
+                256,
+                controls,
+            ),
+            2,
+            AMPLE,
+        ));
+    }
+    let cube_controls = json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 });
+    drop(check(
+        &mut breaches,
+        "the mosaic cube whose model seeds the next",
+        &cube(
+            &alma,
+            &root.path().join("cube-start"),
+            cube_controls.clone(),
+        ),
+        2,
+        AMPLE,
+    ));
+    let mut seeded = cube_controls;
+    seeded["startmodel"] = json!(root.path().join("cube-start.model"));
+    let waves = just_above(
+        &mut breaches,
+        "seeded mosaic cube",
+        &cube(&alma, &root.path().join("seeded-cube"), seeded),
+    );
+    assert!(
+        waves.is_some_and(|planes| planes < 8),
+        "the seeded mosaic cube runs in waves just above what it needs: {waves:?}"
+    );
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
@@ -937,7 +1117,7 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
         &root.path().join("mosaic-cube"),
         json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 }),
     );
-    mosaic.imsize = 1024;
+    mosaic.imsize = [1024; 2];
     check(&mut breaches, "mosaic cube 8 × 1024²", &mosaic, 2, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
 }

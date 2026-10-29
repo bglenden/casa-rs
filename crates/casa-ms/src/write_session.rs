@@ -2017,6 +2017,7 @@ impl MeasurementSetWriteSession {
             .collect::<HashMap<_, _>>();
         let mut seen = HashSet::with_capacity(batch.columns.len());
         let mut batch_bytes = 0usize;
+        let mut columns_bytes = Vec::with_capacity(batch.columns.len());
         for column in &batch.columns {
             if !seen.insert(column.name.as_str()) {
                 return Err(MeasurementSetWriteError::InvalidPlan(format!(
@@ -2052,6 +2053,7 @@ impl MeasurementSetWriteSession {
             batch_bytes = batch_bytes
                 .checked_add(column_bytes)
                 .ok_or(MeasurementSetWriteError::ByteOverflow)?;
+            columns_bytes.push((column.name.clone(), column_bytes));
         }
         if batch_bytes > self.plan.batch_bytes {
             return Err(MeasurementSetWriteError::InvalidPlan(format!(
@@ -2061,29 +2063,30 @@ impl MeasurementSetWriteSession {
         }
 
         let write_started = Instant::now();
-        let column_names = batch
-            .columns
+        let column_names = columns_bytes
             .iter()
-            .map(|column| column.name.as_str())
+            .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>();
         let mut writer = measurement_set
             .main_table_mut()
             .row_accessor_mut()
             .prepare(&column_names)
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-        for column in &batch.columns {
+        // The batch's values move into the table's rows: a batch is written
+        // once, so no cell is copied.
+        for column in batch.columns {
             let slot = writer.column_index(&column.name).ok_or_else(|| {
                 MeasurementSetWriteError::Column(format!(
                     "prepared mutation slot missing for {}",
                     column.name
                 ))
             })?;
-            match &column.values {
+            match column.values {
                 MeasurementSetMutationColumnValues::Scalars(values) => {
                     for (&row, value) in batch.row_indices.iter().zip(values) {
                         writer
                             .seek(row)
-                            .and_then(|()| writer.set_value_at(slot, Value::Scalar(value.clone())))
+                            .and_then(|()| writer.set_value_at(slot, Value::Scalar(value)))
                             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                     }
                 }
@@ -2091,7 +2094,7 @@ impl MeasurementSetWriteSession {
                     for (&row, value) in batch.row_indices.iter().zip(values) {
                         writer
                             .seek(row)
-                            .and_then(|()| writer.set_value_at(slot, Value::Array(value.clone())))
+                            .and_then(|()| writer.set_value_at(slot, Value::Array(value)))
                             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                     }
                 }
@@ -2113,9 +2116,8 @@ impl MeasurementSetWriteSession {
         *bytes_written = bytes_written
             .checked_add(batch_bytes)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        for column in &batch.columns {
-            let column_bytes = mutation_values_bytes(&column.values)?;
-            let total = column_bytes_written.entry(column.name.clone()).or_default();
+        for (name, column_bytes) in columns_bytes {
+            let total = column_bytes_written.entry(name).or_default();
             *total = total
                 .checked_add(column_bytes)
                 .ok_or(MeasurementSetWriteError::ByteOverflow)?;

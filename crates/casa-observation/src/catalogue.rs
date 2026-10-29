@@ -8,6 +8,7 @@
 //! links to it by [`PartitionId`] and copies none of it.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -17,6 +18,7 @@ use casa_types::measures::{EpochRef, MEpoch, MjdHighPrec};
 use casa_types::quanta::Quantity;
 
 use crate::ObservationError;
+use crate::ephemeris::FieldEphemeris;
 
 mod metadata;
 
@@ -169,6 +171,11 @@ pub struct FieldEntry {
     pub reference_centre: Option<MDirection>,
     /// `FLAG_ROW`.
     pub flagged: Option<bool>,
+    /// The ephemeris the field follows, when it follows one: its phase
+    /// centre is then an offset from the body's direction seen from the
+    /// observatory (MSv2 `EPHEMERIS_ID`; MSv4
+    /// `field_and_source_ephemeris`).
+    pub ephemeris: Option<Arc<FieldEphemeris>>,
 }
 
 /// One scan of the catalogue.
@@ -485,6 +492,30 @@ impl Catalogue {
         &self.observations[id.0 as usize]
     }
 
+    /// Bytes the fields' ephemerides hold, each counted once however many
+    /// fields share it: what the catalogue holds beyond its entries that
+    /// grows with a store's content rather than its layout.
+    #[must_use]
+    pub fn ephemeris_bytes(&self) -> usize {
+        let mut counted: Vec<&Arc<FieldEphemeris>> = Vec::new();
+        for ephemeris in self
+            .fields
+            .iter()
+            .filter_map(|field| field.ephemeris.as_ref())
+        {
+            if !counted.iter().any(|known| Arc::ptr_eq(known, ephemeris)) {
+                counted.push(ephemeris);
+            }
+        }
+        counted
+            .iter()
+            // The shared allocation holds two reference counts beside it.
+            .map(|ephemeris| {
+                2 * size_of::<usize>() + size_of::<FieldEphemeris>() + ephemeris.held_bytes()
+            })
+            .sum()
+    }
+
     /// Data group `name` of partition `id`, if it has one.
     #[must_use]
     pub fn data_group(&self, id: PartitionId, name: &str) -> Option<&DataGroupEntry> {
@@ -688,6 +719,7 @@ mod tests {
             delay_centre: None,
             reference_centre: None,
             flagged: None,
+            ephemeris: None,
         }
     }
 

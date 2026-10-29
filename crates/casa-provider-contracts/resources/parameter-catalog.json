@@ -292,7 +292,7 @@
     },
     {
       "id": "image.geometry.cell",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "cell",
       "value_domain": {
         "kind": "array",
@@ -321,9 +321,10 @@
       "semantic_role": "geometry",
       "documentation": {
         "summary": "Image cell size in arcseconds",
-        "details": null,
+        "details": "One value for both axes, given alone or as a one-element list, or the x and y cells, as CASA's tclean takes them.",
         "examples": [
           "1arcsec",
+          "['0.5arcsec', '0.4arcsec']",
           "0.1deg",
           "auto"
         ]
@@ -332,7 +333,7 @@
     },
     {
       "id": "image.geometry.imsize",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "imsize",
       "value_domain": {
         "kind": "optional",
@@ -361,10 +362,11 @@
       "semantic_role": "geometry",
       "documentation": {
         "summary": "Image dimensions in pixels",
-        "details": null,
+        "details": "One size for both axes, given alone or as a one-element list, or the x and y sizes, as CASA's tclean takes them.",
         "examples": [
           "512",
-          "[128, 128]",
+          "[120]",
+          "[192, 128]",
           "auto"
         ]
       },
@@ -6500,6 +6502,29 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.startmodel",
+      "semantic_revision": 2,
+      "casa_name": "startmodel",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "image"
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA image in Jy/pixel that the model starts from",
+        "details": "Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept; its direction frame must be the image's, since casa-rs does not convert frames. Its Stokes must be the image's, plane for plane. A cube's start model has the cube's spectral axis; an MFS image's has one plane, at any frequency, as CASA's regrid takes it. The first major cycle subtracts its prediction, and the restored image includes it.",
+        "examples": [
+          "deep.model"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.starttime",
       "semantic_revision": 1,
       "casa_name": "starttime",
@@ -7051,6 +7076,35 @@
         "details": null,
         "examples": [
           "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.uvtaper",
+      "semantic_revision": 2,
+      "casa_name": "uvtaper",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": 3,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none.",
+        "details": "As angles, bmaj and bmin are the taper's FWHM in the image plane; in wavelengths (lambda, klambda) its HWHM in the uv plane. bpa is the position angle, 0deg by default; bmin defaults to bmaj. A value with no unit is refused.",
+        "examples": [
+          "['10arcsec']",
+          "['5klambda', '3klambda', '45deg']"
         ]
       },
       "persistence_class": "profile"

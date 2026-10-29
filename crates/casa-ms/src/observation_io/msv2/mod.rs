@@ -97,6 +97,11 @@ pub struct Msv2Observation {
     spectral_weights: bool,
     /// Whether MAIN has `SIGMA_SPECTRUM`.
     spectral_sigmas: bool,
+    /// Each data group's visibility column and its tile shape, read when
+    /// the observation opened: an estimate does not read `table.dat` again,
+    /// which an update session over the same MeasurementSet rewrites as it
+    /// saves each batch.
+    tile_shapes: Vec<(String, Option<Vec<usize>>)>,
     options: OpenOptions,
 }
 
@@ -193,6 +198,16 @@ impl Msv2Observation {
             grant,
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
+        // A shape is a hint for an estimate's natural blocks: a header that
+        // cannot be read leaves its group the hint's fallback, as a column
+        // without tiles has, and refuses nothing until the group is read.
+        let tile_shapes = groups
+            .iter()
+            .map(|group| {
+                let shape = main.array_column_tile_shape(&group.visibilities);
+                (group.visibilities.clone(), shape.ok().flatten())
+            })
+            .collect();
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
         for (key, grid) in index.partitions {
@@ -284,6 +299,7 @@ impl Msv2Observation {
             main_states: index.states,
             spectral_weights,
             spectral_sigmas,
+            tile_shapes,
             options: options.clone(),
             ms,
         })
@@ -362,6 +378,18 @@ impl Msv2Observation {
             index::ROWS_PER_CHUNK
         };
         main_rows * (size_of::<u32>() + size_of::<f64>()) + chunk * index::CHUNK_ROW_BYTES
+    }
+
+    /// MAIN's rows when the observation opened.
+    pub(in crate::observation_io) fn main_rows(&self) -> usize {
+        self.ms.main_table().row_count()
+    }
+
+    /// The MeasurementSet's path.
+    pub(in crate::observation_io) fn path(&self) -> Result<&Path, ObservationError> {
+        self.ms
+            .path()
+            .ok_or_else(|| invalid("the MeasurementSet has no path to write back to"))
     }
 
     /// Bytes the opening's index holds while the observation is open: each
@@ -538,10 +566,10 @@ impl Msv2Observation {
         )?;
         let group = &entry.data_groups[resolved.data_group];
         let tile = self
-            .ms
-            .main_table()
-            .array_column_tile_shape(&group.visibilities)
-            .map_err(table_error)?;
+            .tile_shapes
+            .iter()
+            .find(|(column, _)| *column == group.visibilities)
+            .and_then(|(_, shape)| shape.clone());
         let estimate = PartitionEstimate {
             partition: id,
             times,

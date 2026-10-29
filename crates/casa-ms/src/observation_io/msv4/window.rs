@@ -152,6 +152,11 @@ where
             + self.chunk_count() * size_of::<usize>()
     }
 
+    /// Bytes one decoded chunk holds.
+    pub(super) fn chunk_bytes(&self) -> usize {
+        self.chunk.iter().product::<usize>() * size_of::<T>()
+    }
+
     /// Chunks in one row over the held channels.
     fn chunk_count(&self) -> usize {
         self.grid[1] * self.channels.len().div_ceil(self.chunk[2]) * self.grid[3]

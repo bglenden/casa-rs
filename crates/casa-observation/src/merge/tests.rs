@@ -91,6 +91,7 @@ fn field(name: &str, longitude: f64, latitude: f64) -> FieldEntry {
         delay_centre: Some(direction.clone()),
         reference_centre: Some(direction),
         flagged: Some(false),
+        ephemeris: None,
     }
 }
 

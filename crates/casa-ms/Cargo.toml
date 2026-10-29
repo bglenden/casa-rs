@@ -196,6 +196,10 @@ name = "msv2_opening_memory"
 path = "tests/msv2_opening_memory.rs"
 
 [[test]]
+name = "msv2_update_memory"
+path = "tests/msv2_update_memory.rs"
+
+[[test]]
 name = "spectral_envelope_memory"
 path = "tests/spectral_envelope_memory.rs"
 

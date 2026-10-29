@@ -489,7 +489,8 @@ pub(crate) fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, 
         .any(|pixel| pixel.fract() != 0.0 || *pixel < 0.0)
     {
         return Err(ImagingError::Unsupported {
-            reason: "the image reference pixel must be a whole pixel",
+            reason: "an odd image size is not supported: the reference pixel, half the size, \
+                     must be a whole pixel",
         });
     }
     Ok(ImageExtent {

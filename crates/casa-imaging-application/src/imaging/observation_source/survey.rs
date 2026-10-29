@@ -35,7 +35,7 @@ pub(super) fn survey(
     route: &BatchRoute,
     factors: bool,
 ) -> Result<Vec<PartitionSurvey>, SourceError> {
-    let catalogue = route.observation.catalogue();
+    let catalogue = route.observation().catalogue();
     let mut conversions = HashMap::new();
     let mut buffers = BatchBuffers::default();
     let origin = MjdHighPrec::new(0.0, 0.0);
@@ -51,7 +51,7 @@ pub(super) fn survey(
                 partition,
                 route.batching.survey_bytes(),
             );
-            let mut traversal = route.observation.bind_read(&request)?;
+            let mut traversal = route.observation().bind_read(&request)?;
             let mut span: Option<[f64; 2]> = None;
             let mut range = FactorRange::EMPTY;
             while let Some(event) = traversal.next(&mut buffers)? {

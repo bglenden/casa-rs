@@ -119,6 +119,14 @@ pub(super) struct SetupDemand<'r> {
     pub(super) modes: ModeSet,
     /// What the initial pass also holds: the model.
     pub(super) model_bytes: u64,
+    /// With a start model, what seeding the model holds beside the pass
+    /// that seeds it (`StartModel::seeding_bytes`, with its conversion when
+    /// the run reseeds); the pass then grids its residual, with the model.
+    pub(super) start_model: Option<u64>,
+    /// Whether the start model is made physical with the initial pass's
+    /// weights and seeds a refresh of its residual (`cycle::seeding`): the
+    /// initial pass then has no model, and the refresh pass seeds.
+    pub(super) reseeds: bool,
     /// The modes and model of the pass that writes visibilities, and what
     /// the write holds; it holds every plane.
     pub(super) write: Option<(ModeSet, bool, u64)>,
@@ -222,19 +230,37 @@ impl SetupDemand<'_> {
             chunk_sets: 1,
         };
         let refreshing = wave(ModeSet::DATA, true);
-        let mut first = wave(self.modes, false).bytes(1) + self.stitch.pass_bytes(true);
-        let mut refresh = refreshing.bytes(1) + self.stitch.pass_bytes(false);
+        // The pass that seeds holds the seeding beside its wave: the initial
+        // pass, or the refresh after it when the run reseeds.
+        let seeding = self.start_model.unwrap_or(0);
+        let (first_seeding, refresh_seeding) = if self.reseeds {
+            (0, seeding)
+        } else {
+            (seeding, 0)
+        };
+        let mut first = wave(self.modes, self.start_model.is_some() && !self.reseeds).bytes(1)
+            + self.stitch.pass_bytes(true)
+            + first_seeding;
+        let mut refresh = refreshing.bytes(1) + self.stitch.pass_bytes(false) + refresh_seeding;
         // A run that cleans writes on its last refresh, or on a prediction
-        // after it; one that does not, on its first pass (`write_pass`). The
-        // pass that writes holds every plane (#778 review).
+        // after it; one that does not, on its first major cycle
+        // (`write_pass`), beside the seeding (#970 review). The pass that
+        // writes holds every plane (#778 review).
         if let Some((modes, with_model, written)) = self.write {
             let demand = wave(modes, with_model);
             let writing =
                 demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written;
+            let cleans = self
+                .problem
+                .reconstruction()
+                .controls()
+                .max_minor_iterations()
+                > 0;
+            let beside = if cleans { 0 } else { seeding };
             if self.refresh.is_some() {
-                refresh = refresh.max(writing);
+                refresh = refresh.max(writing + if self.reseeds { beside } else { 0 });
             } else {
-                first = first.max(writing);
+                first = first.max(writing + beside);
             }
         }
         let stages = StageCharges {

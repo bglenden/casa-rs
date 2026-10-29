@@ -15,6 +15,8 @@ mod fields;
 #[cfg(unix)]
 #[path = "observation_io/geometry_inputs.rs"]
 mod geometry_inputs;
+#[path = "common/layouts.rs"]
+mod layouts;
 #[cfg(unix)]
 #[path = "observation_io/metadata.rs"]
 mod metadata;
@@ -81,6 +83,51 @@ pub(crate) fn three_scans(path: &Path) {
             .expect("scan");
     }
     ms.save().expect("save");
+}
+
+/// Two days of a body near RA 10°, Dec −20°, 1 AU away and receding:
+/// MJD, RA and DEC (degrees), Rho (AU) and RadVel (AU a day).
+pub(crate) const COMET: [casa_test_support::ephemeris_table::EphemerisRow; 3] = [
+    [58_999.0, 10.0, -20.0, 1.0, 0.001],
+    [59_000.0, 10.1, -20.05, 1.001, 0.002],
+    [59_001.0, 10.2, -20.1, 1.002, 0.003],
+];
+
+/// Make field `row` of the MSv2 at `path` follow ephemeris `ids[row]`
+/// (−1 for none), each id's table holding [`COMET`].
+pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
+    let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let field = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
+    field
+        .add_column(
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                -1,
+            ))),
+        )
+        .expect("EPHEMERIS_ID");
+    for (row, id) in ids.iter().enumerate() {
+        field
+            .fill_column_range(
+                "EPHEMERIS_ID",
+                casa_tables::RowRange::new(row, row + 1),
+                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(*id)),
+            )
+            .expect("an ephemeris id");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let mut written = std::collections::BTreeSet::new();
+    for id in ids.iter().copied().filter(|id| *id >= 0) {
+        if written.insert(id) {
+            casa_test_support::ephemeris_table::write_field_ephemeris(
+                path,
+                id,
+                &format!("COMET{id}"),
+                &COMET,
+            );
+        }
+    }
 }
 
 /// Options that partition an MSv2 by scan as well.

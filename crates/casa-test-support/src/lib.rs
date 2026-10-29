@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod aipsio_oracle;
+pub mod ephemeris_table;
 pub mod gridder_interop;
 pub mod hogbom_interop;
 mod image_oracle;

@@ -457,6 +457,17 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
             what: "writing MSv2 fields in another frame than J2000",
         });
     }
+    // A moving field's phase centre is an offset from its body (#942),
+    // which the plan does not write.
+    if catalogue
+        .fields
+        .iter()
+        .any(|field| field.ephemeris.is_some())
+    {
+        return Err(ObservationError::Unsupported {
+            what: "writing MSv2 fields that follow an ephemeris",
+        });
+    }
     for entry in &catalogue.partitions {
         if entry.frequencies_hz.is_empty() {
             return Err(ObservationError::Unsupported {

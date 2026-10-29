@@ -469,11 +469,11 @@ fn an_updater_of_a_slice_refuses_times_outside_it() {
     }
 }
 
-/// The MSv2 updater writes batch for batch in delivery order: a batch of a
-/// later partition while an earlier one's selected times are unwritten is
-/// refused.
+/// An updater takes its partitions in any order: the MSv2 fixture split
+/// into three scans' partitions, written last partition first, holds every
+/// flag set.
 #[test]
-fn an_updater_refuses_a_partition_before_the_last_is_written() {
+fn an_updater_takes_its_partitions_in_any_order() {
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");
     three_scans(&path);
@@ -483,27 +483,33 @@ fn an_updater_refuses_a_partition_before_the_last_is_written() {
         partitions: session.observation().catalogue().partition_ids(),
         ..request(0..8, usize::MAX)
     };
-    let mut updater = session.updater(&request, &[0]).expect("updater");
     let mut traversal = session.observation().bind_read(&request).expect("bind");
     let mut buffers = BatchBuffers::default();
-    let mut refused = false;
+    let mut delivered = Vec::new();
     while let Some(event) = traversal.next(&mut buffers).expect("read") {
-        let ReadEvent::Batch(batch) = event else {
-            continue;
-        };
-        if batch.partition == PartitionId(0) {
-            continue;
+        if let ReadEvent::Batch(batch) = event {
+            delivered.push((batch.address(), Array3::from_elem(batch.shape(), true)));
         }
-        let set = Array3::from_elem(batch.shape(), true);
-        let written = updater.write(
-            &batch,
-            &[PatchValues::Flags {
-                set: Some(set.view()),
-                clear: None,
-            }],
-        );
-        refused = matches!(written, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("not all written"));
-        break;
     }
-    assert!(refused, "partition 0 was skipped");
+    drop(traversal);
+    assert_eq!(delivered.len(), 3, "one batch a partition");
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    for (address, set) in delivered.iter().rev() {
+        updater
+            .write_at(
+                address,
+                &[PatchValues::Flags {
+                    set: Some(set.view()),
+                    clear: None,
+                }],
+            )
+            .expect("a later partition first");
+    }
+    updater.finish().expect("finish");
+    drop(session);
+    let reopened = casa_ms::observation_io::open(&path, &by_scan()).expect("reopen");
+    let flagged = read(&*reopened, &request)
+        .values()
+        .all(|sample| sample.flags.iter().all(|flag| *flag));
+    assert!(flagged, "every partition written");
 }
