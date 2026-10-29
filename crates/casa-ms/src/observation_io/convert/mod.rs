@@ -111,8 +111,9 @@ pub fn to_msv2(
             tolerance: casa_observation::MergeTolerance::default(),
             history: Vec::new(),
         },
+        Destination::New(destination.to_path_buf()),
     )?;
-    let report = plan.write(destination, Destination::New)?;
+    let report = plan.write()?;
     Ok(ConversionReport {
         losses: report.losses,
         partitions: report.partitions,

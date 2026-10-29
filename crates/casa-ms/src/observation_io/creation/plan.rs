@@ -18,6 +18,7 @@ use super::inputs::Input;
 use super::msv2_pointing::{self, Pointed};
 use super::msv2_rows::{MainRows, Occupancy};
 use super::pointing_plan::{self, PointingPlan};
+use super::replace::Replacing;
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
     losses, msv2_tables, occupancy,
@@ -64,19 +65,34 @@ pub struct CreationPlan {
     occupancy: Occupancy,
     output: Catalogue,
     options: CreationOptions,
+    publication: Publication,
+}
+
+/// How the planned MeasurementSet is published.
+enum Publication {
+    /// Renamed from its staging directory to a new path.
+    New(MeasurementSetCreateTarget),
+    /// Exchanged with the MeasurementSet it replaces, whose lock the plan
+    /// holds.
+    Replace(Replacing),
 }
 
 impl CreationPlan {
-    /// Open `inputs` and plan the MeasurementSet created from them, in
-    /// input order, reading what the plan must know before writing: each
-    /// input's losses, its pointing, its grids and, with padding omitted,
-    /// its acquisitions.
+    /// Open `inputs` and plan the MeasurementSet created from them at
+    /// `destination`, in input order, reading what the plan must know before
+    /// writing: each input's losses, its pointing, its grids and, with
+    /// padding omitted, its acquisitions. A [`Destination::Replace`]
+    /// destination is locked first.
     ///
     /// # Errors
     ///
-    /// Nothing is written by a plan. A weight scale that is not finite and
-    /// positive, no input, or padding flagged where partitions combine
-    /// ([`ObservationError::InvalidRequest`]); a loss not accepted
+    /// Nothing is written by a plan. An existing path for a
+    /// [`Destination::New`], or for a [`Destination::Replace`] no
+    /// MeasurementSet, one another process holds for writing, or a
+    /// filesystem that cannot exchange directories. A weight scale that is
+    /// not finite and positive, no input, or padding flagged where
+    /// partitions combine ([`ObservationError::InvalidRequest`]); a loss not
+    /// accepted
     /// ([`ObservationError::InvalidRequest`]); fields that follow an
     /// ephemeris or whose direction is a polynomial in time; a data group
     /// without an MSv2 column, or selected twice; times in another scale
@@ -93,10 +109,17 @@ impl CreationPlan {
     pub fn new(
         inputs: &[CreationInput],
         options: &CreationOptions,
+        destination: Destination,
     ) -> Result<Self, ObservationError> {
         if inputs.is_empty() {
             return Err(request_error("a MeasurementSet is created from an input"));
         }
+        let publication = match destination {
+            Destination::New(path) => Publication::New(
+                MeasurementSetCreateTarget::prepare(&path, false).map_err(storage)?,
+            ),
+            Destination::Replace(path) => Publication::Replace(Replacing::hold(&path)?),
+        };
         let inputs = inputs
             .iter()
             .map(Input::open)
@@ -178,6 +201,7 @@ impl CreationPlan {
             occupancy,
             output,
             options: options.clone(),
+            publication,
         })
     }
 
@@ -206,35 +230,44 @@ impl CreationPlan {
         &self.combined.notices
     }
 
-    /// Write the planned MeasurementSet at `destination`, by one thread, in
-    /// a staging directory renamed into place when complete. No input is
-    /// written.
+    /// Write the planned MeasurementSet, by one thread, in a staging
+    /// directory beside its destination, then publish it: renamed into a
+    /// new path, or exchanged with the MeasurementSet it replaces, which is
+    /// then deleted. No input is written, except a replaced one, whose
+    /// directory then holds the new MeasurementSet.
     ///
     /// # Errors
     ///
-    /// An existing `destination` ([`Destination::New`]), before anything is
-    /// written. Weights that vary over channels, when padding was not
-    /// omitted. Then any error reading an input or writing the
-    /// MeasurementSet, which then is not created.
-    pub fn write(
-        self,
-        destination: &Path,
-        mode: Destination,
-    ) -> Result<CreationReport, ObservationError> {
-        let Destination::New = mode;
-        let target = MeasurementSetCreateTarget::prepare(destination, false).map_err(storage)?;
-        let staging = target.staging_path().to_path_buf();
-        let created = self
-            .create(&staging)
-            .and_then(|report| target.commit().map(|()| report).map_err(storage));
-        match created {
-            Ok(report) => Ok(CreationReport {
-                losses: self.losses,
-                ..report
-            }),
+    /// A destination that appeared or changed since the plan was made.
+    /// Weights that vary over channels, when padding was not omitted. Then
+    /// any error reading an input or writing the MeasurementSet, which then
+    /// is not published: the stage is removed, and a replaced
+    /// MeasurementSet is as it was.
+    pub fn write(self) -> Result<CreationReport, ObservationError> {
+        let staging = match &self.publication {
+            Publication::New(target) => target.staging_path().to_path_buf(),
+            Publication::Replace(replacing) => replacing.staging()?,
+        };
+        let created = self.create(&staging);
+        let Self {
+            inputs,
+            publication,
+            losses,
+            ..
+        } = self;
+        // The inputs' read handles go first: a replaced MeasurementSet's
+        // directory is exchanged and deleted.
+        drop(inputs);
+        let published = created.and_then(|report| match publication {
+            Publication::New(target) => target.commit().map(|()| report).map_err(storage),
+            Publication::Replace(replacing) => replacing
+                .publish(&staging)
+                .map(|leftover| CreationReport { leftover, ..report }),
+        });
+        match published {
+            Ok(report) => Ok(CreationReport { losses, ..report }),
             Err(error) => {
-                // The staging directory is the only output; nothing is
-                // published.
+                // The stage is the only output; nothing is published.
                 let _ = fs::remove_dir_all(&staging);
                 Err(error)
             }

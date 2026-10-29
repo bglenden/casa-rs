@@ -55,11 +55,16 @@ fn a_plan_over_one_input_writes_what_converting_writes() {
         root.path().join("planned.ms"),
         root.path().join("converted.ms"),
     );
-    let plan = CreationPlan::new(&[CreationInput::new(&v2)], &options()).expect("plan");
+    let plan = CreationPlan::new(
+        &[CreationInput::new(&v2)],
+        &options(),
+        Destination::New(planned.clone()),
+    )
+    .expect("plan");
     let losses = plan.losses().to_vec();
     assert!(losses.contains(&Loss::SigmaDerived), "{losses:?}");
     assert!(!planned.exists(), "a plan writes nothing");
-    let report = plan.write(&planned, Destination::New).expect("write");
+    let report = plan.write().expect("write");
     assert_eq!(report.losses, losses);
     let conversion = to_msv2(
         &v2,
@@ -97,8 +102,8 @@ fn weights_are_scaled_and_sigmas_follow_them() {
             path: v2.clone(),
             weight_scale,
         };
-        CreationPlan::new(&[input], &options())
-            .and_then(|plan| plan.write(&path, Destination::New))
+        CreationPlan::new(&[input], &options(), Destination::New(path.clone()))
+            .and_then(CreationPlan::write)
             .expect("write");
         rows_and_sigmas(&path)
     };
@@ -135,16 +140,21 @@ fn weight_scales_must_be_finite_and_positive() {
         };
         assert!(
             matches!(
-                CreationPlan::new(&[input], &options()),
+                CreationPlan::new(&[input], &options(), unused(root.path())),
                 Err(ObservationError::InvalidRequest { .. })
             ),
             "{weight_scale}"
         );
     }
     assert!(matches!(
-        CreationPlan::new(&[], &options()),
+        CreationPlan::new(&[], &options(), unused(root.path())),
         Err(ObservationError::InvalidRequest { .. })
     ));
+}
+
+/// A new destination in `root` that nothing is written to.
+fn unused(root: &Path) -> Destination {
+    Destination::New(root.join("unused.ms"))
 }
 
 /// A new MeasurementSet is never written over an existing path, which is
@@ -156,8 +166,15 @@ fn an_existing_destination_is_refused_and_kept() {
     let destination = root.path().join("taken.ms");
     std::fs::create_dir(&destination).expect("taken");
     std::fs::write(destination.join("keep"), b"kept").expect("keep");
-    let plan = CreationPlan::new(&[CreationInput::new(&v2)], &options()).expect("plan");
-    assert!(plan.write(&destination, Destination::New).is_err());
+    assert!(
+        CreationPlan::new(
+            &[CreationInput::new(&v2)],
+            &options(),
+            Destination::New(destination.clone())
+        )
+        .is_err(),
+        "refused when planned"
+    );
     assert_eq!(
         std::fs::read(destination.join("keep")).expect("kept"),
         b"kept"
@@ -429,9 +446,13 @@ fn an_msv2s_descriptive_metadata_survives_creation() {
         accept: CASA_LOSSES.to_vec(),
         ..options()
     };
-    let report = CreationPlan::new(&[CreationInput::new(&stated)], &options)
-        .and_then(|plan| plan.write(&created, Destination::New))
-        .expect("create");
+    let report = CreationPlan::new(
+        &[CreationInput::new(&stated)],
+        &options,
+        Destination::New(created.clone()),
+    )
+    .and_then(CreationPlan::write)
+    .expect("create");
     assert!(
         !report
             .losses
@@ -540,10 +561,10 @@ fn a_split_observation_is_created_whole_again() {
         ..options()
     };
     let inputs: Vec<CreationInput> = halves.iter().map(CreationInput::new).collect();
-    let plan = CreationPlan::new(&inputs, &options).expect("plan");
+    let plan = CreationPlan::new(&inputs, &options, Destination::New(whole.clone())).expect("plan");
     let promised = plan.output().clone();
     assert!(plan.notices().is_empty(), "{:?}", plan.notices());
-    let report = plan.write(&whole, Destination::New).expect("write");
+    let report = plan.write().expect("write");
     assert_eq!(report.partitions, 2, "one partition of each input");
     let id = casa_observation::PartitionId(0);
     let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
@@ -591,8 +612,8 @@ fn edited(
     path
 }
 
-/// Plan `inputs` with padding omitted.
-fn plan_of(inputs: &[&Path]) -> Result<CreationPlan, ObservationError> {
+/// Plan `inputs` into `destination` with padding omitted.
+fn plan_of(inputs: &[&Path], destination: Destination) -> Result<CreationPlan, ObservationError> {
     let inputs: Vec<CreationInput> = inputs.iter().map(CreationInput::new).collect();
     CreationPlan::new(
         &inputs,
@@ -600,6 +621,7 @@ fn plan_of(inputs: &[&Path]) -> Result<CreationPlan, ObservationError> {
             padding: PaddingRows::Omitted,
             ..options()
         },
+        destination,
     )
 }
 
@@ -624,7 +646,7 @@ fn what_a_reopening_cannot_hold_is_refused() {
     let root = tempfile::tempdir().expect("root");
     let early = edited(root.path(), "early", 70..120, |_| {});
     let late = edited(root.path(), "late", 0..60, |_| {});
-    let refused = plan_of(&[&early, &late]);
+    let refused = plan_of(&[&early, &late], unused(root.path()));
     assert!(
         matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("also acquire")),
         "time 6 is in both: {}",
@@ -644,13 +666,14 @@ fn what_a_reopening_cannot_hold_is_refused() {
             .expect("interval");
     });
     assert!(matches!(
-        plan_of(&[&early, &longer]),
+        plan_of(&[&early, &longer], unused(root.path())),
         Err(ObservationError::Unsupported { what }) if what.contains("intervals")
     ));
     let late = edited(root.path(), "late-clean", 0..60, |_| {});
     let flagged = CreationPlan::new(
         &[CreationInput::new(&early), CreationInput::new(&late)],
         &options(),
+        unused(root.path()),
     );
     assert!(matches!(
         flagged,
@@ -669,8 +692,8 @@ fn states_combine_and_processors_must_agree() {
         set(subtable(ms, SubtableId::State), 0, &[("CAL", float(5.0))]);
     });
     let whole = root.path().join("whole.ms");
-    plan_of(&[&early, &hotter])
-        .and_then(|plan| plan.write(&whole, Destination::New))
+    plan_of(&[&early, &hotter], Destination::New(whole.clone()))
+        .and_then(CreationPlan::write)
         .expect("write");
     let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
     let catalogue = reopened.catalogue();
@@ -692,7 +715,7 @@ fn states_combine_and_processors_must_agree() {
         table.add_row(row).expect("processor");
     });
     assert!(matches!(
-        plan_of(&[&early, &processed]),
+        plan_of(&[&early, &processed], unused(root.path())),
         Err(ObservationError::Unsupported { what }) if what.contains("processors")
     ));
 }
@@ -725,9 +748,10 @@ fn a_new_session_is_offset_and_weights_take_their_inputs_scale() {
             padding: PaddingRows::Omitted,
             ..options()
         },
+        Destination::New(whole.clone()),
     )
     .expect("plan");
-    plan.write(&whole, Destination::New).expect("write");
+    plan.write().expect("write");
     let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
     assert_eq!(reopened.catalogue().observations.len(), 2);
     assert_eq!(reopened.catalogue().partitions.len(), 2);
@@ -763,7 +787,12 @@ fn uncarried_subtable_columns_are_declared() {
             ],
         );
     });
-    let plan = CreationPlan::new(&[CreationInput::new(&path)], &options()).expect("plan");
+    let plan = CreationPlan::new(
+        &[CreationInput::new(&path)],
+        &options(),
+        unused(root.path()),
+    )
+    .expect("plan");
     let columns: Vec<&Loss> = plan
         .losses()
         .iter()
@@ -781,7 +810,7 @@ fn uncarried_subtable_columns_are_declared() {
         accept: vec![LossKind::Sigma, LossKind::Tables],
         ..options()
     };
-    let refused = CreationPlan::new(&[CreationInput::new(&path)], &strict);
+    let refused = CreationPlan::new(&[CreationInput::new(&path)], &strict, unused(root.path()));
     assert!(
         matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("ANTENNA OFFSET")),
         "{}",
@@ -790,4 +819,103 @@ fn uncarried_subtable_columns_are_declared() {
             .map(|error| error.to_string())
             .unwrap_or_default()
     );
+}
+
+/// The entries of `directory` other than `kept`, by name.
+fn others(directory: &Path, kept: &[&str]) -> Vec<String> {
+    std::fs::read_dir(directory)
+        .expect("dir")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| !kept.contains(&name.as_str()))
+        .collect()
+}
+
+/// Replacing appends to an existing MeasurementSet, the first input, as
+/// CASA's `concat` appends to `concatvis`: the late half's rows join the
+/// early half's in its place, and nothing is left beside it.
+#[test]
+fn replacing_appends_to_an_existing_measurement_set() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let late = edited(root.path(), "late", 0..60, |_| {});
+    let report = plan_of(&[&early, &late], Destination::Replace(early.clone()))
+        .and_then(CreationPlan::write)
+        .expect("replace");
+    assert_eq!(report.leftover, None);
+    let reopened = open(&early, &OpenOptions::default()).expect("reopen");
+    assert_eq!(reopened.catalogue().partitions.len(), 1);
+    assert_eq!(main_ints(&early, "ANTENNA1").len(), 120);
+    let parent = early.parent().expect("parent");
+    assert_eq!(others(parent, &["ms_trial.ms"]), Vec::<String>::new());
+}
+
+/// What cannot be replaced is refused when planned: a path that is no
+/// MeasurementSet, and one another handle holds for writing.
+#[test]
+fn replace_refuses_what_it_cannot_replace() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let late = edited(root.path(), "late", 0..60, |_| {});
+    let nothing = root.path().join("nothing.ms");
+    std::fs::create_dir(&nothing).expect("nothing");
+    assert!(matches!(
+        plan_of(&[&early, &late], Destination::Replace(nothing)),
+        Err(ObservationError::InvalidRequest { .. })
+    ));
+    let held = casa_tables::TableWriteLock::acquire(&early, 1).expect("held");
+    let refused = plan_of(&[&early, &late], Destination::Replace(early.clone()));
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("held")),
+        "{}",
+        refused
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default()
+    );
+    held.release().expect("release");
+}
+
+/// A replacement that fails before the exchange leaves the MeasurementSet
+/// as it was, and its stage removed; an old copy that cannot be deleted
+/// after the exchange is reported, the new MeasurementSet in place.
+#[test]
+fn a_failed_replacement_leaves_the_measurement_set_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let late = edited(root.path(), "late", 0..60, |_| {});
+    let plan = plan_of(&[&early, &late], Destination::Replace(early.clone())).expect("plan");
+    let parent = early.parent().expect("parent");
+    let stage = parent.join(format!(
+        ".ms_trial.ms.casa-rs-replacing-{}",
+        std::process::id()
+    ));
+    std::fs::write(&stage, b"in the way").expect("block the stage");
+    assert!(plan.write().is_err());
+    std::fs::remove_file(&stage).ok();
+    assert_eq!(main_ints(&early, "ANTENNA1").len(), 60, "as it was");
+    assert_eq!(others(parent, &["ms_trial.ms"]), Vec::<String>::new());
+
+    let plan = plan_of(&[&early, &late], Destination::Replace(early.clone())).expect("plan");
+    let pinned = early.join("ANTENNA");
+    std::fs::set_permissions(&pinned, std::fs::Permissions::from_mode(0o500)).expect("pin");
+    let report = plan.write().expect("replace");
+    let leftover = report.leftover.expect("the old copy is reported");
+    assert_eq!(
+        main_ints(&early, "ANTENNA1").len(),
+        120,
+        "the new one in place"
+    );
+    std::fs::set_permissions(
+        leftover.join("ANTENNA"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .expect("unpin");
 }

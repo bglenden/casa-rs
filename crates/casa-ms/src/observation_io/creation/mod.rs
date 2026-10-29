@@ -38,6 +38,7 @@ mod plan;
 pub(crate) mod pointing_plan;
 mod pointing_scan;
 mod preservation;
+mod replace;
 mod scans;
 
 use std::fmt;
@@ -223,13 +224,21 @@ pub struct HistoryRow {
     pub command: Vec<String>,
 }
 
-/// Where a plan writes its MeasurementSet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a plan writes its MeasurementSet, decided when it is made.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Destination {
-    /// A new MeasurementSet; an existing path is refused. It is created in
-    /// a staging directory renamed into place when complete, so a failure
-    /// leaves nothing.
-    New,
+    /// A new MeasurementSet at this path, which must not exist. It is
+    /// created in a staging directory renamed into place when complete, so
+    /// a failure leaves nothing.
+    New(PathBuf),
+    /// The existing MeasurementSet at this path, replaced: how CASA's
+    /// `concat` appends to an existing `concatvis`, which is then the first
+    /// input. The plan holds casacore's write lock on its MAIN from when it
+    /// is made through publication; the new MeasurementSet is staged beside
+    /// it and the two exchanged in one call, so a failure leaves it as it
+    /// was. Refused where another process holds the lock, or where the
+    /// filesystem cannot exchange directories.
+    Replace(PathBuf),
 }
 
 /// What a plan wrote.
@@ -246,4 +255,7 @@ pub struct CreationReport {
     /// Rows written, one per sample, or per acquisition with padding
     /// omitted ([`PaddingRows`]).
     pub rows: usize,
+    /// A replaced MeasurementSet that could not be deleted once the new
+    /// one took its place ([`Destination::Replace`]): its path.
+    pub leftover: Option<PathBuf>,
 }

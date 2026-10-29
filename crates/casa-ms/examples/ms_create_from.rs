@@ -103,9 +103,9 @@ fn main() -> Result<(), Error> {
         inputs = timed.into_iter().map(|(_, input)| input).collect();
     }
     let started = Instant::now();
-    let plan = CreationPlan::new(&inputs, &options)?;
+    let plan = CreationPlan::new(&inputs, &options, Destination::New(destination))?;
     let notices = plan.notices().to_vec();
-    let report = plan.write(&destination, Destination::New)?;
+    let report = plan.write()?;
     println!(
         "{}",
         json!({

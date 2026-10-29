@@ -216,6 +216,12 @@ fn msv2(
                 .collect()
         })
         .unwrap_or_default();
+    if columns.iter().any(|name| name == "FLOAT_DATA") && !columns.iter().any(|name| name == "DATA")
+    {
+        return Err(ObservationError::Unsupported {
+            what: "converting single-dish data (FLOAT_DATA without DATA)",
+        });
+    }
     for column in &columns {
         match column.as_str() {
             "SIGMA" | "SIGMA_SPECTRUM" => losses.push(Loss::Sigma),
@@ -247,6 +253,44 @@ fn msv2(
     subtables(&ms, destination, losses)?;
     if destination == Store::Msv2 {
         super::preservation::inventory(&ms, losses);
+        unnamed_feeds(&ms, catalogue, losses)?;
+    }
+    Ok(())
+}
+
+/// The `FEED` rows of antennas no partition's baselines name, a table loss:
+/// an MSv2 destination writes the feeds its partitions' receptors need.
+fn unnamed_feeds(
+    ms: &crate::MeasurementSet,
+    catalogue: &Catalogue,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
+    let mut named = vec![false; catalogue.antennas.len()];
+    for baseline in catalogue
+        .partitions
+        .iter()
+        .flat_map(|entry| &entry.baselines)
+    {
+        for antenna in [baseline.antenna1, baseline.antenna2] {
+            if let Some(named) = named.get_mut(antenna.0 as usize) {
+                *named = true;
+            }
+        }
+    }
+    let feeds = ms.feed().map_err(storage)?;
+    let mut unnamed = 0;
+    for row in 0..feeds.row_count() {
+        let antenna = feeds.i32(row, "ANTENNA_ID").map_err(storage)?;
+        let used = usize::try_from(antenna)
+            .ok()
+            .and_then(|antenna| named.get(antenna).copied())
+            .unwrap_or(false);
+        unnamed += usize::from(!used);
+    }
+    if unnamed > 0 {
+        losses.push(Loss::Table(format!(
+            "FEED rows of antennas no baseline names ({unnamed})"
+        )));
     }
     Ok(())
 }
