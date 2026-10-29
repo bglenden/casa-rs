@@ -1821,7 +1821,10 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
         .geometry_engine()
         .reproject_raw_uvw_for_mosaic_to_direction(
             sample.row.coordinates.raw_uvw_m,
-            usize::try_from(sample.row.metadata.field_id).expect("field id"),
+            (
+                sample.row.coordinates.time.mjd_days() * 86_400.0,
+                usize::try_from(sample.row.metadata.field_id).expect("field id"),
+            ),
             &target,
         )
         .expect("CASA girarUVW projection");

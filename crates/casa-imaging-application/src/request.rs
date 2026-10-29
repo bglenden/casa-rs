@@ -231,9 +231,9 @@ pub enum SourceRoute {
     /// MAIN rows, through `casa-ms`'s selected-observation layer.
     #[default]
     SelectedRows,
-    /// The observation's batches, with geometry over batches. It writes
-    /// nothing back yet: a run that writes a model or corrected column is
-    /// refused (#932, step 5).
+    /// The observation's batches, with geometry over batches; a model or
+    /// corrected column is written back through the observation's update
+    /// sessions (#932, step 5).
     ObservationBatches,
 }
 

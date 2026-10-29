@@ -34,7 +34,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 /// CASA's `imhead` returns its header record for `summary` and `list`, and
 /// `None` for `put`; `imstat` returns its statistics record.
 fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     let summary = match mode.as_str() {
         "summary" | "list" => imhead(&path).map_err(|error| image_error("imhead", &path, error))?,
@@ -42,9 +42,16 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            let hdvalue = task.text("hdvalue")?.ok_or_else(|| {
-                TaskFailure::validation("imhead mode put requires hdvalue").at("hdvalue")
-            })?;
+            if !hdkey.eq_ignore_ascii_case("bunit") {
+                return Err(TaskFailure::validation(format!(
+                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977); \
+                     it puts bunit"
+                ))
+                .at("hdkey"));
+            }
+            // CASA's default '' is a value here: it clears the key, as
+            // `hdkey='bunit', hdvalue=''` clears the brightness unit.
+            let hdvalue = task.text("hdvalue")?.unwrap_or_default();
             imhead_put(&path, &hdkey, &hdvalue)
                 .map_err(|error| image_error("imhead", &path, error))?
         }
@@ -66,7 +73,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let summary = imstat(
         &path,
         task.text("box")?.as_deref(),

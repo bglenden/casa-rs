@@ -316,7 +316,8 @@ def imhead(
     """Inspect or update CASA image header metadata.
 
     CASA's ``imhead``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``verbose``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``verbose``.
     """
     return _call_casa(imhead, locals())
 
@@ -345,10 +346,10 @@ def imstat(
     """Compute CASA image statistics over optional pixel, region, and channel selections.
 
     CASA's ``imstat``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``axes``, ``stokes``,
-    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``,
-    ``algorithm``, ``fence``, ``center``, ``lside``, ``zscore``,
-    ``maxiter``, ``clmethod``, ``niter``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``axes``, ``stokes``, ``listit``, ``verbose``, ``mask``, ``stretch``,
+    ``logfile``, ``append``, ``algorithm``, ``fence``, ``center``,
+    ``lside``, ``zscore``, ``maxiter``, ``clmethod``, ``niter``.
     """
     return _call_casa(imstat, locals())
 
@@ -371,8 +372,8 @@ def immoments(
     """Create CASA-style image moment maps
 
     CASA's ``immoments``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``axis``, ``region``,
-    ``box``, ``stokes``, ``excludepix``, ``stretch``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``axis``, ``region``, ``box``, ``stokes``, ``excludepix``, ``stretch``.
     """
     return _call_casa(immoments, locals())
 
@@ -393,9 +394,9 @@ def exportfits(
     """Export CASA images to FITS
 
     CASA's ``exportfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``optical``, ``bitpix``,
-    ``minpix``, ``maxpix``, ``dropstokes``, ``stokeslast``, ``history``,
-    ``dropdeg``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``optical``, ``bitpix``, ``minpix``, ``maxpix``, ``dropstokes``,
+    ``stokeslast``, ``history``, ``dropdeg``.
     """
     return _call_casa(exportfits, locals())
 
@@ -459,17 +460,17 @@ def mstransform(
     """Materialize a selected MeasurementSet into a new output MS.
 
     CASA's ``mstransform``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #978: ``createmms``,
-    ``separationaxis``, ``numsubms``, ``tileshape``, ``correlation``,
-    ``intent``, ``array``, ``uvrange``, ``observation``, ``feed``,
-    ``realmodelcol``, ``usewtspectrum``, ``combinespws``, ``hanning``,
-    ``regridms``, ``mode``, ``nchan``, ``start``, ``width``, ``nspw``,
-    ``interpolation``, ``phasecenter``, ``restfreq``, ``outframe``,
-    ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
+    ``correlation``, ``intent``, ``array``, ``uvrange``, ``observation``,
+    ``feed``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
+    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
+    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
+    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
+    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
+    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
+    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
+    ``ddistart``, ``monolithic_processing``, ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -499,9 +500,9 @@ def split(
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #978: ``keepmms``,
-    ``correlation``, ``intent``, ``array``, ``uvrange``, ``observation``,
-    ``feed``, ``timebin``, ``combine``.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``keepmms``, ``correlation``, ``intent``, ``array``, ``uvrange``,
+    ``observation``, ``feed``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
@@ -786,18 +787,19 @@ def flagdata(
     """Run native CASA-style MeasurementSet flagging.
 
     CASA's ``flagdata``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #978: ``autocorr``, ``inpfile``,
-    ``reason``, ``tbuff``, ``uvrange``, ``timerange``, ``correlation``,
-    ``intent``, ``array``, ``observation``, ``feed``, ``clipminmax``,
-    ``clipoutside``, ``channelavg``, ``chanbin``, ``timeavg``, ``timebin``,
-    ``quackincrement``, ``tolerance``, ``addantenna``, ``lowerlimit``,
-    ``upperlimit``, ``ntime``, ``combinescans``, ``timefit``, ``freqfit``,
-    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``minrel``,
-    ``maxrel``, ``minabs``, ``maxabs``, ``spwchan``, ``spwcorr``,
-    ``basecnt``, ``fieldcnt``, ``name``, ``display``, ``savepars``,
-    ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
+    ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
+    ``feed``, ``clipminmax``, ``clipoutside``, ``channelavg``, ``chanbin``,
+    ``timeavg``, ``timebin``, ``quackincrement``, ``tolerance``,
+    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
+    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
+    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
+    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
+    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
+    ``maxabs``, ``spwchan``, ``spwcorr``, ``basecnt``, ``fieldcnt``,
+    ``name``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``, ``writeflags``.
     """
     return _call_casa(flagdata, locals())
 
@@ -832,6 +834,8 @@ def impbcor(
     """Apply primary-beam correction to a CASA image
 
     CASA's ``impbcor``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``box``, ``region``, ``chans``, ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impbcor, locals())
 
@@ -856,9 +860,9 @@ def impv(
     """Extract a CASA-style position-velocity image
 
     CASA's ``impv``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``mode``, ``center``,
-    ``length``, ``pa``, ``unit``, ``region``, ``stokes``, ``mask``,
-    ``stretch``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``mode``, ``center``, ``length``, ``pa``, ``unit``, ``region``,
+    ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impv, locals())
 
@@ -879,8 +883,9 @@ def imsubimage(
     """Extract a CASA-style image section
 
     CASA's ``imsubimage``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``region``, ``stokes``,
-    ``mask``, ``dropdeg``, ``verbose``, ``stretch``, ``keepaxes``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,
+    ``keepaxes``.
     """
     return _call_casa(imsubimage, locals())
 
@@ -906,9 +911,9 @@ def immath(
     """Evaluate tutorial image arithmetic expressions
 
     CASA's ``immath``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``mode``, ``varnames``,
-    ``sigma``, ``polithresh``, ``mask``, ``region``, ``box``, ``chans``,
-    ``stokes``, ``stretch``, ``imagemd``, ``prec``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``mode``, ``varnames``, ``sigma``, ``polithresh``, ``mask``, ``region``,
+    ``box``, ``chans``, ``stokes``, ``stretch``, ``imagemd``, ``prec``.
     """
     return _call_casa(immath, locals())
 
@@ -927,8 +932,8 @@ def imregrid(
     """Regrid a CASA image onto a template image
 
     CASA's ``imregrid``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``asvelocity``, ``axes``,
-    ``shape``, ``decimate``, ``replicate``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``asvelocity``, ``axes``, ``shape``, ``decimate``, ``replicate``.
     """
     return _call_casa(imregrid, locals())
 
@@ -945,8 +950,8 @@ def feather(
     """Combine high-resolution and low-resolution images in the Fourier domain
 
     CASA's ``feather``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``effdishdiam``,
-    ``lowpassfiltersd``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``effdishdiam``, ``lowpassfiltersd``.
     """
     return _call_casa(feather, locals())
 
@@ -964,8 +969,9 @@ def importfits(
     """Import a FITS primary image into a CASA image
 
     CASA's ``importfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``whichrep``, ``whichhdu``,
-    ``zeroblanks``, ``defaultaxes``, ``defaultaxesvalues``, ``beam``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``whichrep``, ``whichhdu``, ``zeroblanks``, ``defaultaxes``,
+    ``defaultaxesvalues``, ``beam``.
     """
     return _call_casa(importfits, locals())
 

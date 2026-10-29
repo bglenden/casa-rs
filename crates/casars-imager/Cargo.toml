@@ -32,6 +32,7 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-numerics = { path = "../casa-numerics" }
 casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
+casa-tables = { path = "../casa-tables" }
 casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true

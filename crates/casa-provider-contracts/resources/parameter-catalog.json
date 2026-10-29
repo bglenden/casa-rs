@@ -3886,7 +3886,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Range of pixel values to include, [min, max]; -1 includes all.",
+        "summary": "Inclusive range of pixel values to include: [min, max] in either order; one value b is [-|b|, |b|]; -1 includes all.",
         "details": null,
         "examples": [
           "[0.002, 100.0]"
@@ -5168,7 +5168,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Primary-beam CASA image path; CASA's [] default means it must be given",
-        "details": null,
+        "details": "CASA's pbimage is an image name or the beam itself as a numeric pixel array. casa-rs takes the name only: an array of numbers is refused, before the task starts, until #977.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -8463,11 +8463,11 @@
       "semantic_revision": 1,
       "casa_name": "algorithm",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "normalization": {"kind": "lowercase"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match.", "details": null, "examples": ["classic"]},
+      "documentation": {"summary": "Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match, in any case.", "details": null, "examples": ["classic"]},
       "persistence_class": "profile"
     },
     {
@@ -8475,11 +8475,11 @@
       "semantic_revision": 1,
       "casa_name": "clmethod",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "normalization": {"kind": "lowercase"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "How the classic algorithm computes its statistics: auto, tiled or framework.", "details": null, "examples": ["auto"]},
+      "documentation": {"summary": "How the classic algorithm computes its statistics: auto, tiled or framework, by first letter, in any case.", "details": null, "examples": ["auto"]},
       "persistence_class": "profile"
     },
     {

@@ -1208,6 +1208,7 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
 
     validate_overwrite_defaults(bundle, errors);
     casa_signature::validate_casa_signature(surface, errors);
+    casa_signature::validate_unimplemented(bundle, &known, errors);
 
     for binding in surface.bindings() {
         if !names.insert(binding.name.clone()) {

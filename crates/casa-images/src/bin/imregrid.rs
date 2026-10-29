@@ -30,8 +30,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         .at("template"));
     }
     let request = ImregridRequest {
-        imagename: task.path("imagename")?,
-        template,
+        imagename: task.input_path("imagename")?,
+        template: task.input_path("template")?,
         output: task.path("output")?,
         interpolation: task.required_text("interpolation")?,
         overwrite: task.flag("overwrite")?,

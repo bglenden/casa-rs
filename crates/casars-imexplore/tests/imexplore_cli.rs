@@ -153,9 +153,10 @@ fn a_failed_run_records_last_but_keeps_last_successful() {
     write_image(&image);
     assert!(imstat(workspace.path(), &image, &[]).status.success());
 
+    // A missing image is refused, naming imagename (#931).
     let missing = workspace.path().join("missing.image");
     let failed = imstat(workspace.path(), &missing, &[]);
-    assert_eq!(failed.status.code(), Some(1), "{}", stderr(&failed));
+    assert_eq!(failed.status.code(), Some(2), "{}", stderr(&failed));
     let (last, successful) = last_files(workspace.path());
     assert!(last.unwrap().contains("missing.image"));
     assert!(successful.unwrap().contains("ramp.image"));

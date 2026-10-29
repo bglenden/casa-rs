@@ -334,7 +334,10 @@ mod tests {
                 binding.name
             );
         }
-        // Contract 4's casa-rs-only profiles are refused, not migrated.
+        // simobserve is current-only (ADR-0012): a profile of any earlier
+        // contract is refused, not migrated. That holds for contract 4's
+        // casa-rs-only profiles and for contract 7's, which differ from 8
+        // only in naming the CASA task (#931 4b).
         assert!(surface.migrations().is_empty());
     }
 

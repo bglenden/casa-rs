@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tarfile
 
 import pytest
 
 from casars import tasks
+from casars.data import Image
 from casars.parameters import TaskParameters
 from casars.tasks import _runner
 
@@ -45,6 +47,27 @@ def flagmanager() -> str:
 @pytest.fixture
 def flagdata() -> str:
     return task_executable("flagdata")
+
+
+def require_executables(*names: str) -> None:
+    for name in names:
+        try:
+            _runner._task_executable(name)
+        except tasks.TaskBinaryNotFoundError as missing:
+            if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
+                raise
+            pytest.skip(f"no {name} executable: {missing}")
+
+
+@pytest.fixture
+def image(tmp_path: Path) -> Path:
+    """A small Jy/beam image, written by the Rust fixture example."""
+    root = tmp_path / "fixtures"
+    example = ["--example", "make_python_fixtures", "--", str(root)]
+    subprocess.run(
+        ["cargo", "run", "-q", "-p", "casars-python", *example], cwd=REPO_ROOT, check=True
+    )
+    return root / "python_fixture.image"
 
 
 @pytest.fixture
@@ -126,4 +149,37 @@ def test_a_real_refusal_names_its_parameter(
     completion = failure.value.completion
     assert completion.status == "refused", completion.describe()
     assert completion.parameter == "versionname"
+    assert completion.returncode == 2
+
+
+def test_casas_spellings_of_a_default_run_as_casa_runs_them(
+    image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("immath", "imhead")
+    monkeypatch.chdir(image.parent)
+    # CASA reads varnames=[] as its '', and ignores sigma outside its
+    # polarization modes (#931).
+    common = {"imagename": [image.name], "expr": "IM0*2"}
+    assert tasks.immath(outfile="names.im", varnames=[], **common) is True
+    assert tasks.immath(outfile="sigma.im", sigma="0Jy/beam", **common) is True
+    # Any other value is refused before the task starts, as a ValueError.
+    with pytest.raises(ValueError, match="varnames.*#977"):
+        tasks.immath(imagename=[image.name], outfile="a.im", expr="A*2", varnames=["A"])
+    assert not (image.parent / "a.im").exists()
+    # hdvalue='' is CASA's default and a value: it clears the unit.
+    assert Image.open(image).units == "Jy/beam"
+    assert tasks.imhead(image.name, mode="put", hdkey="bunit", hdvalue="") is None
+    assert Image.open(image).units == ""
+
+
+def test_a_missing_input_image_is_a_parameter_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("imstat")
+    monkeypatch.chdir(tmp_path)
+    # CASA's imstat('does-not-exist.im') is a parameter error (#931).
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.imstat("does-not-exist.im")
+    completion = failure.value.completion
+    assert completion.parameter == "imagename"
     assert completion.returncode == 2

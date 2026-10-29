@@ -402,13 +402,13 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
 | <code>logfile</code> | <code>parameter.logfile@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Output | Fit log output. |
 | <code>append</code> | <code>parameter.append@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Append to logfile. |
-| <code>algorithm</code> | <code>imstat.algorithm@r1</code> | <code>string</code> | <code>"classic"</code>; optional | Statistics | Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match. |
+| <code>algorithm</code> | <code>imstat.algorithm@r1</code> | <code>string</code> | <code>"classic"</code>; optional | Statistics | Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match, in any case. |
 | <code>fence</code> | <code>parameter.fence@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Outlier fence. |
 | <code>center</code> | <code>parameter.center@r2</code> | <code>choice (3 values)</code> | <code>"mean"</code>; optional | Statistics | Center of the fit-half statistics algorithm: mean, median or zero. |
 | <code>lside</code> | <code>parameter.lside@r1</code> | <code>bool</code> | <code>true</code>; optional | Statistics | Use left side for fit-half. |
 | <code>zscore</code> | <code>parameter.zscore@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Z-score cutoff. |
 | <code>maxiter</code> | <code>parameter.maxiter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Statistics | Maximum iterations. |
-| <code>clmethod</code> | <code>imstat.clmethod@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Statistics | How the classic algorithm computes its statistics: auto, tiled or framework. |
+| <code>clmethod</code> | <code>imstat.clmethod@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Statistics | How the classic algorithm computes its statistics: auto, tiled or framework, by first letter, in any case. |
 | <code>niter</code> | <code>statistics.niter@r1</code> | <code>integer</code> | <code>3</code>; optional | Statistics | Maximum biweight iterations; a negative value makes the fast, simple computation. |
 
 <a id="surface-immoments"></a>
@@ -431,7 +431,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
 | <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
-| <code>includepix</code> | <code>parameter.includepix@r2</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Selection | Range of pixel values to include, [min, max]; -1 includes all. |
+| <code>includepix</code> | <code>parameter.includepix@r2</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Selection | Inclusive range of pixel values to include: [min, max] in either order; one value b is [-&#124;b&#124;, &#124;b&#124;]; -1 includes all. |
 | <code>excludepix</code> | <code>parameter.excludepix@r2</code> | <code>array&lt;float&gt;</code> | <code>-1</code>; optional | Moments | Range of pixel values to exclude, [min, max]; -1 excludes none. |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
 | <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
@@ -1035,7 +1035,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
 | <code>template</code> | <code>parameter.template@r1</code> | <code>path (image)</code> | <code>"get"</code>; required | Input | Template CASA image path |
-| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output CASA image path |
+| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required when not (template="get") | Output | Output CASA image path |
 | <code>asvelocity</code> | <code>imregrid.asvelocity@r1</code> | <code>bool</code> | <code>true</code>; optional | Regrid | Regrid the spectral axis in velocity rather than frequency. |
 | <code>axes</code> | <code>regrid.axes@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Pixel axes to regrid; [-1] regrids them all. |
 | <code>shape</code> | <code>imregrid.shape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Output image shape; [-1] takes the template's along the regridded axes. |

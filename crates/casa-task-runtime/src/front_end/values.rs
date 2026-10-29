@@ -103,6 +103,32 @@ impl TaskInvocation<'_> {
         }
     }
 
+    /// `name` as exactly one path to an input that exists, relative to the
+    /// workspace; a missing input is a refusal naming the parameter, before
+    /// the task starts, as CASA's `imstat('missing.im')` is.
+    pub fn input_path(&self, name: &str) -> Result<PathBuf, TaskFailure> {
+        let path = self.path(name)?;
+        self.existing(name, &path)?;
+        Ok(path)
+    }
+
+    /// `name` as paths to inputs that exist, as [`input_path`](Self::input_path)
+    /// reads one.
+    pub fn input_paths(&self, name: &str) -> Result<Vec<PathBuf>, TaskFailure> {
+        let paths = self.paths(name)?;
+        for path in &paths {
+            self.existing(name, path)?;
+        }
+        Ok(paths)
+    }
+
+    fn existing(&self, name: &str, path: &std::path::Path) -> Result<(), TaskFailure> {
+        if self.workspace().join(path).exists() {
+            return Ok(());
+        }
+        Err(TaskFailure::validation(format!("{name} {:?} does not exist", path.display())).at(name))
+    }
+
     /// `name` as a flag.
     pub fn flag(&self, name: &str) -> Result<bool, TaskFailure> {
         match self.value(name) {

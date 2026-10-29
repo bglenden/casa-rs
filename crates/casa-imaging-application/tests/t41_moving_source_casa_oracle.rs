@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube, on
+//! both observation routes.
 
 use std::{
     error::Error,
@@ -10,7 +11,8 @@ use std::{
 
 use casa_coordinates::CoordinateModel;
 use casa_images::PagedImage;
-use casa_imaging_application::execute;
+use casa_imaging_application::geometry_law::compare_geometry;
+use casa_imaging_application::{SourceRoute, execute, route_law};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::FrequencyRef;
 use serde_json::json;
@@ -34,40 +36,85 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     copy_tree(&source, &measurement_set)?;
-    let rust_prefix = staging.path().join("rust-uranus-cubesource");
 
     // A dirty 16-channel source-frame cube of field 1 tracking its
-    // ephemeris, each output channel 64 native channels wide.
-    let request = imaging::request(json!({
-        "vis": measurement_set,
-        "imagename": rust_prefix,
-        "imsize": 512,
-        "cell": "0.1arcsec",
-        "phasecenter": "TRACKFIELD",
-        "field": "1",
-        "spw": "0",
-        "datacolumn": "DATA",
-        "specmode": "cubesource",
-        "outframe": "REST",
-        "start": "0",
-        "width": "64",
-        "channel_count": 16,
-        "minpsffraction": 0.1,
-        "pblimit": 0.1,
-    }));
-    let result = execute(&request, imaging::context(request.resource_policy()))?;
-    assert_eq!(
-        result.scientific().normal_state().sample_count(),
-        SELECTED_SAMPLE_COUNT,
-        "production traversal must retain all 1,024 channels and both parallel hands",
-    );
+    // ephemeris, each output channel 64 native channels wide, on each
+    // route (#942): today's selected rows and the observation's batches.
+    let mut failures = Vec::new();
+    let mut prefixes = Vec::new();
+    for (route, label) in [
+        (SourceRoute::SelectedRows, "rows"),
+        (SourceRoute::ObservationBatches, "batches"),
+    ] {
+        let rust_prefix = staging
+            .path()
+            .join(format!("rust-uranus-cubesource-{label}"));
+        let mut request = imaging::request(json!({
+            "vis": measurement_set,
+            "imagename": rust_prefix,
+            "imsize": 512,
+            "cell": "0.1arcsec",
+            "phasecenter": "TRACKFIELD",
+            "field": "1",
+            "spw": "0",
+            "datacolumn": "DATA",
+            "specmode": "cubesource",
+            "outframe": "REST",
+            "start": "0",
+            "width": "64",
+            "channel_count": 16,
+            "minpsffraction": 0.1,
+            "pblimit": 0.1,
+        }));
+        request.source_route = route;
+        let result = execute(&request, imaging::context(request.resource_policy()))?;
+        let samples = result.scientific().normal_state().sample_count();
+        eprintln!("t41 {label} samples={samples}");
+        if samples != SELECTED_SAMPLE_COUNT {
+            failures.push(format!(
+                "{label}: {samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal \
+                 must retain all 1,024 channels and both parallel hands (#986)"
+            ));
+        }
+        assert_matching_wcs(&rust_prefix, &casa_prefix)?;
+        failures.extend(
+            compare_with_casa(&rust_prefix, &casa_prefix)?
+                .into_iter()
+                .map(|failure| format!("{label}: {failure}")),
+        );
+        if route == SourceRoute::SelectedRows {
+            let geometry = compare_geometry(&request, &imaging::context(request.resource_policy()))
+                .map_err(|error| error as Box<dyn Error>)?;
+            eprintln!("t41 geometry law {geometry:?}");
+            if !geometry.holds() || geometry.unmatched > 0 || geometry.duplicates > 0 {
+                failures.push(format!("the geometry law fails: {geometry:?}"));
+            }
+        }
+        prefixes.push(rust_prefix);
+    }
+    for suffix in PRODUCTS {
+        let [rows, batches] = [&prefixes[0], &prefixes[1]]
+            .map(|prefix| PathBuf::from(format!("{}{suffix}", prefix.display())));
+        let nrms = route_law::image_nrms(&rows, &batches)?;
+        eprintln!("t41 route law product={suffix} nrms={nrms:.3e}");
+        if nrms > route_law::TOLERANCE {
+            failures.push(format!("{suffix}: the routes differ by NRMS {nrms:.3e}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
 
-    assert_matching_wcs(&rust_prefix, &casa_prefix)?;
-    let casa_primary_beam = read_product(&casa_prefix, ".pb")?;
+/// How the dirty products under `rust_prefix` depart from CASA's.
+fn compare_with_casa(
+    rust_prefix: &Path,
+    casa_prefix: &Path,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let casa_primary_beam = read_product(casa_prefix, ".pb")?;
     let mut failures = Vec::new();
     for suffix in PRODUCTS {
-        let rust = read_product(&rust_prefix, suffix)?;
-        let casa = read_product(&casa_prefix, suffix)?;
+        let rust = read_product(rust_prefix, suffix)?;
+        let casa = read_product(casa_prefix, suffix)?;
         let expected_shape = if suffix == ".sumwt" {
             [1, 1, 1, 16]
         } else {
@@ -93,8 +140,10 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
         let rust_stats = statistics(&rust.values, &common_valid);
         let casa_stats = statistics(&casa.values, &common_valid);
         eprintln!(
-            "t41_casa_parity product={suffix} nrms={nrms:.9e} rust_peak={} casa_peak={}",
-            rust_stats.maximum, casa_stats.maximum,
+            "t41_casa_parity {} product={suffix} nrms={nrms:.9e} rust_peak={} casa_peak={}",
+            rust_prefix.display(),
+            rust_stats.maximum,
+            casa_stats.maximum,
         );
         if nrms > 0.001 {
             failures.push(format!("{suffix} normalized RMS {nrms:.6e} exceeds 0.1%"));
@@ -114,8 +163,7 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
             }
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-    Ok(())
+    Ok(failures)
 }
 
 struct Statistics {
