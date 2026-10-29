@@ -22,8 +22,8 @@
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">let </span>request = FeatherRequest {
 <a href=#24 id=24 data-nosnippet>24</a>        imagename: task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
-<a href=#25 id=25 data-nosnippet>25</a>        highres: task.path(<span class="string">"highres"</span>)<span class="question-mark">?</span>,
-<a href=#26 id=26 data-nosnippet>26</a>        lowres: task.path(<span class="string">"lowres"</span>)<span class="question-mark">?</span>,
+<a href=#25 id=25 data-nosnippet>25</a>        highres: task.input_path(<span class="string">"highres"</span>)<span class="question-mark">?</span>,
+<a href=#26 id=26 data-nosnippet>26</a>        lowres: task.input_path(<span class="string">"lowres"</span>)<span class="question-mark">?</span>,
 <a href=#27 id=27 data-nosnippet>27</a>        sdfactor: task.number(<span class="string">"sdfactor"</span>)<span class="question-mark">? </span><span class="kw">as </span>f32,
 <a href=#28 id=28 data-nosnippet>28</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
 <a href=#29 id=29 data-nosnippet>29</a>    };

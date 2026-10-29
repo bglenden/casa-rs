@@ -1004,7 +1004,7 @@ through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's 
 inventory all project from this catalog.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
 <p>ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by imager.</p>
+current-only profile contract used by imager and simobserve.</p>
 <p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
 <ul>
 <li>stable semantic ID and canonical CASA-facing name</li>
@@ -1053,8 +1053,8 @@ its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
 changed defaults. An empty migration set declares a current-only surface: only
 the exact current contract and canonical parameter names are accepted. The
-imager surface is current-only. Future, stale, and otherwise unmigratable
-contracts are errors.</p>
+imager and simobserve surfaces are current-only. Future, stale, and otherwise
+unmigratable contracts are errors.</p>
 <p>Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
 selected workspace or process current directory, not the profile file's parent.
@@ -1145,10 +1145,24 @@ resolver names, the surface's <code>fixed_args</code>, then <code>--json-run -</
 values the call set on stdin. Python passes the task's log lines to
 <code>sys.stderr</code> as they arrive and classifies the reply through <code>casars._core</code>.
 A success returns a <code>TaskCompletion</code> carrying the reply's <code>value</code> and the
-products the decoder projects; anything else raises <code>TaskExecutionError</code>,
-whose completion's <code>status</code> is <code>refused</code> (a <code>validation</code> reply), <code>failed</code>,
-<code>interrupted</code>, <code>signalled</code> or <code>malformed_reply</code>. A value the contract refuses
-when Python resolves the call raises <code>ValueError</code> before anything starts.</p>
+products the decoder projects. A <code>validation</code> reply raises
+<code>TaskParameterError</code>, a <code>ValueError</code> whose completion's <code>status</code> is
+<code>refused</code>; anything else raises <code>TaskExecutionError</code>, whose completion's
+<code>status</code> is <code>failed</code>, <code>interrupted</code>, <code>signalled</code> or <code>malformed_reply</code>. A
+value the contract refuses when Python resolves the call raises <code>ValueError</code>
+before anything starts, or <code>TypeError</code> for a value of the wrong type.</p>
+<p>A succeeded reply's <code>value</code> is CASA's return value as a tagged <code>CasaValue</code>
+(<code>casa-provider-contracts</code>): <code>none</code>, <code>bool</code>, <code>int</code>, <code>float</code> (non-finite
+values as <code>"nan"</code>, <code>"inf"</code> and <code>"-inf"</code>), <code>string</code>, <code>list</code>, an ordered
+<code>dict</code> whose keys are strings or integers, and typed arrays (<code>bool_array</code>,
+<code>int_array</code> with dtype <code>int32</code> or <code>int64</code>, <code>float_array</code> with <code>float32</code> or
+<code>float64</code>, <code>complex_array</code>, <code>str_array</code>) that carry their shape and their
+data in column-major (Fortran) order. <code>casars._core</code> rebuilds Python's
+types and NumPy arrays from it, so a CASA-signature wrapper returns what
+CASA returns. <code>tools/casa-compat/record_casa_returns.py</code> records the
+structure of CASA's own return values
+(<code>resources/casa-compat/casa-6.7.6.14/returns.json</code>), which the image task
+tests compare against.</p>
 <h2 id="shared-versioned-component-schemas">Shared Versioned Component Schemas<a class="headerlink" href="#shared-versioned-component-schemas" title="Permanent link">&para;</a></h2>
 <p>Protocol-independent basic types have versioned shared schemas, reused across
 task and object surfaces rather than redefined per provider. Component

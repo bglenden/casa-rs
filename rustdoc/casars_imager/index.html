@@ -3,7 +3,7 @@ shared task front end (#931).</p>
 <p>The front end resolves the imager’s parameters through the provider-
 contracts catalog: command-line flags and a <code>--json-run</code> request become
 the same resolved values, and those values, and nothing else, make the
-[<code>ImagingRequest</code>] the application runs. A run’s reply carries its
+<a href="../casa_imaging_application/request/struct.ImagingRequest.html" title="struct casa_imaging_application::request::ImagingRequest"><code>ImagingRequest</code></a> the application runs. A run’s reply carries its
 <a href="struct.ImagerRunTaskResult.html" title="struct casars_imager::ImagerRunTaskResult"><code>ImagerRunTaskResult</code></a>; the imager returns None, as CASA’s <code>tclean</code> does
 unless asked for its history.</p>
 </div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="interrupt/index.html" title="mod casars_imager::interrupt">interrupt</a></dt><dd>SIGINT cancels the run (plan section 5.4). The first interrupt sets the

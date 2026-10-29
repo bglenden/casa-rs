@@ -6,36 +6,38 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>std::process::ExitCode;
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_images::{
-<a href=#9 id=9 data-nosnippet>9</a>    ImageAnalysisTaskResult, ImpbcorRequest, image_task_bool_text, image_task_front_end,
-<a href=#10 id=10 data-nosnippet>10</a>    image_task_success, impbcor,
-<a href=#11 id=11 data-nosnippet>11</a>};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-<a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">fn </span>main() -&gt; ExitCode {
-<a href=#15 id=15 data-nosnippet>15</a>    image_task_front_end(<span class="string">"impbcor"</span>, <span class="kw-2">&amp;</span>[<span class="string">"impbcor"</span>], run).main(
-<a href=#16 id=16 data-nosnippet>16</a>        std::env::args_os().skip(<span class="number">1</span>),
-<a href=#17 id=17 data-nosnippet>17</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
-<a href=#18 id=18 data-nosnippet>18</a>        std::env::set_current_dir,
-<a href=#19 id=19 data-nosnippet>19</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
-<a href=#20 id=20 data-nosnippet>20</a>        std::io::stderr(),
-<a href=#21 id=21 data-nosnippet>21</a>    )
-<a href=#22 id=22 data-nosnippet>22</a>}
-<a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">let </span>request = ImpbcorRequest {
-<a href=#26 id=26 data-nosnippet>26</a>        imagename: task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
-<a href=#27 id=27 data-nosnippet>27</a>        pbimage: task.path(<span class="string">"pbimage"</span>)<span class="question-mark">?</span>,
-<a href=#28 id=28 data-nosnippet>28</a>        outfile: task.path(<span class="string">"outfile"</span>)<span class="question-mark">?</span>,
-<a href=#29 id=29 data-nosnippet>29</a>        mode: task.required_text(<span class="string">"mode"</span>)<span class="question-mark">?</span>,
-<a href=#30 id=30 data-nosnippet>30</a>        cutoff: task.number(<span class="string">"cutoff"</span>)<span class="question-mark">?</span>,
-<a href=#31 id=31 data-nosnippet>31</a>        box_selection: task.text(<span class="string">"box"</span>)<span class="question-mark">?</span>,
-<a href=#32 id=32 data-nosnippet>32</a>        region: task.text(<span class="string">"region"</span>)<span class="question-mark">?</span>.map(PathBuf::from),
-<a href=#33 id=33 data-nosnippet>33</a>        chans: task.text(<span class="string">"chans"</span>)<span class="question-mark">?</span>,
-<a href=#34 id=34 data-nosnippet>34</a>        stokes: task.text(<span class="string">"stokes"</span>)<span class="question-mark">?</span>,
-<a href=#35 id=35 data-nosnippet>35</a>        mask: task.text(<span class="string">"mask"</span>)<span class="question-mark">?</span>,
-<a href=#36 id=36 data-nosnippet>36</a>        stretch: image_task_bool_text(task, <span class="string">"stretch"</span>)<span class="question-mark">?</span>,
-<a href=#37 id=37 data-nosnippet>37</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
-<a href=#38 id=38 data-nosnippet>38</a>    };
-<a href=#39 id=39 data-nosnippet>39</a>    image_task_success(impbcor(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Impbcor))
-<a href=#40 id=40 data-nosnippet>40</a>}
+<a href=#9 id=9 data-nosnippet>9</a>    ImageAnalysisTaskResult, ImpbcorRequest, image_task_front_end, image_task_success, impbcor,
+<a href=#10 id=10 data-nosnippet>10</a>};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">fn </span>main() -&gt; ExitCode {
+<a href=#14 id=14 data-nosnippet>14</a>    image_task_front_end(<span class="string">"impbcor"</span>, <span class="kw-2">&amp;</span>[<span class="string">"impbcor"</span>], run).main(
+<a href=#15 id=15 data-nosnippet>15</a>        std::env::args_os().skip(<span class="number">1</span>),
+<a href=#16 id=16 data-nosnippet>16</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
+<a href=#17 id=17 data-nosnippet>17</a>        std::env::set_current_dir,
+<a href=#18 id=18 data-nosnippet>18</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
+<a href=#19 id=19 data-nosnippet>19</a>        std::io::stderr(),
+<a href=#20 id=20 data-nosnippet>20</a>    )
+<a href=#21 id=21 data-nosnippet>21</a>}
+<a href=#22 id=22 data-nosnippet>22</a>
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">let </span>mask = task.text(<span class="string">"mask"</span>)<span class="question-mark">?</span>;
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="comment">// CASA reads stretch only with a mask, and ignores it otherwise.
+<a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">let </span>stretch = mask.is_some() &amp;&amp; task.flag(<span class="string">"stretch"</span>)<span class="question-mark">?</span>;
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">let </span>request = ImpbcorRequest {
+<a href=#28 id=28 data-nosnippet>28</a>        imagename: task.input_path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
+<a href=#29 id=29 data-nosnippet>29</a>        pbimage: task.input_path(<span class="string">"pbimage"</span>)<span class="question-mark">?</span>,
+<a href=#30 id=30 data-nosnippet>30</a>        outfile: task.path(<span class="string">"outfile"</span>)<span class="question-mark">?</span>,
+<a href=#31 id=31 data-nosnippet>31</a>        mode: task.required_text(<span class="string">"mode"</span>)<span class="question-mark">?</span>,
+<a href=#32 id=32 data-nosnippet>32</a>        cutoff: task.number(<span class="string">"cutoff"</span>)<span class="question-mark">?</span>,
+<a href=#33 id=33 data-nosnippet>33</a>        box_selection: task.text(<span class="string">"box"</span>)<span class="question-mark">?</span>,
+<a href=#34 id=34 data-nosnippet>34</a>        region: task.text(<span class="string">"region"</span>)<span class="question-mark">?</span>.map(PathBuf::from),
+<a href=#35 id=35 data-nosnippet>35</a>        chans: task.text(<span class="string">"chans"</span>)<span class="question-mark">?</span>,
+<a href=#36 id=36 data-nosnippet>36</a>        stokes: task.text(<span class="string">"stokes"</span>)<span class="question-mark">?</span>,
+<a href=#37 id=37 data-nosnippet>37</a>        mask,
+<a href=#38 id=38 data-nosnippet>38</a>        stretch,
+<a href=#39 id=39 data-nosnippet>39</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
+<a href=#40 id=40 data-nosnippet>40</a>    };
+<a href=#41 id=41 data-nosnippet>41</a>    image_task_success(impbcor(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Impbcor))
+<a href=#42 id=42 data-nosnippet>42</a>}
 </code></pre></div></section></main></body></html>

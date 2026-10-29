@@ -20,13 +20,22 @@
 <a href=#20 id=20 data-nosnippet>20</a>}
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">let </span>request = ImregridRequest {
-<a href=#24 id=24 data-nosnippet>24</a>        imagename: task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
-<a href=#25 id=25 data-nosnippet>25</a>        template: task.path(<span class="string">"template"</span>)<span class="question-mark">?</span>,
-<a href=#26 id=26 data-nosnippet>26</a>        output: task.path(<span class="string">"output"</span>)<span class="question-mark">?</span>,
-<a href=#27 id=27 data-nosnippet>27</a>        interpolation: task.required_text(<span class="string">"interpolation"</span>)<span class="question-mark">?</span>,
-<a href=#28 id=28 data-nosnippet>28</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
-<a href=#29 id=29 data-nosnippet>29</a>    };
-<a href=#30 id=30 data-nosnippet>30</a>    image_task_success(imregrid(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Imregrid))
-<a href=#31 id=31 data-nosnippet>31</a>}
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">let </span>template = task.path(<span class="string">"template"</span>)<span class="question-mark">?</span>;
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="comment">// CASA's default, `template='get'`, returns the input's coordinate
+<a href=#25 id=25 data-nosnippet>25</a>    // system and shape instead of regridding.
+<a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">if </span>template.as_os_str().eq_ignore_ascii_case(<span class="string">"get"</span>) {
+<a href=#27 id=27 data-nosnippet>27</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(
+<a href=#28 id=28 data-nosnippet>28</a>            <span class="string">"template='get' is not implemented by casa-rs yet (#977); give a template image"</span>,
+<a href=#29 id=29 data-nosnippet>29</a>        )
+<a href=#30 id=30 data-nosnippet>30</a>        .at(<span class="string">"template"</span>));
+<a href=#31 id=31 data-nosnippet>31</a>    }
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>request = ImregridRequest {
+<a href=#33 id=33 data-nosnippet>33</a>        imagename: task.input_path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
+<a href=#34 id=34 data-nosnippet>34</a>        template: task.input_path(<span class="string">"template"</span>)<span class="question-mark">?</span>,
+<a href=#35 id=35 data-nosnippet>35</a>        output: task.path(<span class="string">"output"</span>)<span class="question-mark">?</span>,
+<a href=#36 id=36 data-nosnippet>36</a>        interpolation: task.required_text(<span class="string">"interpolation"</span>)<span class="question-mark">?</span>,
+<a href=#37 id=37 data-nosnippet>37</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
+<a href=#38 id=38 data-nosnippet>38</a>    };
+<a href=#39 id=39 data-nosnippet>39</a>    image_task_success(imregrid(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Imregrid))
+<a href=#40 id=40 data-nosnippet>40</a>}
 </code></pre></div></section></main></body></html>

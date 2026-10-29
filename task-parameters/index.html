@@ -1062,7 +1062,7 @@ request stdin.</p>
 <p><code>tasks.run(task, parameters=None, /, *, workspace=None, **values)</code> accepts
 every catalog task. It starts from the draft, or Defaults, sets <code>values</code>,
 and runs in <code>workspace</code>: the draft's, or the current directory. The
-CASA-named wrappers take CASA's parameters only and run in the current
+CASA-named wrappers take the surface's parameters and run in the current
 directory. Each call starts the task's own executable, found by the resolver
 (<a href="../install/">Install</a>), with <code>--json-run -</code>, and passes its log lines to
 <code>sys.stderr</code> as they arrive. The log reaches stderr at the logging
@@ -1071,21 +1071,35 @@ configuration's threshold, WARN by default;
 its start and completion. Ctrl-C (<code>KeyboardInterrupt</code>) is passed to the task
 as SIGINT; the task has ten seconds to stop before it is killed, and the
 <code>KeyboardInterrupt</code> is then raised again.</p>
-<p>A request the catalog refuses, such as a parameter its gridder does not read,
-raises <code>ValueError</code> before anything starts. A task that does not succeed
-raises <code>casars.tasks.TaskExecutionError</code>, a <code>RuntimeError</code> whose
-<code>.completion.status</code> is <code>refused</code>, <code>failed</code>, <code>interrupted</code>, <code>signalled</code> or
-<code>malformed_reply</code>, with its <code>message</code> and the <code>parameter</code> it names.
-<code>TaskBinaryNotFoundError</code>, a <code>FileNotFoundError</code>, says what the resolver
-lacked; <code>TaskInvocationError</code> means the executable could not be started, and
-<code>TaskResultError</code> that a success's result was malformed. A success returns a
-<code>TaskCompletion</code> with the <code>command</code> run, its <code>workspace</code>, <code>returncode</code>,
-<code>stdout</code> (the reply), <code>stderr</code> (the log), the <code>provider_invocation</code>, CASA's
-return <code>value</code> from the reply, and the declared products (<code>result</code>,
-<code>products</code>); result projection remains Rust-owned. Catalog-generated
-CASA-named keyword wrappers and type stubs are available directly under
-<code>casars.tasks</code> without copying defaults into Python signatures; there is no
-second provider-specific task API.</p>
+<p>A value the contract refuses, such as a parameter its gridder does not read,
+raises <code>ValueError</code> before anything starts, or <code>TypeError</code> when the value
+has the wrong type. A task that refuses its parameters itself, such as an
+input that does not exist, raises <code>casars.tasks.TaskParameterError</code>, a
+<code>ValueError</code>; one that starts and does not succeed raises
+<code>casars.tasks.TaskExecutionError</code>, a <code>RuntimeError</code>. Both carry the
+<code>.completion</code>, whose <code>status</code> is <code>refused</code>, <code>failed</code>, <code>interrupted</code>,
+<code>signalled</code> or <code>malformed_reply</code>, with its <code>message</code> and the <code>parameter</code> it
+names. <code>TaskBinaryNotFoundError</code>, a <code>FileNotFoundError</code>, says what the
+resolver lacked; <code>TaskInvocationError</code> means the executable could not be
+started, and <code>TaskResultError</code> that a success's result was malformed.
+<code>tasks.run</code> returns a <code>TaskCompletion</code> with the <code>command</code> run, its
+<code>workspace</code>, <code>returncode</code>, <code>stdout</code> (the reply), <code>stderr</code> (the log), the
+<code>provider_invocation</code>, CASA's return <code>value</code> from the reply, and the
+declared products (<code>result</code>, <code>products</code>); result projection remains
+Rust-owned.</p>
+<p>The CASA-named wrappers and their type stubs are generated from the catalog,
+under <code>casars.tasks</code>; there is no second provider-specific task API. A
+surface that names its CASA task (<code>casa_task</code>; the image tasks and
+<code>simobserve</code> so far) has CASA's exact signature: CASA's parameters in CASA's
+order, positional or by keyword, with CASA's defaults, then casa-rs's own
+controls, keyword-only. Its wrapper returns CASA's value: <code>imstat</code>'s
+statistics dictionary with NumPy arrays, <code>immath</code>'s <code>True</code>, <code>None</code> for most
+tasks. A parameter casa-rs does not implement yet is taken only at CASA's
+default and refused at any other value, naming its issue; the wrapper's
+docstring lists them. The other wrappers take keyword arguments and return
+the <code>TaskCompletion</code> until their families are converted (#931).
+<a href="../reference/casa-compatibility/">CASA compatibility</a> compares each surface
+with its CASA task.</p>
 <h2 id="what-profiles-intentionally-exclude">What profiles intentionally exclude<a class="headerlink" href="#what-profiles-intentionally-exclude" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>casars.data.Image</code> and <code>casars.data.Table</code> object-handle lifecycle</li>

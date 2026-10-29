@@ -334,200 +334,202 @@
 <a href=#334 id=334 data-nosnippet>334</a>                category: <span class="string">"Test"</span>.into(),
 <a href=#335 id=335 data-nosnippet>335</a>                summary: <span class="string">"Test"</span>.into(),
 <a href=#336 id=336 data-nosnippet>336</a>                provider_family: <span class="string">"test"</span>.into(),
-<a href=#337 id=337 data-nosnippet>337</a>                execution: SurfaceExecutionProjection::default(),
-<a href=#338 id=338 data-nosnippet>338</a>                bindings: <span class="macro">vec!</span>[SurfaceParameterBinding {
-<a href=#339 id=339 data-nosnippet>339</a>                    name: <span class="string">"niter"</span>.into(),
-<a href=#340 id=340 data-nosnippet>340</a>                    concept: concept.reference(),
-<a href=#341 id=341 data-nosnippet>341</a>                    order: <span class="number">0</span>,
-<a href=#342 id=342 data-nosnippet>342</a>                    default: DefaultSpec::Literal {
-<a href=#343 id=343 data-nosnippet>343</a>                        value: ParameterValue::Integer(<span class="number">0</span>),
-<a href=#344 id=344 data-nosnippet>344</a>                    },
-<a href=#345 id=345 data-nosnippet>345</a>                    required_when: Predicate::Never,
-<a href=#346 id=346 data-nosnippet>346</a>                    active_when: Predicate::Always,
-<a href=#347 id=347 data-nosnippet>347</a>                    refinements: Vec::new(),
-<a href=#348 id=348 data-nosnippet>348</a>                    context_role: <span class="prelude-val">None</span>,
-<a href=#349 id=349 data-nosnippet>349</a>                    surface_note: <span class="prelude-val">None</span>,
-<a href=#350 id=350 data-nosnippet>350</a>                    projections: ParameterProjections {
-<a href=#351 id=351 data-nosnippet>351</a>                        cli: <span class="prelude-val">None</span>,
-<a href=#352 id=352 data-nosnippet>352</a>                        provider: <span class="prelude-val">None</span>,
-<a href=#353 id=353 data-nosnippet>353</a>                        python: <span class="prelude-val">None</span>,
-<a href=#354 id=354 data-nosnippet>354</a>                        presentation: ParameterPresentation {
-<a href=#355 id=355 data-nosnippet>355</a>                            label: <span class="string">"Iterations"</span>.into(),
-<a href=#356 id=356 data-nosnippet>356</a>                            group: <span class="string">"Clean"</span>.into(),
-<a href=#357 id=357 data-nosnippet>357</a>                            advanced: <span class="bool-val">false</span>,
-<a href=#358 id=358 data-nosnippet>358</a>                            hidden: <span class="bool-val">false</span>,
-<a href=#359 id=359 data-nosnippet>359</a>                        },
-<a href=#360 id=360 data-nosnippet>360</a>                    },
-<a href=#361 id=361 data-nosnippet>361</a>                    aliases: Vec::new(),
-<a href=#362 id=362 data-nosnippet>362</a>                    reviewed_homonym: <span class="prelude-val">None</span>,
-<a href=#363 id=363 data-nosnippet>363</a>                }],
-<a href=#364 id=364 data-nosnippet>364</a>                migrations: Vec::new(),
-<a href=#365 id=365 data-nosnippet>365</a>            }),
-<a href=#366 id=366 data-nosnippet>366</a>            catalog: ParameterCatalog {
-<a href=#367 id=367 data-nosnippet>367</a>                schema_version: <span class="number">1</span>,
-<a href=#368 id=368 data-nosnippet>368</a>                concepts: <span class="macro">vec!</span>[concept],
-<a href=#369 id=369 data-nosnippet>369</a>            },
-<a href=#370 id=370 data-nosnippet>370</a>        }
-<a href=#371 id=371 data-nosnippet>371</a>    }
-<a href=#372 id=372 data-nosnippet>372</a>
-<a href=#373 id=373 data-nosnippet>373</a>    <span class="attr">#[test]
-<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">fn </span>precedence_and_reset_are_visible_in_origins() {
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle()).unwrap();
-<a href=#376 id=376 data-nosnippet>376</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Default);
-<a href=#377 id=377 data-nosnippet>377</a>        session
-<a href=#378 id=378 data-nosnippet>378</a>            .apply_context_patch(ResolutionPatch {
-<a href=#379 id=379 data-nosnippet>379</a>                values: BTreeMap::from([(<span class="string">"niter"</span>.into(), ParameterValue::Integer(<span class="number">5</span>))]),
-<a href=#380 id=380 data-nosnippet>380</a>                unset: BTreeSet::new(),
-<a href=#381 id=381 data-nosnippet>381</a>            })
-<a href=#382 id=382 data-nosnippet>382</a>            .unwrap();
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Context);
-<a href=#384 id=384 data-nosnippet>384</a>        session.set(<span class="string">"niter"</span>, ParameterValue::Integer(<span class="number">10</span>)).unwrap();
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Override);
-<a href=#386 id=386 data-nosnippet>386</a>        session.reset(<span class="string">"niter"</span>).unwrap();
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Default);
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert_eq!</span>(
-<a href=#389 id=389 data-nosnippet>389</a>            session.states()[<span class="string">"niter"</span>].value,
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="prelude-val">Some</span>(ParameterValue::Integer(<span class="number">0</span>))
-<a href=#391 id=391 data-nosnippet>391</a>        );
-<a href=#392 id=392 data-nosnippet>392</a>    }
-<a href=#393 id=393 data-nosnippet>393</a>
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="attr">#[test]
-<a href=#395 id=395 data-nosnippet>395</a>    </span><span class="kw">fn </span>failed_mutations_leave_the_prior_draft_unchanged() {
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle()).unwrap();
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>before_states = session.states().clone();
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="macro">assert!</span>(
-<a href=#399 id=399 data-nosnippet>399</a>            session
-<a href=#400 id=400 data-nosnippet>400</a>                .set(<span class="string">"niter"</span>, ParameterValue::String(<span class="string">"not-an-integer"</span>.into()))
-<a href=#401 id=401 data-nosnippet>401</a>                .is_err()
-<a href=#402 id=402 data-nosnippet>402</a>        );
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="macro">assert_eq!</span>(session.states(), <span class="kw-2">&amp;</span>before_states);
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="macro">assert!</span>(!session.is_dirty());
-<a href=#405 id=405 data-nosnippet>405</a>
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>invalid_patch = ResolutionPatch {
-<a href=#407 id=407 data-nosnippet>407</a>            values: BTreeMap::from([(
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"niter"</span>.into(),
-<a href=#409 id=409 data-nosnippet>409</a>                ParameterValue::String(<span class="string">"still-not-an-integer"</span>.into()),
-<a href=#410 id=410 data-nosnippet>410</a>            )]),
-<a href=#411 id=411 data-nosnippet>411</a>            unset: BTreeSet::new(),
-<a href=#412 id=412 data-nosnippet>412</a>        };
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="macro">assert!</span>(session.apply_override_patch(invalid_patch).is_err());
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="macro">assert_eq!</span>(session.states(), <span class="kw-2">&amp;</span>before_states);
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="macro">assert!</span>(!session.is_dirty());
-<a href=#416 id=416 data-nosnippet>416</a>    }
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="attr">#[test]
-<a href=#419 id=419 data-nosnippet>419</a>    </span><span class="kw">fn </span>incomplete_interactive_draft_cannot_be_saved_or_executed() {
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span><span class="kw-2">mut </span>required_bundle = bundle();
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>SurfaceDefinition::Task(definition) = <span class="kw-2">&amp;mut </span>required_bundle.surface;
-<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span>binding = definition.bindings.first_mut().unwrap();
-<a href=#423 id=423 data-nosnippet>423</a>        binding.default = DefaultSpec::Required;
-<a href=#424 id=424 data-nosnippet>424</a>        binding.required_when = Predicate::Always;
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span>session = ParameterSession::defaults(required_bundle).unwrap();
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert!</span>(
-<a href=#427 id=427 data-nosnippet>427</a>            session
-<a href=#428 id=428 data-nosnippet>428</a>                .diagnostics()
-<a href=#429 id=429 data-nosnippet>429</a>                .iter()
-<a href=#430 id=430 data-nosnippet>430</a>                .any(|diagnostic| diagnostic.code == <span class="kw">crate</span>::DiagnosticCode::MissingRequired)
-<a href=#431 id=431 data-nosnippet>431</a>        );
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="macro">assert!</span>(session.render_sparse().is_err());
-<a href=#433 id=433 data-nosnippet>433</a>    }
-<a href=#434 id=434 data-nosnippet>434</a>
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="attr">#[test]
-<a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">fn </span>aggregate_calibrate_enforces_every_selected_modes_required_inputs() {
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>cases: [(<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]); <span class="number">8</span>] = [
-<a href=#438 id=438 data-nosnippet>438</a>            (<span class="string">"apply"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>]),
-<a href=#439 id=439 data-nosnippet>439</a>            (<span class="string">"summary"</span>, <span class="kw-2">&amp;</span>[<span class="string">"summary_paths"</span>]),
-<a href=#440 id=440 data-nosnippet>440</a>            (<span class="string">"stats"</span>, <span class="kw-2">&amp;</span>[<span class="string">"table_path"</span>]),
-<a href=#441 id=441 data-nosnippet>441</a>            (<span class="string">"export_corrected_data"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"outputvis"</span>]),
-<a href=#442 id=442 data-nosnippet>442</a>            (<span class="string">"solve_gain"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"refant"</span>]),
-<a href=#443 id=443 data-nosnippet>443</a>            (<span class="string">"solve_bandpass"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"refant"</span>]),
-<a href=#444 id=444 data-nosnippet>444</a>            (
-<a href=#445 id=445 data-nosnippet>445</a>                <span class="string">"fluxscale"</span>,
-<a href=#446 id=446 data-nosnippet>446</a>                <span class="kw-2">&amp;</span>[<span class="string">"fluxscale_input"</span>, <span class="string">"out_table"</span>, <span class="string">"reference_fields"</span>],
-<a href=#447 id=447 data-nosnippet>447</a>            ),
-<a href=#448 id=448 data-nosnippet>448</a>            (<span class="string">"gencal"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"caltype"</span>]),
-<a href=#449 id=449 data-nosnippet>449</a>        ];
-<a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">for </span>(mode, required) <span class="kw">in </span>cases {
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">let </span><span class="kw-2">mut </span>session =
-<a href=#453 id=453 data-nosnippet>453</a>                ParameterSession::defaults(builtin_surface_bundle(<span class="string">"calibrate"</span>).unwrap()).unwrap();
-<a href=#454 id=454 data-nosnippet>454</a>            session
-<a href=#455 id=455 data-nosnippet>455</a>                .set(<span class="string">"mode"</span>, ParameterValue::String(mode.to_string()))
-<a href=#456 id=456 data-nosnippet>456</a>                .unwrap();
-<a href=#457 id=457 data-nosnippet>457</a>            <span class="kw">let </span>missing = session
-<a href=#458 id=458 data-nosnippet>458</a>                .diagnostics()
-<a href=#459 id=459 data-nosnippet>459</a>                .iter()
-<a href=#460 id=460 data-nosnippet>460</a>                .filter(|diagnostic| diagnostic.code == <span class="kw">crate</span>::DiagnosticCode::MissingRequired)
-<a href=#461 id=461 data-nosnippet>461</a>                .filter_map(|diagnostic| diagnostic.parameter.as_deref())
-<a href=#462 id=462 data-nosnippet>462</a>                .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#463 id=463 data-nosnippet>463</a>            <span class="macro">assert_eq!</span>(missing, required.iter().copied().collect(), <span class="string">"{mode}"</span>);
-<a href=#464 id=464 data-nosnippet>464</a>            <span class="macro">assert!</span>(session.render_sparse().is_err(), <span class="string">"{mode}"</span>);
-<a href=#465 id=465 data-nosnippet>465</a>
-<a href=#466 id=466 data-nosnippet>466</a>            <span class="kw">for </span>name <span class="kw">in </span>required {
-<a href=#467 id=467 data-nosnippet>467</a>                <span class="kw">let </span>value = <span class="kw">match </span><span class="kw-2">*</span>name {
-<a href=#468 id=468 data-nosnippet>468</a>                    <span class="string">"vis" </span>=&gt; ParameterValue::String(<span class="string">"input.ms"</span>.into()),
-<a href=#469 id=469 data-nosnippet>469</a>                    <span class="string">"outputvis" </span>=&gt; ParameterValue::String(<span class="string">"output.ms"</span>.into()),
-<a href=#470 id=470 data-nosnippet>470</a>                    <span class="string">"summary_paths" </span>=&gt; ParameterValue::String(<span class="string">"summary.cal"</span>.into()),
-<a href=#471 id=471 data-nosnippet>471</a>                    <span class="string">"table_path" </span>| <span class="string">"fluxscale_input" </span>=&gt; ParameterValue::String(<span class="string">"input.cal"</span>.into()),
-<a href=#472 id=472 data-nosnippet>472</a>                    <span class="string">"fit_spw" </span>=&gt; ParameterValue::String(<span class="string">"0:0~7"</span>.into()),
-<a href=#473 id=473 data-nosnippet>473</a>                    <span class="string">"out_table" </span>=&gt; ParameterValue::String(<span class="string">"output.cal"</span>.into()),
-<a href=#474 id=474 data-nosnippet>474</a>                    <span class="string">"refant" </span>=&gt; ParameterValue::String(<span class="string">"ea01"</span>.into()),
-<a href=#475 id=475 data-nosnippet>475</a>                    <span class="string">"reference_fields" </span>=&gt; ParameterValue::String(<span class="string">"0"</span>.into()),
-<a href=#476 id=476 data-nosnippet>476</a>                    <span class="string">"caltype" </span>=&gt; ParameterValue::String(<span class="string">"antpos"</span>.into()),
-<a href=#477 id=477 data-nosnippet>477</a>                    other =&gt; <span class="macro">panic!</span>(<span class="string">"missing test value for {other}"</span>),
-<a href=#478 id=478 data-nosnippet>478</a>                };
-<a href=#479 id=479 data-nosnippet>479</a>                session.set(<span class="kw-2">*</span>name, value).unwrap();
-<a href=#480 id=480 data-nosnippet>480</a>            }
-<a href=#481 id=481 data-nosnippet>481</a>            session
-<a href=#482 id=482 data-nosnippet>482</a>                .render_sparse()
-<a href=#483 id=483 data-nosnippet>483</a>                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"complete {mode} should render: {error}"</span>));
-<a href=#484 id=484 data-nosnippet>484</a>        }
-<a href=#485 id=485 data-nosnippet>485</a>    }
-<a href=#486 id=486 data-nosnippet>486</a>
-<a href=#487 id=487 data-nosnippet>487</a>    <span class="attr">#[test]
-<a href=#488 id=488 data-nosnippet>488</a>    </span><span class="kw">fn </span>aggregate_calibrate_keeps_other_stage_values_active_and_persistable() {
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span><span class="kw-2">mut </span>session =
-<a href=#490 id=490 data-nosnippet>490</a>            ParameterSession::defaults(builtin_surface_bundle(<span class="string">"calibrate"</span>).unwrap()).unwrap();
-<a href=#491 id=491 data-nosnippet>491</a>        session
-<a href=#492 id=492 data-nosnippet>492</a>            .set(<span class="string">"vis"</span>, ParameterValue::String(<span class="string">"input.ms"</span>.into()))
-<a href=#493 id=493 data-nosnippet>493</a>            .unwrap();
-<a href=#494 id=494 data-nosnippet>494</a>        session
-<a href=#495 id=495 data-nosnippet>495</a>            .set(
-<a href=#496 id=496 data-nosnippet>496</a>                <span class="string">"summary_paths"</span>,
-<a href=#497 id=497 data-nosnippet>497</a>                ParameterValue::String(<span class="string">"future-stage.cal"</span>.into()),
-<a href=#498 id=498 data-nosnippet>498</a>            )
-<a href=#499 id=499 data-nosnippet>499</a>            .unwrap();
-<a href=#500 id=500 data-nosnippet>500</a>        <span class="macro">assert!</span>(session.states()[<span class="string">"summary_paths"</span>].active);
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>profile = session.render_sparse().unwrap();
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="comment">// A path list, so the one path is kept as a one-element list.
-<a href=#503 id=503 data-nosnippet>503</a>        </span><span class="macro">assert!</span>(
-<a href=#504 id=504 data-nosnippet>504</a>            profile.contains(<span class="string">"summary_paths = [\"future-stage.cal\"]"</span>),
-<a href=#505 id=505 data-nosnippet>505</a>            <span class="string">"{profile}"
-<a href=#506 id=506 data-nosnippet>506</a>        </span>);
-<a href=#507 id=507 data-nosnippet>507</a>    }
-<a href=#508 id=508 data-nosnippet>508</a>
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="attr">#[test]
-<a href=#510 id=510 data-nosnippet>510</a>    </span><span class="kw">fn </span>field_state_predicates_use_catalog_semantic_equality() {
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span><span class="kw-2">mut </span>bundle = builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span>SurfaceDefinition::Task(definition) = <span class="kw-2">&amp;mut </span>bundle.surface;
-<a href=#513 id=513 data-nosnippet>513</a>        definition
-<a href=#514 id=514 data-nosnippet>514</a>            .bindings
-<a href=#515 id=515 data-nosnippet>515</a>            .iter_mut()
-<a href=#516 id=516 data-nosnippet>516</a>            .find(|binding| binding.name == <span class="string">"format"</span>)
-<a href=#517 id=517 data-nosnippet>517</a>            .unwrap()
-<a href=#518 id=518 data-nosnippet>518</a>            .active_when = Predicate::Equals {
-<a href=#519 id=519 data-nosnippet>519</a>            parameter: <span class="string">"vis"</span>.to_string(),
-<a href=#520 id=520 data-nosnippet>520</a>            value: ParameterValue::String(<span class="string">"./target.ms"</span>.to_string()),
-<a href=#521 id=521 data-nosnippet>521</a>        };
-<a href=#522 id=522 data-nosnippet>522</a>
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle).unwrap();
-<a href=#524 id=524 data-nosnippet>524</a>        session
-<a href=#525 id=525 data-nosnippet>525</a>            .set(
-<a href=#526 id=526 data-nosnippet>526</a>                <span class="string">"vis"</span>,
-<a href=#527 id=527 data-nosnippet>527</a>                ParameterValue::String(<span class="string">"data/../target.ms"</span>.to_string()),
-<a href=#528 id=528 data-nosnippet>528</a>            )
-<a href=#529 id=529 data-nosnippet>529</a>            .unwrap();
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="macro">assert!</span>(session.states()[<span class="string">"format"</span>].active);
-<a href=#531 id=531 data-nosnippet>531</a>    }
-<a href=#532 id=532 data-nosnippet>532</a>}
+<a href=#337 id=337 data-nosnippet>337</a>                casa_task: <span class="prelude-val">None</span>,
+<a href=#338 id=338 data-nosnippet>338</a>                execution: SurfaceExecutionProjection::default(),
+<a href=#339 id=339 data-nosnippet>339</a>                bindings: <span class="macro">vec!</span>[SurfaceParameterBinding {
+<a href=#340 id=340 data-nosnippet>340</a>                    name: <span class="string">"niter"</span>.into(),
+<a href=#341 id=341 data-nosnippet>341</a>                    concept: concept.reference(),
+<a href=#342 id=342 data-nosnippet>342</a>                    order: <span class="number">0</span>,
+<a href=#343 id=343 data-nosnippet>343</a>                    default: DefaultSpec::Literal {
+<a href=#344 id=344 data-nosnippet>344</a>                        value: ParameterValue::Integer(<span class="number">0</span>),
+<a href=#345 id=345 data-nosnippet>345</a>                    },
+<a href=#346 id=346 data-nosnippet>346</a>                    required_when: Predicate::Never,
+<a href=#347 id=347 data-nosnippet>347</a>                    active_when: Predicate::Always,
+<a href=#348 id=348 data-nosnippet>348</a>                    refinements: Vec::new(),
+<a href=#349 id=349 data-nosnippet>349</a>                    context_role: <span class="prelude-val">None</span>,
+<a href=#350 id=350 data-nosnippet>350</a>                    surface_note: <span class="prelude-val">None</span>,
+<a href=#351 id=351 data-nosnippet>351</a>                    projections: ParameterProjections {
+<a href=#352 id=352 data-nosnippet>352</a>                        cli: <span class="prelude-val">None</span>,
+<a href=#353 id=353 data-nosnippet>353</a>                        provider: <span class="prelude-val">None</span>,
+<a href=#354 id=354 data-nosnippet>354</a>                        python: <span class="prelude-val">None</span>,
+<a href=#355 id=355 data-nosnippet>355</a>                        presentation: ParameterPresentation {
+<a href=#356 id=356 data-nosnippet>356</a>                            label: <span class="string">"Iterations"</span>.into(),
+<a href=#357 id=357 data-nosnippet>357</a>                            group: <span class="string">"Clean"</span>.into(),
+<a href=#358 id=358 data-nosnippet>358</a>                            advanced: <span class="bool-val">false</span>,
+<a href=#359 id=359 data-nosnippet>359</a>                            hidden: <span class="bool-val">false</span>,
+<a href=#360 id=360 data-nosnippet>360</a>                        },
+<a href=#361 id=361 data-nosnippet>361</a>                    },
+<a href=#362 id=362 data-nosnippet>362</a>                    aliases: Vec::new(),
+<a href=#363 id=363 data-nosnippet>363</a>                    reviewed_homonym: <span class="prelude-val">None</span>,
+<a href=#364 id=364 data-nosnippet>364</a>                    unimplemented: <span class="prelude-val">None</span>,
+<a href=#365 id=365 data-nosnippet>365</a>                }],
+<a href=#366 id=366 data-nosnippet>366</a>                migrations: Vec::new(),
+<a href=#367 id=367 data-nosnippet>367</a>            }),
+<a href=#368 id=368 data-nosnippet>368</a>            catalog: ParameterCatalog {
+<a href=#369 id=369 data-nosnippet>369</a>                schema_version: <span class="number">1</span>,
+<a href=#370 id=370 data-nosnippet>370</a>                concepts: <span class="macro">vec!</span>[concept],
+<a href=#371 id=371 data-nosnippet>371</a>            },
+<a href=#372 id=372 data-nosnippet>372</a>        }
+<a href=#373 id=373 data-nosnippet>373</a>    }
+<a href=#374 id=374 data-nosnippet>374</a>
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="attr">#[test]
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">fn </span>precedence_and_reset_are_visible_in_origins() {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle()).unwrap();
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Default);
+<a href=#379 id=379 data-nosnippet>379</a>        session
+<a href=#380 id=380 data-nosnippet>380</a>            .apply_context_patch(ResolutionPatch {
+<a href=#381 id=381 data-nosnippet>381</a>                values: BTreeMap::from([(<span class="string">"niter"</span>.into(), ParameterValue::Integer(<span class="number">5</span>))]),
+<a href=#382 id=382 data-nosnippet>382</a>                unset: BTreeSet::new(),
+<a href=#383 id=383 data-nosnippet>383</a>            })
+<a href=#384 id=384 data-nosnippet>384</a>            .unwrap();
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Context);
+<a href=#386 id=386 data-nosnippet>386</a>        session.set(<span class="string">"niter"</span>, ParameterValue::Integer(<span class="number">10</span>)).unwrap();
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Override);
+<a href=#388 id=388 data-nosnippet>388</a>        session.reset(<span class="string">"niter"</span>).unwrap();
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="macro">assert_eq!</span>(session.states()[<span class="string">"niter"</span>].origin, ParameterOrigin::Default);
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="macro">assert_eq!</span>(
+<a href=#391 id=391 data-nosnippet>391</a>            session.states()[<span class="string">"niter"</span>].value,
+<a href=#392 id=392 data-nosnippet>392</a>            <span class="prelude-val">Some</span>(ParameterValue::Integer(<span class="number">0</span>))
+<a href=#393 id=393 data-nosnippet>393</a>        );
+<a href=#394 id=394 data-nosnippet>394</a>    }
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a>    <span class="attr">#[test]
+<a href=#397 id=397 data-nosnippet>397</a>    </span><span class="kw">fn </span>failed_mutations_leave_the_prior_draft_unchanged() {
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle()).unwrap();
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>before_states = session.states().clone();
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="macro">assert!</span>(
+<a href=#401 id=401 data-nosnippet>401</a>            session
+<a href=#402 id=402 data-nosnippet>402</a>                .set(<span class="string">"niter"</span>, ParameterValue::String(<span class="string">"not-an-integer"</span>.into()))
+<a href=#403 id=403 data-nosnippet>403</a>                .is_err()
+<a href=#404 id=404 data-nosnippet>404</a>        );
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="macro">assert_eq!</span>(session.states(), <span class="kw-2">&amp;</span>before_states);
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="macro">assert!</span>(!session.is_dirty());
+<a href=#407 id=407 data-nosnippet>407</a>
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>invalid_patch = ResolutionPatch {
+<a href=#409 id=409 data-nosnippet>409</a>            values: BTreeMap::from([(
+<a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"niter"</span>.into(),
+<a href=#411 id=411 data-nosnippet>411</a>                ParameterValue::String(<span class="string">"still-not-an-integer"</span>.into()),
+<a href=#412 id=412 data-nosnippet>412</a>            )]),
+<a href=#413 id=413 data-nosnippet>413</a>            unset: BTreeSet::new(),
+<a href=#414 id=414 data-nosnippet>414</a>        };
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="macro">assert!</span>(session.apply_override_patch(invalid_patch).is_err());
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="macro">assert_eq!</span>(session.states(), <span class="kw-2">&amp;</span>before_states);
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="macro">assert!</span>(!session.is_dirty());
+<a href=#418 id=418 data-nosnippet>418</a>    }
+<a href=#419 id=419 data-nosnippet>419</a>
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="attr">#[test]
+<a href=#421 id=421 data-nosnippet>421</a>    </span><span class="kw">fn </span>incomplete_interactive_draft_cannot_be_saved_or_executed() {
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span><span class="kw-2">mut </span>required_bundle = bundle();
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span>SurfaceDefinition::Task(definition) = <span class="kw-2">&amp;mut </span>required_bundle.surface;
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span>binding = definition.bindings.first_mut().unwrap();
+<a href=#425 id=425 data-nosnippet>425</a>        binding.default = DefaultSpec::Required;
+<a href=#426 id=426 data-nosnippet>426</a>        binding.required_when = Predicate::Always;
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>session = ParameterSession::defaults(required_bundle).unwrap();
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert!</span>(
+<a href=#429 id=429 data-nosnippet>429</a>            session
+<a href=#430 id=430 data-nosnippet>430</a>                .diagnostics()
+<a href=#431 id=431 data-nosnippet>431</a>                .iter()
+<a href=#432 id=432 data-nosnippet>432</a>                .any(|diagnostic| diagnostic.code == <span class="kw">crate</span>::DiagnosticCode::MissingRequired)
+<a href=#433 id=433 data-nosnippet>433</a>        );
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="macro">assert!</span>(session.render_sparse().is_err());
+<a href=#435 id=435 data-nosnippet>435</a>    }
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="attr">#[test]
+<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">fn </span>aggregate_calibrate_enforces_every_selected_modes_required_inputs() {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>cases: [(<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]); <span class="number">8</span>] = [
+<a href=#440 id=440 data-nosnippet>440</a>            (<span class="string">"apply"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>]),
+<a href=#441 id=441 data-nosnippet>441</a>            (<span class="string">"summary"</span>, <span class="kw-2">&amp;</span>[<span class="string">"summary_paths"</span>]),
+<a href=#442 id=442 data-nosnippet>442</a>            (<span class="string">"stats"</span>, <span class="kw-2">&amp;</span>[<span class="string">"table_path"</span>]),
+<a href=#443 id=443 data-nosnippet>443</a>            (<span class="string">"export_corrected_data"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"outputvis"</span>]),
+<a href=#444 id=444 data-nosnippet>444</a>            (<span class="string">"solve_gain"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"refant"</span>]),
+<a href=#445 id=445 data-nosnippet>445</a>            (<span class="string">"solve_bandpass"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"refant"</span>]),
+<a href=#446 id=446 data-nosnippet>446</a>            (
+<a href=#447 id=447 data-nosnippet>447</a>                <span class="string">"fluxscale"</span>,
+<a href=#448 id=448 data-nosnippet>448</a>                <span class="kw-2">&amp;</span>[<span class="string">"fluxscale_input"</span>, <span class="string">"out_table"</span>, <span class="string">"reference_fields"</span>],
+<a href=#449 id=449 data-nosnippet>449</a>            ),
+<a href=#450 id=450 data-nosnippet>450</a>            (<span class="string">"gencal"</span>, <span class="kw-2">&amp;</span>[<span class="string">"vis"</span>, <span class="string">"out_table"</span>, <span class="string">"caltype"</span>]),
+<a href=#451 id=451 data-nosnippet>451</a>        ];
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">for </span>(mode, required) <span class="kw">in </span>cases {
+<a href=#454 id=454 data-nosnippet>454</a>            <span class="kw">let </span><span class="kw-2">mut </span>session =
+<a href=#455 id=455 data-nosnippet>455</a>                ParameterSession::defaults(builtin_surface_bundle(<span class="string">"calibrate"</span>).unwrap()).unwrap();
+<a href=#456 id=456 data-nosnippet>456</a>            session
+<a href=#457 id=457 data-nosnippet>457</a>                .set(<span class="string">"mode"</span>, ParameterValue::String(mode.to_string()))
+<a href=#458 id=458 data-nosnippet>458</a>                .unwrap();
+<a href=#459 id=459 data-nosnippet>459</a>            <span class="kw">let </span>missing = session
+<a href=#460 id=460 data-nosnippet>460</a>                .diagnostics()
+<a href=#461 id=461 data-nosnippet>461</a>                .iter()
+<a href=#462 id=462 data-nosnippet>462</a>                .filter(|diagnostic| diagnostic.code == <span class="kw">crate</span>::DiagnosticCode::MissingRequired)
+<a href=#463 id=463 data-nosnippet>463</a>                .filter_map(|diagnostic| diagnostic.parameter.as_deref())
+<a href=#464 id=464 data-nosnippet>464</a>                .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#465 id=465 data-nosnippet>465</a>            <span class="macro">assert_eq!</span>(missing, required.iter().copied().collect(), <span class="string">"{mode}"</span>);
+<a href=#466 id=466 data-nosnippet>466</a>            <span class="macro">assert!</span>(session.render_sparse().is_err(), <span class="string">"{mode}"</span>);
+<a href=#467 id=467 data-nosnippet>467</a>
+<a href=#468 id=468 data-nosnippet>468</a>            <span class="kw">for </span>name <span class="kw">in </span>required {
+<a href=#469 id=469 data-nosnippet>469</a>                <span class="kw">let </span>value = <span class="kw">match </span><span class="kw-2">*</span>name {
+<a href=#470 id=470 data-nosnippet>470</a>                    <span class="string">"vis" </span>=&gt; ParameterValue::String(<span class="string">"input.ms"</span>.into()),
+<a href=#471 id=471 data-nosnippet>471</a>                    <span class="string">"outputvis" </span>=&gt; ParameterValue::String(<span class="string">"output.ms"</span>.into()),
+<a href=#472 id=472 data-nosnippet>472</a>                    <span class="string">"summary_paths" </span>=&gt; ParameterValue::String(<span class="string">"summary.cal"</span>.into()),
+<a href=#473 id=473 data-nosnippet>473</a>                    <span class="string">"table_path" </span>| <span class="string">"fluxscale_input" </span>=&gt; ParameterValue::String(<span class="string">"input.cal"</span>.into()),
+<a href=#474 id=474 data-nosnippet>474</a>                    <span class="string">"fit_spw" </span>=&gt; ParameterValue::String(<span class="string">"0:0~7"</span>.into()),
+<a href=#475 id=475 data-nosnippet>475</a>                    <span class="string">"out_table" </span>=&gt; ParameterValue::String(<span class="string">"output.cal"</span>.into()),
+<a href=#476 id=476 data-nosnippet>476</a>                    <span class="string">"refant" </span>=&gt; ParameterValue::String(<span class="string">"ea01"</span>.into()),
+<a href=#477 id=477 data-nosnippet>477</a>                    <span class="string">"reference_fields" </span>=&gt; ParameterValue::String(<span class="string">"0"</span>.into()),
+<a href=#478 id=478 data-nosnippet>478</a>                    <span class="string">"caltype" </span>=&gt; ParameterValue::String(<span class="string">"antpos"</span>.into()),
+<a href=#479 id=479 data-nosnippet>479</a>                    other =&gt; <span class="macro">panic!</span>(<span class="string">"missing test value for {other}"</span>),
+<a href=#480 id=480 data-nosnippet>480</a>                };
+<a href=#481 id=481 data-nosnippet>481</a>                session.set(<span class="kw-2">*</span>name, value).unwrap();
+<a href=#482 id=482 data-nosnippet>482</a>            }
+<a href=#483 id=483 data-nosnippet>483</a>            session
+<a href=#484 id=484 data-nosnippet>484</a>                .render_sparse()
+<a href=#485 id=485 data-nosnippet>485</a>                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"complete {mode} should render: {error}"</span>));
+<a href=#486 id=486 data-nosnippet>486</a>        }
+<a href=#487 id=487 data-nosnippet>487</a>    }
+<a href=#488 id=488 data-nosnippet>488</a>
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="attr">#[test]
+<a href=#490 id=490 data-nosnippet>490</a>    </span><span class="kw">fn </span>aggregate_calibrate_keeps_other_stage_values_active_and_persistable() {
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">let </span><span class="kw-2">mut </span>session =
+<a href=#492 id=492 data-nosnippet>492</a>            ParameterSession::defaults(builtin_surface_bundle(<span class="string">"calibrate"</span>).unwrap()).unwrap();
+<a href=#493 id=493 data-nosnippet>493</a>        session
+<a href=#494 id=494 data-nosnippet>494</a>            .set(<span class="string">"vis"</span>, ParameterValue::String(<span class="string">"input.ms"</span>.into()))
+<a href=#495 id=495 data-nosnippet>495</a>            .unwrap();
+<a href=#496 id=496 data-nosnippet>496</a>        session
+<a href=#497 id=497 data-nosnippet>497</a>            .set(
+<a href=#498 id=498 data-nosnippet>498</a>                <span class="string">"summary_paths"</span>,
+<a href=#499 id=499 data-nosnippet>499</a>                ParameterValue::String(<span class="string">"future-stage.cal"</span>.into()),
+<a href=#500 id=500 data-nosnippet>500</a>            )
+<a href=#501 id=501 data-nosnippet>501</a>            .unwrap();
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="macro">assert!</span>(session.states()[<span class="string">"summary_paths"</span>].active);
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>profile = session.render_sparse().unwrap();
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="comment">// A path list, so the one path is kept as a one-element list.
+<a href=#505 id=505 data-nosnippet>505</a>        </span><span class="macro">assert!</span>(
+<a href=#506 id=506 data-nosnippet>506</a>            profile.contains(<span class="string">"summary_paths = [\"future-stage.cal\"]"</span>),
+<a href=#507 id=507 data-nosnippet>507</a>            <span class="string">"{profile}"
+<a href=#508 id=508 data-nosnippet>508</a>        </span>);
+<a href=#509 id=509 data-nosnippet>509</a>    }
+<a href=#510 id=510 data-nosnippet>510</a>
+<a href=#511 id=511 data-nosnippet>511</a>    <span class="attr">#[test]
+<a href=#512 id=512 data-nosnippet>512</a>    </span><span class="kw">fn </span>field_state_predicates_use_catalog_semantic_equality() {
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span><span class="kw-2">mut </span>bundle = builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="kw">let </span>SurfaceDefinition::Task(definition) = <span class="kw-2">&amp;mut </span>bundle.surface;
+<a href=#515 id=515 data-nosnippet>515</a>        definition
+<a href=#516 id=516 data-nosnippet>516</a>            .bindings
+<a href=#517 id=517 data-nosnippet>517</a>            .iter_mut()
+<a href=#518 id=518 data-nosnippet>518</a>            .find(|binding| binding.name == <span class="string">"format"</span>)
+<a href=#519 id=519 data-nosnippet>519</a>            .unwrap()
+<a href=#520 id=520 data-nosnippet>520</a>            .active_when = Predicate::Equals {
+<a href=#521 id=521 data-nosnippet>521</a>            parameter: <span class="string">"vis"</span>.to_string(),
+<a href=#522 id=522 data-nosnippet>522</a>            value: ParameterValue::String(<span class="string">"./target.ms"</span>.to_string()),
+<a href=#523 id=523 data-nosnippet>523</a>        };
+<a href=#524 id=524 data-nosnippet>524</a>
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span><span class="kw-2">mut </span>session = ParameterSession::defaults(bundle).unwrap();
+<a href=#526 id=526 data-nosnippet>526</a>        session
+<a href=#527 id=527 data-nosnippet>527</a>            .set(
+<a href=#528 id=528 data-nosnippet>528</a>                <span class="string">"vis"</span>,
+<a href=#529 id=529 data-nosnippet>529</a>                ParameterValue::String(<span class="string">"data/../target.ms"</span>.to_string()),
+<a href=#530 id=530 data-nosnippet>530</a>            )
+<a href=#531 id=531 data-nosnippet>531</a>            .unwrap();
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="macro">assert!</span>(session.states()[<span class="string">"format"</span>].active);
+<a href=#533 id=533 data-nosnippet>533</a>    }
+<a href=#534 id=534 data-nosnippet>534</a>}
 </code></pre></div></section></main></body></html>

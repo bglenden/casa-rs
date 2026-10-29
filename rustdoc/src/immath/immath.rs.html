@@ -4,9 +4,9 @@
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::process::ExitCode;
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_images::{
-<a href=#7 id=7 data-nosnippet>7</a>    ImageAnalysisTaskResult, ImmathRequest, image_task_front_end, image_task_success, immath,
+<a href=#7 id=7 data-nosnippet>7</a>    ImageAnalysisTaskResult, ImmathRequest, image_task_front_end, image_task_returning, immath,
 <a href=#8 id=8 data-nosnippet>8</a>};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">fn </span>main() -&gt; ExitCode {
 <a href=#12 id=12 data-nosnippet>12</a>    image_task_front_end(<span class="string">"immath"</span>, <span class="kw-2">&amp;</span>[<span class="string">"immath"</span>], run).main(
@@ -20,11 +20,15 @@
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">let </span>request = ImmathRequest {
-<a href=#23 id=23 data-nosnippet>23</a>        imagename: task.paths(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
+<a href=#23 id=23 data-nosnippet>23</a>        imagename: task.input_paths(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
 <a href=#24 id=24 data-nosnippet>24</a>        outfile: task.path(<span class="string">"outfile"</span>)<span class="question-mark">?</span>,
 <a href=#25 id=25 data-nosnippet>25</a>        expr: task.required_text(<span class="string">"expr"</span>)<span class="question-mark">?</span>,
 <a href=#26 id=26 data-nosnippet>26</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
 <a href=#27 id=27 data-nosnippet>27</a>    };
-<a href=#28 id=28 data-nosnippet>28</a>    image_task_success(immath(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Immath))
-<a href=#29 id=29 data-nosnippet>29</a>}
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="comment">// CASA's immath returns True.
+<a href=#29 id=29 data-nosnippet>29</a>    </span>image_task_returning(
+<a href=#30 id=30 data-nosnippet>30</a>        CasaValue::Bool { value: <span class="bool-val">true </span>},
+<a href=#31 id=31 data-nosnippet>31</a>        immath(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Immath),
+<a href=#32 id=32 data-nosnippet>32</a>    )
+<a href=#33 id=33 data-nosnippet>33</a>}
 </code></pre></div></section></main></body></html>

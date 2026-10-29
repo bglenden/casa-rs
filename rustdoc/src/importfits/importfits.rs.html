@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>result = import_fits(
-<a href=#21 id=21 data-nosnippet>21</a>        task.path(<span class="string">"fitsimage"</span>)<span class="question-mark">?</span>,
+<a href=#21 id=21 data-nosnippet>21</a>        task.input_path(<span class="string">"fitsimage"</span>)<span class="question-mark">?</span>,
 <a href=#22 id=22 data-nosnippet>22</a>        task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
 <a href=#23 id=23 data-nosnippet>23</a>        task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
 <a href=#24 id=24 data-nosnippet>24</a>    );

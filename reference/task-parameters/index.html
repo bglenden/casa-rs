@@ -1303,9 +1303,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 351</li>
+<li>Concepts: 389</li>
 <li>Surfaces: 26 (26 task, 0 session)</li>
-<li>Surface bindings: 522</li>
+<li>Surface bindings: 594</li>
 </ul>
 <table>
 <thead>
@@ -1354,7 +1354,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-simobserve">SimObserve</a><br><code>simobserve</code></td>
 <td>task</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">8</td>
 <td><code>simobserve</code></td>
 <td style="text-align: right;">38</td>
 <td>Simulate an observation of a sky model: CASA's simobserve</td>
@@ -1362,33 +1362,33 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imhead">Image Header</a><br><code>imhead</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td>Inspect or update CASA image header metadata.</td>
 </tr>
 <tr>
 <td><a href="#surface-imstat">Image Statistics</a><br><code>imstat</code></td>
 <td>task</td>
-<td style="text-align: right;">3</td>
-<td><code>image_analysis</code></td>
 <td style="text-align: right;">4</td>
+<td><code>image_analysis</code></td>
+<td style="text-align: right;">20</td>
 <td>Compute CASA image statistics over optional pixel, region, and channel selections.</td>
 </tr>
 <tr>
 <td><a href="#surface-immoments">Image Moments</a><br><code>immoments</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">13</td>
 <td>Create CASA-style image moment maps</td>
 </tr>
 <tr>
 <td><a href="#surface-exportfits">Export FITS</a><br><code>exportfits</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">12</td>
 <td>Export CASA images to FITS</td>
 </tr>
 <tr>
@@ -1474,7 +1474,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-impbcor">Primary Beam Correction</a><br><code>impbcor</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">12</td>
 <td>Apply primary-beam correction to a CASA image</td>
@@ -1482,49 +1482,49 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-impv">Position Velocity</a><br><code>impv</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">16</td>
 <td>Extract a CASA-style position-velocity image</td>
 </tr>
 <tr>
 <td><a href="#surface-imsubimage">Subimage</a><br><code>imsubimage</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
-<td><code>image_analysis</code></td>
 <td style="text-align: right;">5</td>
+<td><code>image_analysis</code></td>
+<td style="text-align: right;">12</td>
 <td>Extract a CASA-style image section</td>
 </tr>
 <tr>
 <td><a href="#surface-immath">Image Math</a><br><code>immath</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">16</td>
 <td>Evaluate tutorial image arithmetic expressions</td>
 </tr>
 <tr>
 <td><a href="#surface-imregrid">Image Regrid</a><br><code>imregrid</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
-<td><code>image_analysis</code></td>
 <td style="text-align: right;">5</td>
+<td><code>image_analysis</code></td>
+<td style="text-align: right;">10</td>
 <td>Regrid a CASA image onto a template image</td>
 </tr>
 <tr>
 <td><a href="#surface-feather">Feather</a><br><code>feather</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
-<td><code>image_analysis</code></td>
 <td style="text-align: right;">5</td>
+<td><code>image_analysis</code></td>
+<td style="text-align: right;">7</td>
 <td>Combine high-resolution and low-resolution images in the Fourier domain</td>
 </tr>
 <tr>
 <td><a href="#surface-importfits">Import FITS</a><br><code>importfits</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
 <td><code>image_analysis</code></td>
-<td style="text-align: right;">3</td>
+<td style="text-align: right;">9</td>
 <td>Import a FITS primary image into a CASA image</td>
 </tr>
 </tbody>
@@ -3337,7 +3337,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="simobserve-simobserve">SimObserve (<code>simobserve</code>)<a class="headerlink" href="#simobserve-simobserve" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>7</code></li>
+<li>Contract version: <code>8</code></li>
 <li>Category: Simulation</li>
 <li>Provider family: <code>simobserve</code></li>
 <li>Summary: Simulate an observation of a sky model: CASA's simobserve</li>
@@ -3664,7 +3664,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-header-imhead">Image Header (<code>imhead</code>)<a class="headerlink" href="#image-header-imhead" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Inspect or update CASA image header metadata.</li>
@@ -3685,7 +3685,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path.</td>
 </tr>
@@ -3701,7 +3701,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>hdkey</code></td>
 <td><code>parameter.hdkey@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Header</td>
 <td>Header keyword to update when mode is put.</td>
 </tr>
@@ -3709,9 +3709,17 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>hdvalue</code></td>
 <td><code>parameter.hdvalue@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Header</td>
 <td>Header value to write when mode is put.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Verbose logging.</td>
 </tr>
 </tbody>
 </table>
@@ -3719,7 +3727,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-statistics-imstat">Image Statistics (<code>imstat</code>)<a class="headerlink" href="#image-statistics-imstat" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>3</code></li>
+<li>Contract version: <code>4</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Compute CASA image statistics over optional pixel, region, and channel selections.</li>
@@ -3740,33 +3748,161 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path.</td>
 </tr>
 <tr>
-<td><code>box</code></td>
-<td><code>image.selection.box@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Pixel box.</td>
+<td><code>axes</code></td>
+<td><code>parameter.axes@r2</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Statistics</td>
+<td>Pixel axes to compute statistics over; [] means every axis.</td>
 </tr>
 <tr>
 <td><code>region</code></td>
 <td><code>image.selection.region@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Region file or expression.</td>
+</tr>
+<tr>
+<td><code>box</code></td>
+<td><code>image.selection.box@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Pixel box.</td>
 </tr>
 <tr>
 <td><code>chans</code></td>
 <td><code>image.selection.chans@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Channel selector.</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>listit</code></td>
+<td><code>imstat.listit@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Print the statistics and bounding box to the log.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Verbose logging.</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>parameter.mask@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Mask expression.</td>
+</tr>
+<tr>
+<td><code>stretch</code></td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
+</tr>
+<tr>
+<td><code>logfile</code></td>
+<td><code>parameter.logfile@r1</code></td>
+<td><code>path (product)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Fit log output.</td>
+</tr>
+<tr>
+<td><code>append</code></td>
+<td><code>parameter.append@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Append to logfile.</td>
+</tr>
+<tr>
+<td><code>algorithm</code></td>
+<td><code>imstat.algorithm@r1</code></td>
+<td><code>string</code></td>
+<td><code>"classic"</code>; optional</td>
+<td>Statistics</td>
+<td>Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match, in any case.</td>
+</tr>
+<tr>
+<td><code>fence</code></td>
+<td><code>parameter.fence@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Statistics</td>
+<td>Outlier fence.</td>
+</tr>
+<tr>
+<td><code>center</code></td>
+<td><code>parameter.center@r2</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"mean"</code>; optional</td>
+<td>Statistics</td>
+<td>Center of the fit-half statistics algorithm: mean, median or zero.</td>
+</tr>
+<tr>
+<td><code>lside</code></td>
+<td><code>parameter.lside@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Statistics</td>
+<td>Use left side for fit-half.</td>
+</tr>
+<tr>
+<td><code>zscore</code></td>
+<td><code>parameter.zscore@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Statistics</td>
+<td>Z-score cutoff.</td>
+</tr>
+<tr>
+<td><code>maxiter</code></td>
+<td><code>parameter.maxiter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Statistics</td>
+<td>Maximum iterations.</td>
+</tr>
+<tr>
+<td><code>clmethod</code></td>
+<td><code>imstat.clmethod@r1</code></td>
+<td><code>string</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Statistics</td>
+<td>How the classic algorithm computes its statistics: auto, tiled or framework, by first letter, in any case.</td>
+</tr>
+<tr>
+<td><code>niter</code></td>
+<td><code>statistics.niter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Statistics</td>
+<td>Maximum biweight iterations; a negative value makes the fast, simple computation.</td>
 </tr>
 </tbody>
 </table>
@@ -3774,7 +3910,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-moments-immoments">Image Moments (<code>immoments</code>)<a class="headerlink" href="#image-moments-immoments" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Create CASA-style image moment maps</li>
@@ -3795,49 +3931,97 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
 <tr>
-<td><code>outfile</code></td>
-<td><code>parameter.outfile@r1</code></td>
-<td><code>path (image)</code></td>
-<td>no default; required</td>
-<td>Output</td>
-<td>Output image.</td>
+<td><code>moments</code></td>
+<td><code>parameter.moments@r2</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[0]</code>; optional</td>
+<td>Moment</td>
+<td>CASA moment numbers: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity</td>
 </tr>
 <tr>
-<td><code>moments</code></td>
-<td><code>parameter.moments@r1</code></td>
-<td><code>choice (5 values)</code></td>
-<td><code>"0"</code>; optional</td>
-<td>Moment</td>
-<td>CASA moment number: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity</td>
+<td><code>axis</code></td>
+<td><code>moments.axis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"spectral"</code>; optional</td>
+<td>Moments</td>
+<td>Moment axis: ra, dec, lat, long, spectral or stokes.</td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td><code>image.selection.region@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Region file or expression.</td>
+</tr>
+<tr>
+<td><code>box</code></td>
+<td><code>image.selection.box@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Pixel box.</td>
 </tr>
 <tr>
 <td><code>chans</code></td>
 <td><code>image.selection.chans@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Channel selector.</td>
 </tr>
 <tr>
-<td><code>includepix</code></td>
-<td><code>parameter.includepix@r1</code></td>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Pixel include range.</td>
+<td>Stokes selector.</td>
 </tr>
 <tr>
 <td><code>mask</code></td>
 <td><code>parameter.mask@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Mask expression.</td>
+</tr>
+<tr>
+<td><code>includepix</code></td>
+<td><code>parameter.includepix@r2</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>-1</code>; optional</td>
+<td>Selection</td>
+<td>Inclusive range of pixel values to include: [min, max] in either order; one value b is [-&#124;b&#124;, &#124;b&#124;]; -1 includes all.</td>
+</tr>
+<tr>
+<td><code>excludepix</code></td>
+<td><code>parameter.excludepix@r2</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>-1</code>; optional</td>
+<td>Moments</td>
+<td>Range of pixel values to exclude, [min, max]; -1 excludes none.</td>
+</tr>
+<tr>
+<td><code>outfile</code></td>
+<td><code>parameter.outfile@r1</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; required</td>
+<td>Output</td>
+<td>Output image.</td>
+</tr>
+<tr>
+<td><code>stretch</code></td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -3845,7 +4029,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Output</td>
-<td>Replace an existing output file</td>
+<td>Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's immoments has no overwrite parameter.</td>
 </tr>
 </tbody>
 </table>
@@ -3853,7 +4037,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="export-fits-exportfits">Export FITS (<code>exportfits</code>)<a class="headerlink" href="#export-fits-exportfits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Export CASA images to FITS</li>
@@ -3874,7 +4058,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
@@ -3882,7 +4066,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>fitsimage</code></td>
 <td><code>file.output.fitsimage@r1</code></td>
 <td><code>path (file)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output FITS path</td>
 </tr>
@@ -3895,12 +4079,76 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Write spectral axis as velocity where possible</td>
 </tr>
 <tr>
+<td><code>optical</code></td>
+<td><code>fits.optical@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Use the optical velocity convention rather than the radio one.</td>
+</tr>
+<tr>
+<td><code>bitpix</code></td>
+<td><code>fits.bitpix@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-32</code>; optional</td>
+<td>Output</td>
+<td>Bits per pixel: -32 for floating point, 16 for scaled integers.</td>
+</tr>
+<tr>
+<td><code>minpix</code></td>
+<td><code>fits.minpix@r1</code></td>
+<td><code>float</code></td>
+<td><code>0</code>; optional</td>
+<td>Output</td>
+<td>Minimum pixel value of 16-bit scaling; a minpix above maxpix finds both from the data.</td>
+</tr>
+<tr>
+<td><code>maxpix</code></td>
+<td><code>fits.maxpix@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1</code>; optional</td>
+<td>Output</td>
+<td>Maximum pixel value of 16-bit scaling.</td>
+</tr>
+<tr>
 <td><code>overwrite</code></td>
 <td><code>output.overwrite@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Output</td>
 <td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>dropstokes</code></td>
+<td><code>fits.dropstokes@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Drop the Stokes axis.</td>
+</tr>
+<tr>
+<td><code>stokeslast</code></td>
+<td><code>fits.stokeslast@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Put the Stokes axis last in the FITS header.</td>
+</tr>
+<tr>
+<td><code>history</code></td>
+<td><code>fits.history@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Write the image history to the FITS file.</td>
+</tr>
+<tr>
+<td><code>dropdeg</code></td>
+<td><code>image.output.dropdeg@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Drop the degenerate axes from the output.</td>
 </tr>
 </tbody>
 </table>
@@ -5818,7 +6066,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="primary-beam-correction-impbcor">Primary Beam Correction (<code>impbcor</code>)<a class="headerlink" href="#primary-beam-correction-impbcor" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Apply primary-beam correction to a CASA image</li>
@@ -5839,39 +6087,39 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
 <tr>
 <td><code>pbimage</code></td>
-<td><code>parameter.pbimage@r1</code></td>
-<td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>parameter.pbimage@r2</code></td>
+<td><code>array&lt;path (image)&gt;</code></td>
+<td><code>[]</code>; required</td>
 <td>Input</td>
-<td>Primary-beam CASA image path</td>
+<td>Primary-beam CASA image path; CASA's [] default means it must be given</td>
 </tr>
 <tr>
 <td><code>outfile</code></td>
 <td><code>parameter.outfile@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output image.</td>
 </tr>
 <tr>
-<td><code>cutoff</code></td>
-<td><code>parameter.cutoff@r1</code></td>
-<td><code>float</code></td>
-<td><code>-1.0</code>; optional</td>
-<td>Correction</td>
-<td>Minimum PB value to keep; negative disables cutoff masking</td>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
 </tr>
 <tr>
 <td><code>box</code></td>
 <td><code>image.selection.box@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Pixel box.</td>
 </tr>
@@ -5879,7 +6127,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>region</code></td>
 <td><code>image.selection.region@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Region file or expression.</td>
 </tr>
@@ -5887,7 +6135,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>chans</code></td>
 <td><code>image.selection.chans@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Channel selector.</td>
 </tr>
@@ -5895,7 +6143,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>stokes</code></td>
 <td><code>image.selection.stokes@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Stokes selector.</td>
 </tr>
@@ -5903,7 +6151,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>mask</code></td>
 <td><code>parameter.mask@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Mask expression.</td>
 </tr>
@@ -5916,20 +6164,20 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Correction mode</td>
 </tr>
 <tr>
-<td><code>overwrite</code></td>
-<td><code>output.overwrite@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Output</td>
-<td>Replace an existing output file</td>
+<td><code>cutoff</code></td>
+<td><code>parameter.cutoff@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Correction</td>
+<td>Minimum PB value to keep; negative disables cutoff masking</td>
 </tr>
 <tr>
 <td><code>stretch</code></td>
-<td><code>parameter.stretch@r1</code></td>
-<td><code>string</code></td>
-<td><code>"false"</code>; optional</td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
 <td>Selection</td>
-<td>Stretch mask.</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
 </tr>
 </tbody>
 </table>
@@ -5937,7 +6185,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="position-velocity-impv">Position Velocity (<code>impv</code>)<a class="headerlink" href="#position-velocity-impv" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Extract a CASA-style position-velocity image</li>
@@ -5958,7 +6206,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
@@ -5966,15 +6214,23 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>outfile</code></td>
 <td><code>parameter.outfile@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output image.</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td><code>impv.mode@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"coords"</code>; optional</td>
+<td>Slice</td>
+<td>How the slice is given: by start and end, or by center, length and position angle.</td>
 </tr>
 <tr>
 <td><code>start</code></td>
 <td><code>parameter.start@r1</code></td>
 <td><code>string</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Slice</td>
 <td>Cube-axis start channel, frequency, or velocity</td>
 </tr>
@@ -5982,9 +6238,33 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>end</code></td>
 <td><code>parameter.end@r1</code></td>
 <td><code>string</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Slice</td>
 <td>End pixel coordinate</td>
+</tr>
+<tr>
+<td><code>center</code></td>
+<td><code>pv.center@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Slice</td>
+<td>Center of the slice in the direction plane, given with length and pa.</td>
+</tr>
+<tr>
+<td><code>length</code></td>
+<td><code>impv.length@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Slice</td>
+<td>Length of the slice in the direction plane, given with center and pa.</td>
+</tr>
+<tr>
+<td><code>pa</code></td>
+<td><code>impv.pa@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Slice</td>
+<td>Position angle of the slice, north through east, given with center and length.</td>
 </tr>
 <tr>
 <td><code>width</code></td>
@@ -5995,12 +6275,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Averaging width in pixels</td>
 </tr>
 <tr>
-<td><code>chans</code></td>
-<td><code>image.selection.chans@r1</code></td>
+<td><code>unit</code></td>
+<td><code>impv.unit@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Channel selector.</td>
+<td><code>"arcsec"</code>; optional</td>
+<td>Output</td>
+<td>Angular unit of the output's offset axis.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -6010,13 +6290,53 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Output</td>
 <td>Replace an existing output file</td>
 </tr>
+<tr>
+<td><code>region</code></td>
+<td><code>image.selection.region@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Region file or expression.</td>
+</tr>
+<tr>
+<td><code>chans</code></td>
+<td><code>image.selection.chans@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Channel selector.</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>parameter.mask@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Mask expression.</td>
+</tr>
+<tr>
+<td><code>stretch</code></td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-imsubimage"></a></p>
 <h2 id="subimage-imsubimage">Subimage (<code>imsubimage</code>)<a class="headerlink" href="#subimage-imsubimage" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Extract a CASA-style image section</li>
@@ -6037,7 +6357,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
@@ -6045,7 +6365,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>outfile</code></td>
 <td><code>parameter.outfile@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output image.</td>
 </tr>
@@ -6053,17 +6373,49 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>box</code></td>
 <td><code>image.selection.box@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Pixel box.</td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td><code>image.selection.region@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Region file or expression.</td>
 </tr>
 <tr>
 <td><code>chans</code></td>
 <td><code>image.selection.chans@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Channel selector.</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>parameter.mask@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Mask expression.</td>
+</tr>
+<tr>
+<td><code>dropdeg</code></td>
+<td><code>image.output.dropdeg@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Drop the degenerate axes from the output.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -6073,13 +6425,37 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Output</td>
 <td>Replace an existing output file</td>
 </tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Verbose logging.</td>
+</tr>
+<tr>
+<td><code>stretch</code></td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
+</tr>
+<tr>
+<td><code>keepaxes</code></td>
+<td><code>imsubimage.keepaxes@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Output</td>
+<td>Degenerate axes to keep when dropdeg drops the others.</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-immath"></a></p>
 <h2 id="image-math-immath">Image Math (<code>immath</code>)<a class="headerlink" href="#image-math-immath" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Evaluate tutorial image arithmetic expressions</li>
@@ -6100,25 +6476,121 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
 <tr>
-<td><code>expr</code></td>
-<td><code>parameter.expr@r1</code></td>
-<td><code>string</code></td>
-<td>no default; required</td>
+<td><code>mode</code></td>
+<td><code>immath.mode@r1</code></td>
+<td><code>choice (6 values)</code></td>
+<td><code>"evalexpr"</code>; optional</td>
 <td>Math</td>
-<td>Expression such as IM0 * IM1 or IM0 / IM1</td>
+<td>Image math: an expression, a spectral index, or a polarization angle or intensity.</td>
 </tr>
 <tr>
 <td><code>outfile</code></td>
 <td><code>parameter.outfile@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>"immath_results.im"</code>; optional</td>
 <td>Output</td>
 <td>Output image.</td>
+</tr>
+<tr>
+<td><code>expr</code></td>
+<td><code>parameter.expr@r1</code></td>
+<td><code>string</code></td>
+<td><code>"IM0"</code>; optional</td>
+<td>Math</td>
+<td>Expression such as IM0 * IM1 or IM0 / IM1</td>
+</tr>
+<tr>
+<td><code>varnames</code></td>
+<td><code>immath.varnames@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Math</td>
+<td>Names the expression gives the input images, in their order.</td>
+</tr>
+<tr>
+<td><code>sigma</code></td>
+<td><code>immath.sigma@r1</code></td>
+<td><code>string</code></td>
+<td><code>"0.0mJy/beam"</code>; optional</td>
+<td>Polarization</td>
+<td>Noise standard deviation for debiasing polarized intensity.</td>
+</tr>
+<tr>
+<td><code>polithresh</code></td>
+<td><code>immath.polithresh@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Polarization</td>
+<td>Linearly polarized intensity below which the polarization angle masks pixels.</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>parameter.mask@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Mask expression.</td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td><code>image.selection.region@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Region file or expression.</td>
+</tr>
+<tr>
+<td><code>box</code></td>
+<td><code>image.selection.box@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Pixel box.</td>
+</tr>
+<tr>
+<td><code>chans</code></td>
+<td><code>image.selection.chans@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Channel selector.</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>stretch</code></td>
+<td><code>parameter.stretch@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Selection</td>
+<td>Stretch the mask along the image's other axes if necessary and possible.</td>
+</tr>
+<tr>
+<td><code>imagemd</code></td>
+<td><code>immath.imagemd@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Image whose header metadata the output copies.</td>
+</tr>
+<tr>
+<td><code>prec</code></td>
+<td><code>immath.prec@r1</code></td>
+<td><code>string</code></td>
+<td><code>"float"</code>; optional</td>
+<td>Output</td>
+<td>Output pixel precision for evalexpr and spix: float or double, minimum match.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -6126,7 +6598,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Output</td>
-<td>Replace an existing output file</td>
+<td>Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's immath has no overwrite parameter.</td>
 </tr>
 </tbody>
 </table>
@@ -6134,7 +6606,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-regrid-imregrid">Image Regrid (<code>imregrid</code>)<a class="headerlink" href="#image-regrid-imregrid" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Regrid a CASA image onto a template image</li>
@@ -6155,7 +6627,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input CASA image path</td>
 </tr>
@@ -6163,7 +6635,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>template</code></td>
 <td><code>parameter.template@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>"get"</code>; required</td>
 <td>Input</td>
 <td>Template CASA image path</td>
 </tr>
@@ -6171,9 +6643,33 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>output</code></td>
 <td><code>imregrid.output@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required when not (template="get")</td>
 <td>Output</td>
 <td>Output CASA image path</td>
+</tr>
+<tr>
+<td><code>asvelocity</code></td>
+<td><code>imregrid.asvelocity@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Regrid</td>
+<td>Regrid the spectral axis in velocity rather than frequency.</td>
+</tr>
+<tr>
+<td><code>axes</code></td>
+<td><code>regrid.axes@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[-1]</code>; optional</td>
+<td>Regrid</td>
+<td>Pixel axes to regrid; [-1] regrids them all.</td>
+</tr>
+<tr>
+<td><code>shape</code></td>
+<td><code>imregrid.shape@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[-1]</code>; optional</td>
+<td>Regrid</td>
+<td>Output image shape; [-1] takes the template's along the regridded axes.</td>
 </tr>
 <tr>
 <td><code>interpolation</code></td>
@@ -6182,6 +6678,22 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"linear"</code>; optional</td>
 <td>Regrid</td>
 <td>Spectral interpolation mode for cube gridding</td>
+</tr>
+<tr>
+<td><code>decimate</code></td>
+<td><code>imregrid.decimate@r1</code></td>
+<td><code>integer</code></td>
+<td><code>10</code>; optional</td>
+<td>Regrid</td>
+<td>Decimation factor of the coordinate grid computation.</td>
+</tr>
+<tr>
+<td><code>replicate</code></td>
+<td><code>imregrid.replicate@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Regrid</td>
+<td>Replicate the image rather than regrid it.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -6197,7 +6709,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="feather-feather">Feather (<code>feather</code>)<a class="headerlink" href="#feather-feather" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Combine high-resolution and low-resolution images in the Fourier domain</li>
@@ -6218,7 +6730,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.input.imagename@r1</code></td>
 <td><code>array&lt;path (image)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Input CASA image path</td>
 </tr>
@@ -6226,7 +6738,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>highres</code></td>
 <td><code>parameter.highres@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>High-resolution CASA image path</td>
 </tr>
@@ -6234,7 +6746,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>lowres</code></td>
 <td><code>parameter.lowres@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Low-resolution CASA image path</td>
 </tr>
@@ -6247,12 +6759,28 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Single-dish scaling factor</td>
 </tr>
 <tr>
+<td><code>effdishdiam</code></td>
+<td><code>feather.effdishdiam@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Feather</td>
+<td>Effective single-dish diameter in metres; a negative value keeps the image's beam.</td>
+</tr>
+<tr>
+<td><code>lowpassfiltersd</code></td>
+<td><code>feather.lowpassfiltersd@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Feather</td>
+<td>Filter the single-dish image's high spatial frequencies out.</td>
+</tr>
+<tr>
 <td><code>overwrite</code></td>
 <td><code>output.overwrite@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Output</td>
-<td>Replace an existing output file</td>
+<td>Replace an existing output file<br><em>Surface:</em> casa-rs's own control: CASA's feather has no overwrite parameter.</td>
 </tr>
 </tbody>
 </table>
@@ -6260,7 +6788,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="import-fits-importfits">Import FITS (<code>importfits</code>)<a class="headerlink" href="#import-fits-importfits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>5</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Import a FITS primary image into a CASA image</li>
@@ -6281,7 +6809,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>fitsimage</code></td>
 <td><code>file.input.fitsimage@r1</code></td>
 <td><code>path (file)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input FITS image path</td>
 </tr>
@@ -6289,9 +6817,33 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>imagename</code></td>
 <td><code>image.output.imagename@r1</code></td>
 <td><code>path (image)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Output</td>
 <td>Output CASA image prefix</td>
+</tr>
+<tr>
+<td><code>whichrep</code></td>
+<td><code>fits.whichrep@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Input</td>
+<td>Coordinate representation to read when the FITS image has several.</td>
+</tr>
+<tr>
+<td><code>whichhdu</code></td>
+<td><code>fits.whichhdu@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Input</td>
+<td>HDU to read when the FITS file holds several images; -1 reads the first.</td>
+</tr>
+<tr>
+<td><code>zeroblanks</code></td>
+<td><code>fits.zeroblanks@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Input</td>
+<td>Set blanked pixels to zero rather than NaN.</td>
 </tr>
 <tr>
 <td><code>overwrite</code></td>
@@ -6300,6 +6852,30 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Output</td>
 <td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>defaultaxes</code></td>
+<td><code>fits.defaultaxes@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Add CASA's default four axes where the FITS image lacks them.</td>
+</tr>
+<tr>
+<td><code>defaultaxesvalues</code></td>
+<td><code>fits.defaultaxesvalues@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Output</td>
+<td>Values of the degenerate axes defaultaxes adds.</td>
+</tr>
+<tr>
+<td><code>beam</code></td>
+<td><code>fits.beam@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Output</td>
+<td>Restoring beam to set: major axis, minor axis and position angle.</td>
 </tr>
 </tbody>
 </table>

@@ -237,7 +237,7 @@
 <a href=#237 id=237 data-nosnippet>237</a>}
 <a href=#238 id=238 data-nosnippet>238</a>
 <a href=#239 id=239 data-nosnippet>239</a><span class="doccomment">/// `values`, in Fortran order, as an array of `shape`.
-<a href=#240 id=240 data-nosnippet>240</a></span><span class="kw">fn </span>fortran_array&lt;T&gt;(shape: Vec&lt;usize&gt;, values: Vec&lt;T&gt;) -&gt; PyResult&lt;ArrayD&lt;T&gt;&gt; {
+<a href=#240 id=240 data-nosnippet>240</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>fortran_array&lt;T&gt;(shape: Vec&lt;usize&gt;, values: Vec&lt;T&gt;) -&gt; PyResult&lt;ArrayD&lt;T&gt;&gt; {
 <a href=#241 id=241 data-nosnippet>241</a>    ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>shape).f(), values).map_err(|error| {
 <a href=#242 id=242 data-nosnippet>242</a>        pyo3::exceptions::PyRuntimeError::new_err(<span class="macro">format!</span>(<span class="string">"array of shape {shape:?}: {error}"</span>))
 <a href=#243 id=243 data-nosnippet>243</a>    })
