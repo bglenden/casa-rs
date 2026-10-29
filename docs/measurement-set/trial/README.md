@@ -320,7 +320,7 @@ frame), and the MSv2 binds to its conversion.
   gives its antennas no receptors, as the MSv2 adapter reads that `FEED`.
 - XRADIO writes a window whose channels descend (negative width) in
   ascending order, so its partition does not bind to the MSv2's, whose
-  channels are in stored order. The lines fixture's windows ascend.
+  channels are in stored order (#1014). The lines fixture's windows ascend.
 - XRADIO relabels MSv2's `UVW` ITRF as the phase centre's frame (`fk5`),
   following CASA `fixvis`'s note that the label is usually wrong; names
   antennas `NAME_STATION` and fields `NAME_FIELDID`; and declares the
