@@ -1053,8 +1053,8 @@ port's accepted plan proposes (<code>imaging-port.md</code> §2.2.1), it is part
 field's entry (<code>FieldEntry::ephemeris</code>, #942), shaped as MSv4's
 <code>field_and_source_ephemeris</code> holds it, the field's phase centre then its
 offset from the body; fields that follow one ephemeris share it, and the
-catalogue counts its bytes (<code>Catalogue::ephemeris_bytes</code>). The MSv2 adapter
-reads it; the MSv4 store's reading and writing of it are provisional
+catalogue counts its bytes (<code>Catalogue::ephemeris_bytes</code>). Both adapters
+read it, the MSv4 writer writes it and the converter carries it both ways
 (section 8).</p>
 <p>A <strong>partition</strong> is one store unit (an MSv4 dataset; the MSv2 rows that one such
 dataset would hold), defined by its content: spectral window (frequencies,
@@ -2258,8 +2258,8 @@ when its acceptance obligation is met.</p>
 </tr>
 <tr>
 <td>Ephemeris and time-dependent metadata</td>
-<td>Ephemeris keys MSv2 partitions as XRADIO's converter does, and the MSv2 adapter reads each field's attached table into its catalogue entry, equal to today's imaging reading (#942); the MSv4 reader does not read <code>field_and_source_ephemeris</code> yet, and the converter refuses fields that follow one in both directions. Pointing is read (section 2) and converted both ways, what is not carried found before anything is written: into an MSv4 each row's direction at its own time (further polynomial terms, <code>INTERVAL</code>, <code>TARGET</code>, <code>NAME</code>, <code>TRACKING</code>, repeated rows and rows beyond the partitions' times reported as losses, pointing in a frame MSv4 does not name lost whole); into an MSv2 every row of the partitions' antennas, an MSv4's samples as rows of <code>INTERVAL</code> 0</td>
-<td>The MSv4 store's ephemerides, read and written, and the converter carrying them (#942); whether pointing samples without intervals image as the MSv2 they came from (imaging port step 3b)</td>
+<td>Ephemeris keys MSv2 partitions as XRADIO's converter does, and the MSv2 adapter reads each field's attached table into its catalogue entry, equal to today's imaging reading (#942); the MSv4 reader reads <code>field_and_source_ephemeris</code> in either of XRADIO's layouts (samples on <code>time_ephemeris</code>, or interpolated onto the visibility times, with a warning and a reported loss), the offset recovered from XRADIO's per-time phase centre, one field's datasets uniting into one catalogue field, the union reaching every field that follows an ephemeris the datasets' shared fields match, and the MSv4 writer writes the <code>time_ephemeris</code> layout, its samples, those the source states, reaching two minutes past a dataset's last time where the source holds them so that each time's TDB is covered; an ephemeris ending before the TDB of the last time of the datasets its fields are in, as XRADIO's can, gains its grid's points up to it, extrapolated along the line through its last two and counted as such (owner decision on #995), which the MSv4 writer does not persist; the converter carries ephemerides both ways, into an MSv2 as the evenly spaced table casacore's <code>MeasComet</code> reads (gaps between a union's samples filled by its interpolation), what it cannot carry (samples no dataset holds, the table's other columns and keywords, the FIELD row's <code>TIME</code>, XRADIO's optional variables, rows filled across gaps, extrapolated samples) reported as losses (#942). Pointing is read (section 2) and converted both ways, what is not carried found before anything is written: into an MSv4 each row's direction at its own time (further polynomial terms, <code>INTERVAL</code>, <code>TARGET</code>, <code>NAME</code>, <code>TRACKING</code>, repeated rows and rows beyond the partitions' times reported as losses, pointing in a frame MSv4 does not name lost whole); into an MSv2 every row of the partitions' antennas, an MSv4's samples as rows of <code>INTERVAL</code> 0</td>
+<td>carrying XRADIO's optional ephemeris variables (#998); whether pointing samples without intervals image as the MSv2 they came from (imaging port step 3b)</td>
 </tr>
 <tr>
 <td>Baseline-dependent polarization (<code>polarization_mixed</code>)</td>

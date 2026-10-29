@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["write_ephemeris_table","write_field_ephemeris"],"type":["EphemerisRow"]};
+window.SIDEBAR_ITEMS = {"enum":["EphemerisFrame"],"fn":["write_ephemeris_table","write_ephemeris_table_in","write_field_ephemeris","write_field_ephemeris_in"],"type":["EphemerisRow"]};
