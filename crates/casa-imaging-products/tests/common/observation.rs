@@ -1,45 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The selected observation and product policies every product fixture
-//! problem compiles against: one measurement set with two selected rows in
-//! two spectral windows, Stokes I only.
+//! problem compiles against: one measurement set with two selected
+//! partitions in two spectral windows, Stokes I only.
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, FlagPolicy, IdSelection,
-    IntentSelection, ObservationSelection, ObservationSourceInput, ObservationSourceProvenance,
+    CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
+    ObservationSourceInput, ObservationSourceProvenance, PartitionId, PartitionSelection,
     PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductSupportComparison,
-    ProductValidityPolicies, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
-    SpectralWindowSelection, TaylorSupportReference, TaylorValidityPolicy, UvSelection,
-    VisibilityColumn, WeightColumn,
+    ProductValidityPolicies, RowSelection, SelectedColumns, SpectralWindowSelection,
+    TaylorSupportReference, TaylorValidityPolicy, UvSelection, VisibilityColumn, WeightColumn,
 };
 use casa_types::Correlation;
 
-/// One measurement set selecting rows 0 and 2 of `3 + seed`, each in its own
-/// spectral window, with provenance `fixture://<label>/<seed>`.
+/// One measurement set selecting `2 + seed` samples of two partitions, each
+/// in its own spectral window, with provenance `fixture://<label>/<seed>`.
 pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
+    let partition = |id, window| {
+        PartitionSelection::new(
+            PartitionId(id),
+            window,
+            vec![CorrelationProduct::new(0, Correlation::I)],
+        )
+    };
     ObservationSourceInput::new(
         ObservationSourceProvenance::new(format!("fixture://{label}/{seed}")),
         ObservationSelection::new(
-            // The seed sets the MeasurementSet's row count, so sources from
-            // different seeds are different observations.
-            SelectedRows::from_ordered_main_rows(
-                3 + u64::from(seed),
-                [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
-            )
-            .expect("two selected rows"),
+            // The seed sets the selected samples, so sources from different
+            // seeds are different observations.
+            2 + u64::from(seed),
             RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
-            vec![
-                DataDescriptionSelection::new(0, 0, 0),
-                DataDescriptionSelection::new(1, 1, 0),
-            ],
+            vec![partition(0, 0), partition(1, 1)],
             vec![
                 SpectralWindowSelection::new(0, vec![0]),
                 SpectralWindowSelection::new(1, vec![1]),
             ],
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, Correlation::I)],
-            )],
         ),
         SelectedColumns::new(
             VisibilityColumn::Data,

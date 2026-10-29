@@ -9,7 +9,6 @@
 //! Cf. C++ `MeasurementSet` class.
 
 use std::collections::{HashMap, HashSet};
-use std::mem::size_of;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{
@@ -39,101 +38,6 @@ use crate::validate::{self, ValidationIssue};
 /// The MS version number written by this crate.
 pub const MS_VERSION: f32 = 2.0;
 const CASACORE_MS_TABLE_TYPE: &str = "Measurement Set";
-
-/// The stored MAIN columns of one row that the selected-observation row
-/// predicate and the bounded row traversal read.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SelectedObservationRow {
-    pub(crate) physical_row: usize,
-    pub(crate) data_description_id: i32,
-    pub(crate) field_id: i32,
-    pub(crate) antenna1: i32,
-    pub(crate) antenna2: i32,
-    pub(crate) time_mjd_seconds: f64,
-    pub(crate) time_centroid_mjd_seconds: f64,
-    pub(crate) state_id: i32,
-    pub(crate) observation_id: i32,
-    pub(crate) flag_row: bool,
-    pub(crate) uvw_m: [f64; 3],
-}
-
-impl SelectedObservationRow {
-    /// Exact bytes read from stored MAIN columns for each row: one cell for
-    /// every field but the physical row index (`DATA_DESC_ID`, `FIELD_ID`,
-    /// `ANTENNA1`, `ANTENNA2`, `STATE_ID` and `OBSERVATION_ID`; `TIME` and
-    /// `TIME_CENTROID`; `FLAG_ROW`; `UVW`).
-    pub const STORAGE_BYTES_PER_ROW: usize =
-        6 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>() + size_of::<[f64; 3]>();
-
-    /// Return the physical MAIN row index.
-    #[must_use]
-    pub const fn physical_row(self) -> usize {
-        self.physical_row
-    }
-
-    /// Return the stored `DATA_DESC_ID`.
-    #[must_use]
-    pub const fn data_description_id(self) -> i32 {
-        self.data_description_id
-    }
-
-    /// Return the stored `FIELD_ID`.
-    #[must_use]
-    pub const fn field_id(self) -> i32 {
-        self.field_id
-    }
-
-    /// Return the stored first antenna identifier.
-    #[must_use]
-    pub const fn antenna1(self) -> i32 {
-        self.antenna1
-    }
-
-    /// Return the stored second antenna identifier.
-    #[must_use]
-    pub const fn antenna2(self) -> i32 {
-        self.antenna2
-    }
-
-    /// Return the stored `TIME` in MJD seconds.
-    #[must_use]
-    pub const fn time_mjd_seconds(self) -> f64 {
-        self.time_mjd_seconds
-    }
-
-    /// Return the stored `TIME_CENTROID` in MJD seconds.
-    #[must_use]
-    pub const fn time_centroid_mjd_seconds(self) -> f64 {
-        self.time_centroid_mjd_seconds
-    }
-
-    /// Return the stored `STATE_ID`.
-    #[must_use]
-    pub const fn state_id(self) -> i32 {
-        self.state_id
-    }
-
-    /// Return the stored `OBSERVATION_ID`.
-    #[must_use]
-    pub const fn observation_id(self) -> i32 {
-        self.observation_id
-    }
-
-    /// Return the stored row-level flag.
-    #[must_use]
-    pub const fn flag_row(self) -> bool {
-        self.flag_row
-    }
-
-    /// Return the stored UVW coordinates in metres.
-    #[must_use]
-    pub const fn uvw_m(self) -> [f64; 3] {
-        self.uvw_m
-    }
-}
-
-mod main_rows;
-pub(crate) use main_rows::{MainRowSelectionCursor, MainRowWalk};
 
 /// A MeasurementSet: main table + subtables.
 ///
@@ -608,39 +512,6 @@ impl MeasurementSet {
         self.path.as_deref()
     }
 
-    /// Logical bytes retained by this freshly opened, lazy, read-locked
-    /// MeasurementSet capability.
-    pub(crate) fn retained_read_metadata_bytes(&self) -> Option<usize> {
-        let mut bytes = size_of::<Self>()
-            .checked_add(self.main.retained_read_metadata_bytes()?)?
-            .checked_add(
-                self.subtables
-                    .capacity()
-                    .checked_mul(size_of::<(SubtableId, Table)>())?,
-            )?
-            .checked_add(
-                self.subtable_paths
-                    .capacity()
-                    .checked_mul(size_of::<(SubtableId, PathBuf)>())?,
-            )?;
-        for table in self.subtables.values() {
-            bytes = bytes.checked_add(table.retained_read_metadata_bytes()?)?;
-        }
-        for path in self.subtable_paths.values() {
-            bytes = bytes.checked_add(path_heap_bytes(path))?;
-        }
-        if let Some(path) = &self.path {
-            bytes = bytes.checked_add(path_heap_bytes(path))?;
-        }
-        Some(bytes)
-    }
-
-    /// Logical heap bytes retained beyond the inline `MeasurementSet` value.
-    pub(crate) fn retained_read_metadata_heap_bytes(&self) -> Option<usize> {
-        self.retained_read_metadata_bytes()?
-            .checked_sub(size_of::<Self>())
-    }
-
     // ---- Typed subtable accessors ----
 
     /// Typed read-only accessor for the ANTENNA subtable.
@@ -1089,18 +960,6 @@ impl MeasurementSet {
     }
 }
 
-fn path_heap_bytes(path: &Path) -> usize {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        path.as_os_str().as_bytes().len()
-    }
-    #[cfg(not(unix))]
-    {
-        path.as_os_str().to_string_lossy().len()
-    }
-}
-
 fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
     for def in defs {
         let has_column = table
@@ -1458,131 +1317,6 @@ mod tests {
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
-    #[test]
-    fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
-        assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 65);
-        assert_eq!(
-            MainRowSelectionCursor::retained_bytes_per_row(),
-            65 + size_of::<usize>()
-        );
-        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
-        let schema = ms.main_table().schema().unwrap().clone();
-        for (row, data_description_id) in [2, 5, 5, 7, 11].into_iter().enumerate() {
-            let fields = schema
-                .columns()
-                .iter()
-                .map(|column| {
-                    let value = match column.name() {
-                        "DATA_DESC_ID" => Value::Scalar(ScalarValue::Int32(data_description_id)),
-                        "FIELD_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 10)),
-                        "ANTENNA1" => Value::Scalar(ScalarValue::Int32(row as i32 + 20)),
-                        "ANTENNA2" => Value::Scalar(ScalarValue::Int32(row as i32 + 30)),
-                        "TIME" => Value::Scalar(ScalarValue::Float64(row as f64 + 40.5)),
-                        "TIME_CENTROID" => Value::Scalar(ScalarValue::Float64(row as f64 + 45.5)),
-                        "SCAN_NUMBER" => Value::Scalar(ScalarValue::Int32(row as i32 + 50)),
-                        "STATE_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 60)),
-                        "OBSERVATION_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 70)),
-                        "ARRAY_ID" => Value::Scalar(ScalarValue::Int32(row as i32 + 80)),
-                        "UVW" => Value::Array(ArrayValue::Float64(
-                            ndarray::Array1::from_vec(vec![
-                                row as f64 + 90.0,
-                                row as f64 + 100.0,
-                                row as f64 + 110.0,
-                            ])
-                            .into_dyn(),
-                        )),
-                        _ => default_value(column.name()),
-                    };
-                    RecordField::new(column.name(), value)
-                })
-                .collect();
-            ms.main_table_mut()
-                .add_row(RecordValue::new(fields))
-                .unwrap();
-        }
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("selection.ms");
-        ms.save_as(&path).unwrap();
-        let ms = MeasurementSet::open(&path).unwrap();
-        let plan = crate::MsReadPlan::new(
-            ms.row_count(),
-            crate::MsSelectionIoBudget {
-                available_bytes: 2 * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-                maximum_live_blocks: 1,
-                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-                storage_alignment_rows: None,
-            },
-        )
-        .unwrap();
-        let mut block_count = 0;
-        let mut storage = None;
-        let mut facts = Vec::new();
-        let mut last = None;
-        ms.visit_main_row_selection_blocks(plan, |block| {
-            block_count += 1;
-            assert!(block.len() <= 2);
-            let current = (
-                block.data_description_ids.as_ptr(),
-                block.field_ids.as_ptr(),
-                block.time_centroids_mjd_seconds.as_ptr(),
-                block.uvw_m.as_ptr(),
-            );
-            match storage {
-                Some(expected) => assert_eq!(current, expected),
-                None => storage = Some(current),
-            }
-            for fact in block.rows() {
-                facts.push((fact.physical_row(), fact.data_description_id()));
-                last = Some(fact);
-            }
-        })
-        .expect("bounded reusable DATA_DESC_ID scan");
-
-        assert_eq!(block_count, 3);
-        assert_eq!(facts, vec![(0, 2), (1, 5), (2, 5), (3, 7), (4, 11)]);
-        let last = last.unwrap();
-        assert_eq!(last.field_id(), 14);
-        assert_eq!(last.antenna1(), 24);
-        assert_eq!(last.antenna2(), 34);
-        assert_eq!(last.time_mjd_seconds(), 44.5);
-        assert_eq!(last.time_centroid_mjd_seconds(), 49.5);
-        assert_eq!(last.state_id(), 64);
-        assert_eq!(last.observation_id(), 74);
-        assert_eq!(last.uvw_m(), [94.0, 104.0, 114.0]);
-
-        // The read plans size a row by STORAGE_BYTES_PER_ROW; it must be the
-        // row's stored cells. The pattern names every field, so a field
-        // added, removed or retyped fails here rather than desynchronising
-        // the plans.
-        let SelectedObservationRow {
-            physical_row: _,
-            data_description_id,
-            field_id,
-            antenna1,
-            antenna2,
-            time_mjd_seconds,
-            time_centroid_mjd_seconds,
-            state_id,
-            observation_id,
-            flag_row,
-            uvw_m,
-        } = last;
-        assert_eq!(
-            size_of_val(&data_description_id)
-                + size_of_val(&field_id)
-                + size_of_val(&antenna1)
-                + size_of_val(&antenna2)
-                + size_of_val(&time_mjd_seconds)
-                + size_of_val(&time_centroid_mjd_seconds)
-                + size_of_val(&state_id)
-                + size_of_val(&observation_id)
-                + size_of_val(&flag_row)
-                + size_of_val(&uvw_m),
-            SelectedObservationRow::STORAGE_BYTES_PER_ROW
-        );
-    }
-
-    #[cfg(unix)]
     #[test]
     fn retained_read_open_holds_main_and_required_subtable_locks() {
         use casa_tables::LockType;

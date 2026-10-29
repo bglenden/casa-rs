@@ -22,9 +22,8 @@ use casa_types::measures::{
 };
 
 use super::PrepareError;
-use super::selection::{
-    SourceSpectralWindow, Survey, WindowChannels, explicit_spw_channels, one_window,
-};
+use super::selection::{SourceSpectralWindow, WindowChannels, explicit_spw_channels, one_window};
+use super::survey::Survey;
 use crate::{ImagingRequest, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.

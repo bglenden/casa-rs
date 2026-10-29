@@ -8,11 +8,11 @@ use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
 };
-use casa_ms::{MeasurementSet, SelectedObservationRow};
+use casa_ms::MeasurementSet;
 use casa_types::ArrayValue;
 
-use super::selection::Survey;
 use super::spectral::PreparedSpectralAxis;
+use super::survey::{FirstCrossSample, Survey};
 use super::{PrepareError, Surveyed};
 use crate::{AwCfSource, AwProjection, ImagingRequest};
 
@@ -21,7 +21,7 @@ pub(super) fn resolve(
     request: &ImagingRequest,
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
-    first_row: SelectedObservationRow,
+    first_cross: FirstCrossSample,
 ) -> Result<NativeAwRequestInput, PrepareError> {
     let AwCfSource::NativeEvla {
         evla_surface,
@@ -33,7 +33,7 @@ pub(super) fn resolve(
     else {
         unreachable!("native AW resolves only a native cache");
     };
-    let surface = evla_dish(surveyed.ms, first_row, evla_surface)?;
+    let surface = evla_dish(surveyed.ms, first_cross, evla_surface)?;
     let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
     // AW projection images square grids of square cells (the availability
     // gate refuses others), so x stands for both axes.
@@ -47,13 +47,13 @@ pub(super) fn resolve(
     let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize[0] as f64
         / *native_cf_working_size as f64;
     let pa = surveyed.engine.parallactic_angle(
-        first_row.time_mjd_seconds(),
-        first_row.field_id() as usize,
+        first_cross.time_mjd_seconds,
+        usize::try_from(first_cross.field_id).expect("a surveyed field is a FIELD row"),
         0,
     )? as f32;
     let feed_angle = receptor_zero_angle(
         surveyed.ms,
-        first_row.time_mjd_seconds(),
+        first_cross.time_mjd_seconds,
         frequencies[0].spectral_window,
     )? as f32;
     Ok(NativeAwRequestInput {
@@ -86,12 +86,16 @@ pub(super) fn resolve(
 /// the homogeneous 25 m dishes the native model describes.
 fn evla_dish(
     ms: &MeasurementSet,
-    first_row: SelectedObservationRow,
+    first_cross: FirstCrossSample,
     evla_surface: &std::path::Path,
 ) -> Result<EvlaDishSurface, PrepareError> {
     let observation = ms.observation()?;
     if observation
-        .string(first_row.observation_id() as usize, "TELESCOPE_NAME")?
+        .string(
+            usize::try_from(first_cross.observation_id)
+                .expect("a surveyed observation is an OBSERVATION row"),
+            "TELESCOPE_NAME",
+        )?
         .trim()
         != "EVLA"
     {

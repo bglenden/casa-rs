@@ -19,7 +19,6 @@ msv4 = ["dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_sl
 
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
-casa-imaging-model = { path = "../casa-imaging-model" }
 casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-numerics = { path = "../casa-numerics" }
@@ -192,24 +191,12 @@ name = "synthetic_ms_cli"
 path = "tests/synthetic_ms_cli.rs"
 
 [[test]]
-name = "row_walk_memory"
-path = "tests/row_walk_memory.rs"
-
-[[test]]
 name = "msv2_opening_memory"
 path = "tests/msv2_opening_memory.rs"
 
 [[test]]
 name = "msv2_update_memory"
 path = "tests/msv2_update_memory.rs"
-
-[[test]]
-name = "spectral_envelope_memory"
-path = "tests/spectral_envelope_memory.rs"
-
-[[test]]
-name = "visibility_write_memory"
-path = "tests/visibility_write_memory.rs"
 
 [[test]]
 name = "creation_write_memory"

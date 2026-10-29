@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "slow-tests")]
 //! CASA reads the `MODEL_DATA` casa-rs writes (#912). After CASA's `setjy`
-//! writes a virtual model, casa-rs's imaging writer writes `MODEL_DATA`,
-//! adding it or writing the one there, and CASA's `gaincal` then solves
+//! writes a virtual model, casa-rs's imaging writer, an update session with
+//! a model target, writes `MODEL_DATA`, adding it or writing the one
+//! there, and CASA's `gaincal` then solves
 //! against that column, as it does after CASA's own `delmod` and
 //! `clearcal(addmodel=True)`, not against the virtual model, which it
 //! prefers whenever one is defined.
@@ -10,7 +11,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use casa_ms::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
+use casa_ms::observation_io::{OpenOptions, open_update};
+use casa_observation::{
+    AccessRequest, CorrelationRequest, FieldSelection, Grouping, PartitionId, Roles, TimeSelection,
+    UpdateTarget, WeightRequest, WritableRole,
+};
 use flate2::read::GzDecoder;
 use tar::Archive;
 
@@ -105,10 +110,7 @@ fn casa_solves_against_casa_rs_model_data(python: &Path, ms: &Path, existing: bo
     for copy in ["casa.ms", "stale.ms"] {
         casa(python, "copy", &[ms, &path(copy)]);
     }
-    SelectedVisibilityWrite::begin(ms, SelectedVisibilityWriteTargets::new(true, false))
-        .expect("begin")
-        .complete()
-        .expect("complete");
+    casa_rs_takes_model_data(ms);
     casa(python, "casa_model", &[&path("casa.ms")]);
     for (vis, table) in [
         (ms.to_path_buf(), "casa-rs.G"),
@@ -134,6 +136,51 @@ fn casa_solves_against_casa_rs_model_data(python: &Path, ms: &Path, existing: bo
         "{}: the virtual model would have changed the gains ({stale})",
         ms.display()
     );
+}
+
+/// casa-rs's imaging writer taking `MODEL_DATA` in `ms`, as a run that
+/// saves its model does before its first batch: an update session with a
+/// model target, whose first updater clears what CASA clears and creates a
+/// `MODEL_DATA` MAIN lacks, seeded in every row with CASA's initial model.
+/// Nothing is then written over it.
+fn casa_rs_takes_model_data(ms: &Path) {
+    let model = UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    };
+    let session = open_update(ms, &OpenOptions::default(), &[model]).expect("session");
+    let channels = session
+        .observation()
+        .catalogue()
+        .partition(PartitionId(0))
+        .frequencies_hz
+        .len();
+    let request = AccessRequest {
+        partitions: vec![PartitionId(0)],
+        data_group: "base".to_string(),
+        roles: Roles {
+            values: false,
+            flags: false,
+            weights: false,
+            uvw: false,
+            time_centroid: false,
+            interval: false,
+            exposure: false,
+            scan: false,
+        },
+        channels: 0..channels,
+        times: TimeSelection::All,
+        fields: FieldSelection::All,
+        weights: WeightRequest::Stored,
+        correlations: CorrelationRequest::ALL,
+        grouping: Grouping::None,
+        batch_bytes: usize::MAX,
+    };
+    session
+        .updater(&request, &[0])
+        .expect("updater")
+        .finish()
+        .expect("finish");
 }
 
 /// The trial fixture, an MS without SOURCE rows, whose virtual model CASA

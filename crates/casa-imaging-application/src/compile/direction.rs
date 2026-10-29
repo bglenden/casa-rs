@@ -16,7 +16,7 @@ use casa_imaging_model::{
     SkyDirection,
 };
 use casa_imaging_products::PrimaryBeamCentres;
-use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
+use casa_ms::{EphemerisBudget, MeasurementSet, PhaseCentreEphemeris};
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
     epoch::MEpoch,
@@ -25,13 +25,18 @@ use casa_types::measures::{
 
 use super::PrepareError;
 use super::domains::PreparedImageDomain;
-use super::selection::Survey;
+use super::survey::Survey;
 use crate::ImagingRequest;
+
+/// The bytes a phase-centre ephemeris may hold, within the run's fixed
+/// charges.
+const EPHEMERIS_BUDGET: EphemerisBudget =
+    EphemerisBudget::new(casa_imaging_runtime::BOOTSTRAP_SOURCE_BYTES);
 
 /// The resolved image centre.
 pub(super) struct Centre {
     pub(super) law: PhaseCentreLaw,
-    pub(super) ephemeris: Option<SelectedObservationEphemeris>,
+    pub(super) ephemeris: Option<PhaseCentreEphemeris>,
     /// The J2000 phase centre frame conversions are evaluated at.
     pub(super) phase: MDirection,
     /// The image's reference direction, in the frame the image records.
@@ -47,7 +52,6 @@ pub(super) fn resolve_centre(
     ms: &MeasurementSet,
     survey: &Survey,
     engine: &casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
 ) -> Result<Centre, PrepareError> {
     let selected_field = request
         .phasecenter_field
@@ -58,13 +62,10 @@ pub(super) fn resolve_centre(
             selected: survey.fields.clone(),
         });
     }
-    let field_id = usize::try_from(selected_field).map_err(|_| PrepareError::NegativeMainId {
-        column: "FIELD_ID",
-        value: selected_field,
-    })?;
+    let field_id = usize::try_from(selected_field).expect("a surveyed field is a FIELD row");
     let mut stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
     let anchor_time = survey.first_time_mjd_seconds;
-    let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
+    let ephemeris_direction = |name: &str, ephemeris: &PhaseCentreEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
         Ok::<_, PrepareError>(SkyDirection::new(
@@ -88,13 +89,13 @@ pub(super) fn resolve_centre(
             (PhaseCentreLaw::Fixed(direction), None, direction)
         }
         Some("TRACKFIELD") => {
-            let ephemeris = SelectedObservationEphemeris::tracked_fields(
+            let ephemeris = PhaseCentreEphemeris::tracked_fields(
                 ms,
                 survey
                     .fields
                     .iter()
-                    .map(|field| usize::try_from(*field).expect("validated FIELD_ID")),
-                budget.reference_data_budget(),
+                    .map(|field| usize::try_from(*field).expect("a surveyed field is a FIELD row")),
+                EPHEMERIS_BUDGET,
             )?;
             let direction = ephemeris_direction("TRACKFIELD", &ephemeris)?;
             (
@@ -104,7 +105,7 @@ pub(super) fn resolve_centre(
             )
         }
         Some(text) => {
-            let ephemeris = named_ephemeris(text, survey, engine, budget)?;
+            let ephemeris = named_ephemeris(text, survey, engine)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
                 PhaseCentreLaw::Ephemeris(text.to_string()),
@@ -322,23 +323,18 @@ fn named_ephemeris(
     text: &str,
     survey: &Survey,
     engine: &casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
-) -> Result<SelectedObservationEphemeris, PrepareError> {
-    let budget = budget.reference_data_budget();
+) -> Result<PhaseCentreEphemeris, PrepareError> {
     let ephemeris = if Path::new(text).is_dir() {
-        SelectedObservationEphemeris::external(text, budget)?
+        PhaseCentreEphemeris::external(text, EPHEMERIS_BUDGET)?
     } else {
-        SelectedObservationEphemeris::named(text, budget)?
+        PhaseCentreEphemeris::named(text, EPHEMERIS_BUDGET)?
     };
     // The engine observes each attached field towards its own body
     // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
     // of which only some move is refused.
     let mut moving = 0;
     for field_id in &survey.fields {
-        let field_id = usize::try_from(*field_id).map_err(|_| PrepareError::NegativeMainId {
-            column: "FIELD_ID",
-            value: *field_id,
-        })?;
+        let field_id = usize::try_from(*field_id).expect("a surveyed field is a FIELD row");
         moving += usize::from(engine.field_moves(field_id));
     }
     if moving != 0 && moving != survey.fields.len() {
@@ -359,10 +355,7 @@ pub(super) fn observation_info(
     let observation = ms.observation()?;
     let mut labels = std::collections::BTreeSet::new();
     for id in &survey.observation_ids {
-        let id = usize::try_from(*id).map_err(|_| PrepareError::NegativeMainId {
-            column: "OBSERVATION_ID",
-            value: *id,
-        })?;
+        let id = usize::try_from(*id).expect("a surveyed observation is an OBSERVATION row");
         labels.insert(if id < observation.row_count() {
             (
                 observation.string(id, "TELESCOPE_NAME")?,

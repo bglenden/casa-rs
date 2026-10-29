@@ -303,7 +303,7 @@ fn a_selection_of_no_rows_is_refused() {
     assert!(
         matches!(
             error,
-            ApplicationDispatchError::Preparation(PrepareError::NoSelectedRows)
+            ApplicationDispatchError::Preparation(PrepareError::NoSelectedSamples)
         ),
         "{error}"
     );

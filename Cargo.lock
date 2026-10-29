@@ -515,7 +515,6 @@ version = "0.27.0"
 dependencies = [
  "bytemuck",
  "casa-coordinates",
- "casa-imaging-model",
  "casa-logging",
  "casa-measures-data",
  "casa-numerics",

@@ -1166,8 +1166,8 @@ fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
 }
 
 /// The fixed charges a run makes whatever its size, which the over-charge
-/// bound allows beside its proportion: the Measures catalogs (16 MiB), the
-/// walks and envelope of the MeasurementSet, a kernel set's index.
+/// bound allows beside its proportion: the Measures catalogs (16 MiB),
+/// compile's survey of the observation, a kernel set's index.
 const FIXED_ALLOWANCE: u64 = 64 << 20;
 /// How far a run's reservations may stand above what it holds, beyond
 /// [`FIXED_ALLOWANCE`] (#738).

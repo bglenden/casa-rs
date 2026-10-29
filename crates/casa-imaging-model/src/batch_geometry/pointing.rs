@@ -13,7 +13,7 @@ use crate::geometry::{
     ObservationPointingLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
 };
 use crate::pointing_law::{PointingSample, PointingSamples};
-use crate::selected_observation_sample::SelectedPointingDirections;
+use crate::sample_antennas::SelectedPointingDirections;
 
 /// One time of a batch, as its geometry is evaluated.
 pub(super) struct TimeContext<'a, 'b> {
