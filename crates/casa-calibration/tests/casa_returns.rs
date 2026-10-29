@@ -434,11 +434,47 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         with(&flux, "fitorder", json!(2)),
         "fitorder",
     );
-    let gencal = json!({"vis": ms, "caltable": "o.cal", "caltype": "opac"});
+    // gencal reads infile only for the caltypes CASA's task XML shows it
+    // under, antpos among them.
+    let gencal = json!({"vis": ms, "caltable": "o.cal", "caltype": "antpos"});
     refused_naming_979(
         dir.path(),
         "gencal",
         with(&gencal, "infile", json!("w.txt")),
         "infile",
     );
+}
+
+/// A sub-parameter CASA reads only under another parameter's value takes
+/// any value elsewhere, and is ignored there, as CASA ignores it: gaincal's
+/// GSPLINE controls under gaintype G, bandpass's BPOLY ones under B,
+/// gencal's infile for an opacity table.
+#[test]
+fn a_sub_parameter_casa_ignores_takes_any_value() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = ms.to_str().unwrap();
+    for (surface, values) in [
+        (
+            "gaincal",
+            json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "splinetime": 1800.0,
+                   "phasewrap": 90.0, "normtype": "median"}),
+        ),
+        (
+            "bandpass",
+            json!({"vis": ms, "caltable": "b.bcal", "refant": "0", "maskedge": 10}),
+        ),
+        (
+            "gencal",
+            json!({"vis": ms, "caltable": "o.cal", "caltype": "opac", "spw": "0",
+                   "parameter": [0.05], "infile": "w.txt"}),
+        ),
+    ] {
+        let (output, reply) = json_run(dir.path(), surface, values);
+        assert!(
+            matches!(reply, Some(TaskReply::Succeeded { .. })),
+            "{surface}: {reply:?}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
