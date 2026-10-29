@@ -267,11 +267,12 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"quackmode": "tail"}),
             "quackmode",
         ),
-        // An unimplemented CASA parameter, refused at any value but its default.
+        // An unimplemented CASA parameter, refused at any value but its
+        // default where CASA reads it: clipminmax in clip mode.
         (
             FLAGDATA,
             "flagdata",
-            json!({"clipminmax": [0.0, 1.0]}),
+            json!({"mode": "clip", "clipminmax": [0.0, 1.0]}),
             "clipminmax",
         ),
         (
@@ -301,4 +302,31 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
         assert!(message.contains("#978"), "{message}");
     }
     assert!(!outputvis.exists());
+}
+
+/// A CASA parameter its task reads only under another parameter's value
+/// (the sub-parameters of CASA's task XML) takes any value elsewhere, and
+/// is ignored, as CASA ignores it.
+#[test]
+fn a_sub_parameter_casa_ignores_takes_any_value() {
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
+    let total = (4 * NUM_CORR * NUM_CHAN) as f64;
+    // Manual flagging with clip's, tfcrop's and summary's controls set.
+    let values = json!({"vis": vis, "mode": "manual", "antenna": "0", "clipminmax": [0.0, 1.0],
+                        "timefit": "poly", "spwchan": true, "cmdreason": "ignored"});
+    returned(FLAGDATA, "flagdata", values, workspace.path());
+    let summary = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({"vis": vis, "mode": "summary"}),
+        workspace.path(),
+    );
+    assert_eq!(entry(&summary, "flagged"), &CasaValue::float(total));
+    // mstransform's regridding and averaging controls, with neither on.
+    let outputvis = workspace.path().join("out.ms");
+    let values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data",
+                        "nchan": 3, "outframe": "LSRK", "timebin": "10s", "fitorder": 2});
+    returned(MSTRANSFORM, "mstransform", values, workspace.path());
+    assert!(outputvis.exists());
 }
