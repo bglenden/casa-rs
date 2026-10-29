@@ -263,7 +263,7 @@ pub enum BackendRequest {
 pub enum DataColumn {
     /// `DATA`.
     Data,
-    /// `CORRECTED_DATA`.
+    /// `CORRECTED_DATA`, else `DATA` when the MeasurementSet has none.
     Corrected,
 }
 
