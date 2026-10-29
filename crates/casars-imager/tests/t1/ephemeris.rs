@@ -202,6 +202,53 @@ fn only_an_empty_phase_centre_reads_the_moving_field_time() {
     assert!(refused.contains("T1BODY"), "{refused}");
 }
 
+/// The track converted to MSv4 keeps its moving field's geometry (#942):
+/// the converter writes the body's samples (`field_and_source_ephemeris`),
+/// the MSv4 reader reads them back with the field's offset, and every
+/// geometry quantity of the converted store's rows equals the
+/// MeasurementSet's to the law's 1e-12, tracking the body, following its
+/// table, and on a fixed centre.
+#[test]
+fn a_moving_field_keeps_its_geometry_in_msv4() {
+    use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+    let observation = moving_track();
+    let converted = observation.scratch("moving.ps.zarr");
+    to_msv4(
+        observation.measurement_set(),
+        &converted,
+        &ConversionOptions {
+            data_groups: None,
+            accept: vec![
+                LossKind::Sigma,
+                LossKind::RowFlags,
+                LossKind::FlagCategories,
+                LossKind::Tables,
+                LossKind::Columns,
+            ],
+            batch_bytes: 64 << 20,
+            workers: 1,
+            chunks: [0, 0, 0, 0],
+            codec: casa_ms::observation_io::Msv4Codec::Zstd,
+            padding: PaddingRows::Flagged,
+            creator: "casars-imager t1".to_string(),
+            creation_date: "2026-10-29T00:00:00".to_string(),
+        },
+    )
+    .expect("the track as MSv4");
+    let table = table_outside(&observation);
+    let [ra, dec] = PHASE_CENTER_RAD;
+    for (name, controls) in [
+        ("msv4-trackfield", json!({ "phasecenter": "TRACKFIELD" })),
+        ("msv4-table", json!({ "phasecenter": path_text(&table) })),
+        (
+            "msv4-fixed",
+            json!({ "phasecenter": format!("J2000 {}rad {}rad", ra + 2.0e-6, dec - 1.0e-6) }),
+        ),
+    ] {
+        observation.assert_store_geometry(name, controls, &converted);
+    }
+}
+
 /// [`body`]'s geocentric ICRS direction at `mjd` (UTC), its positions
 /// interpolated linearly in time, as casacore's `MeasComet` reads them.
 fn geocentric_body_direction(mjd: f64) -> MDirection {
