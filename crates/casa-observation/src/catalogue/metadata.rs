@@ -265,12 +265,14 @@ impl super::Catalogue {
             .collect()
     }
 
-    /// The partitions CASA's selection of `intent` reads (`MSStateIndex`):
-    /// those whose intents (each `OBS_MODE` split at commas) include it
-    /// exactly, without the rows of flagged states. A partition whose
-    /// states are all flagged is not selected. A partition without states
-    /// (MSv4) is selected by its intents alone. Rows without a state
-    /// (`STATE_ID` −1) have no intents and are never selected.
+    /// The partitions CASA's selection of `intent` reads
+    /// (`MSStateIndex::matchStateObsMode`): those of a state whose stored
+    /// `OBS_MODE`, split at commas and not trimmed, has an element equal to
+    /// it, without the rows of flagged states (so `"A, B"` holds `" B"`, not
+    /// `"B"`). A partition whose states are all flagged is not selected. A
+    /// partition without states (MSv4) is selected by its stated intents
+    /// alone. Rows without a state (`STATE_ID` −1) have no intents and are
+    /// never selected.
     ///
     /// # Errors
     ///
@@ -283,7 +285,17 @@ impl super::Catalogue {
     ) -> Result<Vec<super::PartitionId>, IntentError> {
         let mut selected = Vec::new();
         for (index, partition) in self.partitions.iter().enumerate() {
-            if !partition.intents.iter().any(|known| known == intent) {
+            let matched = if partition.states.is_empty() {
+                partition.intents.iter().any(|known| known == intent)
+            } else {
+                partition.states.iter().any(|state| {
+                    self.states[state.0 as usize]
+                        .obs_mode
+                        .split(',')
+                        .any(|element| element == intent)
+                })
+            };
+            if !matched {
                 continue;
             }
             let id = super::PartitionId(u32::try_from(index).expect("few partitions"));
@@ -483,6 +495,26 @@ mod tests {
             catalogue.partitions_with_intent("OBSERVE_TARGET"),
             Ok(Vec::new()),
             "an element matches whole"
+        );
+        // A state's stored OBS_MODE is matched element by element, untrimmed,
+        // as CASA's literal matcher does, whatever the intents say.
+        catalogue.states[2].obs_mode = "CALIBRATE_PHASE#ON_SOURCE, CALIBRATE_BANDPASS".to_string();
+        catalogue.partitions[2].intents = vec![
+            "CALIBRATE_PHASE#ON_SOURCE".to_string(),
+            "CALIBRATE_BANDPASS".to_string(),
+        ];
+        assert_eq!(
+            catalogue.partitions_with_intent("CALIBRATE_BANDPASS"),
+            Ok(Vec::new()),
+            "\" CALIBRATE_BANDPASS\" is not \"CALIBRATE_BANDPASS\""
+        );
+        assert_eq!(
+            catalogue.partitions_with_intent(" CALIBRATE_BANDPASS"),
+            Ok(vec![PartitionId(2)])
+        );
+        assert_eq!(
+            catalogue.partitions_with_intent("CALIBRATE_PHASE#ON_SOURCE"),
+            Ok(vec![PartitionId(2)])
         );
         catalogue.partitions[0].states = vec![StateId(0), StateId(1)];
         assert_eq!(

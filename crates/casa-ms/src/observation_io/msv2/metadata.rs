@@ -3,9 +3,12 @@
 //! the logical sources with their records, the states and the processors,
 //! read once at opening. A column the table lacks, or a cell it leaves
 //! undefined, is `None`; a unit or measure reference outside the table's
-//! definition refuses the store, naming the column. A SOURCE line array
-//! whose length is not the row's `NUM_LINES` is dropped with a warning,
-//! since such a table is readable otherwise.
+//! definition refuses the store, naming the column, and so does a defined
+//! cell of another shape than its definition's (a window's per-channel
+//! arrays of `NUM_CHAN` values, SOURCE's fixed vectors of their length,
+//! each on one axis). A SOURCE line array whose length is not the row's
+//! `NUM_LINES` is dropped with a warning, since such a table is readable
+//! otherwise.
 
 use std::collections::BTreeMap;
 
@@ -40,15 +43,47 @@ pub(super) fn floats(
     }
 }
 
-/// `value`, a `column` cell, as exactly `N` values.
+/// The `f64` values of `value`, a `column` cell of one axis.
+fn vector(value: Option<&ArrayValue>, column: &str) -> Result<Option<Vec<f64>>, ObservationError> {
+    match value {
+        Some(ArrayValue::Float64(values)) if values.ndim() != 1 => Err(invalid(format!(
+            "{column} has shape {:?}, not one axis",
+            values.shape()
+        ))),
+        value => floats(value, column),
+    }
+}
+
+/// `value`, a `column` cell, as exactly `N` values on one axis.
 fn fixed<const N: usize>(
     value: Option<&ArrayValue>,
     column: &str,
 ) -> Result<Option<[f64; N]>, ObservationError> {
-    floats(value, column)?
+    vector(value, column)?
         .map(|values| {
             <[f64; N]>::try_from(values.as_slice())
                 .map_err(|_| invalid(format!("{column} holds {} values, not {N}", values.len())))
+        })
+        .transpose()
+}
+
+/// `value`, a `column` cell of a window of `channels` channels, as one
+/// value per channel.
+fn per_channel(
+    value: Option<&ArrayValue>,
+    column: &str,
+    channels: i32,
+) -> Result<Option<Vec<f64>>, ObservationError> {
+    vector(value, column)?
+        .map(|values| {
+            if i32::try_from(values.len()) == Ok(channels) {
+                Ok(values)
+            } else {
+                Err(invalid(format!(
+                    "{column} holds {} values for a window of NUM_CHAN {channels}",
+                    values.len()
+                )))
+            }
         })
         .transpose()
 }
@@ -99,6 +134,7 @@ pub(super) fn read_windows(ms: &MeasurementSet) -> Result<Vec<WindowEntry>, Obse
             let code = get_i32(table, row, "MEAS_FREQ_REF").map_err(storage)?;
             let frame = FrequencyRef::from_casacore_code(code)
                 .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {code}")))?;
+            let channels = get_i32(table, row, "NUM_CHAN").map_err(storage)?;
             Ok(WindowEntry {
                 name: get_string(table, row, "NAME").map_err(storage)?,
                 reference_frequency: optional_f64(table, row, "REF_FREQUENCY")
@@ -110,13 +146,15 @@ pub(super) fn read_windows(ms: &MeasurementSet) -> Result<Vec<WindowEntry>, Obse
                 frequency_group: optional_i32(table, row, "FREQ_GROUP").map_err(storage)?,
                 frequency_group_name: optional_string(table, row, "FREQ_GROUP_NAME")
                     .map_err(storage)?,
-                effective_bandwidths_hz: floats(
+                effective_bandwidths_hz: per_channel(
                     optional_array(table, row, "EFFECTIVE_BW").map_err(storage)?,
                     "EFFECTIVE_BW",
+                    channels,
                 )?,
-                resolutions_hz: floats(
+                resolutions_hz: per_channel(
                     optional_array(table, row, "RESOLUTION").map_err(storage)?,
                     "RESOLUTION",
+                    channels,
                 )?,
                 flagged: optional_bool(table, row, "FLAG_ROW").map_err(storage)?,
             })
@@ -441,6 +479,37 @@ mod tests {
         let short = &sources.entries[2].records[0];
         assert_eq!(short.num_lines, 2);
         assert!(short.rest_frequencies.is_none() && short.systemic_velocities.is_none());
+    }
+
+    /// A SOURCE vector of fixed length is refused on another axis count,
+    /// whatever its element count.
+    #[test]
+    fn a_source_vector_of_two_axes_is_refused() {
+        let mut ms = with_lines();
+        let table = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
+        table
+            .add_column(
+                ColumnSchema::array_variable("POSITION", casa_types::PrimitiveType::Float64, None),
+                None,
+            )
+            .expect("POSITION");
+        source(&mut ms, (0, 0, "M51"), 0, None);
+        ms.subtable_mut(SubtableId::Source)
+            .expect("SOURCE")
+            .row_accessor_mut()
+            .set_cell(
+                0,
+                "POSITION",
+                Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![3, 1]))),
+            )
+            .expect("a position of two axes");
+        let refused = read_sources(&ms, 1).err().map(|error| error.to_string());
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|reason| reason.contains("POSITION") && reason.contains("one axis")),
+            "{refused:?}"
+        );
     }
 
     /// Without a SOURCE table there are no sources.

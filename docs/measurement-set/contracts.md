@@ -99,8 +99,11 @@ what a consumer needs as science (a source's rest frequency for a cube's
 or a single-dish image's default) or as identity (what concatenation
 matches on), each member typed. `None` means the store does not state it and
 is never a value: an unstated flag is not `false`, an unstated string not
-empty. An adapter validates units and shapes at opening and refuses a store
-it cannot read as stated, naming the column.
+empty. A column the store lacks, or a cell it leaves undefined, is `None`.
+An adapter validates units and shapes at opening and refuses a store it
+cannot read as stated, naming the column: a window's per-channel arrays
+hold `NUM_CHAN` values on one axis, a FIELD direction is `[2, NUM_POLY + 1]`,
+and SOURCE's fixed vectors have their length on one axis.
 - **Windows** (`Catalogue::windows`, `WindowId`): every spectral window the
   store states, a window no partition uses included. Each states its name,
   reference frequency (`MFrequency`, in its frame), total bandwidth, IF
@@ -745,10 +748,13 @@ so a consumer selects intents by the partitions it requests:
 `Catalogue::partitions_with_intent` does it as CASA's `MSStateIndex` does
 (revision 8 corrects revision 7, which said CASA matched the whole
 `OBS_MODE`).
-- `OBS_MODE` is split at commas, and one element must equal the intent.
-  The catalogue keeps a partition's intents split that way, sorted and
-  deduplicated. Patterns are matched element by element too, which this
-  contract does not implement yet.
+- A state's stored `OBS_MODE` is split at commas, and one element, not
+  trimmed, must equal the intent (`MSStateIndex::matchStateObsMode`), so
+  `"A, B"` holds `" B"` and not `"B"`. A partition without states (an MSv4)
+  is matched by its stated intents. The catalogue's `PartitionEntry::intents`
+  are trimmed, sorted and deduplicated, for display and grouping, and are
+  not what MSv2 selection matches. Patterns are matched element by element
+  too, which this contract does not implement yet.
 - The rows of a flagged state are never selected, and neither are rows
   without a state (`STATE_ID` −1), which have no intents. A partition whose
   states are all flagged is not selected. A partition whose rows use both
