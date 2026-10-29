@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_observation::{Catalogue, ObservationError, VisibilityBatch};
+use casa_observation::{Catalogue, ObservationError, PartitionId, VisibilityBatch};
 use casa_tables::{ColumnOverrides, StreamedScalarValues, StreamedTiledShapeValueType};
 use casa_types::ScalarValue;
 use casa_types::measures::MjdHighPrec;
@@ -18,6 +18,7 @@ use num_complex::Complex32;
 
 use super::PaddingRows;
 use super::msv2_tables::Layout;
+use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
@@ -60,15 +61,27 @@ pub(super) enum ColumnSource {
     InitialModel,
 }
 
+/// The `STATE_ID` an input partition's rows are written with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum StateIds {
+    /// One for every row: a merged state, or -1 for none.
+    One(i32),
+    /// The output partition's state of intents, written for partitions
+    /// that state intents but no state.
+    Intents,
+    /// Each row's own (an MSv2's rows of one `OBS_MODE` holding several),
+    /// as the merged state [`RowMap::states`] gives it, -1 for -1 and a
+    /// state beyond the input's `STATE`; the merged states they use.
+    PerRow(Vec<i32>),
+}
+
 /// Where one input partition's rows go, and what they are written with.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Placement {
     /// The output partition.
     pub(super) output: usize,
-    /// `STATE_ID`: a merged state, -1 for none, or `None` for the output
-    /// partition's state of intents, written for partitions that state
-    /// intents but no state.
-    pub(super) state: Option<i32>,
+    /// `STATE_ID`.
+    pub(super) state: StateIds,
     /// `PROCESSOR_ID`, -1 for none.
     pub(super) processor: i32,
     /// Added to the input's scan numbers.
@@ -89,6 +102,8 @@ pub(super) struct RowMap {
     /// `SCAN_NUMBER` of each of the input's scans, before its partition's
     /// offset.
     pub(super) scans: Vec<i32>,
+    /// `STATE` row of each of the input's states.
+    pub(super) states: Vec<i32>,
     /// Each of the input's partitions.
     pub(super) partitions: Vec<Placement>,
     /// The factor every acquisition's weights are multiplied by.
@@ -153,8 +168,11 @@ struct Scalars {
     exposure: ScalarColumnId,
     /// Columns constant over an input partition: `ARRAY_ID`,
     /// `DATA_DESC_ID`, `FEED1`, `FEED2`, `FLAG_ROW`, `OBSERVATION_ID`,
-    /// `PROCESSOR_ID`, `STATE_ID`.
-    constant: [ScalarColumnId; 8],
+    /// `PROCESSOR_ID`.
+    constant: [ScalarColumnId; 7],
+    /// `STATE_ID`, constant over an input partition unless its rows'
+    /// states are written row by row ([`StateIds::PerRow`]).
+    state: ScalarColumnId,
 }
 
 /// One batch's keys, gathered for the scalar columns.
@@ -164,6 +182,8 @@ struct Keys {
     antenna2: Vec<i32>,
     field: Vec<i32>,
     scan: Vec<i32>,
+    /// Gathered only where states are written row by row.
+    state: Vec<i32>,
     time: Vec<f64>,
     centroid: Vec<f64>,
     interval: Vec<f64>,
@@ -176,10 +196,56 @@ impl Keys {
         self.antenna2.clear();
         self.field.clear();
         self.scan.clear();
+        self.state.clear();
         self.time.clear();
         self.centroid.clear();
         self.interval.clear();
         self.exposure.clear();
+    }
+}
+
+/// Each sample's `STATE_ID` in an MSv2 input's batches, read from its
+/// MAIN where an input partition's rows are written row by row
+/// ([`StateIds::PerRow`]); one input partition's batches in turn.
+#[derive(Default)]
+pub(super) struct RowStates {
+    /// The input partition's times the batches so far hold.
+    times: usize,
+    rows: Vec<usize>,
+    states: Vec<i32>,
+}
+
+impl RowStates {
+    /// Start an input partition's batches.
+    pub(super) fn restart(&mut self) {
+        self.times = 0;
+    }
+
+    /// Each sample's input `STATE_ID` in `batch`, the next of partition
+    /// `id` of `observation`.
+    ///
+    /// # Errors
+    ///
+    /// A batch that is not its grid's next times, or a failed read.
+    pub(super) fn of(
+        &mut self,
+        observation: &Msv2Observation,
+        id: PartitionId,
+        batch: &VisibilityBatch<'_>,
+    ) -> Result<&[i32], ObservationError> {
+        let times = batch.samples() / batch.samples_per_time().max(1);
+        observation.cell_states_into(
+            id,
+            self.times..self.times + times,
+            (&mut self.rows, &mut self.states),
+        )?;
+        if self.states.len() != batch.samples() {
+            return Err(request_error(
+                "a batch's samples are not its grid's cells at its times",
+            ));
+        }
+        self.times += times;
+        Ok(&self.states)
     }
 }
 
@@ -251,8 +317,8 @@ impl MainRows {
                 id("FLAG_ROW")?,
                 id("OBSERVATION_ID")?,
                 id("PROCESSOR_ID")?,
-                id("STATE_ID")?,
             ],
+            state: id("STATE_ID")?,
         };
         let outputs = catalogue
             .partitions
@@ -284,11 +350,13 @@ impl MainRows {
     /// Write a row for every sample of `batches` (every acquisition, with
     /// padding omitted), one batch per group the partition reads, of the
     /// same times, the first with every role; the input's identities
-    /// written as `map` gives them.
+    /// written as `map` gives them, and each sample's input `STATE_ID`
+    /// as `states` give them where they are written row by row.
     pub(super) fn push(
         &mut self,
         map: &RowMap,
         batches: &[VisibilityBatch<'_>],
+        states: Option<&[i32]>,
     ) -> Result<(), ObservationError> {
         let batch = &batches[0];
         let missing = |role: &str| request_error(format!("a converted batch carries its {role}"));
@@ -309,6 +377,11 @@ impl MainRows {
             ));
         }
         let placement = &map.partitions[batch.partition.0 as usize];
+        if matches!(placement.state, StateIds::PerRow(_)) != states.is_some() {
+            return Err(request_error(
+                "a batch's row states are given exactly where they are written row by row",
+            ));
+        }
         let values = placement
             .columns
             .iter()
@@ -364,6 +437,12 @@ impl MainRows {
             keys.field.push(map.fields[coordinate.field.0 as usize]);
             keys.scan
                 .push(map.scans[scan.0 as usize] + placement.scan_offset);
+            if let Some(states) = states {
+                let state = usize::try_from(states[sample])
+                    .ok()
+                    .and_then(|state| map.states.get(state));
+                keys.state.push(state.copied().unwrap_or(-1));
+            }
             keys.time.push(time);
             if acquisition {
                 keys.centroid.push(centroid.seconds_since(sample, origin));
@@ -482,9 +561,6 @@ impl MainRows {
         }
         let output = placement.output;
         let [feed1, feed2] = self.outputs[output].feeds;
-        let state = placement
-            .state
-            .unwrap_or_else(|| self.layout.intent_states[output].unwrap_or(-1));
         let constants = [
             ScalarValue::Int32(0),
             ScalarValue::Int32(self.layout.data_description[output]),
@@ -493,13 +569,28 @@ impl MainRows {
             ScalarValue::Bool(false),
             ScalarValue::Int32(self.outputs[output].observation),
             ScalarValue::Int32(placement.processor),
-            ScalarValue::Int32(state),
         ];
         for (column, value) in scalars.constant.iter().zip(constants) {
             self.session
                 .push_repeated_scalar(*column, Some(value), count)
                 .map_err(storage)?;
         }
+        let state = match placement.state {
+            StateIds::One(state) => Some(state),
+            StateIds::Intents => Some(self.layout.intent_states[output].unwrap_or(-1)),
+            StateIds::PerRow(_) => None,
+        };
+        match state {
+            Some(state) => self.session.push_repeated_scalar(
+                scalars.state,
+                Some(ScalarValue::Int32(state)),
+                count,
+            ),
+            None => self
+                .session
+                .push_scalar_column(scalars.state, StreamedScalarValues::Int32(&keys.state)),
+        }
+        .map_err(storage)?;
         self.rows += count;
         Ok(())
     }
@@ -566,11 +657,13 @@ pub(super) fn write_plan(
 }
 
 /// What one batch's rows hold in [`MainRows`] beside the writers: the keys
-/// of `samples` samples, and a cell of `cell` elements of each kind.
+/// of `samples` samples with the reading of their states ([`RowStates`]),
+/// and a cell of `cell` elements of each kind.
 pub(super) fn held_bytes(samples: usize, cell: usize) -> usize {
-    let keys = 4 * size_of::<i32>() + 4 * size_of::<f64>();
+    let keys = 5 * size_of::<i32>() + 4 * size_of::<f64>();
+    let states = size_of::<usize>() + size_of::<i32>();
     let scratch = 2 * size_of::<Complex32>() + size_of::<bool>() + 2 * size_of::<f32>();
-    samples * keys + cell * scratch
+    samples * (keys + states) + cell * scratch
 }
 
 /// MAIN's array columns for the `occupancy` of `catalogue`'s partitions

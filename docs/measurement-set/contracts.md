@@ -1052,9 +1052,12 @@ The plan decides everything before writing, and writes nothing until asked:
 - **Combination.** Partitions combine by the key the MSv2 reader partitions
   rows by. A combined partition's inputs must not acquire one time and
   baseline twice, nor hold two fields or scans at one time or two intervals;
-  each is refused before writing. The data groups written are the inputs'
-  union: an input without `corrected` is written from its `base`, and one
-  without `model` with CASA's initial model, each a declared loss.
+  each is refused before writing. Rows keep their own state: where an
+  MSv2's rows of one partition use several `STATE_ID`s, each row is written
+  with its own (merged), and a padded row with its time's first row's. The
+  data groups written are the inputs' union: an input without `corrected`
+  is written from its `base`, and one without `model` with CASA's initial
+  model, each a declared loss.
 - **Losses.** What the MeasurementSet cannot hold, and what it writes as
   MSv2's default, is inventoried, and any loss the caller did not accept
   refuses the plan. Every subtable column an input holds is carried, written

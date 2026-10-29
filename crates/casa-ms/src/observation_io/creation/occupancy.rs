@@ -189,7 +189,7 @@ pub(super) fn grids(
         for (input, id) in contributors {
             let map = &combined.rows[*input];
             let placement = &map.partitions[id.0 as usize];
-            let observation = inputs[*input].observation.as_ref();
+            let observation = inputs[*input].observation();
             let group = &placement.groups[0];
             let times = Sizing::of(observation, *id, std::slice::from_ref(group), WEIGHTS)?.times;
             let bytes = grid_bytes(
@@ -338,7 +338,7 @@ fn acquisitions(
             let map = &combined.rows[*input];
             let placement = &map.partitions[id.0 as usize];
             let groups = [placement.groups[0].clone()];
-            let observation = inputs[*input].observation.as_ref();
+            let observation = inputs[*input].observation();
             let sizing = Sizing::of(observation, *id, &groups, WEIGHTS)?;
             let batch = sizing.times_per_batch(budget, None) * sizing.integration();
             ledger.during("a weights batch", batch, |_| {

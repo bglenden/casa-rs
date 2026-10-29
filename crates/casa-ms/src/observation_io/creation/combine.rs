@@ -27,7 +27,7 @@ use casa_types::measures::MjdHighPrec;
 
 use super::Loss;
 use super::inputs::Input;
-use super::msv2_rows::{ColumnSource, Placement, RowMap};
+use super::msv2_rows::{ColumnSource, Placement, RowMap, StateIds};
 use super::scans::{self, Incoming, Session};
 use crate::observation_io::update::request_error;
 
@@ -75,7 +75,7 @@ pub(super) fn combine(
 ) -> Result<Combined, ObservationError> {
     let catalogues: Vec<&Catalogue> = inputs
         .iter()
-        .map(|input| input.observation.catalogue().as_ref())
+        .map(|input| input.observation().catalogue().as_ref())
         .collect();
     let merged = merge(&catalogues, tolerance)?;
     let offsets = scan_offsets(inputs, &catalogues, &merged)?;
@@ -90,11 +90,20 @@ pub(super) fn combine(
                 .iter()
                 .map(|scan| scan.number.unwrap_or(0))
                 .collect(),
+            states: map.states.iter().map(|id| id.0 as i32).collect(),
             partitions: Vec::with_capacity(catalogue.partitions.len()),
             weight_scale: inputs[index].weight_scale,
         };
         for id in catalogue.partition_ids() {
-            let placement = building.place((index, id), (catalogue, map), &offsets[index], &row)?;
+            let per_row = inputs[index]
+                .msv2()
+                .is_some_and(|observation| observation.row_states(id).len() > 1);
+            let placement = building.place(
+                (index, id, per_row),
+                (catalogue, map),
+                &offsets[index],
+                &row,
+            )?;
             row.partitions.push(placement);
         }
         building.rows.push(row);
@@ -224,10 +233,11 @@ impl<'a> Building<'a> {
 
     /// Place input `index`'s partition `id` (of `catalogue`, merged by
     /// `map`), its scans offset by `offsets` (by session), its identities
-    /// those of `row`.
+    /// those of `row`; `per_row` when its rows' `STATE_ID`s are written row
+    /// by row (an MSv2's partition whose rows hold several).
     fn place(
         &mut self,
-        (index, id): (usize, PartitionId),
+        (index, id, per_row): (usize, PartitionId, bool),
         (catalogue, map): (&Catalogue, &casa_observation::InputMap),
         offsets: &[i32],
         row: &RowMap,
@@ -260,20 +270,26 @@ impl<'a> Building<'a> {
             None => self.open(key, entry, processor),
         };
         let state = match entry.states.as_slice() {
-            [] if entry.intents.is_empty() => Some(-1),
+            states if per_row => StateIds::PerRow(
+                states
+                    .iter()
+                    .map(|state| row.states[state.0 as usize])
+                    .collect(),
+            ),
+            [] if entry.intents.is_empty() => StateIds::One(-1),
             [] => {
                 self.intents[output] = true;
-                None
+                StateIds::Intents
             }
             [first, rest @ ..] => {
                 if !rest.is_empty() {
                     self.losses.insert(Loss::Column(
-                        "STATE_ID of rows using several states in one partition (each is \
-                         written with the first)"
+                        "STATE_ID of rows using several states in one partition of a store \
+                         without row states (each is written with the first)"
                             .to_string(),
                     ));
                 }
-                Some(map.states[first.0 as usize].0 as i32)
+                StateIds::One(row.states[first.0 as usize])
             }
         };
         let scan_offset = offsets[entry.observation.0 as usize];

@@ -17,6 +17,7 @@ pub use cursor::Msv2Cursor;
 pub(crate) use pointing::{POLYNOMIAL_TERMS, scan_rows};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -479,6 +480,79 @@ impl Msv2Observation {
             .copied()
             .filter(|row| *row != index::NO_ROW)
             .min()
+    }
+
+    /// The `STATE_ID`s partition `id`'s rows hold, ascending: -1 and those
+    /// beyond `STATE` included, which its catalogue entry's states leave
+    /// out.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    pub(crate) fn row_states(&self, id: PartitionId) -> &[i32] {
+        &self.partitions[id.0 as usize].grid.states
+    }
+
+    /// The `STATE_ID` of each cell of partition `id`'s grid at times
+    /// `times` (positions on it), in its batches' sample order (time, then
+    /// baseline), into `states`; `rows` is scratch. A padded cell takes the
+    /// state of its time's first row (every time holds one), so a row
+    /// written for it keeps its partition. A batch of those times holds
+    /// `states.len()` samples.
+    ///
+    /// # Errors
+    ///
+    /// Times beyond the grid, or a failed read.
+    pub(crate) fn cell_states_into(
+        &self,
+        id: PartitionId,
+        times: Range<usize>,
+        (rows, states): (&mut Vec<usize>, &mut Vec<i32>),
+    ) -> Result<(), ObservationError> {
+        let grid = &self.partitions[id.0 as usize].grid;
+        if times.end > grid.times_s.len() {
+            return Err(invalid(format!(
+                "times {times:?} of a grid of {} times",
+                grid.times_s.len()
+            )));
+        }
+        let cells = grid.cells(times);
+        rows.clear();
+        rows.extend(
+            cells
+                .iter()
+                .filter(|&&row| row != index::NO_ROW)
+                .map(|&row| row as usize),
+        );
+        states.clear();
+        self.ms
+            .main_table()
+            .required_scalar_columns_for_rows_into(
+                rows.as_slice(),
+                &mut [RequiredScalarColumnDestination::new(
+                    "STATE_ID",
+                    RequiredScalarColumnValuesMut::Int32(states),
+                )],
+            )
+            .map_err(table_error)?;
+        // Spread the rows' states over the cells, last first, so each is
+        // read before its place is written.
+        let per_time = grid.baselines.len();
+        let mut read = states.len();
+        states.resize(cells.len(), -1);
+        for (time, cells) in cells.chunks(per_time.max(1)).enumerate().rev() {
+            let held = cells.iter().filter(|row| **row != index::NO_ROW).count();
+            let first = if held == 0 { -1 } else { states[read - held] };
+            for (baseline, row) in cells.iter().enumerate().rev() {
+                states[time * per_time + baseline] = if *row == index::NO_ROW {
+                    first
+                } else {
+                    read -= 1;
+                    states[read]
+                };
+            }
+        }
+        Ok(())
     }
 
     /// The MeasurementSet.

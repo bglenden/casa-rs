@@ -53,7 +53,7 @@ fn batches(
         integration: 0,
     };
     for (input, map) in inputs.iter().zip(&combined.rows) {
-        let observation = input.observation.as_ref();
+        let observation = input.observation();
         for id in observation.catalogue().partition_ids() {
             let placement = &map.partitions[id.0 as usize];
             let sizing = Sizing::of(observation, id, &placement.groups, Roles::ALL)?;
@@ -101,7 +101,7 @@ pub(super) fn admit(
     // of undefined cells.
     let runs = 1 + inputs
         .iter()
-        .map(|input| input.observation.catalogue().partitions.len())
+        .map(|input| input.observation().catalogue().partitions.len())
         .sum::<usize>();
     let (least, buffered) =
         MeasurementSetWritePlan::variable_array_column_bytes(&columns, runs).map_err(storage)?;

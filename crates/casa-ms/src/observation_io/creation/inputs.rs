@@ -22,12 +22,18 @@ use crate::observation_io::{Msv2Observation, OpenOptions};
 #[cfg(feature = "msv4")]
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
+/// An input's opening, by store.
+enum Opening {
+    Msv2(Box<Msv2Observation>),
+    #[cfg(feature = "msv4")]
+    Msv4(Box<crate::observation_io::Msv4Observation>),
+}
+
 /// One opened input.
 pub(super) struct Input {
     /// Its store.
     pub(super) path: PathBuf,
-    /// Its opening.
-    pub(super) observation: Box<dyn Observation>,
+    opening: Opening,
     /// The factor its weights are multiplied by.
     pub(super) weight_scale: f32,
     /// Its observing sessions in the order they first appear; a session
@@ -36,6 +42,25 @@ pub(super) struct Input {
 }
 
 impl Input {
+    /// Its opening.
+    pub(super) fn observation(&self) -> &dyn Observation {
+        match &self.opening {
+            Opening::Msv2(observation) => observation.as_ref(),
+            #[cfg(feature = "msv4")]
+            Opening::Msv4(observation) => observation.as_ref(),
+        }
+    }
+
+    /// Its opening when it is an MSv2's, whose rows state what an
+    /// observation does not (each row's `STATE_ID`).
+    pub(super) fn msv2(&self) -> Option<&Msv2Observation> {
+        match &self.opening {
+            Opening::Msv2(observation) => Some(observation),
+            #[cfg(feature = "msv4")]
+            Opening::Msv4(_) => None,
+        }
+    }
+
     /// Open `input`, its weight scale checked, admitting what the opening
     /// keeps to `ledger`: an MSv2's tables held open, its index, each
     /// increase asked for before it is allocated
@@ -82,7 +107,7 @@ impl Input {
         Ok(Self {
             path,
             appearance: in_order(&first),
-            observation: Box::new(observation),
+            opening: Opening::Msv2(Box::new(observation)),
             weight_scale,
         })
     }
@@ -133,7 +158,7 @@ fn msv4(path: PathBuf, weight_scale: f32, ledger: &mut Ledger) -> Result<Input, 
     Ok(Input {
         path,
         appearance: in_order(&first),
-        observation: Box::new(observation),
+        opening: Opening::Msv4(Box::new(observation)),
         weight_scale,
     })
 }

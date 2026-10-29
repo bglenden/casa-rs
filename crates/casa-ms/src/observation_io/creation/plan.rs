@@ -17,7 +17,7 @@ use super::combine::{self, Combined};
 use super::inputs::Input;
 use super::memory::{Ledger, MemoryCharges, catalogue_bytes};
 use super::msv2_pointing::{self, Pointed};
-use super::msv2_rows::{MainRows, Occupancy};
+use super::msv2_rows::{MainRows, Occupancy, RowStates, StateIds};
 use super::pointing_plan::{self, PointingPlan};
 use super::replace::{Replacing, Stage};
 use super::{
@@ -153,7 +153,7 @@ impl CreationPlan {
         let mut found = Vec::new();
         let mut pointing = Vec::with_capacity(inputs.len());
         for input in &inputs {
-            let (path, observation) = (&input.path, input.observation.as_ref());
+            let (path, observation) = (&input.path, input.observation());
             let catalogue = observation.catalogue();
             let scans = losses::scan_bytes(catalogue);
             found.extend(ledger.during("an input's loss scans", scans, |_| {
@@ -179,7 +179,7 @@ impl CreationPlan {
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
         for input in &inputs {
-            refuse_unwritable(input.observation.catalogue())?;
+            refuse_unwritable(input.observation().catalogue())?;
         }
         let combined = combine::combine(&inputs, &groups, &options.tolerance)?;
         let merged = catalogue_bytes(&combined.catalogue);
@@ -367,7 +367,7 @@ impl CreationPlan {
             .zip(&self.pointing)
             .zip(&self.combined.rows)
             .map(|((input, plan), map)| Pointed {
-                observation: input.observation.as_ref(),
+                observation: input.observation(),
                 plan,
                 antennas: &map.antennas,
             })
@@ -384,19 +384,30 @@ impl CreationPlan {
             self.options.padding,
         )?;
         let mut report = CreationReport::default();
+        let mut row_states = RowStates::default();
         for (input, map) in self.inputs.iter().zip(&self.combined.rows) {
-            let observation = input.observation.as_ref();
+            let observation = input.observation();
             let mut ids = observation.catalogue().partition_ids();
             ids.sort_by_key(|id| map.partitions[id.0 as usize].output);
             for id in ids {
                 let placement = &map.partitions[id.0 as usize];
+                let per_row = match (&placement.state, input.msv2()) {
+                    (StateIds::PerRow(_), Some(msv2)) => Some(msv2),
+                    _ => None,
+                };
+                row_states.restart();
                 let read = lockstep::read(
                     observation,
                     id,
                     &placement.groups,
                     Roles::ALL,
                     (self.options.batch_bytes, None),
-                    |batches| main.push(map, batches),
+                    |batches| {
+                        let states = per_row
+                            .map(|msv2| row_states.of(msv2, id, &batches[0]))
+                            .transpose()?;
+                        main.push(map, batches, states)
+                    },
                 )?;
                 report.partitions += 1;
                 report.batches += read.batches;
@@ -418,7 +429,7 @@ fn selected_groups(
         None => {
             let mut groups = vec!["base".to_string()];
             for input in inputs {
-                for entry in &input.observation.catalogue().partitions {
+                for entry in &input.observation().catalogue().partitions {
                     for group in &entry.data_groups {
                         if !groups.contains(&group.name) {
                             groups.push(group.name.clone());
@@ -545,14 +556,14 @@ fn written(
         }
         let mut states: Vec<casa_observation::StateId> = combined.contributors[output]
             .iter()
-            .filter_map(|(input, id)| {
-                let placement = &combined.rows[*input].partitions[id.0 as usize];
-                placement
-                    .state
-                    .or(layout.intent_states[output])
-                    .and_then(|state| u32::try_from(state).ok())
-                    .map(casa_observation::StateId)
-            })
+            .flat_map(
+                |(input, id)| match &combined.rows[*input].partitions[id.0 as usize].state {
+                    StateIds::One(state) => vec![*state],
+                    StateIds::Intents => layout.intent_states[output].into_iter().collect(),
+                    StateIds::PerRow(states) => states.clone(),
+                },
+            )
+            .filter_map(|state| u32::try_from(state).ok().map(casa_observation::StateId))
             .collect();
         states.sort_unstable();
         states.dedup();

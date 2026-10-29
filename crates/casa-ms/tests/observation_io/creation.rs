@@ -4,7 +4,7 @@
 //! plan over one input, so the converter's laws (`convert.rs`) are the
 //! one-input laws; these add what a plan says of itself.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::convert::{ConversionOptions, to_msv2};
@@ -524,8 +524,8 @@ fn described(catalogue: &Catalogue, window: &dyn Fn(WindowId) -> Option<WindowId
 /// records with their lines, the every-window record included; nothing is
 /// written as a default. What an MSv2 cannot hold is a loss: the WVR
 /// window, which no partition uses and whose channels no partition holds,
-/// is not written, so the others are renumbered and its source records go;
-/// and rows of one partition using two states are written with the first.
+/// is not written, so the others are renumbered and its source records go.
+/// Rows of one partition using two states keep their own.
 #[test]
 fn an_msv2s_descriptive_metadata_survives_creation() {
     let root = tempfile::tempdir().expect("root");
@@ -553,11 +553,6 @@ fn an_msv2s_descriptive_metadata_survives_creation() {
     for loss in [
         Loss::Table("SPECTRAL_WINDOW rows no partition uses (1)".to_string()),
         Loss::Table("SOURCE records of spectral windows not written (2)".to_string()),
-        Loss::Column(
-            "STATE_ID of rows using several states in one partition (each is written with the \
-             first)"
-                .to_string(),
-        ),
     ] {
         assert!(
             report.losses.contains(&loss),
@@ -565,18 +560,31 @@ fn an_msv2s_descriptive_metadata_survives_creation() {
             report.losses
         );
     }
+    assert!(
+        !report
+            .losses
+            .iter()
+            .any(|loss| matches!(loss, Loss::Column(column) if column.contains("STATE_ID"))),
+        "{:?}",
+        report.losses
+    );
     let open = |path: &Path| open(path, &OpenOptions::default()).expect("open");
     let (input, output) = (open(&stated), open(&created));
     let (input, output) = (input.catalogue(), output.catalogue());
     assert_eq!(input.sources.len(), 2);
     assert_eq!(input.sources[1].records.len(), 4, "{:?}", input.sources);
-    assert!(input.partitions.iter().any(|entry| entry.states.len() == 2));
-    assert!(
-        output
+    let states = |catalogue: &Catalogue| -> Vec<usize> {
+        let mut states: Vec<usize> = catalogue
             .partitions
             .iter()
-            .all(|entry| entry.states.len() == 1)
-    );
+            .map(|entry| entry.states.len())
+            .collect();
+        states.sort_unstable();
+        states
+    };
+    assert!(states(input).contains(&2));
+    assert_eq!(states(output), states(input));
+    states_kept(&stated, &created);
     let renumbered = |id: WindowId| id.0.checked_sub(1).map(WindowId);
     let (written, stated) = (described(output, &Some), described(input, &renumbered));
     for (written, stated) in written.iter().zip(&stated) {
@@ -831,6 +839,39 @@ fn plan_of(inputs: &[&Path], destination: Destination) -> Result<CreationPlan, O
     )
 }
 
+/// MAIN's `STATE_ID`s at each time (milliseconds) and baseline.
+fn states_by_cell(path: &Path) -> BTreeMap<(i64, i32, i32), BTreeSet<i32>> {
+    let ms = MeasurementSet::open(path).expect("ms");
+    let main = ms.main_table();
+    let mut states = BTreeMap::<_, BTreeSet<i32>>::new();
+    for row in 0..main.row_count() {
+        let record = main.row_accessor().row(row).expect("row");
+        let int = |column: &str| match record.get(column) {
+            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
+            other => panic!("{column}: {other:?}"),
+        };
+        let Some(Value::Scalar(ScalarValue::Float64(time))) = record.get("TIME") else {
+            panic!("TIME");
+        };
+        let cell = (
+            (time * 1e3).round() as i64,
+            int("ANTENNA1"),
+            int("ANTENNA2"),
+        );
+        states.entry(cell).or_default().insert(int("STATE_ID"));
+    }
+    states
+}
+
+/// Every row of `input` is written with its own `STATE_ID` in `created`,
+/// whose `STATE` keeps the input's order.
+fn states_kept(input: &Path, created: &Path) {
+    let written = states_by_cell(created);
+    for (cell, states) in states_by_cell(input) {
+        assert_eq!(written.get(&cell), Some(&states), "{cell:?}");
+    }
+}
+
 fn main_ints(path: &Path, column: &str) -> Vec<i32> {
     let ms = MeasurementSet::open(path).expect("ms");
     let main = ms.main_table();
@@ -924,6 +965,75 @@ fn states_combine_and_processors_must_agree() {
         plan_of(&[&early, &processed], unused(root.path())),
         Err(ObservationError::Unsupported { what }) if what.contains("processors")
     ));
+}
+
+/// Rows of one input partition using two states of one `OBS_MODE` (`CAL`
+/// 0 and 5 K, alternating within each time) keep their own `STATE_ID`, and
+/// nothing is lost: the partition reopens whole with both states, and a
+/// padded row takes the state of its time's first row.
+#[test]
+fn rows_of_one_partition_keep_their_own_states() {
+    let root = tempfile::tempdir().expect("root");
+    // Two rows removed leave their cells padding.
+    let input = edited(root.path(), "two-states", 7..9, |ms| {
+        let state = subtable(ms, SubtableId::State);
+        let hotter = state.row_accessor().row(0).expect("state").clone();
+        state.add_row(hotter).expect("a second state");
+        set(state, 1, &[("CAL", float(5.0))]);
+        let main = ms.main_table_mut();
+        for row in (1..main.row_count()).step_by(2) {
+            set(main, row, &[("STATE_ID", int(1))]);
+        }
+    });
+    // Small batches (of an integration at least, and of an antenna's
+    // pointing read), so the rows' states are read batch by batch.
+    let inputs = [CreationInput::new(&input)];
+    let small = CreationOptions {
+        batch_bytes: 8 << 10,
+        ..options()
+    };
+    let batch_bytes = match CreationPlan::new(&inputs, &small, unused(root.path())) {
+        Err(ObservationError::OverBudget { required, .. }) => required,
+        other => other.map(|_| small.batch_bytes).expect("a plan"),
+    };
+    let created = root.path().join("created.ms");
+    let report = CreationPlan::new(
+        &inputs,
+        &CreationOptions {
+            batch_bytes,
+            ..options()
+        },
+        Destination::New(created.clone()),
+    )
+    .and_then(CreationPlan::write)
+    .expect("create");
+    assert!(report.batches > 1, "{}", report.batches);
+    assert!(
+        !report
+            .losses
+            .iter()
+            .any(|loss| matches!(loss, Loss::Column(column) if column.contains("STATE_ID"))),
+        "{:?}",
+        report.losses
+    );
+    let reopened = open(&created, &OpenOptions::default()).expect("reopen");
+    let catalogue = reopened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 1);
+    assert_eq!(catalogue.partitions[0].states.len(), 2);
+    states_kept(&input, &created);
+    let (stated, written) = (states_by_cell(&input), states_by_cell(&created));
+    let padded: Vec<_> = written
+        .iter()
+        .filter(|(cell, _)| !stated.contains_key(cell))
+        .collect();
+    assert_eq!(padded.len(), 2, "{padded:?}");
+    for ((time, _, _), states) in padded {
+        let first = stated
+            .iter()
+            .find(|(cell, _)| cell.0 == *time)
+            .map(|(_, states)| states);
+        assert_eq!(Some(states), first, "{time}");
+    }
 }
 
 /// A second observing session's scans follow the first's, CASA's default
