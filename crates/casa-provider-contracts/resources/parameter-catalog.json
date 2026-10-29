@@ -3124,7 +3124,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag spectral threshold.",
-        "details": null,
+        "details": "Scaled by freqdevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -6891,7 +6891,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag time threshold.",
-        "details": null,
+        "details": "Scaled by timedevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
         "examples": []
       },
       "persistence_class": "profile"

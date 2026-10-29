@@ -5,7 +5,8 @@ use std::path::{Component, Path};
 
 use casa_provider_contracts::{
     Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
-    ParameterType, ParameterValue, validate_parameter_value, validate_selector_capabilities,
+    ParameterType, ParameterValue, SurfaceParameterBinding, validate_parameter_value,
+    validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -217,6 +218,14 @@ fn normalize_domain(
         } => match value {
             ParameterValue::String(value) if states.contains(value) => {
                 Ok(ParameterValue::String(value.clone()))
+            }
+            // CASA spells the empty value of a parameter of several types
+            // both '' and [] (flagdata's timedev): where '' is an absence
+            // state, [] is that state (#931).
+            ParameterValue::Array(items)
+                if items.is_empty() && states.iter().any(String::is_empty) =>
+            {
+                Ok(ParameterValue::String(String::new()))
             }
             value => normalize_domain(value, inner),
         },
@@ -678,6 +687,19 @@ pub enum NormalizationError {
     EnvironmentExpression(String),
     #[error("parameter constraint failed: {0}")]
     Constraint(String),
+}
+
+impl NormalizationError {
+    /// What a refusal of a value for `binding` ends with: for a value of a
+    /// type the binding does not take, the CASA forms it does not take yet
+    /// and their issue (flagdata's per-field `timedev`, #978); otherwise
+    /// nothing.
+    pub fn binding_note(&self, binding: &SurfaceParameterBinding) -> String {
+        match (self, &binding.unimplemented_forms) {
+            (Self::Type(_), Some(forms)) => format!("; {}", forms.refusal()),
+            _ => String::new(),
+        }
+    }
 }
 
 #[cfg(test)]

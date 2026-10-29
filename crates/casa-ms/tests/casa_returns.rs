@@ -140,6 +140,88 @@ fn flagdata_summary_returns_casas_dictionary() {
     assert_eq!(entry(&summary, "type"), &CasaValue::string("summary"));
 }
 
+/// The flagged and total counts of `key` in the summary's `axis`.
+fn counts(summary: &CasaValue, axis: &str, key: &str) -> (CasaValue, CasaValue) {
+    let counts = entry(entry(summary, axis), key);
+    (
+        entry(counts, "flagged").clone(),
+        entry(counts, "total").clone(),
+    )
+}
+
+#[test]
+fn flagdata_summary_counts_each_row_by_its_own_data_description() {
+    // Astra's #997 review ran CASA 6.7.6.14 on two DATA_DESC_IDs sharing a
+    // window, XX/YY and RR/LL, in two observations and arrays and one scan:
+    // each row counts under its own data description's correlations and
+    // its own observation and array, the window and scan once for all.
+    let workspace = tempfile::tempdir().unwrap();
+    let flagged = [(0, 0, 0), (2, 3, 0), (2, 3, 1), (2, 3, 2), (2, 3, 3)];
+    let vis =
+        common::create_two_polarization_fixture_ms(workspace.path(), [9, 10, 11, 12], &flagged);
+    let summary = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({"vis": vis, "mode": "summary"}),
+        workspace.path(),
+    );
+    let float = |value: usize| CasaValue::float(value as f64);
+    let row = NUM_CORR * NUM_CHAN;
+    assert_eq!(counts(&summary, "spw", "0"), (float(5), float(4 * row)));
+    assert_eq!(counts(&summary, "scan", "1"), (float(5), float(4 * row)));
+    for axis in ["observation", "array"] {
+        assert_eq!(counts(&summary, axis, "0"), (float(1), float(2 * row)));
+        assert_eq!(counts(&summary, axis, "1"), (float(4), float(2 * row)));
+    }
+    let CasaValue::Dict { entries } = entry(&summary, "correlation") else {
+        panic!("{summary:?}")
+    };
+    let names = entries
+        .iter()
+        .map(|entry| entry.key.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["LL", "LR", "RL", "RR", "XX", "XY", "YX", "YY"].map(|name| CasaKey::String(name.into()))
+    );
+    let per_correlation = 2 * NUM_CHAN;
+    assert_eq!(
+        counts(&summary, "correlation", "RR"),
+        (float(1), float(per_correlation))
+    );
+    assert_eq!(
+        counts(&summary, "correlation", "YY"),
+        (float(4), float(per_correlation))
+    );
+    assert_eq!(
+        counts(&summary, "correlation", "XX"),
+        (float(0), float(per_correlation))
+    );
+}
+
+#[test]
+fn flagdata_summary_names_every_casacore_correlation() {
+    // CASA 6.7.6.14 aborts on RX/RY (Astra's #997 review; see
+    // docs/CASA (C++) bugs.md); casa-rs keys them by casacore's names.
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = common::create_two_polarization_fixture_ms(workspace.path(), [13, 14, 15, 16], &[]);
+    let summary = returned(
+        FLAGDATA,
+        "flagdata",
+        json!({"vis": vis, "mode": "summary"}),
+        workspace.path(),
+    );
+    for name in ["RX", "RY", "LX", "LY"] {
+        assert_eq!(
+            counts(&summary, "correlation", name),
+            (
+                CasaValue::float(0.0),
+                CasaValue::float((2 * NUM_CHAN) as f64)
+            )
+        );
+    }
+}
+
 #[test]
 fn flagdata_returns_an_empty_dictionary_in_its_other_modes() {
     let workspace = tempfile::tempdir().unwrap();
@@ -228,6 +310,72 @@ fn flagmanager_returns_casas_version_list() {
 }
 
 #[test]
+fn saving_a_version_name_again_keeps_the_old_version() {
+    // Astra's #997 F1: CASA's task renames the version a save would replace
+    // to `<name>.old.<seconds>`, so both generations stay restorable.
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
+    let run = |binary, surface, values: Value| {
+        let mut values = values;
+        values["vis"] = json!(vis);
+        returned(binary, surface, values, workspace.path())
+    };
+    let flagged = || {
+        let summary = run(FLAGDATA, "flagdata", json!({"mode": "summary"}));
+        entry(&summary, "flagged").clone()
+    };
+    let save = |comment| {
+        run(
+            FLAGMANAGER,
+            "flagmanager",
+            json!({"mode": "save", "versionname": "v1", "comment": comment}),
+        )
+    };
+    save("first");
+    run(
+        FLAGDATA,
+        "flagdata",
+        json!({"mode": "manual", "antenna": "0", "flagbackup": false}),
+    );
+    let after_manual = flagged();
+    assert_ne!(after_manual, CasaValue::float(0.0));
+    save("second");
+
+    let listed = run(FLAGMANAGER, "flagmanager", json!({"mode": "list"}));
+    let CasaValue::Dict { entries } = &listed else {
+        unreachable!()
+    };
+    assert_eq!(entries.len(), 3, "two versions and the MS: {listed:?}");
+    let CasaValue::String { value: kept } = entry(&entries[0].value, "name") else {
+        panic!("{listed:?}")
+    };
+    let seconds = kept.strip_prefix("v1.old.").expect("the renamed version");
+    assert!(seconds.parse::<u64>().is_ok(), "{kept}");
+    // casa-rs keeps the old version's own comment; CASA overwrites it.
+    assert_eq!(
+        entry(&entries[0].value, "comment"),
+        &CasaValue::string("first")
+    );
+    assert_eq!(entry(&entries[1].value, "name"), &CasaValue::string("v1"));
+    assert_eq!(
+        entry(&entries[1].value, "comment"),
+        &CasaValue::string("second")
+    );
+
+    let restore = |name: &str| {
+        run(
+            FLAGMANAGER,
+            "flagmanager",
+            json!({"mode": "restore", "versionname": name}),
+        )
+    };
+    restore(kept);
+    assert_eq!(flagged(), CasaValue::float(0.0));
+    restore("v1");
+    assert_eq!(flagged(), after_manual);
+}
+
+#[test]
 fn split_and_mstransform_return_none() {
     let workspace = tempfile::tempdir().unwrap();
     let vis = create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
@@ -275,6 +423,14 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"mode": "clip", "clipminmax": [0.0, 1.0]}),
             "clipminmax",
         ),
+        // CASA parses ntime before it runs any mode, and refuses
+        // 'nonsense' without flagging (Astra's #997 F6).
+        (
+            FLAGDATA,
+            "flagdata",
+            json!({"mode": "manual", "ntime": "nonsense"}),
+            "ntime",
+        ),
         (
             MSTRANSFORM,
             "mstransform",
@@ -301,6 +457,18 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
         assert_eq!(named.as_deref(), Some(parameter), "{message}");
         assert!(message.contains("#978"), "{message}");
     }
+    // CASA's mstransform refuses to average by one channel, as casa-rs now
+    // does, rather than copy the data unaveraged (Astra's #997 F8).
+    let values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data",
+                        "chanaverage": true});
+    let TaskReply::Failed {
+        message, parameter, ..
+    } = json_run(MSTRANSFORM, "mstransform", values, workspace.path())
+    else {
+        panic!("chanaverage with chanbin=1 was not refused");
+    };
+    assert_eq!(parameter.as_deref(), Some("chanbin"), "{message}");
+    assert!(message.contains("must be > 1"), "{message}");
     assert!(!outputvis.exists());
 }
 

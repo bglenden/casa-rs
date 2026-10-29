@@ -237,7 +237,10 @@ pub(crate) fn checked_value(
     binding: &SurfaceParameterBinding,
     value: &ParameterValue,
 ) -> Result<ParameterValue, String> {
-    let named = |error: crate::NormalizationError| format!("parameter {:?}: {error}", binding.name);
+    let named = |error: crate::NormalizationError| {
+        let note = error.binding_note(binding);
+        format!("parameter {:?}: {error}{note}", binding.name)
+    };
     let concept = bundle
         .catalog
         .concept(&binding.concept)

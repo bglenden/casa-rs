@@ -893,7 +893,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
 | <code>lowerlimit</code> | <code>flagdata.lowerlimit@r1</code> | <code>float</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
 | <code>upperlimit</code> | <code>flagdata.upperlimit@r1</code> | <code>float</code> | <code>90.0</code>; optional | Elevation | Highest elevation, in degrees, that elevation mode keeps. |
-| <code>ntime</code> | <code>flagdata.ntime@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Automatic | Time chunk the automatic modes analyse: 'scan' or a time. |
+| <code>ntime</code> | <code>flagdata.ntime@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Automatic | Time chunk the automatic modes analyse: 'scan' or a time.<br><em>Surface:</em> CASA's flagdata parses ntime in every mode before it runs one, so a value other than 'scan' is refused in every mode until #978. |
 | <code>combinescans</code> | <code>flagdata.combinescans@r1</code> | <code>bool</code> | <code>false</code>; optional | Automatic | Let the automatic modes' time chunks span scans. |
 | <code>timecutoff</code> | <code>parameter.timecutoff@r1</code> | <code>float</code> | <code>4.0</code>; optional | Automatic | TFCrop time cutoff in robust sigma units. |
 | <code>freqcutoff</code> | <code>parameter.freqcutoff@r1</code> | <code>float</code> | <code>3.0</code>; optional | Automatic | TFCrop frequency cutoff in robust sigma units. |
@@ -905,8 +905,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>halfwin</code> | <code>flagdata.halfwin@r1</code> | <code>integer</code> | <code>1</code>; optional | Automatic | Half-width of tfcrop's sliding window. |
 | <code>extendflags</code> | <code>parameter.extendflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Extend | Run post-extension after automatic flagging. |
 | <code>winsize</code> | <code>flagdata.winsize@r1</code> | <code>integer</code> | <code>3</code>; optional | Automatic | Number of time steps in rflag's sliding window. |
-| <code>timedev</code> | <code>parameter.timedev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag time threshold. |
-| <code>freqdev</code> | <code>parameter.freqdev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag spectral threshold. |
+| <code>timedev</code> | <code>parameter.timedev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag time threshold.<br><em>Surface:</em> One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it. |
+| <code>freqdev</code> | <code>parameter.freqdev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag spectral threshold.<br><em>Surface:</em> One threshold for every field and window, scaled by freqdevscale; '', 'none' or [] lets rflag compute it. |
 | <code>timedevscale</code> | <code>flagdata.timedevscale@r1</code> | <code>float</code> | <code>5.0</code>; optional | Automatic | Factor that scales rflag's time-deviation threshold. |
 | <code>freqdevscale</code> | <code>flagdata.freqdevscale@r1</code> | <code>float</code> | <code>5.0</code>; optional | Automatic | Factor that scales rflag's frequency-deviation threshold. |
 | <code>spectralmax</code> | <code>flagdata.spectralmax@r1</code> | <code>float</code> | <code>1000000.0</code>; optional | Automatic | rflag flags a whole spectrum whose deviation exceeds this. |

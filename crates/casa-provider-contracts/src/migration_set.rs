@@ -9,30 +9,36 @@
 //! `chanaverage=True` with `chanbin`. Its condition may therefore name only
 //! values a profile set: it is a conjunction of [`Predicate::IsSet`] and
 //! [`Predicate::Equals`], so no step can pin a default the profile omitted.
-//! A conjunction may also require that a parameter was not set, as
-//! `Not(IsSet)`, beside at least one explicit value it depends on: the old
-//! gaincal's explicit `gain_model_source='point'` meant a 1 Jy model when
-//! `smodel` was omitted.
+//!
+//! A conjunction holding at least one explicit value may also narrow it
+//! with a [`Predicate::Not`]:
+//! - of an `IsSet`, a parameter the step depends on was left unset: the old
+//!   gaincal's explicit `gain_model_source='point'` meant a 1 Jy model when
+//!   `smodel` was omitted;
+//! - of an `Equals` on a parameter the conjunction names as set, that value
+//!   is not one value: flagdata's old explicit `timedev` is a threshold
+//!   unless it is the old absence `'none'`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ContractValidationError, ParameterValue, Predicate, SurfaceDefinition};
 
 impl Predicate {
     /// Whether this condition holds of a profile's explicit `overrides`, by
     /// the parameter names they carry: `IsSet` when the profile set the
-    /// parameter, `Equals` when it set it to exactly `value`, `Not(IsSet)`
-    /// when it did not set it, `All` when every part holds. Any other
-    /// predicate never holds here; contract validation refuses it in a
-    /// migration.
+    /// parameter, `Equals` when it set it to exactly `value`, `Not` of
+    /// either when that does not hold, `All` when every part holds. Any
+    /// other predicate never holds here; contract validation refuses it in
+    /// a migration, and a `Not` outside a conjunction holding an explicit
+    /// value.
     pub fn holds_for_overrides(&self, overrides: &BTreeMap<String, ParameterValue>) -> bool {
         match self {
             Self::IsSet { parameter } => overrides.contains_key(parameter),
             Self::Equals { parameter, value } => overrides.get(parameter) == Some(value),
-            Self::Not { predicate } => match predicate.as_ref() {
-                Self::IsSet { parameter } => !overrides.contains_key(parameter),
-                _ => false,
-            },
+            Self::Not { predicate } => {
+                matches!(**predicate, Self::IsSet { .. } | Self::Equals { .. })
+                    && !predicate.holds_for_overrides(overrides)
+            }
             Self::All { predicates } => {
                 !predicates.is_empty()
                     && predicates
@@ -44,24 +50,36 @@ impl Predicate {
     }
 }
 
-/// Whether `when` holds only of a value a profile set: `IsSet` or
-/// `Equals`.
-fn names_a_set_value(when: &Predicate) -> bool {
-    matches!(when, Predicate::IsSet { .. } | Predicate::Equals { .. })
-}
-
-/// Whether `when` names only values a profile set: one of them, or a
-/// conjunction of at least one of them with any number of `Not(IsSet)`.
+/// Whether `when` names only values a profile set: an `IsSet` or `Equals`,
+/// or a conjunction of at least one of them with any number of `Not` of an
+/// `IsSet`, or of an `Equals` on a parameter the conjunction names, so it
+/// never holds of a profile that set none of the values it names.
 fn names_only_set_values(when: &Predicate) -> bool {
-    let unset = |when: &Predicate| matches!(when, Predicate::Not { predicate } if matches!(**predicate, Predicate::IsSet { .. }));
     match when {
+        Predicate::IsSet { .. } | Predicate::Equals { .. } => true,
         Predicate::All { predicates } => {
-            predicates.iter().any(names_a_set_value)
-                && predicates
-                    .iter()
-                    .all(|predicate| names_a_set_value(predicate) || unset(predicate))
+            let named = predicates
+                .iter()
+                .filter_map(|predicate| match predicate {
+                    Predicate::IsSet { parameter } | Predicate::Equals { parameter, .. } => {
+                        Some(parameter)
+                    }
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>();
+            !named.is_empty()
+                && predicates.iter().all(|predicate| match predicate {
+                    Predicate::Not { predicate } => match &**predicate {
+                        Predicate::IsSet { .. } => true,
+                        Predicate::Equals { parameter, .. } => named.contains(parameter),
+                        _ => false,
+                    },
+                    other => names_only_set_values(other),
+                })
         }
-        other => names_a_set_value(other),
+        Predicate::Always | Predicate::Never | Predicate::Not { .. } | Predicate::Any { .. } => {
+            false
+        }
     }
 }
 
@@ -78,7 +96,8 @@ pub(super) fn validate_condition(
             ContractValidationError::new(
                 "migration_set_condition",
                 "a migration's set step needs a condition of explicit values only: \
-                 is_set or equals, or all of at least one of them and any not(is_set)",
+                 is_set or equals, or all of at least one of them with any not(is_set) \
+                 and not(equals) of a parameter the conjunction names",
             )
             .at(surface.id(), Some(parameter)),
         );
@@ -93,6 +112,14 @@ mod tests {
         Predicate::Equals {
             parameter: parameter.into(),
             value: ParameterValue::String(value.into()),
+        }
+    }
+
+    fn unset(parameter: &str) -> Predicate {
+        Predicate::Not {
+            predicate: Box::new(Predicate::IsSet {
+                parameter: parameter.into(),
+            }),
         }
     }
 
@@ -125,11 +152,7 @@ mod tests {
     fn a_condition_that_could_pin_an_omitted_default_is_refused() {
         let pins = [
             Predicate::Always,
-            Predicate::Not {
-                predicate: Box::new(Predicate::IsSet {
-                    parameter: "mode".into(),
-                }),
-            },
+            unset("mode"),
             Predicate::Any {
                 predicates: vec![equals("mode", "manual")],
             },
@@ -142,6 +165,13 @@ mod tests {
                 ],
             },
             Predicate::All { predicates: vec![] },
+            Predicate::Not {
+                predicate: Box::new(equals("timedev", "none")),
+            },
+            // An unset parameter alone names no explicit value.
+            Predicate::All {
+                predicates: vec![unset("smodel")],
+            },
         ];
         for when in pins {
             assert!(!names_only_set_values(&when), "{when:?}");
@@ -154,18 +184,7 @@ mod tests {
                 }
             ],
         }));
-        // An unset parameter alone names no explicit value.
-        assert!(!names_only_set_values(&Predicate::All {
-            predicates: vec![unset("smodel")],
-        }));
-    }
-
-    fn unset(parameter: &str) -> Predicate {
-        Predicate::Not {
-            predicate: Box::new(Predicate::IsSet {
-                parameter: parameter.into(),
-            }),
-        }
+        assert!(names_only_set_values(&explicit_threshold()));
     }
 
     #[test]
@@ -184,5 +203,34 @@ mod tests {
         overrides.insert("smodel".into(), ParameterValue::Array(Vec::new()));
         assert!(!point.holds_for_overrides(&overrides));
         assert!(!point.holds_for_overrides(&BTreeMap::new()));
+    }
+
+    /// flagdata's old `timedev` set to a threshold, not its old absence.
+    fn explicit_threshold() -> Predicate {
+        Predicate::All {
+            predicates: vec![
+                Predicate::IsSet {
+                    parameter: "timedev".into(),
+                },
+                Predicate::Not {
+                    predicate: Box::new(equals("timedev", "none")),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_value_set_may_be_narrowed_to_differ_from_one_value() {
+        let threshold = explicit_threshold();
+        let profile = |value: Option<ParameterValue>| {
+            value
+                .map(|value| BTreeMap::from([("timedev".to_string(), value)]))
+                .unwrap_or_default()
+        };
+        assert!(!threshold.holds_for_overrides(&profile(None)));
+        assert!(
+            !threshold.holds_for_overrides(&profile(Some(ParameterValue::String("none".into()))))
+        );
+        assert!(threshold.holds_for_overrides(&profile(Some(ParameterValue::Float(3.5)))));
     }
 }
