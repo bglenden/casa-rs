@@ -39,6 +39,7 @@ fn options() -> CreationOptions {
         padding: PaddingRows::Flagged,
         tolerance: MergeTolerance::default(),
         history: Vec::new(),
+        creation_date: "2026-10-29T00:00:00".to_string(),
     }
 }
 
@@ -213,6 +214,43 @@ fn weight_scales_must_be_finite_and_positive() {
 /// A new destination in `root` that nothing is written to.
 fn unused(root: &Path) -> Destination {
     Destination::New(root.join("unused.ms"))
+}
+
+/// One input whose field follows an ephemeris is written with it, as a
+/// conversion writes it (#942); fields that follow one in a combination of
+/// several inputs are refused before anything is written.
+#[test]
+fn ephemerides_are_written_for_one_input_and_refused_in_a_combination() {
+    let root = tempfile::tempdir().expect("root");
+    let moving = fixture(&root.path().join("moving"), "ms_trial_ephemeris.ms");
+    let other = fixture(&root.path().join("other"), "ms_trial_ephemeris.ms");
+    let accept = CreationOptions {
+        accept: [ACCEPT.as_slice(), &[LossKind::Defaulted]].concat(),
+        padding: PaddingRows::Omitted,
+        ..options()
+    };
+    let refused = CreationPlan::new(
+        &[CreationInput::new(&moving), CreationInput::new(&other)],
+        &accept,
+        unused(root.path()),
+    );
+    assert!(
+        matches!(&refused, Err(ObservationError::Unsupported { what }) if what.contains("ephemeris")),
+        "{:?}",
+        refused.err()
+    );
+    assert!(!root.path().join("unused.ms").exists());
+    let one = root.path().join("one.ms");
+    CreationPlan::new(
+        &[CreationInput::new(&moving)],
+        &accept,
+        Destination::New(one.clone()),
+    )
+    .and_then(CreationPlan::write)
+    .expect("one input with its ephemeris");
+    let reopened = open(&one, &OpenOptions::default()).expect("reopen");
+    let field = &reopened.catalogue().fields[0];
+    assert!(field.ephemeris.is_some(), "the field follows its ephemeris");
 }
 
 /// A new MeasurementSet is never written over an existing path, which is

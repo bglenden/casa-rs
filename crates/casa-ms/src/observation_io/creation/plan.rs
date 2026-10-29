@@ -25,7 +25,7 @@ use super::pointing_plan::{self, PointingPlan};
 use super::replace::{Replacing, Stage};
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, HistoryRow, Loss, PaddingRows,
-    lockstep, losses, msv2_tables, occupancy, writing,
+    lockstep, losses, msv2_ephemeris, msv2_tables, occupancy, writing,
 };
 use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
@@ -80,6 +80,8 @@ pub struct CreationPlan {
     history: Vec<HistoryRow>,
     padding: PaddingRows,
     batch_bytes: usize,
+    /// The date the ephemeris tables written state.
+    creation_date: String,
     publication: Publication,
 }
 
@@ -115,8 +117,10 @@ impl CreationPlan {
     /// not finite and positive, no input, or padding flagged where
     /// partitions combine ([`ObservationError::InvalidRequest`]); a loss not
     /// accepted
-    /// ([`ObservationError::InvalidRequest`]); fields that follow an
-    /// ephemeris or whose direction is a polynomial in time; a data group
+    /// ([`ObservationError::InvalidRequest`]); fields whose direction is a
+    /// polynomial in time, fields that follow an ephemeris in a combination
+    /// of several inputs, or an ephemeris whose samples are not evenly
+    /// spaced or whose radial velocities are not geocentric; a data group
     /// without an MSv2 column, or selected twice; times in another scale
     /// than UTC; feeds other than 0; a window without channels; fields in
     /// another frame than J2000; a scan without a casacore number; feeds
@@ -194,6 +198,21 @@ impl CreationPlan {
         for input in &inputs {
             refuse_unwritable(input.observation().catalogue())?;
         }
+        // A conversion writes the ephemerides its fields follow (#942);
+        // combining them, as concat merges ephemeris tables, is not done.
+        if inputs.len() > 1
+            && inputs.iter().any(|input| {
+                let catalogue = input.observation().catalogue();
+                catalogue
+                    .fields
+                    .iter()
+                    .any(|field| field.ephemeris.is_some())
+            })
+        {
+            return Err(ObservationError::Unsupported {
+                what: "combining fields that follow an ephemeris from several inputs",
+            });
+        }
         let merging = merge_bound(
             inputs
                 .iter()
@@ -217,6 +236,13 @@ impl CreationPlan {
         }
         refuse_unwritable(&combined.catalogue)?;
         found.extend(combined.losses.iter().cloned());
+        found.extend(msv2_ephemeris::filled_rows(&combined.catalogue));
+        found.extend(
+            msv2_ephemeris::followed(&combined.catalogue)
+                .0
+                .into_iter()
+                .filter_map(|ephemeris| losses::extrapolated(ephemeris)),
+        );
         let grids = occupancy::grids(&inputs, &combined, &mut ledger)?;
         // What writing the subtables defaults or leaves out, found by writing
         // them in memory, and where they put each partition; the catalogue
@@ -274,6 +300,7 @@ impl CreationPlan {
             history: options.history.clone(),
             padding: options.padding,
             batch_bytes: options.batch_bytes,
+            creation_date: options.creation_date.clone(),
             publication,
         })
     }
@@ -386,6 +413,7 @@ impl CreationPlan {
             &self.occupancy.spans,
             &self.combined.intents,
         )?;
+        msv2_ephemeris::mark_fields(&mut ms, catalogue)?;
         let pointed: Vec<Pointed<'_>> = self
             .inputs
             .iter()
@@ -440,6 +468,7 @@ impl CreationPlan {
             }
         }
         report.rows = main.finish(&mut ms)?;
+        msv2_ephemeris::write_tables(staging, catalogue, &self.creation_date)?;
         Ok(report)
     }
 }
@@ -508,8 +537,9 @@ fn unit(units: &VisibilityUnits) -> Option<String> {
 /// Refuse what the MSv2 written cannot say: another time scale than UTC
 /// (`TIME` is written with the MeasurementSet's default reference), a feed
 /// other than the one `FEED` row per antenna the writer writes, a window
-/// without channels, a field in another frame than J2000, and what its
-/// subtables cannot say ([`msv2_tables::refuse_unwritable`]).
+/// without channels, a field in another frame than J2000, what its
+/// subtables cannot say ([`msv2_tables::refuse_unwritable`]) and an
+/// ephemeris its table cannot hold ([`msv2_ephemeris::refuse_unwritable`]).
 fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     if catalogue
         .fields
@@ -518,17 +548,6 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     {
         return Err(ObservationError::Unsupported {
             what: "writing MSv2 fields in another frame than J2000",
-        });
-    }
-    // A moving field's phase centre is an offset from its body (#942),
-    // which the plan does not write.
-    if catalogue
-        .fields
-        .iter()
-        .any(|field| field.ephemeris.is_some())
-    {
-        return Err(ObservationError::Unsupported {
-            what: "writing MSv2 fields that follow an ephemeris",
         });
     }
     for entry in &catalogue.partitions {
@@ -548,7 +567,8 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
             });
         }
     }
-    msv2_tables::refuse_unwritable(catalogue)
+    msv2_tables::refuse_unwritable(catalogue)?;
+    msv2_ephemeris::refuse_unwritable(catalogue)
 }
 
 /// What reopening the written MeasurementSet gives of `combined`, whose
@@ -569,6 +589,11 @@ fn written(
         partitions: combined.catalogue.partitions.clone(),
         ..subtables
     };
+    // The ephemerides fields follow are written as tables of their own
+    // beside the subtables rehearsed (`msv2_ephemeris`).
+    for (field, merged) in catalogue.fields.iter_mut().zip(&combined.catalogue.fields) {
+        field.ephemeris.clone_from(&merged.ephemeris);
+    }
     for (output, entry) in catalogue.partitions.iter_mut().enumerate() {
         entry.window = casa_observation::WindowId(
             u32::try_from(layout.spectral_window[output]).expect("a written window row"),
@@ -639,6 +664,7 @@ pub(crate) fn catalogue_subtables(
         None => super::msv2_rows::Spans {
             time_range: [0.0, 0.0],
             observation_ranges: vec![[0.0, 0.0]; catalogue.observations.len()],
+            field_first: vec![None; catalogue.fields.len()],
         },
     };
     let mut ms =

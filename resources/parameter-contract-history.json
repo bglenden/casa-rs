@@ -42,6 +42,16 @@
       "fingerprint": "cda0b08ef2113e4b1cfadbd5a23c374d9b8f9560880fa9d25df48f501c3a8a3a"
     },
     {
+      "id": "feather.effdishdiam",
+      "semantic_revision": 1,
+      "fingerprint": "705ae5adf3ac26dc13acb9033c98a0c8e7fc5d2e4b992b95483e79205a9c6296"
+    },
+    {
+      "id": "feather.lowpassfiltersd",
+      "semantic_revision": 1,
+      "fingerprint": "cb62801a7e51260d5ba44b5075a72d6b3b8296225cccadc78bd4a443bf94f3ce"
+    },
+    {
       "id": "file.input.fitsimage",
       "semantic_revision": 1,
       "fingerprint": "29fba58e8638f3b09ed1ce3205690e5c5949eb8dce61939716304c6c23e595f5"
@@ -50,6 +60,71 @@
       "id": "file.output.fitsimage",
       "semantic_revision": 1,
       "fingerprint": "3bee14f4a46c72099d56952b6eb43114ae0d13de847ea5348dfee4877569c8ca"
+    },
+    {
+      "id": "fits.beam",
+      "semantic_revision": 1,
+      "fingerprint": "a543bde438264bbbcaf49e6ec8c97ddba2093d74550a5046145219dc2ec0ab0e"
+    },
+    {
+      "id": "fits.bitpix",
+      "semantic_revision": 1,
+      "fingerprint": "377e6050263e4c1c422cf5eac8690eccddf559e347ca6ce0da6c4ba789012251"
+    },
+    {
+      "id": "fits.defaultaxes",
+      "semantic_revision": 1,
+      "fingerprint": "f401d362d0b8636537394b96348cedc94dc5940c1cc6eeb688dbdb26041edd46"
+    },
+    {
+      "id": "fits.defaultaxesvalues",
+      "semantic_revision": 1,
+      "fingerprint": "7c080af169943aad797f319c1942f29a835a763d116746ac344bff3912e71334"
+    },
+    {
+      "id": "fits.dropstokes",
+      "semantic_revision": 1,
+      "fingerprint": "0a5f1f4c3073b5b7bdb6b43685d93e0914fca60f86fb1844302686681d4b337e"
+    },
+    {
+      "id": "fits.history",
+      "semantic_revision": 1,
+      "fingerprint": "764d9a27bb837d0eb7fc1e83b902b0f95aaaacb9dbf7851e5fea7321be087355"
+    },
+    {
+      "id": "fits.maxpix",
+      "semantic_revision": 1,
+      "fingerprint": "384e9c005408e586095e1cb7d50adf9cf1a71696ae8f72f34a1877360a31d049"
+    },
+    {
+      "id": "fits.minpix",
+      "semantic_revision": 1,
+      "fingerprint": "827f15b9e16de3b2191b72f11e833bdaa179de13eae34baad4df79cb5ba7b7a1"
+    },
+    {
+      "id": "fits.optical",
+      "semantic_revision": 1,
+      "fingerprint": "2837453896227d901b9732466721c26828ba04848dc0d2739c5090f32a8f3aaa"
+    },
+    {
+      "id": "fits.stokeslast",
+      "semantic_revision": 1,
+      "fingerprint": "cddca07897c9e53b1ca2ad70bb995dc8edf6ef11a6d02ad55ad8bcf627a17e61"
+    },
+    {
+      "id": "fits.whichhdu",
+      "semantic_revision": 1,
+      "fingerprint": "63374330dd5be92282d89dbdb17147de5db1f5e61dd700b69eff182b75a85fb3"
+    },
+    {
+      "id": "fits.whichrep",
+      "semantic_revision": 1,
+      "fingerprint": "7f35b707ae85f5c0e313b0edf96aa382e2cea4e70ca66548234cb8df7a2e2180"
+    },
+    {
+      "id": "fits.zeroblanks",
+      "semantic_revision": 1,
+      "fingerprint": "79259338034340afb1897cc005bd5f5ed7ec6ea4da60700f6243e8315c0b5fa5"
     },
     {
       "id": "flagdata.action",
@@ -127,6 +202,11 @@
       "fingerprint": "6ffdb7c9e986e83e3af341ebd4fe3f3b86d9665872160533b53a61e45f064e38"
     },
     {
+      "id": "image.output.dropdeg",
+      "semantic_revision": 1,
+      "fingerprint": "ad9548a47ed39f1680fa705247a80d8fe77912c360793cb6503080b6cedcff31"
+    },
+    {
       "id": "image.output.imagename",
       "semantic_revision": 1,
       "fingerprint": "5431952e7a96355abc49e4d6fce39bb565cc872632c121390b08ac21270431fc"
@@ -177,9 +257,59 @@
       "fingerprint": "8dfee4c5d6d89c30017dc16a2e15ca138a77632cd3cbbfe873db21ef0cda9171"
     },
     {
+      "id": "immath.imagemd",
+      "semantic_revision": 1,
+      "fingerprint": "fe00bb9fd217fd7efbd69da74f9d8724f73189369970e9d5995d3fe11745a1ff"
+    },
+    {
+      "id": "immath.mode",
+      "semantic_revision": 1,
+      "fingerprint": "b546d4fc1dc20e242b7a8537210f5ca4da219453f30533c0a46e54073ad2a470"
+    },
+    {
+      "id": "immath.polithresh",
+      "semantic_revision": 1,
+      "fingerprint": "95b875ad09b024c47353e18457639bd6c6f9fad0b46bd027d4088bc141a83a9f"
+    },
+    {
+      "id": "immath.prec",
+      "semantic_revision": 1,
+      "fingerprint": "d329d505f37b4fd18609137514c48fbcabc96f4737c5bb0e9bf3276d78887f58"
+    },
+    {
+      "id": "immath.sigma",
+      "semantic_revision": 1,
+      "fingerprint": "df2535e0fc1daf38978d578655683a234ed7968cbc789b6510080ab6b2223708"
+    },
+    {
+      "id": "immath.varnames",
+      "semantic_revision": 1,
+      "fingerprint": "24c62520f783bc48c791fb9ae6866480ad803680d370c3148d97f8904178883c"
+    },
+    {
       "id": "impbcor.mode",
       "semantic_revision": 1,
       "fingerprint": "a4b021433978fde3db58ff61f29a0960fc54935d1b65465bcb0f0157b4f9dcd7"
+    },
+    {
+      "id": "impv.length",
+      "semantic_revision": 1,
+      "fingerprint": "0f42a1d215a8c99c41fdb12382b761eb290d5d8ebf6c18f098707241bec065d0"
+    },
+    {
+      "id": "impv.mode",
+      "semantic_revision": 1,
+      "fingerprint": "54e4549e0f5df0cdb4bcc1d2b367d26b185ce9b417e77a0d9306e7417e4f8565"
+    },
+    {
+      "id": "impv.pa",
+      "semantic_revision": 1,
+      "fingerprint": "e18cead6b44d7bbeeb17068b9a0b547cf9472569a7bdb8eacc13806c4d856274"
+    },
+    {
+      "id": "impv.unit",
+      "semantic_revision": 1,
+      "fingerprint": "222fa356c504c4af751597d702a9b52a77853f54189101d21af090209e5c03f6"
     },
     {
       "id": "impv.width",
@@ -187,14 +317,59 @@
       "fingerprint": "cead1516a0a6bbabb131c132dea63a34f73c8ae71d7f5241caf6686892eb4e42"
     },
     {
+      "id": "imregrid.asvelocity",
+      "semantic_revision": 1,
+      "fingerprint": "c23551a76008944b277f0bd2d4450a7587ef2109b105b843e0cf86c66208f43b"
+    },
+    {
+      "id": "imregrid.decimate",
+      "semantic_revision": 1,
+      "fingerprint": "67957ebdb756ddf9680d57b9e1d2589e4d127108a76c59a9e4c4fc83f8c120f3"
+    },
+    {
       "id": "imregrid.output",
       "semantic_revision": 1,
       "fingerprint": "28e9e49920ef3960328bd98e05a0b15de19cc229483908367dcc4f7d425d586a"
     },
     {
+      "id": "imregrid.replicate",
+      "semantic_revision": 1,
+      "fingerprint": "3910b96b805e88746a20ed1d4d4ba8fa9fed520849a290859bbd4eaba1d1a179"
+    },
+    {
+      "id": "imregrid.shape",
+      "semantic_revision": 1,
+      "fingerprint": "b097710de575318c178458272c2a17e0496130fb0f0c494905f3340ea9cfbb73"
+    },
+    {
+      "id": "imstat.algorithm",
+      "semantic_revision": 1,
+      "fingerprint": "728e7eb03268e24ba8a909f7f66a2f95bf4f41099504a17e6db038966fabab40"
+    },
+    {
+      "id": "imstat.clmethod",
+      "semantic_revision": 1,
+      "fingerprint": "da16f099b4b4247f46dc9f97856d93b5ec4619501f4db511113565894dba82e2"
+    },
+    {
+      "id": "imstat.listit",
+      "semantic_revision": 1,
+      "fingerprint": "108fa60c1b65c9467788a027f28a2d91778c0ebc6ac21de3847de095b4c14241"
+    },
+    {
+      "id": "imsubimage.keepaxes",
+      "semantic_revision": 1,
+      "fingerprint": "f5d9f3b3af7e6402ee425d57433ebf6e7ff946a021831c9228a4fa392edea781"
+    },
+    {
       "id": "measurementset.summary.output",
       "semantic_revision": 1,
       "fingerprint": "2eec48c9b357e0833a4589e1c98090620fc4ce03b74058eef49114a90edb05a7"
+    },
+    {
+      "id": "moments.axis",
+      "semantic_revision": 1,
+      "fingerprint": "7bcd6fccf8f9780db24a27c2af73f6e3c661979d56caeb1fb486d7d93f793b77"
     },
     {
       "id": "ms.selection.antenna",
@@ -387,6 +562,11 @@
       "fingerprint": "d9cca213f0d8e13017804cd560194fcdcf0c579a128441e60fe070b058071431"
     },
     {
+      "id": "parameter.axes",
+      "semantic_revision": 2,
+      "fingerprint": "190d6a79c0842a5b0a2efc7244252f80c3224308b96e8058eeeb27ad07692b1f"
+    },
+    {
       "id": "parameter.backend",
       "semantic_revision": 1,
       "fingerprint": "ac08a281af51a928646b71eaf9c4be999bb9e466721f6fbea707498531e8897e"
@@ -465,6 +645,11 @@
       "id": "parameter.center",
       "semantic_revision": 1,
       "fingerprint": "b9762eeb617e64e94ece0b7843bb254453b7b93f6855f438afe28bc220a0c469"
+    },
+    {
+      "id": "parameter.center",
+      "semantic_revision": 2,
+      "fingerprint": "2459738ac1f1b25f494d07e820dc3fcc7a1d66b1dd0c4a4816b40941b294dabc"
     },
     {
       "id": "parameter.cf_resident_mb",
@@ -705,6 +890,11 @@
       "id": "parameter.excludepix",
       "semantic_revision": 1,
       "fingerprint": "0708ddd540c114894f2c86ccfcd0b3e855cae60edf94853b915a43f8c159de98"
+    },
+    {
+      "id": "parameter.excludepix",
+      "semantic_revision": 2,
+      "fingerprint": "edf8f199d53e29f8fdfe2dc858c15c3b153d10afaec82bde706920aad9529ecc"
     },
     {
       "id": "parameter.expr",
@@ -1122,6 +1312,11 @@
       "fingerprint": "64bae4ad706a9b97dc8116f2dfc4ee87dc3f18914740650690a0574235ce2d24"
     },
     {
+      "id": "parameter.includepix",
+      "semantic_revision": 2,
+      "fingerprint": "a9ff6a8a71b319330e1b2321dde615b2287f83a8bbadee34a39de7fd96e81857"
+    },
+    {
       "id": "parameter.incremental",
       "semantic_revision": 1,
       "fingerprint": "de9f482a54690c19bc940034dab17b0f5d113b61e1e5cbd344f5e890180a080e"
@@ -1327,6 +1522,11 @@
       "fingerprint": "21e1f219dde2e3c6683b16d0d6fefd2797eb22cccd63fb8808b079c002f886e4"
     },
     {
+      "id": "parameter.moments",
+      "semantic_revision": 2,
+      "fingerprint": "a21e49986f3411ffa8031db609c4f8a2d43dcfb7586d221b03f3570c79cf10ce"
+    },
+    {
       "id": "parameter.mosweight",
       "semantic_revision": 1,
       "fingerprint": "ca1c137b9c11f06a650b28ea3543cdecee34d1c3751a0b24121127b8762061bf"
@@ -1530,6 +1730,11 @@
       "id": "parameter.pbimage",
       "semantic_revision": 1,
       "fingerprint": "e2ee923b099554d58430f377706849a0136bc083a156e865b92728c70a46718e"
+    },
+    {
+      "id": "parameter.pbimage",
+      "semantic_revision": 2,
+      "fingerprint": "28c8cc1a79f9aa73d036cb7669fd1015ce0a9200b3704677f0a2545e89fd00ee"
     },
     {
       "id": "parameter.pblimit",
@@ -2012,6 +2217,11 @@
       "fingerprint": "465dbe76b9d9041e24f875676228c2ea75869169d094baa63b65a7b1f9575725"
     },
     {
+      "id": "parameter.stretch",
+      "semantic_revision": 2,
+      "fingerprint": "65024d700610371971579181111a8d5313dd03393275a4e3011455d06d5a58f1"
+    },
+    {
       "id": "parameter.summary",
       "semantic_revision": 1,
       "fingerprint": "400a5d9fee2a35f2b53a7d3f447104b68af3a6313d25bee00fea1b06671855dd"
@@ -2287,6 +2497,16 @@
       "fingerprint": "b9dc47714408cfe8243ea720e27ebad929ced96aabbfb3e31692c3607b1976d8"
     },
     {
+      "id": "pv.center",
+      "semantic_revision": 1,
+      "fingerprint": "5bf1ebde93ac22d5e379e0989a4920ca262c897aedac92a34bb79367fc799a00"
+    },
+    {
+      "id": "regrid.axes",
+      "semantic_revision": 1,
+      "fingerprint": "9ffeee5d5514ac164f317e127d068566ee8d9e0ee5352f5a4ae69144a5166bdb"
+    },
+    {
       "id": "simalma.image",
       "semantic_revision": 1,
       "fingerprint": "11012087786172ccb0c656513ffa14732cc0bad50390156a2031921002aae1f2"
@@ -2400,6 +2620,11 @@
       "id": "split.width",
       "semantic_revision": 1,
       "fingerprint": "49a186bf5d1cbe105677041dfb4e0bd1a9f42a4786033bf7daf781d577eaa4b3"
+    },
+    {
+      "id": "statistics.niter",
+      "semantic_revision": 1,
+      "fingerprint": "212b0c14f7105993c10787fb8f9d498d232e03cb426ab35505a14567799acae8"
     },
     {
       "id": "tablebrowser.contentmode",
@@ -2564,6 +2789,11 @@
       "fingerprint": "15c8366ae9319141134734b923dce1feecbb9843f92928f069630f02034d6b8a"
     },
     {
+      "id": "exportfits",
+      "contract_version": 5,
+      "fingerprint": "e97b73784029b14ad488bc7e4b6f8e201e9bad7cc6a075c1f4c06f2748ee0fe6"
+    },
+    {
       "id": "feather",
       "contract_version": 1,
       "fingerprint": "47eca72ff00a63886a0a1c32e774a79ebb264c8757f0198ae709d231d33867df"
@@ -2582,6 +2812,11 @@
       "id": "feather",
       "contract_version": 4,
       "fingerprint": "c43982a9b87a59021952af393f50f9b9f9fd7d28e6c1dcbbbf3275114824ef4f"
+    },
+    {
+      "id": "feather",
+      "contract_version": 5,
+      "fingerprint": "c0a25f4bb4f1b0940b0d9f0757cd15dd2e31edd64f5d89fbf389a44f1f025cbb"
     },
     {
       "id": "flagdata",
@@ -2949,6 +3184,11 @@
       "fingerprint": "7ce318ee7b0fd45a40030052c6618a8e754b69cefb4508b80713abe4efebbfb4"
     },
     {
+      "id": "imhead",
+      "contract_version": 5,
+      "fingerprint": "6bdb3d05425a3fe777fbe6c9c8defa146cf4c22f3a4b18ba8e9d628cba5a35cb"
+    },
+    {
       "id": "immath",
       "contract_version": 1,
       "fingerprint": "5cd79104d7ca83f4273c36dd5a33855309ddf4c10f0f95f20f504d2c90d6cc7e"
@@ -2967,6 +3207,11 @@
       "id": "immath",
       "contract_version": 4,
       "fingerprint": "b44a577e5dee9670ae66715d561aeb8d608d3a0c6ceb3ab52d7eb1164b670311"
+    },
+    {
+      "id": "immath",
+      "contract_version": 5,
+      "fingerprint": "8061489bda3f55028e0b545cb6a5d4643e46f3b4cd2cf14e844d12942843f3ba"
     },
     {
       "id": "immoments",
@@ -2989,6 +3234,11 @@
       "fingerprint": "2bf16cb2aac34504f5da9777a1d4acc5ceae496237ec39a8a51fb60f93e80fbb"
     },
     {
+      "id": "immoments",
+      "contract_version": 5,
+      "fingerprint": "723ea7ba3f8cd7b052d336b3f442b99a065d0507f3cb94fd2642b19bf41a882f"
+    },
+    {
       "id": "impbcor",
       "contract_version": 1,
       "fingerprint": "dd0523a8cc02d03f5500bf99fc5eda7dacb49f50918d821bf9a626f3b6989f27"
@@ -3009,6 +3259,11 @@
       "fingerprint": "f1c33df5b4ff7b5b2b89d95a51c36c490d2629a1d63ed9d8631d38bbf2ef16b3"
     },
     {
+      "id": "impbcor",
+      "contract_version": 5,
+      "fingerprint": "b5bbd419c411dfb83f12113417d5db1e725b503ee61ae10ca19b9412b9fdf8d5"
+    },
+    {
       "id": "importfits",
       "contract_version": 1,
       "fingerprint": "43c43e3ada233fefede08d5b50e90f7c266f8be39742b40c0cf93008b5ae99c4"
@@ -3027,6 +3282,11 @@
       "id": "importfits",
       "contract_version": 4,
       "fingerprint": "88465e24df4a933f075520d9a547934436f0d69524ed0d7b44808ded745ae7d9"
+    },
+    {
+      "id": "importfits",
+      "contract_version": 5,
+      "fingerprint": "f5873f7ccc036e0dfd4de8b623a8542d1c7e1ebff3d66de9b4f553afa42e56b1"
     },
     {
       "id": "importvla",
@@ -3069,6 +3329,11 @@
       "fingerprint": "44ea1d7b16b6ee964fa2a2ebbe13babd237488954d2b94ec32e86f348a2e29fa"
     },
     {
+      "id": "impv",
+      "contract_version": 5,
+      "fingerprint": "6d9b21f8c779b4c3a986ea7348f2c3146170cc115a3b4707cb734ed7531fe617"
+    },
+    {
       "id": "imregrid",
       "contract_version": 1,
       "fingerprint": "603fa9bdd8ce717679b8f4ed1acc0dbb30bcf5116d50421d73e82b4c29b06293"
@@ -3089,6 +3354,11 @@
       "fingerprint": "ae2c5c9380181aa967c3b46b82aeb4a7b02472e1970bd15a35740b1f28ec8ef8"
     },
     {
+      "id": "imregrid",
+      "contract_version": 5,
+      "fingerprint": "7e1e448b0940f2a59807acd4be20dcd2c2003dce69b4ac666e218dca52efba2b"
+    },
+    {
       "id": "imstat",
       "contract_version": 1,
       "fingerprint": "53869dd4bf07ac400ee0585676204ab27fbc11679a0f648145480b928a852ac5"
@@ -3102,6 +3372,11 @@
       "id": "imstat",
       "contract_version": 3,
       "fingerprint": "e2d8aff1f7a7a19b41ca184bf9973a6ae86183058a068cd8f74532de9a0e8109"
+    },
+    {
+      "id": "imstat",
+      "contract_version": 4,
+      "fingerprint": "f96fa23f2be8fedb2dd4b33ef0e7d4f9c6dcf2e61462688c69b125ed0fd03218"
     },
     {
       "id": "imsubimage",
@@ -3122,6 +3397,11 @@
       "id": "imsubimage",
       "contract_version": 4,
       "fingerprint": "bcdb0de7795ba1e8532dc890e70cc8c6ebcc15f676e939987b397981dcfa6c90"
+    },
+    {
+      "id": "imsubimage",
+      "contract_version": 5,
+      "fingerprint": "378cffd6e74082b3d16148ee17431c2140c78fa26a7699c8ad0336644b74673a"
     },
     {
       "id": "msexplore",
@@ -3297,6 +3577,11 @@
       "id": "simobserve",
       "contract_version": 7,
       "fingerprint": "3b3212c266c61c95611a30f9961a7b360f603364613357117279de2a4210ef23"
+    },
+    {
+      "id": "simobserve",
+      "contract_version": 8,
+      "fingerprint": "a2f484f1052dc12cd22647d3b9df197e48b060822549dde19193d8d2be46140d"
     },
     {
       "id": "split",

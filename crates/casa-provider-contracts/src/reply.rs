@@ -16,6 +16,8 @@ use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::CasaValue;
+
 /// Exit status of a task whose reply is [`TaskReply::Succeeded`].
 pub const EXIT_SUCCEEDED: i32 = 0;
 /// Exit status of a task that started and failed ([`TaskFailureKind::Execution`]).
@@ -80,9 +82,10 @@ pub enum TaskReply {
         /// Surface that ran.
         surface: String,
         /// The value CASA's task returns, such as `imstat`'s statistics
-        /// record, or `null` where CASA returns `None`. It is kept ahead of
-        /// the generic product projection, which cannot recover it.
-        value: Value,
+        /// record, or [`CasaValue::None`] where CASA returns `None`. It is
+        /// kept ahead of the generic product projection, which cannot
+        /// recover it.
+        value: CasaValue,
         /// The provider's full typed result, from which the surface's declared
         /// products are projected.
         result: Value,
@@ -146,13 +149,13 @@ mod tests {
     fn a_success_carries_casas_return_value_ahead_of_the_result() {
         let reply = TaskReply::Succeeded {
             surface: "imstat".into(),
-            value: json!({"npts": [12.0]}),
+            value: CasaValue::dict([("npts", CasaValue::float64_vector([12.0]))]),
             result: json!({"kind": "statistics"}),
         };
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(
             text,
-            r#"{"status":"succeeded","surface":"imstat","value":{"npts":[12.0]},"result":{"kind":"statistics"}}"#
+            r#"{"status":"succeeded","surface":"imstat","value":{"kind":"dict","entries":[{"key":"npts","value":{"kind":"float_array","dtype":"float64","shape":[1],"data":[12.0]}}]},"result":{"kind":"statistics"}}"#
         );
         assert_eq!(serde_json::from_str::<TaskReply>(&text).unwrap(), reply);
         assert_eq!(reply.exit_code(), EXIT_SUCCEEDED);

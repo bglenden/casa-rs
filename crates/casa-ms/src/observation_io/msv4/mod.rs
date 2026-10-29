@@ -9,6 +9,7 @@
 //! schema requires. Anything else is refused with a typed error.
 
 mod cursor;
+mod ephemeris;
 mod held;
 mod metadata;
 mod pointing;
@@ -21,6 +22,7 @@ mod write;
 pub use cursor::Msv4Cursor;
 pub(crate) use pointing::POINTING_FRAMES;
 pub use read::Msv4Observation;
+pub(in crate::observation_io) use write::{check_fields, kept_samples, unix_times};
 
 /// XRADIO's name for an absent source, which the writer writes for a field
 /// without one and the reader reads as none.

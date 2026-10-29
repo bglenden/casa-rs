@@ -16,35 +16,69 @@ use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::{ColumnSchema, Table};
 use casa_types::RecordField;
+use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::DirectionRef;
 
 use super::Loss;
-use super::msv2_identity::utc_seconds;
+use super::msv2_identity::{field_time, utc_seconds};
 use super::msv2_tables::Notes;
 use crate::MeasurementSet;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId, optional_columns};
 use crate::subtable_rows::{f, f64_array, i, row_from_defs, s, string_array, subtable_mut};
 
+/// Seconds per day, for MSv2 `TIME` (MJD seconds).
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
 /// The sources a catalogue that states none has its fields name: each
-/// name once, at its first field's direction.
+/// name once, at its first field's direction ([`source_direction`]).
 pub(super) struct NamedSources(Vec<(String, [f64; 2])>);
 
 /// The sources `catalogue`'s fields name, when it states no sources of
-/// its own.
-pub(super) fn named(catalogue: &Catalogue) -> NamedSources {
+/// its own, each at its first field's direction at that field's time
+/// ([`field_time`] from `times`).
+///
+/// # Errors
+///
+/// A field epoch in another scale than UTC, or a body's direction that
+/// cannot be evaluated.
+pub(super) fn named(
+    catalogue: &Catalogue,
+    times: (f64, &[Option<f64>]),
+) -> Result<NamedSources, ObservationError> {
     let mut named: Vec<(String, [f64; 2])> = Vec::new();
     if catalogue.sources.is_empty() {
-        for field in &catalogue.fields {
+        for (index, field) in catalogue.fields.iter().enumerate() {
             if let Some(name) = &field.source_name
                 && !named.iter().any(|known| known.0 == *name)
             {
-                let (longitude, latitude) = field.phase_centre.as_angles();
-                named.push((name.clone(), [longitude, latitude]));
+                let (time, _) = field_time(field, index, times)?;
+                named.push((name.clone(), source_direction(field, time)?));
             }
         }
     }
-    NamedSources(named)
+    Ok(NamedSources(named))
+}
+
+/// A source's `DIRECTION`, from its first field (at `field_time`, MJD
+/// seconds): a fixed field's phase centre, or the body a moving field
+/// follows at that time (clamped to its samples), in J2000 as the column
+/// states it. The source is the body; its fields are offsets from it.
+fn source_direction(field: &FieldEntry, field_time: f64) -> Result<[f64; 2], ObservationError> {
+    let Some(ephemeris) = field.ephemeris.as_deref() else {
+        let (longitude, latitude) = field.phase_centre.as_angles();
+        return Ok([longitude, latitude]);
+    };
+    let times = ephemeris.times_mjd();
+    let mjd = (field_time / SECONDS_PER_DAY).clamp(times[0], times[times.len() - 1]);
+    let body = crate::ephemeris::reference_direction(ephemeris, mjd, [0.0, 0.0])
+        .and_then(|body| {
+            body.convert_to(DirectionRef::J2000, &MeasFrame::new())
+                .map_err(Into::into)
+        })
+        .map_err(storage)?;
+    let (longitude, latitude) = body.as_angles();
+    Ok([longitude, latitude])
 }
 
 /// The `SOURCE_ID` of `field`: its logical source's, or in a catalogue
@@ -406,4 +440,70 @@ fn from_fields(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use casa_observation::{FieldEntry, FieldEphemeris};
+    use casa_types::measures::direction::{DirectionRef, MDirection};
+    use casa_types::measures::radial_velocity::RadialVelocityRef;
+
+    use super::{SECONDS_PER_DAY, source_direction};
+
+    /// A moving field's source is the body it follows at the field's time
+    /// (clamped to the samples), not its offset; a fixed field's is its
+    /// phase centre.
+    #[test]
+    fn a_moving_fields_source_is_its_body_at_the_fields_time() {
+        let times = vec![60_000.0, 60_000.01, 60_000.02];
+        let directions = vec![[1.0, 0.2], [1.01, 0.21], [1.02, 0.22]];
+        let ephemeris = FieldEphemeris::new(
+            "comet",
+            times.clone(),
+            directions.clone(),
+            DirectionRef::J2000,
+            vec![3.8e8; 3],
+            (vec![10.0; 3], RadialVelocityRef::GEO),
+        )
+        .expect("an ephemeris");
+        let offset = MDirection::from_angles(1.0e-5, -5.0e-6, DirectionRef::J2000);
+        let field = FieldEntry {
+            name: "comet".to_string(),
+            phase_centre: offset.clone(),
+            reference_epoch: None,
+            source_name: Some("comet".to_string()),
+            source: None,
+            code: None,
+            delay_centre: None,
+            reference_centre: None,
+            flagged: None,
+            ephemeris: Some(Arc::new(ephemeris)),
+        };
+        let close = |found: [f64; 2], expected: [f64; 2]| {
+            assert!(
+                (found[0] - expected[0]).abs() < 1.0e-12
+                    && (found[1] - expected[1]).abs() < 1.0e-12,
+                "{found:?} is not {expected:?}"
+            );
+        };
+        close(
+            source_direction(&field, times[1] * SECONDS_PER_DAY).expect("a direction"),
+            directions[1],
+        );
+        close(
+            source_direction(&field, (times[2] + 1.0) * SECONDS_PER_DAY).expect("clamped"),
+            directions[2],
+        );
+        let fixed = FieldEntry {
+            ephemeris: None,
+            ..field
+        };
+        let (longitude, latitude) = offset.as_angles();
+        close(
+            source_direction(&fixed, 0.0).expect("a direction"),
+            [longitude, latitude],
+        );
+    }
 }

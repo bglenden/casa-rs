@@ -54,8 +54,8 @@ pub struct MemoryCharges {
     /// The most making the plan held, `kept` included.
     pub planning: usize,
     /// What writing holds beyond `kept`: the subtables, `HISTORY` and
-    /// `POINTING` until the save, then the larger of the pointing reads and
-    /// the MAIN writers with one batch.
+    /// `POINTING` until the save, then the largest of the pointing reads,
+    /// the MAIN writers with one batch, and an ephemeris table.
     pub writing: usize,
     /// Of `writing`, the MAIN writers': their tile bands and I/O buffers,
     /// and the keys of one batch's rows.

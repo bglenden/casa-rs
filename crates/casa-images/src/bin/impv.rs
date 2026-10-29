@@ -22,7 +22,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let width = task.integer("width")?;
     let request = ImpvRequest {
-        imagename: task.path("imagename")?,
+        imagename: task.input_path("imagename")?,
         outfile: task.path("outfile")?,
         mode: "coords".to_string(),
         start: task.required_text("start")?,

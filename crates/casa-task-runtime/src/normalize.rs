@@ -275,6 +275,36 @@ pub(crate) fn normalize_quantity_unit(
     map_strings(value, |value| normalize_quantity(value, canonical_unit))
 }
 
+/// A profile's old comma-separated numbers (`"0.1,10"`) as a list of
+/// numbers, and its old explicit absence (`"none"` or empty) as CASA's
+/// `-1`: the `number_list` migration transform (#931). Any other value is
+/// kept.
+pub(crate) fn number_list(
+    value: ParameterValue,
+    parameter: &str,
+) -> Result<ParameterValue, crate::profile::ProfileError> {
+    let ParameterValue::String(text) = value else {
+        return Ok(value);
+    };
+    let text = text.trim();
+    if text.is_empty() || text.eq_ignore_ascii_case("none") {
+        return Ok(ParameterValue::Integer(-1));
+    }
+    text.split(',')
+        .map(|part| {
+            part.trim()
+                .parse::<f64>()
+                .map(ParameterValue::Float)
+                .map_err(|error| {
+                    crate::profile::ProfileError::Contract(format!(
+                        "migration expected numbers for {parameter:?}, got {text:?}: {error}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(ParameterValue::Array)
+}
+
 fn normalize_quantity(value: &str, canonical_unit: &str) -> Result<String, NormalizationError> {
     if matches!(value.trim(), "auto" | "none") {
         return Ok(value.trim().to_string());
@@ -648,6 +678,27 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn an_old_number_text_migrates_to_a_list_of_numbers() {
+        let text = |text: &str| ParameterValue::String(text.into());
+        assert_eq!(
+            number_list(text(" 0.1, 10 "), "includepix").unwrap(),
+            ParameterValue::Array(vec![
+                ParameterValue::Float(0.1),
+                ParameterValue::Float(10.0)
+            ])
+        );
+        assert_eq!(
+            number_list(text("none"), "includepix").unwrap(),
+            ParameterValue::Integer(-1)
+        );
+        assert_eq!(
+            number_list(ParameterValue::Integer(-1), "includepix").unwrap(),
+            ParameterValue::Integer(-1)
+        );
+        assert!(number_list(text("0.1,lots"), "includepix").is_err());
+    }
 
     fn concept(domain: ParameterType, rule: NormalizationRule) -> ParameterConcept {
         ParameterConcept {

@@ -129,6 +129,7 @@ fn options(batch_bytes: usize, memory_bytes: usize) -> CreationOptions {
         padding: PaddingRows::Omitted,
         tolerance: MergeTolerance::default(),
         history: Vec::new(),
+        creation_date: "2026-10-29T00:00:00".to_string(),
     }
 }
 

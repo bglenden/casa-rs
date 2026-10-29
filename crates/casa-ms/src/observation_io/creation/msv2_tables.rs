@@ -199,8 +199,9 @@ pub(super) fn populate(
     let time_range = spans.time_range;
     let mut notes = Notes::default();
     antennas(ms, catalogue, &mut notes)?;
-    let named_sources = msv2_sources::named(catalogue);
-    msv2_identity::fields(ms, catalogue, (&named_sources, time_range[0]), &mut notes)?;
+    let times = (time_range[0], spans.field_first.as_slice());
+    let named_sources = msv2_sources::named(catalogue, times)?;
+    msv2_identity::fields(ms, catalogue, (&named_sources, times), &mut notes)?;
     msv2_identity::observations(ms, catalogue, &spans.observation_ranges, &mut notes)?;
     let window_rows = msv2_identity::spectral_windows(ms, catalogue, &mut notes)?;
     let states = msv2_identity::states(ms, catalogue, intents, &mut notes)?;

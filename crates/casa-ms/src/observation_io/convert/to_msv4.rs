@@ -4,15 +4,17 @@
 //! an MSv2.
 
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
-use casa_observation::{Catalogue, Observation, ObservationError, PartitionId, Roles};
+use casa_observation::{
+    Catalogue, FieldEphemeris, Observation, ObservationError, PartitionId, Roles,
+};
 
-use super::{ConversionOptions, ConversionReport};
+use super::{ConversionOptions, ConversionReport, Loss};
 use crate::observation_io::creation::pointing_plan::{self, PointingPlan};
 use crate::observation_io::creation::{lockstep, losses};
-use crate::observation_io::msv4::STATION_NAMED;
+use crate::observation_io::msv4::{STATION_NAMED, check_fields, kept_samples, unix_times};
 use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -31,7 +33,7 @@ struct Converted {
 ///
 /// Every partition becomes one dataset with the selected data groups
 /// ([`ConversionOptions::data_groups`]) and the antennas its baselines name
-/// (others are [`Loss::UnusedAntennas`](super::Loss::UnusedAntennas)).
+/// (others are [`Loss::UnusedAntennas`]).
 /// An MSv4's datasets keep their names. An MSv2's are named as XRADIO's
 /// converter names them: the file name without `.ms`, then the partition's
 /// number in the order the partitions' first MAIN rows appear, padded with
@@ -45,18 +47,24 @@ struct Converted {
 /// rows of different feeds, are two datasets here, and rows with
 /// `STATE_ID` -1 have no intents here where XRADIO gives them the last
 /// `STATE` row's; the datasets numbered after such a difference can hold
-/// other data than XRADIO's of the same name. Partitions are
+/// other data than XRADIO's of the same name. A dataset whose fields
+/// follow an ephemeris holds it as XRADIO's `field_and_source_ephemeris`,
+/// the samples on `time_ephemeris` from the last before its first
+/// time to the first two minutes past its last (the samples no dataset
+/// holds are a reported loss), with the phase centre at each time as XRADIO
+/// states it. Partitions are
 /// converted [`ConversionOptions::workers`] at a time; nothing appears at
 /// `destination` until every dataset is complete.
 ///
 /// # Errors
 ///
-/// [`ObservationError::InvalidRequest`] naming the first loss not accepted,
-/// and [`ObservationError::Unsupported`] for fields that follow an
-/// ephemeris or whose direction is a polynomial in time, both before
-/// anything is written; any error opening or
-/// reading the source or writing the destination, which then is not
-/// created.
+/// All before anything is written: [`ObservationError::InvalidRequest`]
+/// naming the first loss not accepted, or an ephemeris that does not cover
+/// a dataset's times; [`ObservationError::Unsupported`] for fields whose
+/// direction is a polynomial in time, a dataset whose fields follow
+/// different ephemerides (or only some one), or radial velocities that are
+/// not geocentric. Otherwise, any error opening or reading the source or
+/// writing the destination, which then is not created.
 pub fn to_msv4(
     source: &Path,
     destination: &Path,
@@ -78,6 +86,7 @@ pub fn to_msv4(
     )?;
     found.extend(lost);
     found.extend(losses::unused_antennas(catalogue));
+    found.extend(preflight_fields(observation.as_ref(), &groups[0])?);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     let set = Msv4ProcessingSetWriter::create(destination)?;
@@ -135,6 +144,60 @@ pub fn to_msv4(
     }
     set.finish()?;
     Ok(report)
+}
+
+/// Refuse, before anything is written, what a dataset's field dataset
+/// cannot hold ([`check_fields`]), and report the samples of each ephemeris
+/// the partitions' fields follow that no dataset holds, one loss an
+/// ephemeris: a dataset holds those from the last before its first time to
+/// the first that reaches past its last time's TDB ([`kept_samples`]),
+/// much as XRADIO's converter keeps those either side of a dataset's times.
+/// Only the samples the source states count: an extrapolated one is not
+/// written, and reading the destination extrapolates it again.
+fn preflight_fields(
+    observation: &dyn Observation,
+    group: &str,
+) -> Result<Vec<Loss>, ObservationError> {
+    let catalogue = observation.catalogue();
+    let mut followed: Vec<(&Arc<FieldEphemeris>, Vec<bool>)> = Vec::new();
+    for id in catalogue.partition_ids() {
+        let grid = observation.grid(id, group)?;
+        let times = unix_times(&grid);
+        let entry = catalogue.partition(id);
+        if let Some((_, data_group)) = entry.data_group(group) {
+            check_fields(catalogue, &grid, &times, data_group.uvw_frame.effective)?;
+        }
+        for field in &entry.fields {
+            let Some(ephemeris) = catalogue.fields[field.0 as usize].ephemeris.as_ref() else {
+                continue;
+            };
+            let index = followed
+                .iter()
+                .position(|(known, _)| Arc::ptr_eq(known, ephemeris))
+                .unwrap_or_else(|| {
+                    let stated = ephemeris.times_mjd().len() - ephemeris.extrapolated();
+                    followed.push((ephemeris, vec![false; stated]));
+                    followed.len() - 1
+                });
+            for held in &mut followed[index].1[kept_samples(ephemeris, &times)] {
+                *held = true;
+            }
+        }
+    }
+    Ok(followed
+        .into_iter()
+        .filter_map(|(ephemeris, held)| {
+            let lost = held.iter().filter(|held| !**held).count();
+            (lost > 0).then(|| {
+                Loss::Table(format!(
+                    "the ephemeris of {}: samples no dataset keeps ({lost}; a dataset keeps \
+                     those from the last before its first time to the first 120 s or more past \
+                     its last)",
+                    ephemeris.name()
+                ))
+            })
+        })
+        .collect())
 }
 
 /// A source opened for conversion, with what its datasets are named.

@@ -124,10 +124,14 @@ fn user_format_decides_the_summary_on_stdout_and_in_output() {
         };
         assert_eq!(
             surface == "msexplore",
-            is_fixture_summary(&value),
+            is_fixture_summary(&value.to_plain_json()),
             "{surface}"
         );
-        assert_eq!(surface == "plotms", value.is_null(), "{surface}");
+        assert_eq!(
+            surface == "plotms",
+            value == casa_provider_contracts::CasaValue::None,
+            "{surface}"
+        );
         assert!(
             is_fixture_summary(&result["summary"]),
             "{surface}: {result}"

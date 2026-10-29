@@ -18,7 +18,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let result = import_fits(
-        task.path("fitsimage")?,
+        task.input_path("fitsimage")?,
         task.path("imagename")?,
         task.flag("overwrite")?,
     );

@@ -22,7 +22,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImsubimageRequest {
-        imagename: task.path("imagename")?,
+        imagename: task.input_path("imagename")?,
         outfile: task.path("outfile")?,
         box_pixels: task.text("box")?,
         chans: task.text("chans")?,

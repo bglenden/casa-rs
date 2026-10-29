@@ -6,7 +6,7 @@
 //! scale than UTC, a field direction in another frame than J2000) is
 //! refused.
 
-use casa_observation::{Catalogue, ObservationError, PartitionEntry};
+use casa_observation::{Catalogue, FieldEntry, ObservationError, PartitionEntry};
 use casa_tables::ColumnSchema;
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -48,17 +48,40 @@ fn j2000(direction: &MDirection) -> Result<[f64; 2], ObservationError> {
     Ok([longitude, latitude])
 }
 
+/// The `TIME` of `field`, catalogue field `index`, and whether the field
+/// states it: its epoch, or else `time`, the data's first, but for a field
+/// that follows an ephemeris its own first time in `first` (by field): an
+/// image without a phase centre is centred on its body at that time (#987).
+///
+/// # Errors
+///
+/// An epoch in another scale than UTC.
+pub(super) fn field_time(
+    field: &FieldEntry,
+    index: usize,
+    (time, first): (f64, &[Option<f64>]),
+) -> Result<(f64, bool), ObservationError> {
+    if let Some(epoch) = &field.reference_epoch {
+        return Ok((utc_seconds(epoch)?, true));
+    }
+    let own = field
+        .ephemeris
+        .as_ref()
+        .and_then(|_| first.get(index).copied().flatten());
+    Ok((own.unwrap_or(time), false))
+}
+
 /// One `FIELD` row per catalogue field, its source named by `SOURCE_ID`
-/// as [`msv2_sources`] writes them (`named`); `time`, the data's first, is
-/// the `TIME` of a field that states none.
+/// as [`msv2_sources`] writes them (`named`), its `TIME` as [`field_time`]
+/// gives it from `times` (the data's first, and each field's first).
 pub(super) fn fields(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
-    (named, time): (&NamedSources, f64),
+    (named, times): (&NamedSources, (f64, &[Option<f64>])),
     notes: &mut Notes,
 ) -> Result<(), ObservationError> {
     let table = subtable_mut(ms, SubtableId::Field).map_err(storage)?;
-    for field in &catalogue.fields {
+    for (index, field) in catalogue.fields.iter().enumerate() {
         let phase = &field.phase_centre;
         let delay = notes.or(field.delay_centre.as_ref(), "FIELD DELAY_DIR", || phase);
         let reference = notes.or(
@@ -67,11 +90,7 @@ pub(super) fn fields(
             || phase,
         );
         let direction = |centre| j2000(centre).map(|angles| f64_array(&angles, vec![2, 1]));
-        let epoch = field
-            .reference_epoch
-            .as_ref()
-            .map(utc_seconds)
-            .transpose()?;
+        let (seconds, stated) = field_time(field, index, times)?;
         let row = row_from_defs(
             schema::field::REQUIRED_COLUMNS,
             &[
@@ -88,7 +107,10 @@ pub(super) fn fields(
                     "SOURCE_ID",
                     i(msv2_sources::field_source(catalogue, field, named)),
                 ),
-                ("TIME", f(notes.or(epoch, "FIELD TIME", || time))),
+                (
+                    "TIME",
+                    f(notes.or(stated.then_some(seconds), "FIELD TIME", || seconds)),
+                ),
                 (
                     "FLAG_ROW",
                     b(notes.or(field.flagged, "FIELD FLAG_ROW", || false)),

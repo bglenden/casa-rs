@@ -10,6 +10,9 @@ mod convert;
 #[path = "observation_io/creation.rs"]
 mod creation;
 #[cfg(unix)]
+#[path = "observation_io/ephemeris.rs"]
+mod ephemeris;
+#[cfg(unix)]
 #[path = "observation_io/fields.rs"]
 mod fields;
 #[cfg(unix)]
@@ -57,7 +60,8 @@ use flate2::read::GzDecoder;
 use num_complex::Complex32;
 use tar::Archive;
 
-/// Unpack fixture `name` (`ms_trial.ms` or `ms_trial.ps.zarr`).
+/// Unpack fixture `name` (`ms_trial.ms`, `ms_trial.ps.zarr` or the
+/// ephemeris fixtures, `ms_trial_ephemeris*`).
 pub(crate) fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/ms_trial")

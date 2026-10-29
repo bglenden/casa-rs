@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from os import PathLike
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from ..parameters import ParameterData
-from ._runner import TaskCompletion, _run
+from ._runner import TaskCompletion, _call_casa, _run
 
 StrPath: TypeAlias = str | PathLike[str]
 
@@ -250,7 +250,6 @@ def imager(
     ...
 
 def simobserve(
-    *,
     project: str = ...,
     skymodel: StrPath = ...,
     inbright: str = ...,
@@ -289,46 +288,74 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
     verbose: bool = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def imhead(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     mode: Literal['list', 'put', 'summary'] = ...,
     hdkey: str = ...,
     hdvalue: str = ...,
-) -> TaskCompletion:
+    verbose: bool = ...,
+) -> Any:
     ...
 
 def imstat(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    box: str = ...,
+    axes: int | list[int] | tuple[int, ...] = ...,
     region: str = ...,
+    box: str = ...,
     chans: str = ...,
-) -> TaskCompletion:
+    stokes: str = ...,
+    listit: bool = ...,
+    verbose: bool = ...,
+    mask: str = ...,
+    stretch: bool = ...,
+    logfile: StrPath = ...,
+    append: bool = ...,
+    algorithm: str = ...,
+    fence: float = ...,
+    center: Literal['mean', 'median', 'zero'] = ...,
+    lside: bool = ...,
+    zscore: float = ...,
+    maxiter: int = ...,
+    clmethod: str = ...,
+    niter: int = ...,
+) -> Any:
     ...
 
 def immoments(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    outfile: StrPath = ...,
-    moments: Literal['-1', '0', '1', '2', '3'] = ...,
+    moments: int | list[int] | tuple[int, ...] = ...,
+    axis: str = ...,
+    region: str = ...,
+    box: str = ...,
     chans: str = ...,
-    includepix: str = ...,
+    stokes: str = ...,
     mask: str = ...,
+    includepix: float | list[float] | tuple[float, ...] = ...,
+    excludepix: float | list[float] | tuple[float, ...] = ...,
+    outfile: StrPath = ...,
+    stretch: bool = ...,
+    *,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def exportfits(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     fitsimage: StrPath = ...,
     velocity: bool = ...,
+    optical: bool = ...,
+    bitpix: int = ...,
+    minpix: float = ...,
+    maxpix: float = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+    dropstokes: bool = ...,
+    stokeslast: bool = ...,
+    history: bool = ...,
+    dropdeg: bool = ...,
+) -> Any:
     ...
 
 def mstransform(
@@ -592,79 +619,115 @@ def flagmanager(
     ...
 
 def impbcor(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    pbimage: StrPath = ...,
+    pbimage: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     outfile: StrPath = ...,
-    cutoff: float = ...,
+    overwrite: bool = ...,
     box: str = ...,
     region: str = ...,
     chans: str = ...,
     stokes: str = ...,
     mask: str = ...,
     mode: Literal['divide', 'multiply'] = ...,
-    overwrite: bool = ...,
-    stretch: str = ...,
-) -> TaskCompletion:
+    cutoff: float = ...,
+    stretch: bool = ...,
+) -> Any:
     ...
 
 def impv(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     outfile: StrPath = ...,
+    mode: Literal['coords', 'length'] = ...,
     start: str = ...,
     end: str = ...,
+    center: str | list[str] | tuple[str, ...] = ...,
+    length: str = ...,
+    pa: str = ...,
     width: int = ...,
-    chans: str = ...,
+    unit: str = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+    region: str = ...,
+    chans: str = ...,
+    stokes: str = ...,
+    mask: str = ...,
+    stretch: bool = ...,
+) -> Any:
     ...
 
 def imsubimage(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     outfile: StrPath = ...,
     box: str = ...,
+    region: str = ...,
     chans: str = ...,
+    stokes: str = ...,
+    mask: str = ...,
+    dropdeg: bool = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+    verbose: bool = ...,
+    stretch: bool = ...,
+    keepaxes: int | list[int] | tuple[int, ...] = ...,
+) -> Any:
     ...
 
 def immath(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    expr: str = ...,
+    mode: Literal['evalexpr', 'lpoli', 'pola', 'poli', 'spix', 'tpoli'] = ...,
     outfile: StrPath = ...,
+    expr: str = ...,
+    varnames: str | list[str] | tuple[str, ...] = ...,
+    sigma: str = ...,
+    polithresh: str = ...,
+    mask: str = ...,
+    region: str = ...,
+    box: str = ...,
+    chans: str = ...,
+    stokes: str = ...,
+    stretch: bool = ...,
+    imagemd: str = ...,
+    prec: str = ...,
+    *,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def imregrid(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     template: StrPath = ...,
     output: StrPath = ...,
+    asvelocity: bool = ...,
+    axes: int | list[int] | tuple[int, ...] = ...,
+    shape: int | list[int] | tuple[int, ...] = ...,
     interpolation: Literal['linear', 'nearest'] = ...,
+    decimate: int = ...,
+    replicate: bool = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def feather(
-    *,
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     highres: StrPath = ...,
     lowres: StrPath = ...,
     sdfactor: float = ...,
+    effdishdiam: float = ...,
+    lowpassfiltersd: bool = ...,
+    *,
     overwrite: bool = ...,
-) -> TaskCompletion:
+) -> Any:
     ...
 
 def importfits(
-    *,
     fitsimage: StrPath = ...,
     imagename: StrPath = ...,
+    whichrep: int = ...,
+    whichhdu: int = ...,
+    zeroblanks: bool = ...,
     overwrite: bool = ...,
-) -> TaskCompletion:
+    defaultaxes: bool = ...,
+    defaultaxesvalues: str | list[str] | tuple[str, ...] = ...,
+    beam: str | list[str] | tuple[str, ...] = ...,
+) -> Any:
     ...
 
 TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')

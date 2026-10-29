@@ -36,22 +36,36 @@ fn seconds(grid: &TimeBaselineGrid, t: usize) -> f64 {
 struct Spanning {
     range: [f64; 2],
     sessions: Vec<[f64; 2]>,
+    /// Each output field's first time.
+    fields: Vec<Option<f64>>,
 }
 
 impl Spanning {
     const EMPTY: [f64; 2] = [f64::INFINITY, f64::NEG_INFINITY];
 
-    fn new(sessions: usize) -> Self {
+    /// No span yet, of `sessions` observing sessions and `fields` fields.
+    fn new(sessions: usize, fields: usize) -> Self {
         Self {
             range: Self::EMPTY,
             sessions: vec![Self::EMPTY; sessions],
+            fields: vec![None; fields],
         }
     }
 
-    /// Widen the spans by `grid`, of observing session `session`.
-    fn add(&mut self, grid: &TimeBaselineGrid, session: ObservationId) {
+    /// Widen the spans by `grid`, of observing session `session`, whose
+    /// fields are the output's `fields` (by the grid's field).
+    fn add(&mut self, grid: &TimeBaselineGrid, session: ObservationId, fields: &[i32]) {
         if grid.times_s.is_empty() {
             return;
+        }
+        for (t, field) in grid.field_per_time.iter().enumerate() {
+            let output = fields
+                .get(field.0 as usize)
+                .and_then(|output| usize::try_from(*output).ok());
+            if let Some(first) = output.and_then(|output| self.fields.get_mut(output)) {
+                let time = seconds(grid, t);
+                *first = Some(first.map_or(time, |known: f64| known.min(time)));
+            }
         }
         let (first, last) = (seconds(grid, 0), seconds(grid, grid.times_s.len() - 1));
         let span =
@@ -80,6 +94,7 @@ impl Spanning {
         Spans {
             time_range: spanned(self.range),
             observation_ranges: self.sessions.into_iter().map(spanned).collect(),
+            field_first: self.fields,
         }
     }
 }
@@ -173,14 +188,14 @@ pub(super) fn grids(
     ledger: &mut Ledger,
 ) -> Result<Grids, ObservationError> {
     let output = &combined.catalogue;
-    let mut spanned = Spanning::new(output.observations.len());
+    let mut spanned = Spanning::new(output.observations.len(), output.fields.len());
     let count = output.partitions.len();
     let mut read = Grids {
         combinations: Vec::with_capacity(count),
         combined_bytes: 0,
         intervals: Vec::with_capacity(count),
         cells: Vec::with_capacity(count),
-        spans: Spanning::new(0).finish(),
+        spans: Spanning::new(0, 0).finish(),
     };
     for (index, contributors) in combined.contributors.iter().enumerate() {
         let mut grids = Vec::with_capacity(contributors.len());
@@ -199,7 +214,7 @@ pub(super) fn grids(
             ledger.admit("a partition's grids", bytes)?;
             held += bytes;
             let grid = observation.grid(*id, group)?;
-            spanned.add(&grid, output.partitions[index].observation);
+            spanned.add(&grid, output.partitions[index].observation, &map.fields);
             identities.push(
                 grid.field_per_time
                     .iter()
@@ -282,11 +297,14 @@ pub(super) fn spans(
     group: &str,
 ) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
-    let mut spanned = Spanning::new(catalogue.observations.len());
+    let mut spanned = Spanning::new(catalogue.observations.len(), catalogue.fields.len());
+    // The observation's own fields.
+    let fields: Vec<i32> = (0..catalogue.fields.len() as i32).collect();
     for id in catalogue.partition_ids() {
         spanned.add(
             &observation.grid(id, group)?,
             catalogue.partition(id).observation,
+            &fields,
         );
     }
     Ok(spanned.finish())

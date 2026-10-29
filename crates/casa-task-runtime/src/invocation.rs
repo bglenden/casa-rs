@@ -48,7 +48,8 @@ pub enum ProviderInvocationError {
 }
 
 /// Whether `value` is the explicit absence its provider adapter omits:
-/// `"none"` or `"auto"` under `omit_none`, or an empty list under any.
+/// `"none"`, `"auto"` or CASA's empty string under `omit_none`, or an empty
+/// list under any.
 pub fn parameter_value_is_omitted(value: &ParameterValue, adapter: Option<&ValueAdapter>) -> bool {
     matches!(value, ParameterValue::Array(values) if values.is_empty())
         || (matches!(adapter, Some(ValueAdapter::OmitNone)) && is_explicit_absence(value))
@@ -56,7 +57,7 @@ pub fn parameter_value_is_omitted(value: &ParameterValue, adapter: Option<&Value
 
 fn is_explicit_absence(value: &ParameterValue) -> bool {
     match value {
-        ParameterValue::String(state) => state == "none" || state == "auto",
+        ParameterValue::String(state) => state.is_empty() || state == "none" || state == "auto",
         ParameterValue::Array(values) => {
             !values.is_empty() && values.iter().all(is_explicit_absence)
         }

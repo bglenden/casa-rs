@@ -18,21 +18,33 @@ TaskParameters.save(path)
 TaskParameters.run(**values)
 
 casars.tasks.run(task, parameters=None, /, *, workspace=None, **values)
-casars.tasks.<task>(**casa_parameters)
+casars.tasks.<casa_task>(casa_parameters..., *, casa_rs_controls...)
+casars.tasks.<task>(**parameters)
 ```
 
-A task call starts the task's own executable and returns a `TaskCompletion`
-(`task`, `command`, `workspace`, `returncode`, `stdout`, the reply; `stderr`,
-the log; `provider_invocation`, `status`, `message`, `parameter`, `value`,
-CASA's return value; and `result`, the declared products). A task that does
-not succeed raises `TaskExecutionError`, a `RuntimeError` whose `.completion`
-says how it ended; a value the contract refuses raises `ValueError` before
-anything starts; `TaskBinaryNotFoundError` (a `FileNotFoundError`) names
-what the executable search lacked; `TaskInvocationError` means the process
-could not start; `TaskResultError` means a success's result was malformed.
+A task call starts the task's own executable. `tasks.run` returns a
+`TaskCompletion` (`task`, `command`, `workspace`, `returncode`, `stdout`, the
+reply; `stderr`, the log; `provider_invocation`, `status`, `message`,
+`parameter`, `value`, CASA's return value; and `result`, the declared
+products). A wrapper whose surface names its CASA task (the image tasks and
+`simobserve` so far) has CASA's signature, positional or by keyword with
+CASA's defaults, then casa-rs's own controls, keyword-only, and returns
+CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
+does not implement yet is taken only at CASA's default; its docstring names
+the issue. The other wrappers take keyword arguments and return the
+`TaskCompletion` until their families are converted (#931).
+
+A value the contract refuses raises `ValueError` before anything starts, or
+`TypeError` for a value of the wrong type. A task that refuses its
+parameters raises `TaskParameterError`, a `ValueError`, and one that starts
+and does not succeed `TaskExecutionError`, a `RuntimeError`; the
+`.completion` of either says how it ended. `TaskBinaryNotFoundError` (a
+`FileNotFoundError`) names what the executable search lacked;
+`TaskInvocationError` means the process could not start; `TaskResultError`
+means a success's result was malformed.
 
 A Python task call saves no Last or Last Successful profile; those record
-command-line runs. The CASA-named wrappers take CASA's parameters only. A
+command-line runs. The CASA-named wrappers take the surface's parameters. A
 profile runs through one as `tasks.gaincal(**parameters.load(path))`, since
 a draft, as a mapping, holds the parameters that have a value.
 

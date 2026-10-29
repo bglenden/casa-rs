@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! What writing a plan holds, admitted when the plan is made: beside what
-//! the plan keeps, the subtables and the `POINTING` table until the save,
-//! then the larger of the pointing reads (each input's in turn) and the
-//! MAIN writers with one batch of every selected group. Every input
+//! the plan keeps, the subtables, `HISTORY` and the `POINTING` table until
+//! the save, then the largest of the pointing reads (each input's in
+//! turn), the MAIN writers with one batch of every selected group, and the
+//! largest ephemeris table, written once they are done. Every input
 //! partition's batch must hold one integration; the MAIN writers assemble
 //! their tile bands in memory when the budget holds them, and otherwise
 //! write each tile row in place.
@@ -14,6 +15,7 @@ use super::combine::Combined;
 use super::inputs::Input;
 use super::lockstep::Sizing;
 use super::memory::{Ledger, MemoryCharges, history_table_bytes, subtables_bytes};
+use super::msv2_ephemeris;
 use super::msv2_pointing::TABLE_ROW_BYTES;
 use super::msv2_rows::{self, Occupancy};
 use super::pointing_plan::PointingPlan;
@@ -121,9 +123,11 @@ pub(super) fn admit(
             .map(|plan| plan.gathered().0 * TABLE_ROW_BYTES)
             .sum::<usize>();
     let reads = pointing.iter().map(PointingPlan::peak).max().unwrap_or(0);
+    // The ephemeris tables are written once MAIN's writers are done.
+    let ephemerides = msv2_ephemeris::tables_bytes(catalogue);
     let writing = |plan: &MeasurementSetWritePlan| {
         let writer = plan.maximum_resident_bytes() + rows;
-        (writer, held + reads.max(writer + batch))
+        (writer, held + reads.max(writer + batch).max(ephemerides))
     };
     let least_plan = msv2_rows::write_plan(columns.clone(), occupancy, least)?;
     let buffered_plan = msv2_rows::write_plan(columns, occupancy, buffered)?;

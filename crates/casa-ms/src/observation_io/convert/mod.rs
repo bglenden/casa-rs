@@ -2,7 +2,7 @@
 //! Converting between MeasurementSet v2 and MSv4 through the observation
 //! boundary: the source is read as batches like any consumer reads it, and
 //! the destination is created from those batches and the source's
-//! catalogue ([`to_msv4`](fn@to_msv4), [`to_msv2`]).
+//! catalogue ([`to_msv4()`], [`to_msv2()`]).
 //!
 //! A conversion first inventories what the destination cannot hold (a
 //! [`Loss`]) and refuses, before any byte is written, every loss the
@@ -89,7 +89,11 @@ pub struct ConversionReport {
 /// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
 /// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
-/// row, which reproduces an original sparse MSv2. `SIGMA` is derived
+/// row, which reproduces an original sparse MSv2. A field that follows an
+/// ephemeris gets the table casacore reads (`FIELD/EPHEM<id>_<name>.tab`)
+/// and its `EPHEMERIS_ID`, its `PHASE_DIR` the offset from the body and its
+/// `TIME` the epoch its catalogue entry states, or else its first time,
+/// the table stamped [`ConversionOptions::creation_date`]. `SIGMA` is derived
 /// from the weights, a loss the caller must accept as [`LossKind::Sigma`]
 /// ([`Loss::SigmaDerived`]) unless the source's stored `SIGMA` is already
 /// `1/√WEIGHT`. Names are the source's: an MSv4 converted from an
@@ -114,6 +118,7 @@ pub fn to_msv2(
             padding: options.padding,
             tolerance: casa_observation::MergeTolerance::default(),
             history: Vec::new(),
+            creation_date: options.creation_date.clone(),
         },
         Destination::New(destination.to_path_buf()),
     )?;

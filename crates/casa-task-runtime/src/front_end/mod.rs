@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
-    EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
+    CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
     SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
     TaskRunRequest,
 };
@@ -61,8 +61,8 @@ pub use outcome::{TaskExit, TaskOutcome, classify_task_exit};
 
 use crate::{
     BaseSource, DiagnosticLevel, OpenSessionRequest, ParameterRuntime, ParameterRuntimeError,
-    ParameterSession, ResolutionPatch, TaskLastCoordinator, read_task_request,
-    render_documented_template, write_parameter_profile_atomic,
+    ParameterSession, ParameterSessionError, ProfileError, ResolutionPatch, TaskLastCoordinator,
+    read_task_request, render_documented_template, write_parameter_profile_atomic,
 };
 
 /// How a task binary's process enters a run's workspace, which its `main`
@@ -73,18 +73,23 @@ pub type EnterWorkspace = fn(PathBuf) -> std::io::Result<()>;
 /// A task's success, as its execution callback returns it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSuccess {
-    value: Value,
+    value: CasaValue,
     result: Value,
     text: Option<String>,
     notes: Vec<String>,
 }
 
 impl TaskSuccess {
-    /// A success returning CASA's `value` (`&()` where CASA returns `None`)
-    /// and the provider's full `result`.
-    pub fn new(value: &impl Serialize, result: &impl Serialize) -> Result<Self, TaskFailure> {
+    /// A success returning CASA's `value` ([`CasaValue::None`] where CASA
+    /// returns `None`) and the provider's full `result`.
+    pub fn new(value: CasaValue, result: &impl Serialize) -> Result<Self, TaskFailure> {
+        if !value.is_consistent() {
+            return Err(TaskFailure::execution(
+                "the task's return value holds an array whose data does not fill its shape",
+            ));
+        }
         Ok(Self {
-            value: to_json(value)?,
+            value,
             result: to_json(result)?,
             text: None,
             notes: Vec::new(),
@@ -584,8 +589,8 @@ where
                 stderr.extend(success.notes);
                 let stdout = match success.text {
                     Some(text) => text,
-                    None if success.value.is_null() => String::new(),
-                    None => format!("{:#}\n", success.value),
+                    None if success.value == CasaValue::None => String::new(),
+                    None => format!("{:#}\n", success.value.to_plain_json()),
                 };
                 FrontEndOutput {
                     stdout,
@@ -671,7 +676,7 @@ where
             overrides.values.insert(name.clone(), value);
         }
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let session = match open_session(OpenSessionRequest {
+        let session = match open_named_session(OpenSessionRequest {
             bundle: bundle.clone(),
             workspace: workspace.clone(),
             source: BaseSource::Defaults,
@@ -681,7 +686,7 @@ where
             managed_save: false,
         }) {
             Ok(session) => session,
-            Err(error) => return refuse(&request.surface, error, None),
+            Err((message, parameter)) => return refuse(&request.surface, message, parameter),
         };
         if let Some(diagnostic) = first_error(&session) {
             return refuse(
@@ -814,12 +819,32 @@ fn action_flag(action: &Action) -> &'static str {
 }
 
 fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String> {
+    open_named_session(request).map_err(|(message, _)| message)
+}
+
+/// The session `request` opens, or its refusal and the parameter the
+/// refusal names, if any.
+fn open_named_session(
+    request: OpenSessionRequest,
+) -> Result<ParameterSession, (String, Option<String>)> {
     ParameterRuntime::default()
         .open_session(request)
-        .map_err(|error| match error {
-            ParameterRuntimeError::Session(error) => format_session_error(error),
-            ParameterRuntimeError::Profile(error) => format_profile_error(error),
-            other => other.to_string(),
+        .map_err(|error| {
+            let parameter = match &error {
+                ParameterRuntimeError::Profile(ProfileError::Diagnostics(diagnostics))
+                | ParameterRuntimeError::Session(ParameterSessionError::Profile(
+                    ProfileError::Diagnostics(diagnostics),
+                )) => diagnostics
+                    .iter()
+                    .find_map(|diagnostic| diagnostic.parameter.clone()),
+                _ => None,
+            };
+            let message = match error {
+                ParameterRuntimeError::Session(error) => format_session_error(error),
+                ParameterRuntimeError::Profile(error) => format_profile_error(error),
+                other => other.to_string(),
+            };
+            (message, parameter)
         })
 }
 

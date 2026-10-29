@@ -77,6 +77,7 @@ fn main() -> Result<(), Error> {
         padding: PaddingRows::Omitted,
         tolerance: MergeTolerance::default(),
         history: Vec::new(),
+        creation_date: "2026-10-29T00:00:00+00:00".to_string(),
     };
     while let Some(argument) = args.next() {
         match argument.as_str() {

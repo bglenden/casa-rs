@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
@@ -179,9 +179,11 @@ pub fn task_front_end()
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outcome = run(options_from(task)?)?;
     let success = if task.surface() == "plotms" {
-        TaskSuccess::new(&(), &outcome.result)?
+        TaskSuccess::new(CasaValue::None, &outcome.result)?
     } else {
-        TaskSuccess::new(&outcome.result.summary, &outcome.result)?
+        let summary = serde_json::to_value(&outcome.result.summary)
+            .map_err(|error| TaskFailure::execution(format!("serialize the summary: {error}")))?;
+        TaskSuccess::new(CasaValue::from_plain_json(&summary), &outcome.result)?
     };
     let success = success.with_text(outcome.text);
     Ok(match outcome.note {

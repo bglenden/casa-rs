@@ -183,20 +183,31 @@ mod tests {
                 else {
                     continue;
                 };
-                if default == "none" {
+                // A surface that mimics a CASA task takes CASA's absence,
+                // `''`; the others spell it `none` (#931). Either way the
+                // provider omits it.
+                let absence = if surface.casa_task().is_some() {
+                    ""
+                } else {
+                    "none"
+                };
+                let adapter = binding
+                    .projections
+                    .provider
+                    .as_ref()
+                    .map(|projection| &projection.adapter);
+                if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
-                        binding
-                            .projections
-                            .provider
-                            .as_ref()
-                            .map(|projection| &projection.adapter),
+                        adapter,
                         Some(&crate::ValueAdapter::OmitNone),
                         "{}.{}",
                         surface.id(),
                         binding.name
                     );
                 }
-                assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                if surface.casa_task().is_none() {
+                    assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                }
             }
         }
     }
@@ -264,7 +275,8 @@ mod tests {
     fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 8);
+        assert_eq!(surface.casa_task(), Some("simobserve"));
         let names: Vec<&str> = surface
             .bindings()
             .iter()
@@ -322,7 +334,10 @@ mod tests {
                 binding.name
             );
         }
-        // Contract 4's casa-rs-only profiles are refused, not migrated.
+        // simobserve is current-only (ADR-0012): a profile of any earlier
+        // contract is refused, not migrated. That holds for contract 4's
+        // casa-rs-only profiles and for contract 7's, which differ from 8
+        // only in naming the CASA task (#931 4b).
         assert!(surface.migrations().is_empty());
     }
 
@@ -608,7 +623,9 @@ mod tests {
                 "flagdata.mode",
                 "flagmanager.mode",
                 "imhead.mode",
+                "immath.mode",
                 "impbcor.mode",
+                "impv.mode",
             ]
             .into_iter()
             .map(str::to_string)

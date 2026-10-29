@@ -34,6 +34,7 @@ mod inputs;
 pub(crate) mod lockstep;
 pub(crate) mod losses;
 mod memory;
+mod msv2_ephemeris;
 mod msv2_identity;
 mod msv2_pointing;
 mod msv2_rows;
@@ -215,6 +216,9 @@ pub struct CreationOptions {
     /// parameters). The inputs' own history is not carried
     /// ([`Loss::Table`]).
     pub history: Vec<HistoryRow>,
+    /// The creation time recorded, ISO 8601: the date each ephemeris
+    /// table written states (`VS_CREATE`, `VS_DATE`).
+    pub creation_date: String,
 }
 
 /// One `HISTORY` row a plan writes.
