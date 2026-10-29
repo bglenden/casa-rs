@@ -68,13 +68,17 @@ fn write_fromshape(path: &Path, units: &str, masked: bool) {
     use casa_types::measures::frequency::FrequencyRef;
     let arcmin = std::f64::consts::PI / 180.0 / 60.0;
     let mut coords = CoordinateSystem::new();
-    coords.add_coordinate(DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
-        [0.0, 0.0],
-        [-arcmin, arcmin],
-        [2.0, 2.0],
-    ));
+    coords.add_coordinate(
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-arcmin, arcmin],
+            [2.0, 2.0],
+        )
+        .with_world_units(["'", "'"])
+        .expect("arcminutes"),
+    );
     coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     coords.add_coordinate(SpectralCoordinate::new(
         FrequencyRef::LSRK,
@@ -106,17 +110,38 @@ fn write_fromshape(path: &Path, units: &str, masked: bool) {
     image.save().expect("save image");
 }
 
-/// The one value of the one-element `float64` array `key` of `record`.
-fn statistic(record: &CasaValue, key: &str) -> f64 {
+/// The entry `key` of `record`.
+fn entry<'a>(record: &'a CasaValue, key: &str) -> &'a CasaValue {
     let CasaValue::Dict { entries } = record else {
         panic!("not a record: {record:?}");
     };
-    let entry = entries
+    &entries
         .iter()
         .find(|entry| entry.key == CasaKey::String(key.to_string()))
-        .unwrap_or_else(|| panic!("no {key}"));
-    match &entry.value {
+        .unwrap_or_else(|| panic!("no {key}"))
+        .value
+}
+
+/// The one value of the one-element `float64` array `key` of `record`.
+fn statistic(record: &CasaValue, key: &str) -> f64 {
+    match entry(record, key) {
         CasaValue::FloatArray { data, shape, .. } if shape == &[1] => data[0].0,
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
+/// The `float64` array `key` of `record`.
+fn floats(record: &CasaValue, key: &str) -> Vec<f64> {
+    match entry(record, key) {
+        CasaValue::FloatArray { data, .. } => data.iter().map(|value| value.0).collect(),
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
+/// The `str` array `key` of `record`.
+fn texts<'a>(record: &'a CasaValue, key: &str) -> &'a [String] {
+    match entry(record, key) {
+        CasaValue::StrArray { data, .. } => data,
         other => panic!("{key}: {other:?}"),
     }
 }
@@ -353,6 +378,63 @@ fn imstat_of_no_pixels_returns_empty_statistics() {
             other => panic!("{:?}: {other:?}", entry.key),
         }
     }
+}
+
+/// `imhead` presents each coordinate in the units the image stores it in,
+/// and `hasmask` says whether a mask applies, as CASA 6.7.6.14's does for
+/// its own `fromshape` image (values from CASA's `imhead`).
+#[test]
+fn imhead_presents_stored_units_and_the_active_mask_as_casa_does() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("head.im");
+    write_fromshape(&image, "Jy/beam", false);
+    let summary = returned(workspace.path(), "imhead", json!({"imagename": image}));
+    assert_eq!(texts(&summary, "axisunits"), ["'", "'", "", "Hz"]);
+    assert_eq!(floats(&summary, "incr"), [-1.0, 1.0, 1.0, 1000.0]);
+    assert_eq!(floats(&summary, "refval"), [0.0, 0.0, 1.0, 1.415e9]);
+    assert_eq!(floats(&summary, "refpix"), [2.0, 2.0, 0.0, 2.0]);
+    assert_eq!(
+        entry(&summary, "hasmask"),
+        &CasaValue::Bool { value: false }
+    );
+    let list = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": image, "mode": "list"}),
+    );
+    for (key, expected) in [
+        ("cunit1", CasaValue::string("'")),
+        ("cdelt1", CasaValue::float(-1.0)),
+        ("cdelt2", CasaValue::float(1.0)),
+        ("crval4", CasaValue::float(1.415e9)),
+        ("cunit4", CasaValue::string("Hz")),
+    ] {
+        assert_eq!(entry(&list, key), &expected, "{key}");
+    }
+    // A stored mask that is not the default does not apply.
+    let mut stored = Image::open(&image).expect("open image");
+    stored
+        .make_mask("allmasked", false, true)
+        .expect("make mask");
+    stored.save().expect("save image");
+    drop(stored);
+    let summary = returned(workspace.path(), "imhead", json!({"imagename": image}));
+    assert_eq!(
+        entry(&summary, "hasmask"),
+        &CasaValue::Bool { value: false }
+    );
+    assert_eq!(entry(&summary, "defaultmask"), &CasaValue::string(""));
+    assert_eq!(texts(&summary, "masks"), ["allmasked"]);
+    let mut stored = Image::open(&image).expect("open image");
+    stored.set_default_mask("allmasked").expect("set mask");
+    stored.save().expect("save image");
+    drop(stored);
+    let summary = returned(workspace.path(), "imhead", json!({"imagename": image}));
+    assert_eq!(entry(&summary, "hasmask"), &CasaValue::Bool { value: true });
+    assert_eq!(
+        entry(&summary, "defaultmask"),
+        &CasaValue::string("allmasked")
+    );
 }
 
 #[test]

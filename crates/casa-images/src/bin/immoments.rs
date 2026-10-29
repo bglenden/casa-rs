@@ -56,7 +56,7 @@ fn one_moment(moments: &[i64]) -> Result<i32, TaskFailure> {
 fn include_range(values: &[f64]) -> Result<Option<[f64; 2]>, TaskFailure> {
     match *values {
         [] => Ok(None),
-        [value] if value == -1.0 => Ok(None),
+        [-1.0] => Ok(None),
         [value] => Ok(Some([-value.abs(), value.abs()])),
         [a, b] => Ok(Some([a.min(b), a.max(b)])),
         _ => Err(TaskFailure::validation(format!(

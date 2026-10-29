@@ -126,6 +126,39 @@ fn immoments_takes_casas_moments_and_includepix() {
     assert!(!root.join("two.mom").exists());
 }
 
+/// A 4x4 direction image with one channel per value of `spectrum`, the
+/// same spectrum at every direction pixel, in Jy/beam.
+fn write_spectrum_cube(path: &Path, spectrum: &[f32]) {
+    use casa_coordinates::{
+        CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
+    };
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
+    use ndarray::{ArrayD, IxDyn};
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [1.2, -0.4],
+        [-2.0e-6, 3.0e-6],
+        [1.5, 1.5],
+    ));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.415e9,
+        1.0e3,
+        0.0,
+        1.415e9,
+    ));
+    let shape = vec![4, 4, spectrum.len()];
+    let mut image =
+        casa_images::PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
+    let data = ArrayD::from_shape_fn(IxDyn(&shape), |index| spectrum[index[2]]);
+    image.put_slice(&data, &[0, 0, 0]).unwrap();
+    image.set_units("Jy/beam").unwrap();
+    image.save().unwrap();
+}
+
 /// The first pixel of the moment image at `path` and whether it is valid.
 fn moment_pixel(path: &Path) -> (f32, bool) {
     let image = casa_images::PagedImage::<f32>::open(path).unwrap();
@@ -144,7 +177,7 @@ fn moment_pixel(path: &Path) -> (f32, bool) {
 fn immoments_includepix_is_casas_inclusive_range() {
     let workspace = tempfile::tempdir().unwrap();
     let root = workspace.path();
-    support::write_spectrum_cube(&root.join("cube.image"), &[-10.0, -2.0, 3.0, 11.0]);
+    write_spectrum_cube(&root.join("cube.image"), &[-10.0, -2.0, 3.0, 11.0]);
     let immoments = env!("CARGO_BIN_EXE_immoments");
     for (index, (includepix, expected)) in [
         // Only -1 (or no value) includes every pixel.

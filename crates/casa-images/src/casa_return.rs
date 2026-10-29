@@ -74,10 +74,11 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             "defaultmask",
             CasaValue::string(summary.default_mask.clone().unwrap_or_default()),
         ),
+        // Whether a mask applies: the default mask, not any stored one.
         (
             "hasmask",
             CasaValue::Bool {
-                value: !summary.masks.is_empty(),
+                value: summary.default_mask.is_some(),
             },
         ),
         ("imagetype", CasaValue::string(summary.image_type.clone())),

@@ -1192,11 +1192,20 @@ fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxi
     let mut axis = 0usize;
     for coord_idx in 0..image.coordinates().n_coordinates() {
         let coord = image.coordinates().coordinate(coord_idx);
-        let refs = coord.reference_value();
+        let mut refs = coord.reference_value();
         let refpix = coord.reference_pixel();
-        let increments = coord.increment();
+        let mut increments = coord.increment();
         let names = coord.axis_names();
-        let units = coord.axis_units();
+        let mut units = coord.axis_units();
+        // A direction coordinate presents its values in the units it is
+        // stored in, as casacore's does, though it computes in radians.
+        if let casa_coordinates::CoordinateModel::Direction(direction) = coord {
+            refs = direction.in_world_units([refs[0], refs[1]]).to_vec();
+            increments = direction
+                .in_world_units([increments[0], increments[1]])
+                .to_vec();
+            units = direction.world_units().to_vec();
+        }
         for axis_in_coord in 0..coord.n_pixel_axes() {
             summaries.push(ImageAxisSummary {
                 axis,
