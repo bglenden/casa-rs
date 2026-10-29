@@ -2,7 +2,7 @@
 //! CASA ephemeris tables for tests: the layout casacore's `MeasComet`
 //! reads (an `IERS` table of regularly spaced samples with its `MJD0`,
 //! `dMJD` and `VS_*` keywords) and XRADIO's converter reads (`GeoLong`,
-//! `GeoLat`, `GeoDist`, `obsloc`, `posrefsys`), both as a MeasurementSet
+//! `GeoLat`, `GeoDist`, `obsloc`, `posrefsys`, the columns' `UNIT`), both as a MeasurementSet
 //! field's attached ephemeris (`FIELD/EPHEM<id>_<name>.tab`) and as a
 //! `phasecenter` table.
 
@@ -15,6 +15,16 @@ use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 /// distance `Rho` (AU) and radial velocity `RadVel` (AU a day).
 pub type EphemerisRow = [f64; 5];
 
+/// The frame of an ephemeris's directions, as its `posrefsys` keyword
+/// names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EphemerisFrame {
+    /// `ICRF/ICRS`.
+    Icrs,
+    /// `ICRF/J2000.0`.
+    J2000,
+}
+
 /// Write a geocentric ICRS ephemeris of body `name` at `path`.
 ///
 /// # Panics
@@ -22,6 +32,20 @@ pub type EphemerisRow = [f64; 5];
 /// If the table cannot be built or saved, or `rows` are fewer than two or
 /// not equally spaced in time, as `MeasComet` requires.
 pub fn write_ephemeris_table(path: &Path, name: &str, rows: &[EphemerisRow]) {
+    write_ephemeris_table_in(path, name, rows, EphemerisFrame::Icrs);
+}
+
+/// [`write_ephemeris_table`] with its directions in `frame`.
+///
+/// # Panics
+///
+/// As [`write_ephemeris_table`].
+pub fn write_ephemeris_table_in(
+    path: &Path,
+    name: &str,
+    rows: &[EphemerisRow],
+    frame: EphemerisFrame,
+) {
     let step = rows[1][0] - rows[0][0];
     assert!(
         rows.windows(2)
@@ -49,13 +73,29 @@ pub fn write_ephemeris_table(path: &Path, name: &str, rows: &[EphemerisRow]) {
             ))
             .expect("an ephemeris row");
     }
+    for (column, unit) in ["MJD", "RA", "DEC", "Rho", "RadVel"]
+        .into_iter()
+        .zip(["d", "deg", "deg", "AU", "AU/d"])
+    {
+        table.set_column_keywords(
+            column,
+            RecordValue::new(vec![RecordField::new(
+                "UNIT",
+                Value::Scalar(ScalarValue::String(unit.to_string())),
+            )]),
+        );
+    }
+    let posrefsys = match frame {
+        EphemerisFrame::Icrs => "ICRF/ICRS",
+        EphemerisFrame::J2000 => "ICRF/J2000.0",
+    };
     for (keyword, value) in [
         ("VS_CREATE", "2026/10/29/00:00"),
         ("VS_DATE", "2026/10/29/00:00"),
         ("VS_VERSION", "0001.0001"),
         ("VS_TYPE", "Table of comet/planetary positions"),
         ("NAME", name),
-        ("posrefsys", "ICRF/ICRS"),
+        ("posrefsys", posrefsys),
         ("obsloc", "GEOCENTRIC"),
     ] {
         table.keywords_mut().push(RecordField::new(
@@ -100,9 +140,30 @@ pub fn write_field_ephemeris(
     name: &str,
     rows: &[EphemerisRow],
 ) -> PathBuf {
+    write_field_ephemeris_in(
+        measurement_set,
+        ephemeris_id,
+        name,
+        rows,
+        EphemerisFrame::Icrs,
+    )
+}
+
+/// [`write_field_ephemeris`] with its directions in `frame`.
+///
+/// # Panics
+///
+/// As [`write_field_ephemeris`].
+pub fn write_field_ephemeris_in(
+    measurement_set: &Path,
+    ephemeris_id: i32,
+    name: &str,
+    rows: &[EphemerisRow],
+    frame: EphemerisFrame,
+) -> PathBuf {
     let path = measurement_set
         .join("FIELD")
         .join(format!("EPHEM{ephemeris_id}_{name}.tab"));
-    write_ephemeris_table(&path, name, rows);
+    write_ephemeris_table_in(&path, name, rows, frame);
     path
 }

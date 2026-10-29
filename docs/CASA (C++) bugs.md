@@ -12,7 +12,8 @@ CASA behaviours casa-rs follows for parity:
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
-[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field).
+[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
+[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -473,6 +474,38 @@ A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
 division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
+
+## `tclean` images DATA when CORRECTED_DATA is missing, and says nothing
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour casa-rs follows, with a warning (simulation plan
+  §3, decision 6)
+- Affected code: `synthesis/ImagerObjects/SIMapperCollection.cc` (`grid`),
+  `synthesis/TransformMachines2/FTMachine.cc` (`makeImage`),
+  `synthesis/ImagerObjects/SynthesisImagerVi2.cc` (`selectData`)
+
+`datacolumn='corrected'` sets `FTMachine::CORRECTED` in `selectData`
+without looking at the MeasurementSet. When a VisBuffer has no corrected
+visibilities, `SIMapperCollection::grid` and `FTMachine::makeImage` switch
+to `OBSERVED`, so `tclean` images `DATA` (less the model in a major cycle).
+`SynthesisImager::selectData` once logged "CORRECTED_DATA column does not
+exist. Using DATA column instead"; that block is commented out, and CASA
+6.7.6's `libcasacpp_synthesis` does not contain the message, so CASA logs
+no message for the fallback.
+
+casa-rs's simulator writes `DATA` only, so its imager follows the fallback
+and logs CASA's old message as a warning, since the column imaged is not
+the one asked for.
+
+VisibilityIterator2's `existsColumn` also counts `CORRECTED_DATA` as
+missing in an iteration chunk whose first row's cell is undefined
+(`isDefined(0)` on the chunk's attached table), so CASA can image `DATA`
+chunk by chunk from a partly written column. casa-rs decides by the
+column's presence alone and images an existing `CORRECTED_DATA` as before.
+That is a deliberate scope limit, not full parity: casa-tables'
+metadata-only probe (`array_cell_is_defined_uncached`) answers only for
+lazy, disk-backed `TiledShapeStMan` columns, and one probe would not
+reproduce the per-chunk rule.
 
 ## The Airy beam's blockage term uses the inverse length ratio
 

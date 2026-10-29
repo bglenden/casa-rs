@@ -311,7 +311,11 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
 /// unflagged rows fills its backends' batches, and onto a linear cube of
 /// two output channels. On the CPU that is its heap; on Metal its heap and
 /// its device buffers together (`casa_imaging_metal::device_bytes`), the
-/// models' device copies, which are the caller's, made beforehand.
+/// models' device copies, which are the caller's, made beforehand. Each
+/// case is measured over a window that frees what it allocates
+/// ([`held_in_a_clean_window`]), and each case's team lives until the law
+/// ends: rayon does not join a dropped pool's threads, which exit in their
+/// own time, freeing and allocating inside a later case's window.
 #[test]
 fn the_block_predictor_holds_at_most_its_bytes() {
     const IMAGE: usize = 16;
@@ -330,6 +334,7 @@ fn the_block_predictor_holds_at_most_its_bytes() {
     } else {
         eprintln!("skipped on Metal: no Metal device");
     }
+    let mut teams = Vec::new();
     for resampler in [direct, linear].map(SpectralResampler::predicting_autocorrelations) {
         let planes = resampler.basis().planes();
         let operators = [1, 2].map(|_| operator_of(IMAGE, GridPrecision::F32, resampler.basis()));
@@ -352,23 +357,26 @@ fn the_block_predictor_holds_at_most_its_bytes() {
                         model: (&models[index]).into(),
                     })
                     .collect::<Vec<_>>();
-                predictor_holds_at_most_its_bytes(&domains, backend, workers, NATIVES);
+                teams.push(WorkerTeam::new(workers).expect("team"));
+                let team = teams.last().expect("this case's team");
+                predictor_holds_at_most_its_bytes(&domains, backend, team, NATIVES);
             }
         }
     }
 }
 
-/// [`the_block_predictor_holds_at_most_its_bytes`] for one case: 100 rows
-/// of `channels` channels in blocks of 37. On Metal the predictor also
-/// adds three terms of noise on the device as it predicts (#855), and holds
-/// at most [`BlockPredictor::noise_bytes`] more.
+/// [`the_block_predictor_holds_at_most_its_bytes`] for one case on `team`:
+/// 100 rows of `channels` channels in blocks of 37. On Metal the predictor
+/// also adds three terms of noise on the device as it predicts (#855), and
+/// holds at most [`BlockPredictor::noise_bytes`] more.
 fn predictor_holds_at_most_its_bytes(
     domains: &[PredictionDomain<'_>],
     backend: BackendChoice,
-    workers: usize,
+    team: &WorkerTeam,
     channels: usize,
 ) {
     const BLOCK_ROWS: usize = 37;
+    let workers = team.workers();
     let label = format!(
         "{backend:?}, {:?}, {workers} workers, {} domains",
         domains[0].resampler.basis(),
@@ -382,7 +390,6 @@ fn predictor_holds_at_most_its_bytes(
         natives(channels),
     );
     let shape = prediction_shape(&rows, BLOCK_ROWS);
-    let team = WorkerTeam::new(workers).expect("team");
     let blocks = (0..rows.rows.len())
         .step_by(BLOCK_ROWS)
         .map(|start| prediction_block(&rows, start..(start + BLOCK_ROWS).min(rows.rows.len())))
@@ -403,25 +410,22 @@ fn predictor_holds_at_most_its_bytes(
         let block = &blocks[index];
         let out = &mut out[..block.len() * cells];
         match backend {
-            BackendChoice::Cpu => predictor.predict_into(block, &team, out),
+            BackendChoice::Cpu => predictor.predict_into(block, team, out),
             BackendChoice::Metal => {
                 let start = index * BLOCK_ROWS;
                 let noise = DeviceNoise {
                     rows: &noise_rows[start..start + block.len()],
                     terms: &terms,
                 };
-                predictor.predict_into_with_noise(block, &team, out, noise)
+                predictor.predict_into_with_noise(block, team, out, noise)
             }
         }
     };
     // What the caller and the team hold apart from the predictor is made
     // first: the models' device copies on Metal, and what the team's
-    // threads allocate when they first park. Each boxes its condition
-    // variable then (a 48-byte `pthread_cond_t` on macOS): measuring at
-    // once on a just-built team, six of these laws at a time counted one or
-    // two such allocations from the team's threads in 77 of 90 runs, and
-    // after a 50 ms pause in none of 90. A whole prediction on the team and
-    // the pause let every thread park first.
+    // threads allocate when they first park ([`held_in_a_clean_window`]).
+    // A whole prediction on the team and a 50 ms pause let most threads
+    // park first, so a case rarely needs a second window.
     {
         let mut warm = BlockPredictor::new(domains, backend, shape, workers, false).expect("warm");
         for index in 0..blocks.len() {
@@ -431,19 +435,18 @@ fn predictor_holds_at_most_its_bytes(
     std::thread::sleep(std::time::Duration::from_millis(50));
     let admitted = BlockPredictor::bytes(domains, backend, shape, workers)
         + BlockPredictor::noise_bytes(backend, shape, terms.len());
-    let device = casa_imaging_metal::device_bytes();
-    let baseline = LIVE.load(Ordering::Relaxed);
-    PEAK.store(baseline, Ordering::Relaxed);
-    MEASURING.store(true, Ordering::Relaxed);
-    let mut predictor =
-        BlockPredictor::new(domains, backend, shape, workers, false).expect("predictor");
-    for index in 0..blocks.len() {
-        predict(&mut predictor, index, &mut out).expect("prediction");
-    }
-    let device_held = casa_imaging_metal::device_bytes().saturating_sub(device);
-    drop(predictor);
-    MEASURING.store(false, Ordering::Relaxed);
-    let held = PEAK.load(Ordering::Relaxed) - baseline + device_held;
+    let (heap_held, device_held) = held_in_a_clean_window(&label, || {
+        let device = casa_imaging_metal::device_bytes();
+        let mut predictor =
+            BlockPredictor::new(domains, backend, shape, workers, false).expect("predictor");
+        for index in 0..blocks.len() {
+            predict(&mut predictor, index, &mut out).expect("prediction");
+        }
+        let device_held = casa_imaging_metal::device_bytes().saturating_sub(device);
+        drop(predictor);
+        device_held
+    });
+    let held = heap_held + device_held;
     assert!(
         out.iter().any(|value| *value != Complex32::default()),
         "{label}: the predictor predicts"
@@ -453,6 +456,49 @@ fn predictor_holds_at_most_its_bytes(
         "{label}: the predictor held {held} bytes ({device_held} on the device) against \
          {admitted} admitted"
     );
+}
+
+/// Windows [`held_in_a_clean_window`] measures before it fails the law:
+/// under the load below, no case of 2,400 needed more than four.
+const WINDOWS: usize = 8;
+
+/// The peak live bytes over the baseline while `run` runs, with what `run`
+/// returns, in the first of at most [`WINDOWS`] windows that ends where it
+/// began.
+///
+/// `run` frees what it allocates, so a window that ends anywhere else also
+/// counted another owner's allocation or free. A team's thread boxes its
+/// sleep condition variable the first time it blocks: rayon-core's
+/// `Sleep::sleep` waits on a `std` `Condvar`, which on macOS boxes its
+/// 48-byte `pthread_cond_t` at first use. The thread blocks only once it
+/// has yielded some thirty times without work, and under load that can fall
+/// inside a window, which then holds and keeps the box: measured in one
+/// window, 31 of 100 runs of this law, four at a time beside twelve busy
+/// loops on the 8-core Mac mini, held 48 to 144 bytes over. Each thread
+/// boxes it once, so such a window is measured again; a `run` that keeps
+/// bytes in every window fails.
+fn held_in_a_clean_window<T>(label: &str, mut run: impl FnMut() -> T) -> (u64, T) {
+    let mut kept = Vec::with_capacity(WINDOWS);
+    loop {
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = run();
+        MEASURING.store(false, Ordering::Relaxed);
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        let end = LIVE.load(Ordering::Relaxed);
+        if end == baseline {
+            if !kept.is_empty() {
+                eprintln!("{label}: measured again after windows that kept {kept:?} bytes");
+            }
+            return (held, result);
+        }
+        kept.push(i128::from(end) - i128::from(baseline));
+        assert!(
+            kept.len() < WINDOWS,
+            "{label}: none of {WINDOWS} windows ended where it began; they kept {kept:?} bytes"
+        );
+    }
 }
 
 /// #449: a region pass on the CPU whose owners pipeline over two sets of

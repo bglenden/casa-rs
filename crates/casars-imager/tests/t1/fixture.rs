@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
-use casa_imaging_application::geometry_law::compare_geometry;
+use casa_imaging_application::geometry_law::{compare_geometry, compare_stores};
 use casa_imaging_application::route_law;
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{
@@ -386,6 +386,26 @@ impl Observation {
     /// Imaging port step 3b's equality law (#932) alone for `controls`,
     /// without imaging: for a geometry no imaging law of its own covers.
     pub fn assert_geometry(&self, name: &str, controls: Value) {
+        assert_geometry_law(name, &self.request(name, controls));
+    }
+
+    /// The same law between stores (#932, #942): the batch geometry of the
+    /// rows `controls` image equals theirs in `converted`, another store of
+    /// the same observation (an MSv4 conversion), to the law's 1e-12.
+    pub fn assert_store_geometry(&self, name: &str, controls: Value, converted: &Path) {
+        let request = self.request(name, controls);
+        let comparison = compare_stores(&request, &run_context(&request), converted)
+            .expect("both stores' geometry");
+        eprintln!("{name}: store geometry law {comparison:?}");
+        assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
+        assert!(
+            comparison.holds(),
+            "{name}: the converted store's geometry departs: {comparison:?}"
+        );
+    }
+
+    /// The request of `controls` merged over the T1 geometry.
+    fn request(&self, name: &str, controls: Value) -> ImagingRequest {
         let mut parameters = json!({
             "vis": self.measurement_set,
             "imagename": self.root.path().join(name),
@@ -401,8 +421,9 @@ impl Observation {
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
-        let (_, request) = resolve_request(&ImagingParameters(parameters)).expect("request");
-        assert_geometry_law(name, &request);
+        resolve_request(&ImagingParameters(parameters))
+            .expect("request")
+            .1
     }
 
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
@@ -504,13 +525,8 @@ impl Observation {
 /// quantity to its scale: UVW and phase shift to the baseline length,
 /// pixels to their magnitude, angles in radians).
 fn assert_geometry_law(name: &str, request: &ImagingRequest) {
-    let context = RunContext {
-        host: HostResources::detect().expect("host resources"),
-        policy: request.resource_policy(),
-        cancel: Cancel::default(),
-        summary: None,
-    };
-    let comparison = compare_geometry(request, &context).expect("both geometry routes");
+    let comparison =
+        compare_geometry(request, &run_context(request)).expect("both geometry routes");
     eprintln!("{name}: geometry law {comparison:?}");
     assert!(comparison.rows > 0, "{name}: no rows to compare");
     assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
@@ -519,6 +535,16 @@ fn assert_geometry_law(name: &str, request: &ImagingRequest) {
         comparison.holds(),
         "{name}: batch geometry departs from today's: {comparison:?}"
     );
+}
+
+/// A run context for `request` on this host.
+fn run_context(request: &ImagingRequest) -> RunContext {
+    RunContext {
+        host: HostResources::detect().expect("host resources"),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    }
 }
 
 /// Imaging port's route law (#932, steps 4 and 5): the run imaged again
