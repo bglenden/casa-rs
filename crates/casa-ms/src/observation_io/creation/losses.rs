@@ -3,16 +3,20 @@
 //! anything is written.
 //!
 //! The inventory is of whole tables and columns: an MSv2's `SIGMA`,
-//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
-//! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
-//! more than their intents, `FEED` receptors that vary in time (of which
-//! the catalogue keeps the last row, as casacore's `MSIter` does), MAIN
-//! columns outside the boundary's roles and subtables the catalogue does
-//! not carry (system calibration, weather, flag commands, history, Doppler,
-//! frequency offsets, sources, and any further subtable a keyword names);
-//! an MSv4's sub-datasets and main-dataset variables the writer does not
-//! write; and in either the data groups not selected; and, into an MSv4,
-//! antennas no partition's baselines name. What pointing carries is
+//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s other than 0,
+//! `FEED` receptors that vary in time (of which the catalogue keeps the
+//! last row, as casacore's `MSIter` does), MAIN columns outside the
+//! boundary's roles and subtables the catalogue does not carry (system
+//! calibration, weather, flag commands, history, Doppler, frequency
+//! offsets, and any further subtable a keyword names), and into an MSv4,
+//! which holds less of them than the catalogue, its `SOURCE` rows,
+//! `PROCESSOR_ID`s other than 0, a `PROCESSOR` of more than one row and
+//! `STATE` rows that say more than their intents; an MSv4's sub-datasets
+//! and main-dataset variables the writer does not write; and in either the
+//! data groups not selected; and, into an MSv4, antennas no partition's
+//! baselines name. What an MSv2 destination's subtables write as MSv2's
+//! default is found by writing them ([`super::msv2_tables::rehearse`]).
+//! What pointing carries is
 //! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried. Fields that follow
@@ -187,7 +191,6 @@ const UNCARRIED_SUBTABLES: &[SubtableId] = &[
     SubtableId::History,
     SubtableId::Doppler,
     SubtableId::FreqOffset,
-    SubtableId::Source,
 ];
 
 /// Rows of `FLAG_ROW` read at a time.
@@ -229,7 +232,7 @@ fn msv2(
             "WEIGHT (the row summary beside WEIGHT_SPECTRUM)".to_string(),
         ));
     }
-    main_keys(main, losses)?;
+    main_keys(main, destination, losses)?;
     if crate::observation_io::msv2::catalogue::read_feeds(&ms)?
         .varying()
         .is_some()
@@ -240,7 +243,7 @@ fn msv2(
                 .to_string(),
         ));
     }
-    subtables(&ms, losses)
+    subtables(&ms, destination, losses)
 }
 
 /// Refuse fields whose direction moves, among those `destination` writes:
@@ -281,11 +284,16 @@ fn refuse_moving_fields(
     Ok(())
 }
 
-/// MAIN's keys the destination does not hold: a set `FLAG_ROW`, and an
-/// `ARRAY_ID` or `PROCESSOR_ID` above the 0 an MSv2 destination writes (an
-/// MSv4 has neither), read in row chunks. A negative id names nothing:
+/// MAIN's keys the destination does not hold: a set `FLAG_ROW`, an
+/// `ARRAY_ID` above the 0 an MSv2 destination writes, and into an MSv4,
+/// which has neither, a `PROCESSOR_ID` above 0 (an MSv2 destination writes
+/// each partition's), read in row chunks. A negative id names nothing:
 /// casacore's UVFITS filler writes `PROCESSOR_ID` -1 in every row.
-fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+fn main_keys(
+    main: &casa_tables::Table,
+    destination: Store,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
     let rows = main.row_count();
     let (mut flags, mut arrays, mut processors) = (Vec::new(), Vec::new(), Vec::new());
     let (mut flagged, mut array, mut processor) = (false, false, false);
@@ -323,23 +331,47 @@ fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), Ob
     if array {
         losses.push(Loss::Column("ARRAY_ID".to_string()));
     }
-    if processor {
+    if processor && destination == Store::Msv4 {
         losses.push(Loss::Column("PROCESSOR_ID".to_string()));
     }
     Ok(())
 }
 
 /// Subtables, and subtable content, the destination does not hold: the
-/// uncarried subtables with rows, any further table a keyword names, a
-/// `PROCESSOR` of more than one row or of another type than a correlator
-/// (an MSv2 destination writes one correlator), and `STATE` rows that say
-/// more than their `OBS_MODE` (an MSv2 destination writes `SIG`, and no
-/// sub-scan, calibration or load).
-fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+/// uncarried subtables with rows, any further table a keyword names, and
+/// into an MSv4 (an MSv2 destination writes them from the catalogue)
+/// `SOURCE` rows, a `PROCESSOR` of more than one row or of another type
+/// than a correlator, and `STATE` rows that say more than their `OBS_MODE`.
+fn subtables(
+    ms: &crate::MeasurementSet,
+    destination: Store,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
     for id in UNCARRIED_SUBTABLES {
         if ms.subtable(*id).is_some_and(|table| table.row_count() > 0) {
             losses.push(Loss::Table(id.name().to_string()));
         }
+    }
+    let main = ms.main_table();
+    let standard: Vec<&str> = SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(UNCARRIED_SUBTABLES)
+        .chain(&[SubtableId::Pointing, SubtableId::Source])
+        .map(SubtableId::name)
+        .collect();
+    for field in main.keywords().fields() {
+        if matches!(field.value, Value::TableRef(_)) && !standard.contains(&field.name.as_str()) {
+            losses.push(Loss::Table(field.name.clone()));
+        }
+    }
+    if destination == Store::Msv2 {
+        return Ok(());
+    }
+    if ms
+        .subtable(SubtableId::Source)
+        .is_some_and(|table| table.row_count() > 0)
+    {
+        losses.push(Loss::Table(SubtableId::Source.name().to_string()));
     }
     let processors = ms.processor().map_err(storage)?;
     let correlator = |row| {
@@ -363,18 +395,6 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
                 "STATE SUB_SCAN, CAL, LOAD, SIG and REF".to_string(),
             ));
             break;
-        }
-    }
-    let main = ms.main_table();
-    let standard: Vec<&str> = SubtableId::ALL_REQUIRED
-        .iter()
-        .chain(UNCARRIED_SUBTABLES)
-        .chain(&[SubtableId::Pointing])
-        .map(SubtableId::name)
-        .collect();
-    for field in main.keywords().fields() {
-        if matches!(field.value, Value::TableRef(_)) && !standard.contains(&field.name.as_str()) {
-            losses.push(Loss::Table(field.name.clone()));
         }
     }
     Ok(())

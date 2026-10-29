@@ -389,7 +389,7 @@ impl MainRows {
             ScalarValue::Int32(feed2 as i32),
             ScalarValue::Bool(false),
             ScalarValue::Int32(entry.observation.0 as i32),
-            ScalarValue::Int32(0),
+            ScalarValue::Int32(self.layout.processor[partition]),
             ScalarValue::Int32(self.layout.state[partition]),
         ];
         for (column, value) in scalars.constant.iter().zip(constants) {

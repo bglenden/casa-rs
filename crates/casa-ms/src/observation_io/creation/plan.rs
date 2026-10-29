@@ -132,6 +132,15 @@ impl CreationPlan {
         found.sort();
         losses::refuse_unaccepted(&found, &options.accept)?;
         refuse_unwritable(catalogue)?;
+        // What writing the subtables defaults or leaves out, found by writing
+        // them in memory.
+        found.extend(msv2_tables::rehearse(
+            catalogue,
+            &spans(observation.as_ref(), &groups[0])?,
+        )?);
+        found.sort();
+        found.dedup();
+        losses::refuse_unaccepted(&found, &options.accept)?;
         let columns = columns
             .into_iter()
             .zip(&groups)
@@ -214,7 +223,7 @@ impl CreationPlan {
                     .map_err(storage)?;
             }
         }
-        let layout = msv2_tables::populate(&mut ms, catalogue, &self.occupancy.spans)?;
+        let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &self.occupancy.spans)?;
         msv2_pointing::write(&mut ms, observation, &self.pointing)?;
         let names = optional.iter().map(|column| column.name()).collect();
         let mut main = MainRows::start(
@@ -308,7 +317,6 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
 
 /// The times the grids of `group` span: the whole observation's, and each
 /// session's edge to edge, as fillers write `TIME_RANGE`.
-#[cfg(feature = "msv4")]
 fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
     let catalogue = observation.catalogue();
     let mut spanned = Spanning::new(catalogue.observations.len());
@@ -454,7 +462,7 @@ pub(crate) fn catalogue_subtables(
     };
     let mut ms =
         MeasurementSet::create_memory(msv2_tables::builder(catalogue, &[])).map_err(storage)?;
-    let layout = msv2_tables::populate(&mut ms, catalogue, &spans)?;
+    let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &spans)?;
     Ok((ms, layout.spectral_window))
 }
 

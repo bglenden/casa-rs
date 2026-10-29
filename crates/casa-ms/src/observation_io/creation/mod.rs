@@ -26,8 +26,10 @@
 
 pub(crate) mod lockstep;
 pub(crate) mod losses;
+mod msv2_identity;
 mod msv2_pointing;
 mod msv2_rows;
+mod msv2_sources;
 mod msv2_tables;
 mod plan;
 pub(crate) mod pointing_plan;
@@ -67,6 +69,10 @@ pub enum Loss {
     /// dataset's `antenna_xds` holds only its baselines' antennas, as
     /// XRADIO's converter writes it, so these are written nowhere.
     UnusedAntennas(usize),
+    /// An MSv2 column the source leaves unstated for some row (an MSv4
+    /// window's IF chain, a flag no store holds), written as MSv2's
+    /// default: the destination states what the source did not.
+    Defaulted(String),
 }
 
 impl Loss {
@@ -81,6 +87,7 @@ impl Loss {
             Self::DataGroup(_) => LossKind::DataGroups,
             Self::Table(_) | Self::UnusedAntennas(_) => LossKind::Tables,
             Self::Column(_) => LossKind::Columns,
+            Self::Defaulted(_) => LossKind::Defaulted,
         }
     }
 }
@@ -97,6 +104,9 @@ impl fmt::Display for Loss {
             Self::Column(column) => write!(f, "{column} is not carried"),
             Self::UnusedAntennas(count) => {
                 write!(f, "antennas no baseline names are not carried ({count})")
+            }
+            Self::Defaulted(column) => {
+                write!(f, "{column} is not stated, and MSv2's default is written")
             }
         }
     }
@@ -117,6 +127,8 @@ pub enum LossKind {
     Tables,
     /// Any [`Loss::Column`].
     Columns,
+    /// Any [`Loss::Defaulted`].
+    Defaulted,
 }
 
 /// What a padded grid cell (one no acquisition filled) becomes in an MSv2

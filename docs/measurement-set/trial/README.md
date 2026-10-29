@@ -973,18 +973,23 @@ datasets other intents. Either way the datasets numbered after the
 first difference can hold other data than XRADIO's of the same name.
 Partitions are converted `workers` at a time.
 
-**To MSv2.** A new MeasurementSet through production's creation path:
+**To MSv2.** A new MeasurementSet through production's creation path, a
+`CreationPlan` over one input (#937 PR B):
 
-- subtables from the catalogue: an antenna and a feed per antenna, a field
-  per field, a source per source in each spectral window, an observation
-  per session whose `TIME_RANGE` spans its integrations edge to edge,
-  polarizations whose products name receptors by their place in the
-  feeds (which must agree), and
-  spectral windows, polarizations, data descriptions and states shared by
-  partitions of equal content (`creation/msv2_tables.rs`). A data
-  description is shared only by partitions whose state or observation
-  differs, since an MSv2 keys partitions by data description, state and
-  observation and would read two alike back as one.
+- subtables from the catalogue (`creation/msv2_tables.rs`,
+  `msv2_identity.rs`, `msv2_sources.rs`): an antenna per antenna, the
+  feeds the partitions' receptors need, and a field, observation, state,
+  processor and source record per catalogue entry, with every member the
+  catalogue states (contract §2's descriptive metadata); a spectral window
+  per catalogue window a partition uses; and polarizations whose products
+  name receptors by their place in the feeds (which must agree). A member
+  the catalogue leaves unstated (an MSv4's IF chain, flags, a session
+  whose extent is not stated, which then spans its integrations edge to
+  edge) is written as MSv2's default and listed as `Loss::Defaulted`; a
+  window no partition uses, and its source records, are table losses. A
+  data description is shared only by partitions whose `OBS_MODE` or
+  observation differs, since an MSv2 keys partitions by data description,
+  `OBS_MODE` and observation and would read two alike back as one.
 - MAIN rows through the variable-shape creation writers
   (`MeasurementSetWritePlan::variable_array_creation`), one hypercube per
   visibility shape, partition after partition, in time and baseline order.
@@ -1193,11 +1198,12 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
 **Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
 other than 0; the MSv4 `processor_info` (written empty, where XRADIO
 writes the `PROCESSOR` row's type and sub-type, so a lone correlator's
-sub-type is not carried; `to_msv2` writes one correlator); fields that follow an ephemeris or whose direction is a
+sub-type is not carried; `to_msv2` writes the catalogue's processors);
+fields that follow an ephemeris or whose direction is a
 polynomial in time, refused in either direction since the MSv2 adapter's
 catalogue would hold an offset or a constant term as the phase centre; MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
-conversion drops `SOURCE` detail, `HISTORY` and `POINTING`'s `NAME`,
-`TARGET` and `TRACKING`, as reported);
+conversion drops `HISTORY` and `POINTING`'s `NAME`, `TARGET` and
+`TRACKING`, as reported);
 a loss inventory at subtable-column level; a v4 → v2 reference converter
 to compare with (XRADIO has none; casacore read-back stands in); MSv2
 creation from parallel workers.

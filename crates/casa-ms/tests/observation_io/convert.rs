@@ -320,10 +320,17 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
         "{refused:?}"
     );
     assert!(!out.exists(), "nothing is written before the refusal");
+    let stated = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
+    let refused = to_msv2(&xradio, &out, &options(&stated));
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("Defaulted")),
+        "what the MSv4 leaves unstated is refused until accepted: {refused:?}"
+    );
+    assert!(!out.exists(), "nothing is written before the refusal");
     let report = to_msv2(
         &xradio,
         &out,
-        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+        &options(&[stated.as_slice(), &[LossKind::Defaulted]].concat()),
     )
     .expect("convert");
     assert!(
@@ -331,6 +338,25 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
         "{:?}",
         report.losses
     );
+    // What XRADIO's MSv4 leaves unstated is written as MSv2's default and
+    // listed; what it states (the reference frequency, the release date)
+    // is written as stated.
+    let defaulted = |column: &str| report.losses.contains(&Loss::Defaulted(column.to_string()));
+    for column in [
+        "SPECTRAL_WINDOW IF_CONV_CHAIN",
+        "FIELD CODE",
+        "OBSERVATION TIME_RANGE",
+        "PROCESSOR TYPE_ID",
+    ] {
+        assert!(defaulted(column), "{column}: {:?}", report.losses);
+    }
+    for column in [
+        "SPECTRAL_WINDOW REF_FREQUENCY",
+        "OBSERVATION RELEASE_DATE",
+        "PROCESSOR TYPE",
+    ] {
+        assert!(!defaulted(column), "{column}: {:?}", report.losses);
+    }
     assert_eq!(
         (report.partitions, report.samples, report.rows),
         (1, 120, 120)
@@ -463,7 +489,7 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
     let v2 = two_windows(root.path());
     let v4 = root.path().join("two_windows.ps.zarr");
     let back = root.path().join("back.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     let report = to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
     let original = casa_ms::MeasurementSet::open(&v2)
@@ -518,7 +544,7 @@ fn padding_becomes_a_flagged_row_or_none_as_declared() {
     ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
     ms.save().expect("save");
     drop(ms);
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     let v4 = root.path().join("sparse.ps.zarr");
     to_msv4(&sparse, &v4, &options(&accept)).expect("to MSv4");
     let padded = |path: &Path| {
@@ -620,7 +646,12 @@ fn weights_varying_over_channels_are_refused() {
     let refused = to_msv2(
         &v4,
         &out,
-        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+        &options(&[
+            LossKind::Sigma,
+            LossKind::Tables,
+            LossKind::Columns,
+            LossKind::Defaulted,
+        ]),
     );
     assert!(
         matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("WEIGHT_SPECTRUM")),
@@ -755,7 +786,7 @@ fn partitions_of_one_window_share_its_name_and_rows() {
     let v2 = two_sessions(root.path(), false);
     let v4 = root.path().join("sessions.ps.zarr");
     let back = root.path().join("back.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     let report = to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     assert_eq!(report.partitions, 2, "one partition per session");
     let converted = open(&v4, &OpenOptions::default()).expect("open");
@@ -1167,7 +1198,7 @@ fn a_round_trip_keeps_the_antenna_order() {
     drop(ms);
     let v4 = root.path().join("order.ps.zarr");
     let back = root.path().join("order.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
     let stations = |path: &Path| subtable_strings(path, casa_ms::SubtableId::Antenna, "STATION");
