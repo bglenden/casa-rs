@@ -241,12 +241,23 @@ impl Columns {
                 .iter()
                 .find(|definition| definition.name == name)
                 .expect("an optional SOURCE column");
-            let schema = match name {
-                "PULSAR_ID" => ColumnSchema::scalar(name, definition.data_type),
-                "POSITION" => ColumnSchema::array_fixed(name, definition.data_type, vec![3]),
-                _ => ColumnSchema::array_variable(name, definition.data_type, Some(1)),
+            // A scalar or fixed-shape column is added with the default every
+            // cell then has until its row is written: MSv2's.
+            let (schema, default) = match name {
+                "PULSAR_ID" => (
+                    ColumnSchema::scalar(name, definition.data_type),
+                    Some(i(-1)),
+                ),
+                "POSITION" => (
+                    ColumnSchema::array_fixed(name, definition.data_type, vec![3]),
+                    Some(f64_array(&[0.0; 3], vec![3])),
+                ),
+                _ => (
+                    ColumnSchema::array_variable(name, definition.data_type, Some(1)),
+                    None,
+                ),
             };
-            table.add_column(schema, None).map_err(storage)?;
+            table.add_column(schema, default).map_err(storage)?;
         }
         Ok(columns)
     }
@@ -294,11 +305,10 @@ impl Columns {
                 .collect();
             row.push(RecordField::new("SYSVEL", f64_array(&values, vec![lines])));
         }
-        if let Some(position) = &record.position {
-            row.push(RecordField::new(
-                "POSITION",
-                f64_array(&position.as_itrf(), vec![3]),
-            ));
+        if self.positions {
+            let position = record.position.as_ref().map(|position| position.as_itrf());
+            let position = notes.or(position, "SOURCE POSITION", || [0.0; 3]);
+            row.push(RecordField::new("POSITION", f64_array(&position, vec![3])));
         }
         if self.pulsars {
             let pulsar = notes.or(record.pulsar_id, "SOURCE PULSAR_ID", || -1);

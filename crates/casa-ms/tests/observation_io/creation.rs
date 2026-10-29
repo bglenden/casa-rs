@@ -18,6 +18,7 @@ use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table};
 use casa_types::measures::MEpoch;
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
@@ -352,6 +353,35 @@ fn stated_msv2(root: &Path) -> PathBuf {
                 .expect("line column");
         }
     }
+    // A scalar and a fixed-shape optional column, which the writer adds
+    // with their defaults.
+    for (column, default) in [
+        (
+            ColumnSchema::scalar("PULSAR_ID", PrimitiveType::Int32),
+            int(-1),
+        ),
+        (
+            ColumnSchema::array_fixed("POSITION", PrimitiveType::Float64, vec![3]),
+            floats(&[0.0; 3], vec![3]),
+        ),
+    ] {
+        if !source
+            .schema()
+            .is_some_and(|schema| schema.contains_column(column.name()))
+        {
+            source.add_column(column, Some(default)).expect("column");
+        }
+    }
+    for row in 0..source.row_count() {
+        set(
+            source,
+            row,
+            &[
+                ("PULSAR_ID", int(7)),
+                ("POSITION", floats(&[6.0e6, 1.0e5, 2.0e5], vec![3])),
+            ],
+        );
+    }
     TableMeasDesc::new_fixed("REST_FREQUENCY", MeasureType::Frequency, "BARY")
         .write(source)
         .expect("REST_FREQUENCY MEASINFO");
@@ -467,7 +497,7 @@ fn described(catalogue: &Catalogue, window: &dyn Fn(WindowId) -> Option<WindowId
             };
             let Some(written) = written else { continue };
             described.push(format!(
-                "{} {written:?} {:?} {:?} {:?} {:?} {} {:?} {:?} {:?} {:?} {:?}",
+                "{} {written:?} {:?} {:?} {:?} {:?} {} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
                 source.name,
                 record.code,
                 record.calibration_group,
@@ -479,6 +509,8 @@ fn described(catalogue: &Catalogue, window: &dyn Fn(WindowId) -> Option<WindowId
                 record.systemic_velocities,
                 record.interval_s,
                 record.time.as_ref().map(seconds),
+                record.position.as_ref().map(MPosition::as_itrf),
+                record.pulsar_id,
             ));
         }
     }
