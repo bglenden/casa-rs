@@ -402,17 +402,17 @@ the MeasurementSet's to 1.1e-15 (`a_moving_field_keeps_its_geometry_in_msv4`).
 The owner accepted three decisions (2026-10-29, on #942): read XRADIO's
 interpolated layout, with a reported loss; write `time_ephemeris`; keep a
 sample either side of a dataset's times. Two facts found since bear on the
-cutover:
+cutover, and the owner decided both (2026-10-29, on #995):
 - XRADIO brackets a dataset's UTC times, but imaging reads a body's
   direction at each time's TDB, 69.2 s later. Its stores can therefore end
-  before the last times' TDB, and its interpolated layout always does. Such
-  rows are refused (`EphemerisCoverage`). The writer here keeps samples
-  two minutes past the last time.
+  before the last times' TDB, and its interpolated layout always does.
+  The reader extends such an ephemeris by one sample on its grid, on the
+  line through its last two, counted as extrapolated and reported when
+  converting, rather than refusing those rows (`EphemerisCoverage`). The
+  writer here keeps samples two minutes past the last time.
 - XRADIO's optional ephemeris variables (`NORTH_POLE_*`, `SUB_*`, and the
   rest) and the table's columns beyond the five `MeasComet` reads are
-  reported as losses, not carried.
-
-Both are open questions for the owner on the PR.
+  reported as losses, not carried; carrying them is #998.
 
 Two consequences:
 - **Pointing in MSv4.** XRADIO keeps one polynomial term per sample and

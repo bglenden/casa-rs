@@ -23,7 +23,7 @@
 
 use std::path::Path;
 
-use casa_observation::{Catalogue, ObservationError};
+use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::Value;
 
@@ -133,6 +133,25 @@ pub(super) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
     }
     let unused = named.iter().filter(|named| !**named).count();
     (unused > 0).then_some(Loss::UnusedAntennas(unused))
+}
+
+/// That the last samples of `ephemeris` are extrapolated rather than the
+/// source's ([`FieldEphemeris::extrapolated`]), as a loss when they are: the
+/// destination holds them as samples like any other.
+pub(super) fn extrapolated(ephemeris: &FieldEphemeris) -> Option<Loss> {
+    let count = ephemeris.extrapolated();
+    (count > 0).then(|| {
+        Loss::Column(format!(
+            "the ephemeris of {}: that its last {} extrapolated, not the source's (continuing \
+             the line through the two before to reach the last time's TDB)",
+            ephemeris.name(),
+            if count == 1 {
+                "sample is".to_string()
+            } else {
+                format!("{count} samples are")
+            }
+        ))
+    })
 }
 
 /// Refuse the first of `losses` whose kind is not in `accept`.

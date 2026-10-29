@@ -108,6 +108,12 @@ pub fn to_msv2(
     )?;
     found.extend(lost);
     found.extend(msv2_ephemeris::filled_rows(catalogue));
+    found.extend(
+        msv2_ephemeris::followed(catalogue)
+            .0
+            .into_iter()
+            .filter_map(|ephemeris| losses::extrapolated(ephemeris)),
+    );
     found.push(Loss::SigmaDerived);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;

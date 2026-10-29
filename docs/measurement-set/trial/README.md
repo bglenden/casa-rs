@@ -281,7 +281,8 @@ alone.
   Imaging reads a body's direction at each time's TDB (CASA's convention),
   69.2 s later. In the fixture, XRADIO's samples reach 59.3 s past the last
   time, so the last 10 s are not covered; in its interpolated layout no
-  time's TDB after the last sample is.
+  time's TDB after the last sample is. The reader extends such an
+  ephemeris by one extrapolated sample ("Ephemerides in MSv4").
 - XRADIO writes `OBSERVER_POSITION` as the WGS84 point at the table's
   `GeoLong`, `GeoLat` and `GeoDist`, the distance read as a height in
   metres (casacore reads it in km from the Earth's centre), so a geocentric
@@ -1539,6 +1540,19 @@ converter carries it both ways.
   of fewer than two samples is refused (`Unsupported`): XRADIO writes one
   when it interpolates onto a dataset of one time.
 
+  An ephemeris whose samples cover a dataset's last time but end less
+  than 72 s after it, short of that time's TDB (69.2 s after its UTC since
+  2017, with room for two more leap seconds), gains one sample on the
+  samples' grid past it, continuing the straight line through the last
+  two (`FieldEphemeris::extrapolated_to`), with a warning. XRADIO's
+  samples only bracket the UTC times, so without it imaging would refuse a
+  moving field's last times; the owner chose this over refusing them
+  (#995). The sample is counted as extrapolated
+  (`FieldEphemeris::extrapolated`), and converting reports it. For the
+  Moon the line departs from the true path by about 3 mas over a minute.
+  The extension is applied once the datasets' samples are united, so it
+  only ever extends a union's end.
+
   Datasets of one field (same name, source, offset) whose samples agree
   where both hold them are one catalogue field. The union spreads through
   the fields datasets share: every field following an ephemeris that a
@@ -1576,6 +1590,7 @@ converter carries it both ways.
     (where an image without a phase centre is centred) and the table's
     `NAME`;
   - from XRADIO's interpolated layout, the table's own samples;
+  - from an XRADIO store, that a sample is extrapolated;
   - into an MSv2, the rows filled across gaps;
   - either way, a table's columns other than the five, its keywords other
     than those carried (the `VS_*` set is written anew, so a source
@@ -1584,8 +1599,8 @@ converter carries it both ways.
 
 | Law | What it shows |
 | --- | --- |
-| `xradios_ephemeris_samples_read_as_the_msv2_holds_them` | XRADIO's `time_ephemeris` layout reads as the MSv2's ephemeris: its samples from the last before the first time to the first after the last, equal to the table's (1e-15 rad, relative distance 1e-15); the offset to 1e-15 rad; J2000, geocentric velocities. |
-| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's interpolated layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there; the offset equals the MSv2's to 1e-15 rad. Converted into an MSv4, the store keeps every sample, the interpolation reported. |
+| `xradios_ephemeris_samples_read_as_the_msv2_holds_them` | XRADIO's `time_ephemeris` layout reads as the MSv2's ephemeris: its samples from the last before the first time to the first after the last, equal to the table's (1e-15 rad, relative distance 1e-15); the offset to 1e-15 rad; J2000, geocentric velocities. XRADIO's last sample is 59 s past the last time, so one more is extrapolated on the table's grid, on the line through the last two (1e-15 rad); this test body accelerates, so it misses the table's row there by 2.5e-7 rad. The body is then found 72 s past the last time, and converting reports the extrapolation. |
+| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's interpolated layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there, and one extrapolated past the last; the offset equals the MSv2's to 1e-15 rad. Converted into an MSv4, the store keeps every sample, the interpolation and the extrapolation reported. |
 | `a_moving_field_converts_both_ways` | Into an MSv4 the samples reach from the first time to two minutes past the last, the rest reported (with the FIELD `TIME`). Back into an MSv2 the same samples, the offset as `PHASE_DIR`, the field's first time as `TIME` and `EPHEM0_trial_0.tab`. An MSv2 into an MSv2 keeps every sample and the original `TIME`. |
 | `two_converters_datasets_of_one_field_are_one_field` | The converter's dataset and XRADIO's, in one processing set, are one field following one ephemeris. |
 | `one_bodys_fields_in_two_datasets_follow_their_united_samples` | Two sessions ten minutes apart, one field, west of the body, in both and another in the first only: into an MSv4 two datasets whose samples have a gap; read back, two catalogue fields (the west one's offset wrapping) following one shared union of the samples. Into an MSv2 one evenly spaced table, the gap's rows the ephemeris's interpolation (1e-14 rad), their number reported. |
@@ -1593,7 +1608,9 @@ converter carries it both ways.
 | `an_unused_moving_field_is_written_only_where_every_field_is` | (Converter laws above.) |
 | `a_moving_field_keeps_its_geometry_in_msv4` (casars-imager T1) | The T1 track's moving field, converted to MSv4: on all 52,650 rows every geometry quantity equals the MeasurementSet's to 1.1e-15 (UVW; the phase shift 8.4e-16), tracking the body, following its table, and on a fixed centre. |
 
-Unit laws: (casa-ms) `angles_wrap_as_xradio_wraps_them`,
+Unit laws: (casa-observation)
+`an_extrapolated_sample_continues_the_last_two_along_a_line`; (casa-ms)
+`angles_wrap_as_xradio_wraps_them`,
 `angles_are_one_whatever_turn_they_are_stated_in`,
 `directions_interpolate_linearly_in_angle_and_not_beyond_the_samples`,
 `two_datasets_samples_of_one_body_unite_and_conflicting_ones_do_not`,

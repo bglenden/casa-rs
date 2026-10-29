@@ -64,10 +64,11 @@ fn assert_close(what: &str, a: f64, b: f64, tolerance: f64) {
     );
 }
 
-/// `ephemeris`'s samples equal `reference`'s from sample `first` on, to
-/// the rounding of converting units and times twice.
+/// `ephemeris`'s samples, those its store states, equal `reference`'s
+/// from sample `first` on, to the rounding of converting units and times
+/// twice.
 fn assert_samples(ephemeris: &FieldEphemeris, reference: &FieldEphemeris, first: usize) {
-    for index in 0..ephemeris.times_mjd().len() {
+    for index in 0..ephemeris.times_mjd().len() - ephemeris.extrapolated() {
         assert_sample(ephemeris, index, reference, first + index);
     }
 }
@@ -117,7 +118,11 @@ fn sample_at(reference: &FieldEphemeris, time: f64) -> usize {
 /// XRADIO's `time_ephemeris` layout reads as the MSv2's own ephemeris: the
 /// samples from the last before the first time to the first after
 /// the last, the offset recovered from its sum with the body's direction,
-/// and the frames.
+/// and the frames. XRADIO's last sample is 59 s after the last time, short
+/// of its TDB, so one more is extrapolated, on the table's grid, along the
+/// line through the last two: this body accelerates, so the line misses
+/// the table's own row there by 2.5e-7 rad. Converted, the extrapolation
+/// is reported.
 #[test]
 fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
     let root = tempfile::tempdir().expect("root");
@@ -141,8 +146,39 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
     assert_samples(ephemeris, reference, first);
     let samples = ephemeris.times_mjd();
     assert!(samples[0] < times[0] && samples[1] >= times[0]);
-    let last = samples[samples.len() - 1];
-    assert!(last > times[times.len() - 1] && samples[samples.len() - 2] <= times[times.len() - 1]);
+    assert_eq!(ephemeris.extrapolated(), 1);
+    let (stored, last_time) = (samples.len() - 1, times[times.len() - 1]);
+    assert!(samples[stored - 1] > last_time && samples[stored - 2] <= last_time);
+    assert!(samples[stored - 1] < last_time + 69.184 / DAY_S);
+    let at = sample_at(reference, samples[stored]);
+    assert_eq!(at, first + stored, "the next row of the table's grid");
+    for axis in 0..2 {
+        let line = 2.0 * ephemeris.directions_rad()[stored - 1][axis]
+            - ephemeris.directions_rad()[stored - 2][axis];
+        assert_close(
+            "extrapolated",
+            ephemeris.directions_rad()[stored][axis],
+            line,
+            1.0e-15,
+        );
+        assert_close(
+            "extrapolated",
+            ephemeris.directions_rad()[stored][axis],
+            reference.directions_rad()[at][axis],
+            2.6e-7,
+        );
+    }
+    assert!(ephemeris.sample(last_time + 72.0 / DAY_S).is_some());
+    let out = root.path().join("theirs.ms");
+    let report = to_msv2(&store, &out, &super::convert::options(&ACCEPT)).expect("to MSv2");
+    assert!(
+        report
+            .losses
+            .iter()
+            .any(|loss| loss.to_string().contains("last sample is extrapolated")),
+        "{:?}",
+        report.losses
+    );
 }
 
 /// XRADIO's interpolated layout (`ephemeris_interpolate=True`), the samples
@@ -150,7 +186,9 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
 /// MSv2's samples interpolated linearly in angle (and in distance) at each
 /// time. The test interpolates in MJD days, whose rounding (0.6 µs) moves
 /// this body by up to 2e-12 rad and 1e-4 m; XRADIO interpolates in Unix
-/// seconds. The store converts into an MSv4 with every sample.
+/// seconds. One sample is extrapolated past the last time, which the
+/// samples end at, to reach its TDB. The store converts into an MSv4 with
+/// every sample, the interpolation and the extrapolation reported.
 #[test]
 fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     let root = tempfile::tempdir().expect("root");
@@ -166,7 +204,14 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     assert_close("offset", offset.0, reference_offset.0, 1.0e-15);
     assert_close("offset", offset.1, reference_offset.1, 1.0e-15);
     let (times, _) = times(&store);
-    assert_eq!(ephemeris.times_mjd().len(), times.len());
+    // One sample past the times is extrapolated, to reach the last's TDB.
+    assert_eq!(ephemeris.times_mjd().len(), times.len() + 1);
+    assert_eq!(ephemeris.extrapolated(), 1);
+    assert!(
+        ephemeris
+            .sample(times[times.len() - 1] + 72.0 / DAY_S)
+            .is_some()
+    );
     for (index, time) in times.iter().enumerate() {
         assert_close("time", ephemeris.times_mjd()[index], *time, 1.0e-6 / DAY_S);
         let after = reference
@@ -214,8 +259,18 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
         "{:?}",
         report.losses
     );
+    assert!(
+        report
+            .losses
+            .iter()
+            .any(|loss| loss.to_string().contains("last sample is extrapolated")),
+        "{:?}",
+        report.losses
+    );
+    // The extrapolated sample is the converted store's own.
     let converted = catalogue(&ours);
     let (_, again) = moving_field(&converted);
+    assert_eq!(again.extrapolated(), 0);
     assert_eq!(again.times_mjd().len(), ephemeris.times_mjd().len());
     assert_samples(again, ephemeris, 0);
 }
@@ -236,6 +291,9 @@ fn a_moving_field_converts_both_ways() {
     let report = to_msv4(&source, &v4_path, &super::convert::options(&ACCEPT)).expect("to MSv4");
     let v4 = catalogue(&v4_path);
     let (field, ephemeris) = moving_field(&v4);
+    // The converter's samples reach past the last time's TDB, so none is
+    // extrapolated.
+    assert_eq!(ephemeris.extrapolated(), 0);
     let (times, _) = times(&v4_path);
     let first = sample_at(reference, ephemeris.times_mjd()[0]);
     assert_samples(ephemeris, reference, first);

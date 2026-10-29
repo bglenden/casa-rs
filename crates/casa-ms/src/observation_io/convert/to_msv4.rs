@@ -182,16 +182,17 @@ fn preflight_fields(
     }
     Ok(followed
         .into_iter()
-        .filter_map(|(ephemeris, held)| {
+        .flat_map(|(ephemeris, held)| {
             let lost = held.iter().filter(|held| !**held).count();
-            (lost > 0).then(|| {
+            let unkept = (lost > 0).then(|| {
                 Loss::Table(format!(
                     "the ephemeris of {}: samples no dataset keeps ({lost}; a dataset keeps \
                      those from the last before its first time to the first 120 s or more past \
                      its last)",
                     ephemeris.name()
                 ))
-            })
+            });
+            unkept.into_iter().chain(losses::extrapolated(ephemeris))
         })
         .collect())
 }

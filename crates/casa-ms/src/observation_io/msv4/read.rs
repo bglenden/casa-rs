@@ -92,9 +92,12 @@ pub(super) struct Dataset {
 /// dataset's fields follow its ephemeris, in either of XRADIO's layouts
 /// (`msv4/ephemeris.rs`), and are one field across datasets when their
 /// offsets agree and their samples agree where both hold them: the
-/// field then follows the samples of both. Opening checks every variable's
-/// data type and dimensions, and every unit and frame, against the profile
-/// and refuses others rather than reinterpreting or rescaling them.
+/// field then follows the samples of both. An ephemeris that ends before
+/// the TDB of a dataset's last time, as XRADIO's can, gains one sample
+/// extrapolated to it ([`casa_observation::FieldEphemeris::extrapolated`]).
+/// Opening checks every variable's data type and dimensions, and every
+/// unit and frame, against the profile and refuses others rather than
+/// reinterpreting or rescaling them.
 pub struct Msv4Observation {
     pub(super) store: Arc<FilesystemStore>,
     pub(super) catalogue: Arc<Catalogue>,
@@ -159,6 +162,19 @@ impl Msv4Observation {
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
         }
+        let last_mjd: Vec<Option<f64>> = observation
+            .datasets
+            .iter()
+            .zip(&observation.catalogue.partitions)
+            .map(|(dataset, entry)| {
+                let origin = entry.time_origin.day() + entry.time_origin.frac();
+                dataset
+                    .times
+                    .last()
+                    .map(|time| origin + time / ephemeris::SECONDS_PER_DAY)
+            })
+            .collect();
+        ephemeris::reach_last_tdb(observation.catalogue_mut(), &last_mjd)?;
         share_ephemerides(&mut observation.catalogue_mut().fields);
         Ok(observation)
     }

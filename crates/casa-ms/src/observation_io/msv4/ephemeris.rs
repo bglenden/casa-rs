@@ -25,7 +25,7 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::Arc;
 
-use casa_observation::{FieldEphemeris, ObservationError};
+use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
 use casa_types::measures::radial_velocity::RadialVelocityRef;
 use zarrs::filesystem::FilesystemStore;
 
@@ -331,6 +331,80 @@ const SAMPLE_RESOLUTION: f64 = 1.0e-12;
 
 /// One sample: time, direction, distance and radial velocity.
 type Sample = (f64, [f64; 2], f64, f64);
+
+/// How far past a time its TDB can be, seconds: 69.184 s since 2017 (TT −
+/// TAI 32.184 s, TAI − UTC 37 s), TDB − TT within 2 ms, and room for two
+/// more leap seconds. Opening a store takes no leap-second table, so it
+/// bounds the TDB rather than computing it.
+const TDB_LEAD_S: f64 = 72.0;
+
+/// Extend each ephemeris the catalogue's fields follow whose samples cover
+/// the last time of a partition one of its fields is in but end less than
+/// [`TDB_LEAD_S`] after it, by one sample on the samples' grid at or past
+/// that ([`FieldEphemeris::extrapolated_to`]), with a warning. Imaging
+/// reads a body's direction at each time's TDB, and XRADIO keeps only the
+/// samples that bracket a dataset's UTC times; the owner chose extending
+/// them over refusing those times (#995). `last_mjd` is each partition's
+/// last time, MJD UTC. An ephemeris that does not cover a last time is
+/// left as it is.
+///
+/// # Errors
+///
+/// An extension [`FieldEphemeris`] refuses.
+pub(super) fn reach_last_tdb(
+    catalogue: &mut Catalogue,
+    last_mjd: &[Option<f64>],
+) -> Result<(), ObservationError> {
+    let mut needed: Vec<(Arc<FieldEphemeris>, f64)> = Vec::new();
+    for (entry, last) in catalogue.partitions.iter().zip(last_mjd) {
+        let Some(last) = *last else { continue };
+        for field in &entry.fields {
+            let Some(ephemeris) = &catalogue.fields[field.0 as usize].ephemeris else {
+                continue;
+            };
+            match needed
+                .iter_mut()
+                .find(|(known, _)| Arc::ptr_eq(known, ephemeris))
+            {
+                Some((_, end)) => *end = end.max(last),
+                None => needed.push((Arc::clone(ephemeris), last)),
+            }
+        }
+    }
+    for (ephemeris, last) in needed {
+        let times = ephemeris.times_mjd();
+        let (before, end) = (times[times.len() - 2], times[times.len() - 1]);
+        let tdb = last + TDB_LEAD_S / SECONDS_PER_DAY;
+        if end >= tdb || end < last - SAMPLE_TIME_RESOLUTION_DAYS {
+            continue;
+        }
+        let step = end - before;
+        let at = end + ((tdb - end) / step).ceil() * step;
+        let extended = Arc::new(ephemeris.extrapolated_to(at).map_err(|error| {
+            invalid(format!(
+                "extending the ephemeris of {}: {error}",
+                ephemeris.name()
+            ))
+        })?);
+        tracing::warn!(
+            "the ephemeris of {}: its samples end {:.1} s after the last time, short of its TDB; \
+             one sample is extrapolated, {:.1} s after it, along the line through the last two",
+            ephemeris.name(),
+            (end - last) * SECONDS_PER_DAY,
+            (at - last) * SECONDS_PER_DAY
+        );
+        for field in &mut catalogue.fields {
+            if field
+                .ephemeris
+                .as_ref()
+                .is_some_and(|known| Arc::ptr_eq(known, &ephemeris))
+            {
+                field.ephemeris = Some(Arc::clone(&extended));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The ephemeris of `known` and `other` together, when they are one
 /// body's samples: the same frames, and the same values (to
