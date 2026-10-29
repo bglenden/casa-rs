@@ -248,9 +248,8 @@ impl CoordinateSystem {
     /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
     /// the same, but its coordinate numbers can differ from casacore's
     /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
-    /// them in this order.
-    /// [`record_coordinate_fields`](Self::record_coordinate_fields) names the
-    /// record field each coordinate came from.
+    /// them in this order. [`record_coordinates`](Self::record_coordinates)
+    /// says where in the record each coordinate came from.
     ///
     /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
     /// the maps with a replacement value. A linear coordinate whose other axes
@@ -283,27 +282,46 @@ impl CoordinateSystem {
         })
     }
 
-    /// The fields of `rec` that hold the coordinates
-    /// [`from_record`](Self::from_record) reads, in the order of the system's
-    /// coordinates: `record_coordinate_fields(rec)?[i]` holds coordinate `i`.
+    /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
+    /// them, in the order of the system's coordinates:
+    /// `record_coordinates(rec)?[i]` is coordinate `i`.
     ///
-    /// For a record whose coordinates own consecutive axes in index order,
-    /// as casa-rs writes them, these are the coordinate fields in index
-    /// order.
+    /// Each names the record field that holds the coordinate and the system
+    /// pixel axis of each of the record coordinate's own axes. These can
+    /// differ from the system's: a transposed casacore system numbers its
+    /// coordinates in creation order, and a linear coordinate's removed axes
+    /// are in the record but not in the system. For a record whose
+    /// coordinates own consecutive axes in index order, as casa-rs writes
+    /// them, the fields come in index order over consecutive axes.
     ///
     /// # Errors
     ///
     /// As [`from_record`](Self::from_record).
-    pub fn record_coordinate_fields(rec: &RecordValue) -> Result<Vec<String>, CoordinateError> {
+    pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
         Ok(read_coordinates(rec)?
             .into_iter()
-            .map(|(field, _)| field)
+            .map(|(placed, _)| placed)
             .collect())
     }
 }
 
-/// `rec`'s coordinates with their field names, in the order of their axes.
-fn read_coordinates(rec: &RecordValue) -> Result<Vec<(String, CoordinateModel)>, CoordinateError> {
+/// One coordinate of a casacore coordinate-system record, as
+/// [`CoordinateSystem::record_coordinates`] places it in the system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordCoordinate {
+    /// The record field that holds the coordinate (`direction0`,
+    /// `stokes1`, ...).
+    pub field: String,
+    /// For each of the record coordinate's own axes, in its order, the
+    /// system pixel axis it lies on; `None` for an axis the record removed.
+    pub pixel_axes: Vec<Option<usize>>,
+}
+
+/// `rec`'s coordinates with where they come from, in the order of their
+/// axes.
+fn read_coordinates(
+    rec: &RecordValue,
+) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
     let mut parsed = Vec::new();
     for (index, key) in coordinate_record_entries(rec) {
         let Some(Value::Record(coord_rec)) = rec.get(&key) else {
@@ -314,15 +332,19 @@ fn read_coordinates(rec: &RecordValue) -> Result<Vec<(String, CoordinateModel)>,
         let coordinate = parse_coordinate_record(&key, coord_rec)?;
         parsed.push((index, key, coordinate));
     }
-    let order = record_axes::coordinate_order(rec, &mut parsed)?;
+    let placements = record_axes::coordinate_order(rec, &mut parsed)?;
     let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
-    Ok(order
+    Ok(placements
         .into_iter()
-        .map(|k| {
-            let (_, key, coordinate) = parsed[k]
+        .map(|placement| {
+            let (_, field, coordinate) = parsed[placement.index]
                 .take()
                 .expect("an order names each coordinate once");
-            (key, coordinate)
+            let placed = RecordCoordinate {
+                field,
+                pixel_axes: placement.pixel_axes,
+            };
+            (placed, coordinate)
         })
         .collect())
 }

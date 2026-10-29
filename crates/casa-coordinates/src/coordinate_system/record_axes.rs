@@ -34,10 +34,21 @@ use crate::record_utils::get_required_vec_i32;
 const SUPPORTED: &str = "casa-rs reads a coordinate system only when each coordinate's axes are \
      adjacent and in the coordinate's own order (#1002)";
 
-/// One coordinate's `pixelmap<i>` and `worldmap<i>`.
+/// One coordinate's `pixelmap<i>` and `worldmap<i>` over the axes it keeps,
+/// and its `pixelmap<i>` as the record has it.
 struct AxisMaps {
     pixel: Vec<i32>,
     world: Vec<i32>,
+    record_pixel: Vec<i32>,
+}
+
+/// Where one of a record's coordinates goes in the system.
+pub(super) struct Placement {
+    /// Its position in the record's coordinates.
+    pub(super) index: usize,
+    /// The system pixel axis of each of the record coordinate's own axes,
+    /// `None` for a removed one.
+    pub(super) pixel_axes: Vec<Option<usize>>,
 }
 
 /// The order of `coordinates`, read from `rec` as `(record index, field
@@ -50,13 +61,25 @@ struct AxisMaps {
 pub(super) fn coordinate_order(
     rec: &RecordValue,
     coordinates: &mut [(usize, String, CoordinateModel)],
-) -> Result<Vec<usize>, CoordinateError> {
+) -> Result<Vec<Placement>, CoordinateError> {
     let maps = coordinates
         .iter_mut()
         .map(|(index, name, coordinate)| axis_maps(rec, *index, name, coordinate))
         .collect::<Result<Vec<_>, _>>()?;
     if maps.iter().all(Option::is_none) {
-        return Ok((0..coordinates.len()).collect());
+        let mut next = 0;
+        return Ok(coordinates
+            .iter()
+            .enumerate()
+            .map(|(index, (_, _, coordinate))| {
+                let count = coordinate.n_pixel_axes();
+                next += count;
+                Placement {
+                    index,
+                    pixel_axes: (next - count..next).map(Some).collect(),
+                }
+            })
+            .collect());
     }
     let maps = maps
         .into_iter()
@@ -99,7 +122,17 @@ pub(super) fn coordinate_order(
             names(&world_order)
         )));
     }
-    Ok(order)
+    Ok(order
+        .into_iter()
+        .map(|index| Placement {
+            index,
+            pixel_axes: maps[index]
+                .record_pixel
+                .iter()
+                .map(|&axis| usize::try_from(axis).ok())
+                .collect(),
+        })
+        .collect())
 }
 
 /// Coordinate `name`'s axis maps, `None` if the record has neither, with a
@@ -135,7 +168,11 @@ fn axis_maps(
         }
     }
     if pixel.iter().chain(&world).all(|&axis| axis >= 0) {
-        return Ok(Some(AxisMaps { pixel, world }));
+        return Ok(Some(AxisMaps {
+            record_pixel: pixel.clone(),
+            pixel,
+            world,
+        }));
     }
     let kept = (0..pixel.len())
         .filter(|&j| pixel[j] >= 0)
@@ -151,8 +188,8 @@ fn axis_maps(
             "{name} has removed axes (pixel axes {pixel:?}, world axes {world:?}; casacore \
              keeps a removed axis as -(axis + 1)); {SUPPORTED}, and drops a removed axis \
              only from a linear coordinate whose other axes do not depend on it. In CASA, \
-             make the image without dropping an axis of a coordinate it keeps (imsubimage \
-             with dropdeg=False)"
+             make the image again from the one it was cut from without dropping an axis of a \
+             coordinate it keeps (imsubimage with dropdeg=False)"
         )));
     };
     *coordinate = CoordinateModel::Linear(reduced);
@@ -160,6 +197,7 @@ fn axis_maps(
     Ok(Some(AxisMaps {
         pixel: keep(&pixel),
         world: keep(&world),
+        record_pixel: pixel,
     }))
 }
 
@@ -270,6 +308,20 @@ mod tests {
             .collect()
     }
 
+    /// `record_coordinates(rec)` are `expected`, as (field, pixel axes).
+    fn assert_placed<const N: usize>(rec: &RecordValue, expected: [(&str, Vec<Option<usize>>); N]) {
+        let placed = CoordinateSystem::record_coordinates(rec)
+            .unwrap()
+            .into_iter()
+            .map(|placed| (placed.field, placed.pixel_axes))
+            .collect::<Vec<_>>();
+        let expected = expected
+            .into_iter()
+            .map(|(field, axes)| (field.to_string(), axes))
+            .collect::<Vec<_>>();
+        assert_eq!(placed, expected);
+    }
+
     fn refusal(rec: &RecordValue) -> String {
         match CoordinateSystem::from_record(rec) {
             Err(CoordinateError::UnsupportedAxisLayout(message)) => message,
@@ -291,9 +343,13 @@ mod tests {
                 CoordinateType::Spectral
             ]
         );
-        assert_eq!(
-            CoordinateSystem::record_coordinate_fields(&rec).unwrap(),
-            ["stokes1", "direction0", "spectral2"]
+        assert_placed(
+            &rec,
+            [
+                ("stokes1", vec![Some(0)]),
+                ("direction0", vec![Some(1), Some(2)]),
+                ("spectral2", vec![Some(3)]),
+            ],
         );
         // Pixel (Q, RA 3, Dec 2, channel 4) is world (Q, the reference
         // direction, 1.419 GHz), in the system's axis order.
@@ -458,12 +514,31 @@ mod tests {
         let world = cs.to_world(&[3.0, 0.0, 2.0]).unwrap();
         assert_eq!(world[..2], [-660.0, 1.0]);
         assert!((world[2] - 1.414_998e9).abs() < 1e-3);
-        assert_eq!(
-            CoordinateSystem::record_coordinate_fields(&position_velocity_record(
-                ndarray::Array2::eye(2)
-            ))
-            .unwrap(),
-            ["linear0", "stokes1", "spectral2"]
+        // The record's linear coordinate keeps its removed axis.
+        assert_placed(
+            &position_velocity_record(ndarray::Array2::eye(2)),
+            [
+                ("linear0", vec![Some(0), None]),
+                ("stokes1", vec![Some(1)]),
+                ("spectral2", vec![Some(2)]),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_record_without_maps_places_its_coordinates_over_consecutive_axes() {
+        let mut rec = creation_order().to_record();
+        for index in 0..3 {
+            rec.remove(&format!("worldmap{index}"));
+            rec.remove(&format!("pixelmap{index}"));
+        }
+        assert_placed(
+            &rec,
+            [
+                ("direction0", vec![Some(0), Some(1)]),
+                ("stokes1", vec![Some(2)]),
+                ("spectral2", vec![Some(3)]),
+            ],
         );
     }
 

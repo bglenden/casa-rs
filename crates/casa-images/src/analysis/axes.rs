@@ -3,9 +3,9 @@
 //! pixels of a coordinate-system record with a subimage.
 //!
 //! casa-rs reads a CASA image whose coordinates own transposed axes with
-//! the coordinates in axis order (#1001), so its coordinate numbers can
-//! differ from the record's: a record's coordinates are found by the fields
-//! they were read from.
+//! the coordinates in axis order, and drops a linear coordinate's removed
+//! axes (#1001), so its coordinates can differ from the record's: a
+//! record's coordinates are found where the record places them.
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -39,7 +39,7 @@ pub(super) fn subimage_coordinates(
     start: &[usize],
 ) -> Result<CoordinateSystem, ImageError> {
     let mut record = coordinates.to_record();
-    shift_record_reference_pixels(&mut record, coordinates, start)?;
+    shift_record_reference_pixels(&mut record, start)?;
     CoordinateSystem::from_record(&record).map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "failed to build subimage coordinate system: {error}"
@@ -58,63 +58,78 @@ pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
     };
     // The image's coordinates were read from this record, so its fields
     // resolve; if not, the output keeps the coordinates casa-rs writes.
-    shift_record_reference_pixels(&mut coords, image.coordinates(), start).ok()?;
+    shift_record_reference_pixels(&mut coords, start).ok()?;
     Some(coords)
 }
 
-/// Moves the reference pixel of each coordinate in `record`, which holds
-/// `coordinates`, back by `start` along the coordinate's pixel axes.
+/// Moves each coordinate in `record` back by `start`, the subimage's first
+/// pixel, along the coordinate's own axes.
 ///
-/// `record` may number its coordinates unlike `coordinates` (a transposed
-/// casacore image keeps its coordinates in creation order), so each is
-/// found by the field it was read from.
+/// Each coordinate is found as the record places it
+/// ([`CoordinateSystem::record_coordinates`]): a transposed casacore image
+/// numbers its coordinates in creation order, and a linear coordinate keeps
+/// its removed axes in the record, where they do not move. A lookup table
+/// (a tabular spectral coordinate's, or a tabular coordinate's) moves its
+/// pixels as well as its reference pixel, since casacore and casa-rs
+/// rebuild such a coordinate from the table. casacore's
+/// `CoordinateSystem::subImageInSitu` instead rebuilds a tabular spectral
+/// table over the subimage's channels, which gives the same world values.
 fn shift_record_reference_pixels(
     record: &mut RecordValue,
-    coordinates: &CoordinateSystem,
     start: &[usize],
 ) -> Result<(), ImageError> {
-    let fields = CoordinateSystem::record_coordinate_fields(record).map_err(|error| {
+    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
     })?;
-    let mut axis_offset = 0usize;
-    for (coordinate_index, field) in fields.iter().enumerate() {
-        let axis_count = coordinates.coordinate(coordinate_index).n_pixel_axes();
-        let axes = &start[axis_offset..axis_offset + axis_count];
-        if let Some(Value::Record(coordinate_record)) = record.get_mut(field) {
-            shift_coordinate_reference_pixel(coordinate_record, axes);
-            shift_legacy_spectral_wcs_reference_pixel(coordinate_record, axes);
+    for coordinate in placed {
+        let shifts = coordinate
+            .pixel_axes
+            .iter()
+            .map(|axis| axis.map_or(0.0, |axis| start[axis] as f64))
+            .collect::<Vec<_>>();
+        let Some(Value::Record(coordinate_record)) = record.get_mut(&coordinate.field) else {
+            continue;
+        };
+        shift_pixels(coordinate_record, &shifts);
+        for parameters in ["wcs", "tabular"] {
+            if let Some(Value::Record(inner)) = coordinate_record.get_mut(parameters) {
+                shift_pixels(inner, &shifts);
+            }
         }
-        axis_offset += axis_count;
     }
     Ok(())
 }
 
-fn shift_coordinate_reference_pixel(record: &mut RecordValue, start: &[usize]) {
-    let Some(Value::Array(array)) = record.get_mut("crpix") else {
-        return;
-    };
+/// Moves `record`'s `crpix` back by `shifts`, one per axis, and the
+/// `pixelvalues` of its lookup table, which has one axis, by the first.
+fn shift_pixels(record: &mut RecordValue, shifts: &[f64]) {
+    let first = shifts.first().copied().unwrap_or(0.0);
+    match record.get_mut("crpix") {
+        Some(Value::Array(array)) => {
+            shift_values(array, |axis| shifts.get(axis).copied().unwrap_or(0.0));
+        }
+        Some(Value::Scalar(ScalarValue::Float64(crpix))) => *crpix -= first,
+        _ => {}
+    }
+    if let Some(Value::Array(array)) = record.get_mut("pixelvalues") {
+        shift_values(array, |_| first);
+    }
+}
+
+/// Subtracts `shift(i)` from element `i` of `array`, a float array.
+fn shift_values(array: &mut ArrayValue, shift: impl Fn(usize) -> f64) {
     let values = match array {
         ArrayValue::Float64(values) => values
             .iter()
             .enumerate()
-            .map(|(axis, value)| *value - start.get(axis).copied().unwrap_or(0) as f64)
+            .map(|(i, value)| *value - shift(i))
             .collect::<Vec<_>>(),
         ArrayValue::Float32(values) => values
             .iter()
             .enumerate()
-            .map(|(axis, value)| *value as f64 - start.get(axis).copied().unwrap_or(0) as f64)
+            .map(|(i, value)| f64::from(*value) - shift(i))
             .collect::<Vec<_>>(),
         _ => return,
     };
     *array = ArrayValue::from_f64_vec(values);
-}
-
-fn shift_legacy_spectral_wcs_reference_pixel(record: &mut RecordValue, start: &[usize]) {
-    let Some(Value::Record(wcs)) = record.get_mut("wcs") else {
-        return;
-    };
-    let Some(Value::Scalar(ScalarValue::Float64(crpix))) = wcs.get_mut("crpix") else {
-        return;
-    };
-    *crpix -= start.first().copied().unwrap_or(0) as f64;
 }

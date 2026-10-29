@@ -798,6 +798,576 @@
      "value": 1124.030517578125
     }
    ]
+  },
+  "dropdeg_linear.image": {
+   "made_by": "ia.subimage(dropdeg=True) of a three-axis linear image one pixel wide on its first axis",
+   "shape": [
+    6,
+    6
+   ],
+   "axis_types": [
+    "Linear",
+    "Linear"
+   ],
+   "names": [
+    "LinAxis1",
+    "LinAxis2"
+   ],
+   "units": [
+    "km",
+    "km"
+   ],
+   "maps": {
+    "linear0": {
+     "worldmap": [
+      -1,
+      0,
+      1
+     ],
+     "pixelmap": [
+      -1,
+      0,
+      1
+     ],
+     "worldreplace": [
+      200.0,
+      180.0,
+      240.0
+     ],
+     "pixelreplace": [
+      100.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0
+     ],
+     "world": [
+      180.0,
+      240.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      5,
+      5
+     ],
+     "world": [
+      190.0,
+      255.0
+     ],
+     "value": 550.5
+    },
+    {
+     "pixel": [
+      3,
+      3
+     ],
+     "world": [
+      186.0,
+      249.0
+     ],
+     "value": 330.5
+    },
+    {
+     "pixel": [
+      1,
+      1
+     ],
+     "world": [
+      182.0,
+      243.0
+     ],
+     "value": 110.5
+    }
+   ]
+  },
+  "dropdeg_linear_between.image": {
+   "made_by": "ia.subimage(dropdeg=True) of a three-axis linear image one pixel wide on its second axis",
+   "shape": [
+    6,
+    6
+   ],
+   "axis_types": [
+    "Linear",
+    "Linear"
+   ],
+   "names": [
+    "LinAxis0",
+    "LinAxis2"
+   ],
+   "units": [
+    "km",
+    "km"
+   ],
+   "maps": {
+    "linear0": {
+     "worldmap": [
+      0,
+      -2,
+      1
+     ],
+     "pixelmap": [
+      0,
+      -2,
+      1
+     ],
+     "worldreplace": [
+      100.0,
+      300.0,
+      240.0
+     ],
+     "pixelreplace": [
+      0.0,
+      60.0,
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0
+     ],
+     "world": [
+      100.0,
+      240.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      5,
+      5
+     ],
+     "world": [
+      105.0,
+      255.0
+     ],
+     "value": 505.5
+    },
+    {
+     "pixel": [
+      3,
+      3
+     ],
+     "world": [
+      103.0,
+      249.0
+     ],
+     "value": 303.5
+    },
+    {
+     "pixel": [
+      1,
+      1
+     ],
+     "world": [
+      101.0,
+      243.0
+     ],
+     "value": 101.5
+    }
+   ]
+  },
+  "tabular_spectral_first.image": {
+   "made_by": "imtrans(order='3012') of an image with frequencies [1000000000.0, 1100000000.0, 1300000000.0, 1600000000.0] Hz",
+   "shape": [
+    4,
+    3,
+    2,
+    1
+   ],
+   "axis_types": [
+    "Spectral",
+    "Direction",
+    "Direction",
+    "Stokes"
+   ],
+   "names": [
+    "Frequency",
+    "Right Ascension",
+    "Declination",
+    "Stokes"
+   ],
+   "units": [
+    "Hz",
+    "rad",
+    "rad",
+    ""
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      1,
+      2
+     ],
+     "pixelmap": [
+      1,
+      2
+     ],
+     "worldreplace": [
+      0.0,
+      0.0
+     ],
+     "pixelreplace": [
+      0.0,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      3
+     ],
+     "pixelmap": [
+      3
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      0
+     ],
+     "pixelmap": [
+      0
+     ],
+     "worldreplace": [
+      1415000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "world": [
+      1000000000.0,
+      1.2000162856352816,
+      -0.4000099999524359,
+      1.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      3,
+      2,
+      1,
+      0
+     ],
+     "world": [
+      1600000000.0,
+      1.199994571477858,
+      -0.39999999999471525,
+      1.0
+     ],
+     "value": 3012.5
+    },
+    {
+     "pixel": [
+      2,
+      1,
+      1,
+      0
+     ],
+     "world": [
+      1300000000.0,
+      1.200005428522142,
+      -0.39999999999471525,
+      1.0
+     ],
+     "value": 2011.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1,
+      0
+     ],
+     "world": [
+      1100000000.0,
+      1.200005428522142,
+      -0.39999999999471525,
+      1.0
+     ],
+     "value": 1011.5
+    }
+   ]
   }
- }
+ },
+ "crops": [
+  {
+   "image": "dropdeg_linear.image",
+   "blc": [
+    2,
+    3
+   ],
+   "trc": [
+    4,
+    5
+   ],
+   "casa": {
+    "shape": [
+     3,
+     3
+    ],
+    "axis_types": [
+     "Linear",
+     "Linear"
+    ],
+    "names": [
+     "LinAxis1",
+     "LinAxis2"
+    ],
+    "units": [
+     "km",
+     "km"
+    ],
+    "samples": [
+     {
+      "pixel": [
+       0,
+       0
+      ],
+      "world": [
+       184.0,
+       249.0
+      ],
+      "value": 320.5
+     },
+     {
+      "pixel": [
+       2,
+       2
+      ],
+      "world": [
+       188.0,
+       255.0
+      ],
+      "value": 540.5
+     },
+     {
+      "pixel": [
+       1,
+       1
+      ],
+      "world": [
+       186.0,
+       252.0
+      ],
+      "value": 430.5
+     },
+     {
+      "pixel": [
+       1,
+       1
+      ],
+      "world": [
+       186.0,
+       252.0
+      ],
+      "value": 430.5
+     }
+    ]
+   }
+  },
+  {
+   "image": "dropdeg_linear_between.image",
+   "blc": [
+    2,
+    3
+   ],
+   "trc": [
+    4,
+    5
+   ],
+   "casa": {
+    "shape": [
+     3,
+     3
+    ],
+    "axis_types": [
+     "Linear",
+     "Linear"
+    ],
+    "names": [
+     "LinAxis0",
+     "LinAxis2"
+    ],
+    "units": [
+     "km",
+     "km"
+    ],
+    "samples": [
+     {
+      "pixel": [
+       0,
+       0
+      ],
+      "world": [
+       102.0,
+       249.0
+      ],
+      "value": 302.5
+     },
+     {
+      "pixel": [
+       2,
+       2
+      ],
+      "world": [
+       104.0,
+       255.0
+      ],
+      "value": 504.5
+     },
+     {
+      "pixel": [
+       1,
+       1
+      ],
+      "world": [
+       103.0,
+       252.0
+      ],
+      "value": 403.5
+     },
+     {
+      "pixel": [
+       1,
+       1
+      ],
+      "world": [
+       103.0,
+       252.0
+      ],
+      "value": 403.5
+     }
+    ]
+   }
+  },
+  {
+   "image": "tabular_spectral_first.image",
+   "blc": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "trc": [
+    2,
+    2,
+    1,
+    0
+   ],
+   "casa": {
+    "shape": [
+     2,
+     3,
+     2,
+     1
+    ],
+    "axis_types": [
+     "Spectral",
+     "Direction",
+     "Direction",
+     "Stokes"
+    ],
+    "names": [
+     "Frequency",
+     "Right Ascension",
+     "Declination",
+     "Stokes"
+    ],
+    "units": [
+     "Hz",
+     "rad",
+     "rad",
+     ""
+    ],
+    "samples": [
+     {
+      "pixel": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "world": [
+       1100000000.0,
+       1.2000162856352816,
+       -0.4000099999524359,
+       1.0
+      ],
+      "value": 1000.5
+     },
+     {
+      "pixel": [
+       1,
+       2,
+       1,
+       0
+      ],
+      "world": [
+       1300000000.0,
+       1.199994571477858,
+       -0.39999999999471525,
+       1.0
+      ],
+      "value": 2012.5
+     },
+     {
+      "pixel": [
+       1,
+       1,
+       1,
+       0
+      ],
+      "world": [
+       1300000000.0,
+       1.200005428522142,
+       -0.39999999999471525,
+       1.0
+      ],
+      "value": 2011.5
+     },
+     {
+      "pixel": [
+       1,
+       1,
+       1,
+       0
+      ],
+      "world": [
+       1300000000.0,
+       1.200005428522142,
+       -0.39999999999471525,
+       1.0
+      ],
+      "value": 2011.5
+     }
+    ]
+   }
+  }
+ ]
 }

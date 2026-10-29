@@ -11,10 +11,13 @@
 //! 6.7.6 through `tools/images/axis_map_oracle.py fixture`, which also
 //! recorded what CASA reads in `axis_maps.json`: each image's shape, axis
 //! types, names and units, its axis maps, and at a few pixels the world
-//! coordinates and the pixel value. casa-rs reads the two whose coordinates
-//! each own adjacent axes in order, and `impv`'s position-velocity image,
-//! whose linear offset coordinate has an independent removed axis. It
-//! refuses the three it cannot represent (#1002).
+//! coordinates and the pixel value. casa-rs reads the images whose
+//! coordinates each own adjacent axes in order, and those whose linear
+//! coordinate has independent removed axes (`impv`'s position-velocity
+//! image, and a linear image dropped on its first or second axis). It
+//! refuses the three it cannot represent (#1002). The record also holds
+//! CASA's world coordinates and values for boxes cut from three of them,
+//! which casa-rs's `imsubimage` cuts alike.
 
 use std::path::{Path, PathBuf};
 
@@ -134,7 +137,14 @@ fn assert_reads_as_casa(image: &PagedImage<f32>, casa: &Json, label: &str) {
 #[test]
 fn transposed_casa_images_read_as_casa_reads_them() {
     let scratch = tempfile::tempdir().expect("scratch");
-    for name in ["transposed.image", "spectral_first.image", "pv.image"] {
+    for name in [
+        "transposed.image",
+        "spectral_first.image",
+        "pv.image",
+        "dropdeg_linear.image",
+        "dropdeg_linear_between.image",
+        "tabular_spectral_first.image",
+    ] {
         let casa = casa(name);
         let image = PagedImage::<f32>::open(copy_image(name, scratch.path())).expect(name);
         assert_reads_as_casa(&image, &casa, name);
@@ -196,6 +206,15 @@ fn coords_record(path: &Path) -> casa_types::RecordValue {
     }
 }
 
+/// The fields of `record`'s coordinates, in the order casa-rs reads them.
+fn fields(record: &casa_types::RecordValue) -> Vec<String> {
+    CoordinateSystem::record_coordinates(record)
+        .unwrap()
+        .into_iter()
+        .map(|placed| placed.field)
+        .collect()
+}
+
 fn int_map(record: &casa_types::RecordValue, field: &str) -> Vec<i32> {
     match record.get(field) {
         Some(Value::Array(ArrayValue::Int32(values))) => values.iter().copied().collect(),
@@ -217,10 +236,7 @@ fn a_transposed_image_casa_rs_rewrites_numbers_its_coordinates_in_axis_order() {
     // the order of their axes, each over consecutive axes. The system is the
     // same (`axis_map_oracle.py readback` checks that CASA reads it so).
     let record = coords_record(&path);
-    assert_eq!(
-        CoordinateSystem::record_coordinate_fields(&record).unwrap(),
-        ["stokes0", "direction1", "spectral2"]
-    );
+    assert_eq!(fields(&record), ["stokes0", "direction1", "spectral2"]);
     assert_eq!(int_map(&record, "pixelmap0"), [0]);
     assert_eq!(int_map(&record, "pixelmap1"), [1, 2]);
     assert_eq!(int_map(&record, "worldmap1"), [1, 2]);
@@ -305,10 +321,7 @@ fn a_subimage_of_a_transposed_image_moves_each_coordinates_reference_pixel() {
     .unwrap();
 
     let record = coords_record(&outfile);
-    assert_eq!(
-        CoordinateSystem::record_coordinate_fields(&record).unwrap(),
-        ["spectral2", "direction0", "stokes1"]
-    );
+    assert_eq!(fields(&record), ["spectral2", "direction0", "stokes1"]);
     let input = PagedImage::<f32>::open(&input).unwrap();
     let output = PagedImage::<f32>::open(&outfile).unwrap();
     assert_eq!(output.shape(), [3, 4, 3, 2]);
@@ -327,5 +340,45 @@ fn a_subimage_of_a_transposed_image_moves_each_coordinates_reference_pixel() {
             output.get_at(&pixel).unwrap(),
             input.get_at(&source).unwrap()
         );
+    }
+}
+
+#[test]
+fn subimages_read_as_casa_reads_the_pixels_they_cut() {
+    // CASA's world coordinates and values at the input pixels each box cuts
+    // (`axis_maps.json` `crops`). A linear coordinate's removed axis stays in
+    // the record it copies, so each kept axis moves by its own map: the
+    // reference pixels once moved by the first axes of the record, leaving
+    // `dropdeg_linear.image`'s origin at [186, 240] instead of [184, 249].
+    // A tabular frequency axis moves its table: it once stayed at the input's
+    // channels, labelling the first output channel 1.0 GHz, not 1.1 GHz.
+    let path = fixture_dir().join("axis_maps.json");
+    let document: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let crops = document["crops"].as_array().expect("crops");
+    assert_eq!(crops.len(), 3);
+    let scratch = tempfile::tempdir().expect("scratch");
+    for crop in crops {
+        let name = crop["image"].as_str().expect("image name");
+        let blc = numbers(&crop["blc"]);
+        let trc = numbers(&crop["trc"]);
+        let (box_pixels, chans) = if name == "tabular_spectral_first.image" {
+            // The whole image but channels 1 to 2 of axis 0.
+            assert_eq!((blc[0], trc[0]), (1.0, 2.0));
+            (None, Some("1~2".to_string()))
+        } else {
+            let box_pixels = format!("{},{},{},{}", blc[0], blc[1], trc[0], trc[1]);
+            (Some(box_pixels), None)
+        };
+        let outfile = scratch.path().join(format!("crop-{name}"));
+        imsubimage(&ImsubimageRequest {
+            imagename: copy_image(name, scratch.path()),
+            outfile: outfile.clone(),
+            box_pixels,
+            chans,
+            overwrite: false,
+        })
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let output = PagedImage::<f32>::open(&outfile).unwrap();
+        assert_reads_as_casa(&output, &crop["casa"], &format!("{name} cut"));
     }
 }

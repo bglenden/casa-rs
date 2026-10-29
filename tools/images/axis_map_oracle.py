@@ -23,7 +23,22 @@ direction, Stokes I and Q, and a spectral axis (`direction0`, `stokes1`,
   wide, which removes the RA axis from the direction coordinate;
 - `pv.image`: `impv` of a 12 by 12 pixel image, whose position-velocity
   output keeps a two-axis linear offset coordinate with its second axis
-  removed.
+  removed;
+- `dropdeg_linear.image` and `dropdeg_linear_between.image`:
+  `ia.subimage(dropdeg=True)` of a three-axis linear image one pixel wide on
+  its first or second axis, which removes that axis (maps `[-1, 0, 1]` and
+  `[0, -2, 1]`);
+- `tabular_spectral_first.image`: `imtrans(order='3012')` of an image whose
+  four channels are at 1.0, 1.1, 1.3 and 1.6 GHz, a tabular spectral
+  coordinate on pixel axis 0.
+
+`axis_maps.json` also records, under `crops`, a box of each of the last three
+as CASA reads it: at a few of the box's pixels, the world coordinates and
+value CASA reads at the image pixel they come from, which a subimage holds
+(CASA's own `imsubimage(chans='1~2')` of the tabular image does). casa-rs
+cuts the same boxes. CASA's `imsubimage` ignores a box on an image without
+a direction coordinate, and `cs.subimage` refuses the dropdeg image's
+system, so neither records the linear crop.
 
 Each pixel holds `sum(index[k] * 10**k) + 0.5` over its own image's axes
 before any transpose, so a value names where CASA put it. `axis_maps.json`
@@ -50,9 +65,18 @@ import sys
 
 import numpy as np
 from casatasks import impv, imsubimage, imtrans
-from casatools import coordsys, ctsys, image, table
+from casatools import coordsys, ctsys, image, quanta, table
 
 MAP_KEYS = ("worldmap", "pixelmap", "worldreplace", "pixelreplace")
+TABULAR_FREQUENCIES_HZ = [1.0e9, 1.1e9, 1.3e9, 1.6e9]
+# Boxes (first and last pixel, inclusive) that CASA and casa-rs cut alike:
+# a linear coordinate's axes after its removed one, and a nonlinear
+# frequency table on the first axis.
+CROPS = [
+    ("dropdeg_linear.image", [2, 3], [4, 5]),
+    ("dropdeg_linear_between.image", [2, 3], [4, 5]),
+    ("tabular_spectral_first.image", [1, 0, 0, 0], [2, 2, 1, 0]),
+]
 
 
 def coordinate_system():
@@ -103,7 +127,7 @@ def sample_pixels(shape):
         [0] * len(shape),
         (shape - 1).tolist(),
         (shape // 2).tolist(),
-        [min(1, n - 1) for n in shape],
+        [int(min(1, n - 1)) for n in shape],
     ]
 
 
@@ -126,6 +150,35 @@ def describe(path):
         "names": list(cs.names()),
         "units": list(cs.units()),
         "maps": axis_maps(path),
+        "samples": samples,
+    }
+    cs.done()
+    ia.done()
+    return record
+
+
+def describe_crop(path, blc, trc):
+    """The subimage of `path` from pixel `blc` to `trc` as CASA reads it: the
+    image's axes, and at a few of the subimage's pixels the world coordinates
+    and value CASA reads at the input pixel they cut from."""
+    ia = image()
+    ia.open(path)
+    cs = ia.coordsys()
+    data = ia.getchunk()
+    shape = [t - b + 1 for b, t in zip(blc, trc)]
+    samples = []
+    for pixel in sample_pixels(shape):
+        source = [p + b for p, b in zip(pixel, blc)]
+        samples.append({
+            "pixel": pixel,
+            "world": [float(v) for v in cs.toworld([float(p) for p in source], "n")["numeric"]],
+            "value": float(data[tuple(source)]),
+        })
+    record = {
+        "shape": shape,
+        "axis_types": list(cs.axiscoordinatetypes()),
+        "names": list(cs.names()),
+        "units": list(cs.units()),
         "samples": samples,
     }
     cs.done()
@@ -163,11 +216,46 @@ def fixture(out):
     shutil.rmtree(path, ignore_errors=True)
     impv(imagename=wide, outfile=path, start=[2, 2], end=[9, 7])
     images["pv.image"] = "impv(start=[2, 2], end=[9, 7]) of a 12 by 12 pixel image"
+
+    for name, shape, which in [
+        ("dropdeg_linear.image", [1, 6, 6], "first"),
+        ("dropdeg_linear_between.image", [6, 1, 6], "second"),
+    ]:
+        linear = coordsys().newcoordsys(linear=3)
+        linear.setreferencevalue(value=[100.0, 200.0, 300.0])
+        linear.setincrement(value=[1.0, 2.0, 3.0])
+        linear.setreferencepixel(value=[0.0, 10.0, 20.0])
+        thin = os.path.join(scratch, f"thin-{name}")
+        write_image(thin, shape, linear)
+        path = os.path.join(out, name)
+        shutil.rmtree(path, ignore_errors=True)
+        # imsubimage(dropdeg=True) drops a second axis of an image without a
+        # direction coordinate; the image tool drops only the degenerate one.
+        ia = image()
+        ia.open(thin)
+        ia.subimage(outfile=path, dropdeg=True).done()
+        ia.done()
+        images[name] = f"ia.subimage(dropdeg=True) of a three-axis linear image one pixel wide on its {which} axis"
+
+    tabular = coordinate_system()
+    tabular.setspectral(frequencies=quanta().quantity(TABULAR_FREQUENCIES_HZ, "Hz"))
+    channels = os.path.join(scratch, "channels.image")
+    write_image(channels, [3, 2, 1, 4], tabular)
+    path = os.path.join(out, "tabular_spectral_first.image")
+    shutil.rmtree(path, ignore_errors=True)
+    imtrans(imagename=channels, outfile=path, order="3012")
+    images["tabular_spectral_first.image"] = f"imtrans(order='3012') of an image with frequencies {TABULAR_FREQUENCIES_HZ} Hz"
+
+    crops = [
+        {"image": name, "blc": blc, "trc": trc, "casa": describe_crop(os.path.join(out, name), blc, trc)}
+        for name, blc, trc in CROPS
+    ]
     shutil.rmtree(scratch)
 
     document = {
         "casa_version": ctsys.version_string(),
         "images": {name: {"made_by": how, **describe(os.path.join(out, name))} for name, how in images.items()},
+        "crops": crops,
     }
     with open(os.path.join(out, "axis_maps.json"), "w") as handle:
         json.dump(document, handle, indent=1)
