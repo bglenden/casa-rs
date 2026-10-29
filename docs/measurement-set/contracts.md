@@ -1,10 +1,11 @@
 # Intermediate observation contracts
 
-Status: revision 8; the read contract the M0/M1 trial realizes, frozen
+Status: revision 9; the read contract the M0/M1 trial realizes, frozen
 narrowly for M2 by the owner on 2026-10-25. Revision 8 (2026-10-28, #937
 design revision 3) adds the catalogue's descriptive metadata, pointing's
 `store_has_pointing` and intent selection, and corrects how CASA matches
-intents.
+intents. Revision 9 (2026-10-29, #937 PR B) adds creating one MSv2 from
+several observations (section 7).
 Truth class: design proposal
 Date: 2026-10-28
 
@@ -1012,20 +1013,57 @@ boundary, make it hold nothing. Held times the next batch does not continue
 (batches out of time order) are stored as they are, and zarrs decodes, merges
 and re-encodes that chunk when its other times come (`partial_chunks`).
 
-An MSv2 creator from batches is built narrowly, inside the trial's converter
-(trial README, "Converter"): subtables from the common catalogue, then MAIN's
-rows through production's variable-shape creation writers, in time order per
-partition. As the declaration was designed to serve one (revision 2 design,
-D23), cells in time order become rows, and a padded cell a row flagged
-throughout with NaN data and weights; its interval, exposure (0) and time
-centroid stay valid so the MeasurementSet reopens. A conversion that must
-reproduce an original sparse row set declares it, and padding then becomes
-no row: since a batch carries no presence mask and an MSv2's row count is
-fixed before its rows are written, that policy first reads the weights to
-count the acquisitions. `SIGMA` is derived from the weights, a loss the
-caller accepts. Publication semantics beyond staging and rename, and
-loss-policy coverage beyond the converter's inventory, are provisional
-(section 8).
+An MSv2 is created from one or more observations by a creation plan
+(`casa_ms::observation_io::creation::CreationPlan`; converting into an MSv2
+is a plan over one input): subtables from the merged catalogue, then MAIN's
+rows through production's variable-shape creation writers, input after
+input, each input's partitions in output order and their rows in time and
+baseline order. As the declaration was designed to serve one (revision 2
+design, D23), cells in time order become rows, and a padded cell a row
+flagged throughout with NaN data and weights; its interval, exposure (0)
+and time centroid stay valid so the MeasurementSet reopens. A creation that
+must reproduce an original sparse row set declares it, and padding then
+becomes no row: since a batch carries no presence mask and an MSv2's row
+count is fixed before its rows are written, that policy first reads the
+weights to count the acquisitions. Partitions combined from several inputs
+need it.
+
+The plan decides everything before writing, and writes nothing until asked:
+- **Merge.** The inputs' catalogues are merged as CASA's `concat` merges
+  MeasurementSets' subtables (`casa_observation::merge`): antennas, windows,
+  fields, states, sources, observing sessions and processors matched by
+  CASA's predicates and tolerances, in its search orders. Where a predicate
+  lacks what it needs, the entity is appended and the merge says so. Scan
+  numbers are offset as `concat` offsets them. Where casa-rs departs from
+  `concat`, the departure is recorded in `docs/CASA (C++) bugs.md`.
+- **Combination.** Partitions combine by the key the MSv2 reader partitions
+  rows by. A combined partition's inputs must not acquire one time and
+  baseline twice, nor hold two fields or scans at one time or two intervals;
+  each is refused before writing. The data groups written are the inputs'
+  union: an input without `corrected` is written from its `base`, and one
+  without `model` with CASA's initial model, each a declared loss.
+- **Losses.** What the MeasurementSet cannot hold, and what it writes as
+  MSv2's default, is inventoried, and any loss the caller did not accept
+  refuses the plan. Every subtable column an input holds is carried, written
+  by the writer's allowlist, or declared. `SIGMA` is derived from the
+  weights (times each input's weight scale, CASA's `visweightscale`): a loss
+  unless the input's stored `SIGMA` is already `1/√WEIGHT` to within one
+  unit in the last place.
+- **Pointing.** Each input's `POINTING` is appended, its antennas renumbered;
+  the inputs' frames must agree.
+- **Memory.** What making the plan holds, and what writing it will hold,
+  are admitted against the caller's budget before they are allocated (each
+  input's opening through `Msv2Observation::open_granted`), and the plan
+  states its charges. A batch that cannot hold one integration of every
+  selected group is refused, not rounded up.
+- **Publication.** A new MeasurementSet is staged and renamed into place. An
+  existing one is replaced, as `concat` appends to an existing `concatvis`
+  (then the first input): its MAIN's write lock is held from the plan
+  through publication, the new MeasurementSet is staged beside it and the
+  two directories exchanged in one call, so a failure leaves it as it was.
+  No input is written.
+
+Loss-policy coverage beyond the plan's inventory is provisional (section 8).
 
 ### Updates (provisional)
 
@@ -1154,7 +1192,7 @@ when its acceptance obligation is met.
 | Weight roles and fallback; `SIGMA` | The request reads stored weights or 1/σ² of the sigmas by CASA's column rule; an MSv4, holding no sigmas, refuses or falls back to its stored weights as the request names; the estimate records the rule and column per partition; a weight write refuses sigma-derived weights (section 4). A batch-fed gain solve weighted from the sigmas equals production `gaincal` where `WEIGHT` is not 1/σ² (trial README, example B) | A fallback per cell where a sigma cell is undefined, recorded per cell; today an undefined cell is a read error, as for every role |
 | Revisit and compute-window requirements as request fields | A new traversal per pass; windows are views | Binding states what depends on an estimated pass count; a revisit does not imply cached values |
 | Updates | The write-back trial's update sessions (section 7) | Section 7's remaining obligations: bit flags and flag categories, conflicting queued patches, structural writes (a new MSv4 data group), per-batch MSv2 planning, a killed process, stray temporary files and the synchronization cost at scale |
-| MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the converter's MSv2 creator: padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights as an accepted loss | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss |
+| MSv2 creation from batches; general creation and loss policy | The MSv4 writer (one dataset or a processing set of many), and the MSv2 creation plan over one or several observations (section 7): padded cells flagged NaN rows, or no row by declared policy (the occupancy row above), catalogues merged as CASA's `concat` merges them, losses inventoried and refused unless accepted before anything is written, `SIGMA` derived from the weights (a loss unless the stored `SIGMA` is already `1/√WEIGHT`), memory admitted before it is allocated. Agrees with CASA 6.7.6's `concat` on its `unittest/concat` cases within the plan's profile and on `simalma`'s 12 m + 7 m pair | Cells in time order become rows, padded cells flagged NaN rows; cross-format creation preflights metadata, flag and occupancy mappings and rejects unapproved loss; the creation of an MSv4 from several observations |
 | Mixed read/update sessions and locking | One update session per store in a process, its updaters claiming disjoint times (whole chunk rows on MSv4), read-only opens beside them; casacore's MSv2 lock held while an updater is live | Plan read and write access before locking, no implicit upgrade; original-input semantics need disjoint read and write regions after resolving aliases, or a proven read-before-write order; casacore cross-process locks stay authoritative for v2; the v4 profile reports that it has no cross-process lock protocol |
 | Calibration binding across stores | Section 2's persisted namespace and calibration binding, in the calibration trial (test code until the calibration port): a batch solve persisted through an MSv2's namespace is production `gaincal`'s table; one solved on an MSv4 lacking an antenna, rebound to the full MSv2 that numbers its antennas otherwise and applied from batches, equals production `gaincal` and `applycal`, and CASA's `applycal` reads the MSv4-namespace table as casa-rs does; reordered antennas and windows, renamed entities, subsets, equal content refused unless the namespace is the table's own or the association is stated (trial README, "Caltable round trip") | The binding in production, with `gainfield` and nearest-field selection through bound fields; bandpass and other per-channel tables, whose windows keep their channels; tables solved over combined windows; `FEED` and receptor association; a field binding tolerant of ephemeris fields |
 | Ephemeris and time-dependent metadata | Ephemeris keys MSv2 partitions as XRADIO's converter does but is not read, and the converter refuses fields that follow one (#942). Pointing is read (section 2) and converted both ways, what is not carried found before anything is written: into an MSv4 each row's direction at its own time (further polynomial terms, `INTERVAL`, `TARGET`, `NAME`, `TRACKING`, repeated rows and rows beyond the partitions' times reported as losses, pointing in a frame MSv4 does not name lost whole); into an MSv2 every row of the partitions' antennas, an MSv4's samples as rows of `INTERVAL` 0 | Ephemerides queried in bounded windows on both stores and carried by the converter; whether pointing samples without intervals image as the MSv2 they came from (imaging port step 3b) |

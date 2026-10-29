@@ -623,7 +623,7 @@ impl Msv2Observation {
 
     /// Partition `id`'s grid ([`Observation::grid`]): its times, fields and
     /// scans from the opening index, and the one `INTERVAL` of its rows,
-    /// read in row chunks of at most [`GRID_READ_ROWS`]. Padding has no
+    /// read in chunks of at most 262,144 rows. Padding has no
     /// row, so no interval.
     ///
     /// # Errors

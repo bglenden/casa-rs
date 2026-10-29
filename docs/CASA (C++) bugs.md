@@ -78,7 +78,8 @@ Concatenation behaviours casa-rs does not follow:
 [source equivalence decided by its last column](#concats-source-equivalence-lets-its-last-optional-column-decide),
 [merged sources' numbering](#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle),
 [observation IDs after removing duplicates](#concat-leaves-gaps-in-observation-ids-after-removing-duplicates),
-[an input without states](#concat-drops-every-state-when-one-input-has-none).
+[an input without states](#concat-drops-every-state-when-one-input-has-none),
+[writing into its inputs](#concat-writes-into-the-measurementsets-it-appends).
 ATM data errors casa-rs corrects (`tools/atmosphere/atm-corrections.patch`):
 [HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
 [sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
@@ -2443,3 +2444,18 @@ every row's `STATE_ID` to -1, so the intents of the input that had them are
 lost. casa-rs keeps them: the rows of an input without states have
 `STATE_ID` -1, and the others keep their merged states
 (`casa_observation::merge`, `states`).
+
+## `concat` writes into the MeasurementSets it appends
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casatools `src/tools/ms/ms_cmpt.cc` (`ms::concatenate`,
+  line 6497)
+
+After appending a MeasurementSet, `ms::concatenate` writes a `HISTORY` row
+("… appended to …", with its parameters) into the appended MeasurementSet,
+an input, rather than into the output; the inputs' own `HISTORY` is never
+copied. A task that reads several MeasurementSets to make another should
+leave them as they were. casa-rs never writes an input: the output's
+`HISTORY` holds what the creating task records of itself
+(`CreationOptions::history`), and the inputs' `HISTORY` is a declared loss.

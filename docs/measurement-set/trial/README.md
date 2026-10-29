@@ -909,7 +909,9 @@ grids, batches) and create the destination from those alone.
   - in either, unselected data groups;
   - into an MSv4, antennas no partition's baselines name
     (`Loss::UnusedAntennas`, below);
-  - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below).
+  - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below), unless
+    the source's stored `SIGMA` is already `1/√WEIGHT` to within one unit
+    in the last place and it holds no `WEIGHT_SPECTRUM` (#937 PR B).
 
   Columns of the subtables the catalogue does carry (an antenna's offset,
   a field's delay direction) are not inventoried. Fields whose direction
@@ -1019,7 +1021,18 @@ Partitions are converted `workers` at a time.
   data become data (`weightToSigma`): `1/√w`, and −1 where `w` is not
   positive. This is reported as `Loss::SigmaDerived` and must be accepted,
   since no batch carries sigma; right for weights never recalibrated,
-  wrong for the others (finding 6).
+  wrong for the others (finding 6). An MSv2 source whose stored `SIGMA`
+  is already that, to within one unit in the last place, and which holds
+  no `WEIGHT_SPECTRUM`, loses nothing, and no loss is reported.
+- **Memory is admitted before it is allocated**
+  (`CreationOptions::memory_bytes`, `to_msv2` takes the host's usual
+  eighth of physical memory): the opening's index as it grows, the scans,
+  grids and weights batches of planning, and writing's subtables,
+  `POINTING` table, pointing reads, MAIN writers and one batch, which must
+  hold one integration of every selected group (`CreationPlan::charges`;
+  the counting law `creation_plan_memory.rs`). The MAIN writers assemble
+  their tile bands in memory when the budget holds them and otherwise
+  write each tile row in place.
 - Refused before anything is written: times in a scale other than UTC,
   feeds other than 0, units that differ between partitions of one column,
   fields in a frame other than J2000, a scan without a casacore number,
