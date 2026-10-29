@@ -6,7 +6,7 @@
 //! and baseline order.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_observation::{Catalogue, ObservationError, Roles, VisibilityUnits};
 use casa_tables::table_quantum::TableQuantumDesc;
@@ -19,13 +19,13 @@ use super::memory::{Ledger, MemoryCharges, catalogue_bytes};
 use super::msv2_pointing::{self, Pointed};
 use super::msv2_rows::{MainRows, Occupancy};
 use super::pointing_plan::{self, PointingPlan};
-use super::replace::Replacing;
+use super::replace::{Replacing, Stage};
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
     losses, msv2_tables, occupancy, writing,
 };
 use crate::observation_io::update::{request_error, storage};
-use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWritePlan};
+use crate::write_session::MeasurementSetWritePlan;
 use crate::{MeasurementSet, OptionalMainColumn};
 
 /// A new MeasurementSet v2 planned from observations, checked before
@@ -78,7 +78,7 @@ pub struct CreationPlan {
 /// How the planned MeasurementSet is published.
 enum Publication {
     /// Renamed from its staging directory to a new path.
-    New(MeasurementSetCreateTarget),
+    New(PathBuf),
     /// Exchanged with the MeasurementSet it replaces, whose lock the plan
     /// holds.
     Replace(Replacing),
@@ -129,9 +129,15 @@ impl CreationPlan {
             return Err(request_error("a MeasurementSet is created from an input"));
         }
         let publication = match destination {
-            Destination::New(path) => Publication::New(
-                MeasurementSetCreateTarget::prepare(&path, false).map_err(storage)?,
-            ),
+            Destination::New(path) => {
+                if path.symlink_metadata().is_ok() {
+                    return Err(request_error(format!(
+                        "{} already exists; a new MeasurementSet is created at a free path",
+                        path.display()
+                    )));
+                }
+                Publication::New(path)
+            }
             Destination::Replace(path) => Publication::Replace(Replacing::hold(&path)?),
         };
         let mut ledger = Ledger::new(options.memory_bytes);
@@ -281,11 +287,13 @@ impl CreationPlan {
     /// is not published: the stage is removed, and a replaced
     /// MeasurementSet is as it was.
     pub fn write(self) -> Result<CreationReport, ObservationError> {
-        let staging = match &self.publication {
-            Publication::New(target) => target.staging_path().to_path_buf(),
-            Publication::Replace(replacing) => replacing.staging()?,
+        let stage = match &self.publication {
+            Publication::New(path) => Stage::reserve(path, "casa-rs-creating")?,
+            Publication::Replace(replacing) => {
+                Stage::reserve(&replacing.destination, "casa-rs-replacing")?
+            }
         };
-        let created = self.create(&staging);
+        let created = self.create(stage.path());
         let Self {
             inputs,
             publication,
@@ -296,16 +304,19 @@ impl CreationPlan {
         // directory is exchanged and deleted.
         drop(inputs);
         let published = created.and_then(|report| match publication {
-            Publication::New(target) => target.commit().map(|()| report).map_err(storage),
+            Publication::New(path) => stage.publish_new(&path).map(|()| report),
             Publication::Replace(replacing) => replacing
-                .publish(&staging)
+                .publish(&stage)
                 .map(|leftover| CreationReport { leftover, ..report }),
         });
         match published {
-            Ok(report) => Ok(CreationReport { losses, ..report }),
+            Ok(report) => {
+                stage.release();
+                Ok(CreationReport { losses, ..report })
+            }
             Err(error) => {
-                // The stage is the only output; nothing is published.
-                let _ = fs::remove_dir_all(&staging);
+                // The stage, which the plan reserved, is the only output.
+                stage.remove();
                 Err(error)
             }
         }

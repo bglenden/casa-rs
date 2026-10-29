@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Replacing an existing MeasurementSet with a created one
-//! ([`super::Destination::Replace`], r3 §8): how CASA's `concat` appends to
-//! an existing `concatvis`, which is then the plan's first input.
+//! Publishing a created MeasurementSet: staged in a directory the plan
+//! reserves beside its destination ([`Stage`]), then renamed into a new
+//! path or exchanged with the MeasurementSet it replaces.
 //!
-//! The plan takes casacore's write lock on the MeasurementSet's MAIN when it
-//! is made, refusing one another process holds, and holds it through
-//! publication. The new MeasurementSet is staged beside the old and the two
-//! directories are exchanged in one call (`renamex_np` with `RENAME_SWAP` on
-//! macOS, `renameat2` with `RENAME_EXCHANGE` on Linux), so an opening sees
-//! either whole; the old one, then at the stage's path, is deleted. A
-//! filesystem without the exchange (some network filesystems) refuses
-//! `Replace` before anything is written. A failure before the exchange
-//! removes the stage and leaves the MeasurementSet as it was; a failed
-//! exchange changes nothing; an old copy that cannot be deleted is reported
+//! The stage is a directory created atomically under a name of the plan's
+//! own (another name is tried while one is taken), holding the MeasurementSet
+//! being written, so a failure removes only what the plan made, never a
+//! directory or file that was there before. A new MeasurementSet is renamed
+//! into place without replacing anything that appeared there meanwhile.
+//!
+//! Replacing an existing MeasurementSet ([`super::Destination::Replace`],
+//! r3 §8) is how CASA's `concat` appends to an existing `concatvis`, which
+//! is then the plan's first input. The plan takes casacore's write lock on
+//! the MeasurementSet's MAIN when it is made, refusing one another process
+//! holds, and holds it through publication. The two directories are
+//! exchanged in one call (`renamex_np` with `RENAME_SWAP` on macOS,
+//! `renameat2` with `RENAME_EXCHANGE` on Linux), so an opening sees either
+//! whole; the old one, then in the stage, is deleted. A filesystem without
+//! the exchange (some network filesystems) refuses `Replace` before
+//! anything is written. A failure before the exchange removes the stage and
+//! leaves the MeasurementSet as it was; a failed exchange changes nothing; an
+//! old copy that cannot be deleted is reported
 //! ([`super::CreationReport::leftover`]). The same exchange publishes image
 //! products (`casa-imaging-products`' writer); the two could share one
 //! function if that crate's dependency policy (ADR-0016) took this one's.
@@ -58,20 +66,79 @@ impl Replacing {
         })
     }
 
-    /// Where the replacement is staged: beside the MeasurementSet.
-    pub(super) fn staging(&self) -> Result<PathBuf, ObservationError> {
-        beside(&self.destination, "casa-rs-replacing")
+    /// Publish the MeasurementSet `stage` holds in place of the one replaced
+    /// and delete the old one, then in the stage; the old copy's path when
+    /// it could not be deleted.
+    pub(super) fn publish(self, stage: &Stage) -> Result<Option<PathBuf>, ObservationError> {
+        exchange_directories(&stage.measurement_set, &self.destination).map_err(storage)?;
+        // The lock was taken on the old MAIN, now in the stage.
+        let _ = self.lock.release();
+        Ok(fs::remove_dir_all(&stage.measurement_set)
+            .is_err()
+            .then(|| stage.measurement_set.clone()))
+    }
+}
+
+/// A directory the plan reserved beside its destination, holding the
+/// MeasurementSet being written (at the destination's own name).
+pub(super) struct Stage {
+    reserved: PathBuf,
+    measurement_set: PathBuf,
+}
+
+impl Stage {
+    /// Reserve a directory beside `destination` for `purpose`, created
+    /// atomically: a name already taken, by anything, is passed over.
+    pub(super) fn reserve(destination: &Path, purpose: &str) -> Result<Self, ObservationError> {
+        let name = destination
+            .file_name()
+            .ok_or_else(|| request_error("a MeasurementSet's path ends in a name"))?;
+        for attempt in 0..1000 {
+            let reserved = beside(destination, &format!("{purpose}-{attempt}"))?;
+            match fs::create_dir(&reserved) {
+                Ok(()) => {
+                    let measurement_set = reserved.join(name);
+                    return Ok(Self {
+                        reserved,
+                        measurement_set,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(storage(error)),
+            }
+        }
+        Err(request_error(format!(
+            "no staging directory could be reserved beside {}",
+            destination.display()
+        )))
     }
 
-    /// Publish `staging` in place of the MeasurementSet and delete the old
-    /// one; the old copy's path when it could not be deleted.
-    pub(super) fn publish(self, staging: &Path) -> Result<Option<PathBuf>, ObservationError> {
-        exchange_directories(staging, &self.destination).map_err(storage)?;
-        // The lock was taken on the old MAIN, now at the stage's path.
-        let _ = self.lock.release();
-        Ok(fs::remove_dir_all(staging)
-            .is_err()
-            .then(|| staging.to_path_buf()))
+    /// Where the MeasurementSet is written.
+    pub(super) fn path(&self) -> &Path {
+        &self.measurement_set
+    }
+
+    /// Publish the staged MeasurementSet at `destination`, a new path,
+    /// without replacing anything that appeared there.
+    pub(super) fn publish_new(&self, destination: &Path) -> Result<(), ObservationError> {
+        rename_without_replacing(&self.measurement_set, destination).map_err(|error| {
+            request_error(format!(
+                "the MeasurementSet could not be published at {}: {error}",
+                destination.display()
+            ))
+        })
+    }
+
+    /// Release the reservation once its MeasurementSet is published: the
+    /// directory, then empty (a replaced copy that could not be deleted
+    /// keeps it).
+    pub(super) fn release(self) {
+        let _ = fs::remove_dir(&self.reserved);
+    }
+
+    /// Remove the reservation and whatever was written in it.
+    pub(super) fn remove(self) {
+        let _ = fs::remove_dir_all(&self.reserved);
     }
 }
 
@@ -85,19 +152,63 @@ fn beside(path: &Path, purpose: &str) -> Result<PathBuf, ObservationError> {
 }
 
 /// Refuse a filesystem that cannot exchange two directories, by exchanging
-/// two empty ones beside `destination`.
+/// two empty ones reserved beside `destination`; only what this made is
+/// removed.
 fn probe(destination: &Path) -> Result<(), ObservationError> {
-    let (first, second) = (
-        beside(destination, "casa-rs-probe-a")?,
-        beside(destination, "casa-rs-probe-b")?,
-    );
-    let created = fs::create_dir(&first).and_then(|()| fs::create_dir(&second));
-    let exchanged = created.and_then(|()| exchange_directories(&first, &second));
-    let _ = fs::remove_dir(&first);
-    let _ = fs::remove_dir(&second);
+    let first = Stage::reserve(destination, "casa-rs-probe")?;
+    let second = Stage::reserve(destination, "casa-rs-probe")?;
+    let exchanged = exchange_directories(&first.reserved, &second.reserved);
+    first.remove();
+    second.remove();
     exchanged.map_err(|_| ObservationError::Unsupported {
         what: "replacing a MeasurementSet on a filesystem that cannot exchange directories",
     })
+}
+
+#[cfg(target_os = "macos")]
+fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
+    let to = CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("destination path contains NUL"))?;
+    // SAFETY: both C strings remain valid for the duration of this call.
+    let status = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    (status == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
+#[cfg(target_os = "linux")]
+fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
+    let to = CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("destination path contains NUL"))?;
+    // SAFETY: both C strings remain valid for the duration of this call.
+    let status = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    (status == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
+/// Elsewhere a destination that appeared is refused before the rename.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.symlink_metadata().is_ok() {
+        return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+    }
+    fs::rename(from, to)
 }
 
 #[cfg(target_os = "macos")]

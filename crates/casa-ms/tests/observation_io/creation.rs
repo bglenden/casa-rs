@@ -910,6 +910,74 @@ fn uncarried_subtable_columns_are_declared() {
 }
 
 /// The entries of `directory` other than `kept`, by name.
+/// The name of this process's stage of `purpose` for a MeasurementSet named
+/// `name`, at `attempt`.
+fn stage_name(name: &str, purpose: &str, attempt: usize) -> String {
+    format!(".{name}.casa-rs-{purpose}-{attempt}-{}", std::process::id())
+}
+
+/// MAIN's storage-manager files of the MeasurementSet at `path`.
+fn payload_files(path: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(path)
+        .expect("dir")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|file| {
+            file.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("table.f"))
+        })
+        .collect()
+}
+
+/// A new MeasurementSet passes over what occupies its stage's first name,
+/// which is kept, and is not published over a destination that appeared
+/// after the plan was made: that is kept, and the stage removed.
+#[test]
+fn a_new_measurement_set_keeps_what_it_did_not_make() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let destination = root.path().join("created.ms");
+    let occupied = root.path().join(stage_name("created.ms", "creating", 0));
+    std::fs::create_dir(&occupied).expect("a directory");
+    std::fs::write(occupied.join("sentinel"), b"kept").expect("sentinel");
+    let plan = || {
+        CreationPlan::new(
+            &[CreationInput::new(&v2)],
+            &options(),
+            Destination::New(destination.clone()),
+        )
+        .expect("plan")
+    };
+    plan().write().expect("created");
+    assert!(MeasurementSet::open(&destination).is_ok());
+    assert_eq!(
+        std::fs::read(occupied.join("sentinel")).expect("kept"),
+        b"kept"
+    );
+    let entries = |root: &Path| {
+        let mut names = others(root, &["ms_trial.ms", "created.ms"]);
+        names.sort();
+        names
+    };
+    assert_eq!(
+        entries(root.path()),
+        [stage_name("created.ms", "creating", 0)]
+    );
+
+    std::fs::remove_dir_all(&destination).expect("remove");
+    let pending = plan();
+    std::fs::create_dir(&destination).expect("appeared");
+    std::fs::write(destination.join("keep"), b"theirs").expect("theirs");
+    assert!(pending.write().is_err(), "not published over it");
+    assert_eq!(
+        std::fs::read(destination.join("keep")).expect("kept"),
+        b"theirs"
+    );
+    assert_eq!(
+        entries(root.path()),
+        [stage_name("created.ms", "creating", 0)]
+    );
+}
+
 fn others(directory: &Path, kept: &[&str]) -> Vec<String> {
     std::fs::read_dir(directory)
         .expect("dir")
@@ -979,17 +1047,41 @@ fn a_failed_replacement_leaves_the_measurement_set_as_it_was() {
     let root = tempfile::tempdir().expect("root");
     let early = edited(root.path(), "early", 60..120, |_| {});
     let late = edited(root.path(), "late", 0..60, |_| {});
-    let plan = plan_of(&[&early, &late], Destination::Replace(early.clone())).expect("plan");
     let parent = early.parent().expect("parent");
-    let stage = parent.join(format!(
-        ".ms_trial.ms.casa-rs-replacing-{}",
-        std::process::id()
-    ));
-    std::fs::write(&stage, b"in the way").expect("block the stage");
-    assert!(plan.write().is_err());
-    std::fs::remove_file(&stage).ok();
+    // What occupies the stage's first names, a file and a nonempty
+    // directory, is passed over and kept.
+    let (file, directory) = (
+        stage_name("ms_trial.ms", "replacing", 0),
+        stage_name("ms_trial.ms", "replacing", 1),
+    );
+    std::fs::write(parent.join(&file), b"in the way").expect("a file");
+    std::fs::create_dir(parent.join(&directory)).expect("a directory");
+    std::fs::write(parent.join(&directory).join("sentinel"), b"kept").expect("sentinel");
+    let kept = ["ms_trial.ms", file.as_str(), directory.as_str()];
+    // A write that fails part way: the late input's payload unreadable.
+    let plan = plan_of(&[&early, &late], Destination::Replace(early.clone())).expect("plan");
+    let payload = payload_files(&late);
+    for path in &payload {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).expect("hide");
+    }
+    let failed = plan.write();
+    for path in &payload {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("show");
+    }
+    assert!(failed.is_err(), "{:?}", failed.ok());
     assert_eq!(main_ints(&early, "ANTENNA1").len(), 60, "as it was");
-    assert_eq!(others(parent, &["ms_trial.ms"]), Vec::<String>::new());
+    assert_eq!(
+        others(parent, &kept),
+        Vec::<String>::new(),
+        "its stage removed"
+    );
+    assert_eq!(
+        std::fs::read(parent.join(&directory).join("sentinel")).expect("kept"),
+        b"kept"
+    );
+    assert!(parent.join(&file).is_file());
+    std::fs::remove_file(parent.join(&file)).expect("tidy");
+    std::fs::remove_dir_all(parent.join(&directory)).expect("tidy");
 
     let plan = plan_of(&[&early, &late], Destination::Replace(early.clone())).expect("plan");
     let pinned = early.join("ANTENNA");
