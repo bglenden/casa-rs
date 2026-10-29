@@ -68,7 +68,8 @@ def test_task_parameters_mutate_reset_save_reload_and_track_origins(
     assert loaded["comment"] == "before editing"
     assert loaded.origins["comment"] is ParameterOrigin.BASE_PROFILE
     loaded.reset("comment")
-    assert loaded["comment"] == "none"
+    # CASA's default (#931 PR 4c).
+    assert loaded["comment"] == ""
     assert loaded.origins["comment"] is ParameterOrigin.DEFAULT
     loaded.revert()
     assert loaded["comment"] == "before editing"

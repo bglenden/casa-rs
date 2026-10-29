@@ -519,12 +519,7 @@ mod tests {
                 "measurementset.summary.output",
                 Some("msexplore"),
             ),
-            (
-                &["mstransform", "split"][..],
-                "width",
-                "ms.transform.width",
-                Some("mstransform"),
-            ),
+            (&["split"][..], "width", "ms.transform.width", Some("split")),
         ] {
             for surface in surfaces {
                 let binding = binding(surface, name);
@@ -539,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn importvla_archivefiles_preserves_a_nonempty_path_list() {
+    fn importvla_archivefiles_is_a_path_list_required_when_the_task_runs() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -547,26 +542,29 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == "parameter.archivefiles")
             .unwrap();
-        assert_eq!(concept.semantic_revision, SemanticRevision(2));
+        // CASA's default is the empty list (#931), so the list is required
+        // when the task runs rather than by the domain.
+        assert_eq!(concept.semantic_revision, SemanticRevision(3));
         assert_eq!(
             concept.value_domain,
             ParameterType::Array {
                 element: Box::new(ParameterType::Path {
                     resource_kind: Some(ResourceKind::Archive),
                 }),
-                min_items: 1,
+                min_items: 0,
                 max_items: None,
                 allow_scalar: true,
             }
         );
 
         let surface = catalog.surface("importvla").unwrap();
-        assert_eq!(surface.contract_version(), 4);
+        assert_eq!(surface.contract_version(), 5);
         let archivefiles = surface
             .bindings()
             .iter()
             .find(|binding| binding.name == "archivefiles")
             .unwrap();
+        assert_eq!(archivefiles.required_when, Predicate::Always);
         assert_eq!(
             archivefiles.projections.provider.as_ref().unwrap().adapter,
             ValueAdapter::StringListCsv
@@ -608,10 +606,15 @@ mod tests {
         );
         assert_eq!(
             concept_ids("width"),
-            ["imager.width", "impv.width", "ms.transform.width"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "imager.width",
+                "impv.width",
+                "ms.transform.width",
+                "regridms.width"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("mode"),
@@ -623,6 +626,7 @@ mod tests {
                 "immath.mode",
                 "impbcor.mode",
                 "impv.mode",
+                "regridms.mode",
             ]
             .into_iter()
             .map(str::to_string)

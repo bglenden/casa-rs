@@ -6,9 +6,11 @@ use std::process::ExitCode;
 
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, MeasurementSet,
-    delete_flag_version, flagmanager_task_schema_bundle, list_flag_versions, ms_task_success,
-    rename_flag_version, restore_flag_version, save_flag_version, task_flag_merge,
+    delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
+    list_flag_versions, ms_task_success, rename_flag_version, restore_flag_version,
+    save_flag_version, task_flag_merge,
 };
+use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -31,8 +33,9 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let vis = task.path("vis")?;
     let request = FlagManagerTaskRequest {
-        vis: task.path("vis")?,
+        vis: vis.clone(),
         mode: task.required_text("mode")?.to_ascii_lowercase(),
         versionname: task.text("versionname")?,
         oldname: task.text("oldname")?,
@@ -41,10 +44,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     };
     let result = execute(request)?;
     // CASA's `list` returns the versions; the other modes return None.
-    match &result {
-        FlagManagerTaskResult::Versions(versions) => ms_task_success(versions, &result),
-        FlagManagerTaskResult::Mutation(_) => ms_task_success(&(), &result),
-    }
+    let value = match &result {
+        FlagManagerTaskResult::Versions(versions) => flagmanager_list_record(versions, &vis),
+        FlagManagerTaskResult::Mutation(_) => CasaValue::None,
+    };
+    ms_task_success(value, &result)
 }
 
 fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {

@@ -14,19 +14,17 @@ use serde::Serialize;
 
 use crate::FlagMerge;
 
-/// A MeasurementSet task's reply: `value` is what the task returns (`&()`
-/// for `None`), read as plain JSON until each task returns CASA's own
-/// types (#931 PR 4c), and `result` the provider's report, which a command
-/// line prints as JSON.
+/// A MeasurementSet task's reply: `value` is what CASA's task returns
+/// ([`CasaValue::None`] for `None`; `crate::casa_return` builds the
+/// records), and `result` the provider's report, which a command line
+/// prints as JSON.
 pub fn ms_task_success(
-    value: &impl Serialize,
+    value: CasaValue,
     result: &impl Serialize,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let serialize =
-        |error: serde_json::Error| TaskFailure::execution(format!("serialize the result: {error}"));
-    let text = serde_json::to_string_pretty(result).map_err(serialize)?;
-    let value = serde_json::to_value(value).map_err(serialize)?;
-    Ok(TaskSuccess::new(CasaValue::from_plain_json(&value), result)?.with_text(text + "\n"))
+    let text = serde_json::to_string_pretty(result)
+        .map_err(|error| TaskFailure::execution(format!("serialize the result: {error}")))?;
+    Ok(TaskSuccess::new(value, result)?.with_text(text + "\n"))
 }
 
 /// Read `name`, a flag-version merge: `replace`, `or` or `and`, any case.

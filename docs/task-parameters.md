@@ -278,12 +278,15 @@ Rust-owned.
 
 The CASA-named wrappers and their type stubs are generated from the catalog,
 under `casars.tasks`; there is no second provider-specific task API. A
-surface that names its CASA task (`casa_task`; the image tasks and
-`simobserve` so far) has CASA's exact signature: CASA's parameters in CASA's
-order, positional or by keyword, with CASA's defaults, then casa-rs's own
-controls, keyword-only. Its wrapper returns CASA's value: `imstat`'s
-statistics dictionary with NumPy arrays, `immath`'s `True`, `None` for most
-tasks. A parameter casa-rs does not implement yet is taken only at CASA's
+surface that names its CASA task (`casa_task`; the image tasks, `flagdata`,
+`flagmanager`, `importvla`, `mstransform`, `split` and `simobserve` so far)
+has CASA's exact signature: CASA's parameters in CASA's order, positional or
+by keyword, with CASA's defaults, then casa-rs's own controls, keyword-only.
+Its wrapper returns CASA's value: `imstat`'s statistics dictionary with NumPy
+arrays, `immath`'s `True`, `flagdata`'s summary dictionary in summary mode
+and `{}` in its other modes, `flagmanager`'s version list in list mode,
+`None` for most tasks. A parameter casa-rs does not implement yet is taken
+only at CASA's
 default and refused at any other value, naming its issue; the wrapper's
 docstring lists them. The other wrappers take keyword arguments and return
 the `TaskCompletion` until their families are converted (#931).

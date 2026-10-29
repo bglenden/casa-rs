@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{FlagMerge, FlagVersionEntry};
 
-/// JSON request accepted by the native `mstransform` provider.
+/// JSON request accepted by the native `mstransform` provider, for its
+/// `mstransform` and `split` surfaces.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MsTransformTaskRequest {
     /// Input MeasurementSet.
@@ -24,9 +25,15 @@ pub struct MsTransformTaskRequest {
     /// CASA spectral-window selector.
     #[serde(default)]
     pub spw: String,
-    /// Adjacent channels to average.
+    /// `split`: adjacent channels to average.
     #[serde(default = "default_width")]
     pub width: usize,
+    /// `mstransform`: average `chanbin` channels into one.
+    #[serde(default)]
+    pub chanaverage: bool,
+    /// `mstransform`: adjacent channels to average when `chanaverage` is set.
+    #[serde(default = "default_width")]
+    pub chanbin: usize,
     /// CASA field selector.
     #[serde(default)]
     pub field: String,
@@ -39,9 +46,12 @@ pub struct MsTransformTaskRequest {
     /// MJD-seconds range in `start~end` form.
     #[serde(default)]
     pub timerange: String,
-    /// Additional TaQL row selection.
+    /// `split`: additional TaQL row selection, a casa-rs control.
     #[serde(default)]
     pub msselect: String,
+    /// `mstransform`: additional TaQL row selection.
+    #[serde(default)]
+    pub taql: String,
     /// Input visibility column.
     #[serde(default = "default_corrected_data")]
     pub datacolumn: String,
@@ -73,8 +83,8 @@ pub struct FlagDataTaskRequest {
     /// Visibility column used by automatic modes.
     #[serde(default = "default_data")]
     pub datacolumn: String,
-    /// Manual flagging action.
-    #[serde(default = "default_flag")]
+    /// Whether to apply the flags: `apply`, or `''`/`none` to run nothing.
+    #[serde(default = "default_apply")]
     pub action: String,
     /// Save the current flags before mutation.
     #[serde(default = "default_true")]
@@ -83,7 +93,7 @@ pub struct FlagDataTaskRequest {
     #[serde(default)]
     pub clipzeros: bool,
     /// Quack interval in seconds.
-    #[serde(default)]
+    #[serde(default = "default_quackinterval")]
     pub quackinterval: f64,
     /// Quack scan edge.
     #[serde(default = "default_beg")]
@@ -116,13 +126,13 @@ pub struct FlagDataTaskRequest {
     #[serde(default = "default_true")]
     pub extendflags: bool,
     /// Extend flags across correlations.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub extendpols: bool,
     /// Flag time columns above this percentage.
-    #[serde(default)]
+    #[serde(default = "default_grow")]
     pub growtime: f64,
     /// Flag spectra above this percentage.
-    #[serde(default)]
+    #[serde(default = "default_grow")]
     pub growfreq: f64,
 }
 
@@ -179,9 +189,10 @@ pub fn mstransform_task_schema_bundle() -> TaskProviderContract {
     )
 }
 
-/// Canonical provider bundle for `flagdata`.
+/// Canonical provider bundle for `flagdata`; its result is `null` when
+/// `action` runs nothing.
 pub fn flagdata_task_schema_bundle() -> TaskProviderContract {
-    one_shot_contract::<FlagDataTaskRequest, crate::FlagDataReport>(
+    one_shot_contract::<FlagDataTaskRequest, Option<crate::FlagDataReport>>(
         "casa_ms_flagdata_task",
         &["flagdata"],
     )
@@ -262,15 +273,23 @@ fn default_manual() -> String {
 }
 
 fn default_data() -> String {
-    "data".to_string()
+    "DATA".to_string()
 }
 
-fn default_flag() -> String {
-    "flag".to_string()
+fn default_apply() -> String {
+    "apply".to_string()
 }
 
 fn default_beg() -> String {
     "beg".to_string()
+}
+
+const fn default_quackinterval() -> f64 {
+    1.0
+}
+
+const fn default_grow() -> f64 {
+    50.0
 }
 
 const fn default_timecutoff() -> f64 {

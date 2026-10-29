@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
+#[path = "migration_set.rs"]
+mod migration_set;
 
 pub use casa_signature::{UnimplementedParameter, python_repr};
 
@@ -898,6 +900,15 @@ pub enum MigrationStep {
     Transform {
         parameter: String,
         transform: MigrationTransform,
+    },
+    /// Set `parameter` to `value` when the profile's explicit overrides
+    /// satisfy `when`: a value that moves between parameters (#931). `when`
+    /// holds only of values a profile set, so an omitted value still adopts
+    /// the current default (ADR-0006); see [`Predicate::holds_for_overrides`].
+    Set {
+        parameter: String,
+        value: ParameterValue,
+        when: Predicate,
     },
 }
 
@@ -2056,9 +2067,16 @@ fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractVal
             let current_name = match step {
                 MigrationStep::Rename { to, .. } => Some(to),
                 MigrationStep::ReplaceValue { parameter, .. }
-                | MigrationStep::Transform { parameter, .. } => Some(parameter),
+                | MigrationStep::Transform { parameter, .. }
+                | MigrationStep::Set { parameter, .. } => Some(parameter),
                 MigrationStep::Remove { .. } => None,
             };
+            if let MigrationStep::Set {
+                parameter, when, ..
+            } = step
+            {
+                migration_set::validate_condition(surface, parameter, when, errors);
+            }
             if let Some(name) = current_name
                 && !known.contains(name.as_str())
             {

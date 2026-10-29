@@ -42,6 +42,9 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod summary;
+pub use summary::{FlagCounts, FlagSummaryBreakdown};
+
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
@@ -215,6 +218,9 @@ pub struct FlagDataReport {
     pub timedev: Option<f64>,
     /// RFlag spectral threshold actually used.
     pub freqdev: Option<f64>,
+    /// CASA's summary of the selection's flags, in summary mode (#931).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<FlagSummaryBreakdown>,
 }
 
 /// Flag-version merge behavior.
@@ -326,22 +332,7 @@ pub fn flagdata(
     }
 
     if request.mode == FlagDataMode::Summary {
-        let report = report_after(
-            ms,
-            request,
-            selected_rows.len(),
-            ChangeSet::default(),
-            None,
-            None,
-        )?;
-        tracing::info!(
-            path = %ms_path,
-            selected_rows = report.selected_rows,
-            flagged_samples = report.flagged_samples,
-            total_samples = report.total_samples,
-            "flagdata summary completed"
-        );
-        return Ok(report);
+        return summary::report(ms, &selected_rows, channel_selections.as_ref());
     }
 
     let backup_version = if request.flagbackup && !selected_rows.is_empty() {
@@ -521,6 +512,7 @@ fn report_after(
         backup_version,
         timedev: thresholds.map(|pair| pair.0),
         freqdev: thresholds.map(|pair| pair.1),
+        summary: None,
     })
 }
 

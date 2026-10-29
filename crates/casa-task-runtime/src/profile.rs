@@ -589,6 +589,15 @@ fn apply_migration_step(
                 );
             }
         }
+        MigrationStep::Set {
+            parameter,
+            value,
+            when,
+        } => {
+            if when.holds_for_overrides(parameters) {
+                parameters.insert(parameter.clone(), value.clone());
+            }
+        }
     }
     Ok(())
 }

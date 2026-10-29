@@ -10,31 +10,31 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 389
+- Concepts: 470
 - Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 594
+- Surface bindings: 705
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
-| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 4 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
+| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 28 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
-| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 4 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
-| [Split](#surface-split)<br><code>split</code> | task | 4 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
+| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 5 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
+| [Split](#surface-split)<br><code>split</code> | task | 5 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 5 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 5 | <code>calibration</code> | 29 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 5 | <code>calibration</code> | 27 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 5 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 5 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
-| [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 4 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
-| [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 4 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
+| [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
+| [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
 | [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
 | [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
@@ -193,20 +193,20 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## ImportVLA (<code>importvla</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Import
 - Provider family: `importvla`
 - Summary: scan or import old VLA export archives from disk
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>archivefiles</code> | <code>parameter.archivefiles@r2</code> | <code>array&lt;path (archive)&gt;</code> | no default; required | Input | Input VLA export archive paths.<br><em>Surface:</em> The canonical archive-path list is passed to importvla as one comma-separated --archivefiles value. |
-| <code>vis</code> | <code>data.output.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; optional | Output | Output MeasurementSet path; defaults to ./&lt;first-archive-stem&gt;.ms for imports |
-| <code>bandname</code> | <code>parameter.bandname@r1</code> | <code>choice (11 values)</code> | <code>"none"</code>; optional | Selection | Optional CASA `importvla` band selector |
+| <code>archivefiles</code> | <code>parameter.archivefiles@r3</code> | <code>array&lt;path (archive)&gt;</code> | <code>[]</code>; required | Input | Input VLA export archive paths.<br><em>Surface:</em> The canonical archive-path list is passed to importvla as one comma-separated --archivefiles value. |
+| <code>vis</code> | <code>data.output.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; optional | Output | Output MeasurementSet path; defaults to ./&lt;first-archive-stem&gt;.ms for imports<br><em>Surface:</em> When vis is empty, casa-rs names the MeasurementSet after the first archive file, where CASA raises. |
+| <code>bandname</code> | <code>parameter.bandname@r2</code> | <code>choice (11 values)</code> | <code>""</code>; optional | Selection | Optional CASA `importvla` band selector |
 | <code>frequencytol</code> | <code>parameter.frequencytol@r1</code> | <code>string</code> | <code>"150000.0Hz"</code>; optional | Selection | Spectral-window matching tolerance in CASA quantity syntax |
-| <code>project</code> | <code>parameter.project@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Optional project-code selector |
-| <code>starttime</code> | <code>parameter.starttime@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Optional inclusive CASA-style start time |
-| <code>stoptime</code> | <code>parameter.stoptime@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Optional inclusive CASA-style stop time |
+| <code>project</code> | <code>parameter.project@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Optional project-code selector |
+| <code>starttime</code> | <code>parameter.starttime@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Optional inclusive CASA-style start time |
+| <code>stoptime</code> | <code>parameter.stoptime@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Optional inclusive CASA-style stop time |
 | <code>applytsys</code> | <code>parameter.applytsys@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Apply nominal sensitivity scaling |
 | <code>autocorr</code> | <code>parameter.autocorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Keep auto-correlation rows |
 | <code>antnamescheme</code> | <code>parameter.antnamescheme@r1</code> | <code>choice (2 values)</code> | <code>"new"</code>; optional | Selection | Use CASA `new` or `old` antenna names |
@@ -467,48 +467,101 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSTransform (<code>mstransform</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Materialize a selected MeasurementSet into a new output MS.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | no default; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector. |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
+| <code>createmms</code> | <code>mstransform.createmms@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Write a multi-MS rather than one MeasurementSet. |
+| <code>separationaxis</code> | <code>mstransform.separationaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Axis a multi-MS is partitioned along. |
+| <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
+| <code>tileshape</code> | <code>mstransform.tileshape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Output | Tile shape of the output data columns. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
+| <code>realmodelcol</code> | <code>mstransform.realmodelcol@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Write a virtual MODEL column as a real one. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
+| <code>usewtspectrum</code> | <code>mstransform.usewtspectrum@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Create WEIGHT_SPECTRUM and SIGMA_SPECTRUM in the output. |
+| <code>combinespws</code> | <code>mstransform.combinespws@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Combine the selected spectral windows into one. |
+| <code>chanaverage</code> | <code>mstransform.chanaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Average chanbin channels into one. |
+| <code>chanbin</code> | <code>parameter.chanbin@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Channel bin mode.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True, as CASA's mstransform does. |
+| <code>hanning</code> | <code>mstransform.hanning@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Hanning-smooth the spectra. |
+| <code>regridms</code> | <code>mstransform.regridms@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Regrid the spectral axis. |
+| <code>mode</code> | <code>regridms.mode@r1</code> | <code>string</code> | <code>"channel"</code>; optional | Spectral | How the regridded spectral axis is given: 'channel', 'velocity', 'frequency' or 'channel_b'. |
+| <code>nchan</code> | <code>regridms.nchan@r1</code> | <code>integer</code> | <code>-1</code>; optional | Spectral | Number of channels of the regridded spectral axis; -1 for all. |
+| <code>start</code> | <code>regridms.start@r1</code> | <code>integer</code> | <code>0</code>; optional | Spectral | First channel of the regridded spectral axis. |
+| <code>width</code> | <code>regridms.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Channel width of the regridded spectral axis. |
+| <code>nspw</code> | <code>regridms.nspw@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Number of spectral windows the regridded axis is split into. |
+| <code>interpolation</code> | <code>regridms.interpolation@r1</code> | <code>string</code> | <code>"linear"</code>; optional | Spectral | Interpolation the spectral regridding uses. |
+| <code>phasecenter</code> | <code>parameter.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Explicit CASA-style J2000 phase center |
+| <code>restfreq</code> | <code>parameter.restfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Rest frequency used for velocity-style cube axes |
+| <code>outframe</code> | <code>regridms.outframe@r1</code> | <code>string</code> | <code>""</code>; optional | Spectral | Reference frame of the regridded spectral axis; empty keeps the input's. |
+| <code>veltype</code> | <code>regridms.veltype@r1</code> | <code>string</code> | <code>"radio"</code>; optional | Spectral | Velocity definition: 'radio' or 'optical'. |
+| <code>preaverage</code> | <code>regridms.preaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Average channels before regridding to wider ones. |
+| <code>timeaverage</code> | <code>mstransform.timeaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Time | Average in time over timebin. |
+| <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Time | Averaging time bin, a time quantity as CASA writes it. |
+| <code>timespan</code> | <code>mstransform.timespan@r1</code> | <code>string</code> | <code>""</code>; optional | Time | Let time averages span 'scan', 'state' or both. |
+| <code>maxuvwdistance</code> | <code>mstransform.maxuvwdistance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Time | Largest UVW change, in metres, a time average may span. |
+| <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
+| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Calibration | CASA callibrary file describing the calibration-table chain |
+| <code>douvcontsub</code> | <code>mstransform.douvcontsub@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum | Subtract the continuum, as uvcontsub does. |
+| <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>""</code>; optional | Continuum | Fit SPW selector. |
+| <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum | Polynomial fit order. |
+| <code>want_cont</code> | <code>uvcontsub.want_cont@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum | Write the continuum fit rather than the subtracted data. |
+| <code>denoising_lib</code> | <code>uvcontsub.denoising_lib@r1</code> | <code>bool</code> | <code>true</code>; optional | Continuum | Fit the continuum with the GSL denoising library. |
+| <code>nthreads</code> | <code>uvcontsub.nthreads@r1</code> | <code>integer</code> | <code>1</code>; optional | Continuum | Threads for the continuum fit. |
+| <code>niter</code> | <code>uvcontsub.niter@r1</code> | <code>integer</code> | <code>1</code>; optional | Continuum | Iterations of the continuum's re-weighted linear fit. |
+| <code>disableparallel</code> | <code>mstransform.disableparallel@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | CASA's internal control of parallel processing. |
+| <code>ddistart</code> | <code>mstransform.ddistart@r1</code> | <code>integer</code> | <code>-1</code>; optional | Output | CASA's internal first data-description id. |
+| <code>taql</code> | <code>mstransform.taql@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | TaQL expression that selects rows. |
+| <code>monolithic_processing</code> | <code>mstransform.monolithic_processing@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | CASA's internal control of multi-MS processing. |
+| <code>reindex</code> | <code>mstransform.reindex@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Re-index the output's subtable ids from zero. |
 
 <a id="surface-split"></a>
 
 ## Split (<code>split</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Create a selected MeasurementSet subset, equivalent to CASA split.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | no default; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector. |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
+| <code>keepmms</code> | <code>parameter.keepmms@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Preserve MMS structure. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
+| <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |
+| <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Averaging | Averaging time bin, a time quantity as CASA writes it. |
+| <code>combine</code> | <code>parameter.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Axes to combine. |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors<br><em>Surface:</em> casa-rs's own control: CASA's split has no msselect parameter. |
 
 <a id="surface-applycal"></a>
 
@@ -757,49 +810,107 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Flag Data (<code>flagdata</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Flagging
 - Provider family: `flagdata`
 - Summary: Run native CASA-style MeasurementSet flagging.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths. |
-| <code>mode</code> | <code>flagdata.mode@r1</code> | <code>choice (7 values)</code> | <code>"summary"</code>; optional | Flagging | Flagging mode. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector. |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"data"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
-| <code>action</code> | <code>flagdata.action@r1</code> | <code>choice (2 values)</code> | <code>"flag"</code>; optional | Flagging | Manual mode flagging action. |
-| <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Safety | Create a flagmanager backup before mutating flags. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>mode</code> | <code>flagdata.mode@r2</code> | <code>choice (13 values)</code> | <code>"manual"</code>; optional | Flagging | Flagging mode. |
+| <code>autocorr</code> | <code>flagdata.autocorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Flag only the autocorrelations of the selection. |
+| <code>inpfile</code> | <code>flagdata.inpfile@r1</code> | <code>string</code> | <code>""</code>; optional | Input | File, files or list of flag commands to apply in list mode. |
+| <code>reason</code> | <code>flagdata.reason@r1</code> | <code>string</code> | <code>"any"</code>; optional | Input | Select list-mode flag commands by their reason. |
+| <code>tbuff</code> | <code>flagdata.tbuff@r1</code> | <code>float</code> | <code>0.0</code>; optional | Input | Time buffer in seconds that pads each flag command's time range. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Range of data values that clip mode keeps; values outside it are flagged. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
+| <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>bool</code> | <code>true</code>; optional | Clip | Clip outside clipminmax's range rather than inside it. |
+| <code>channelavg</code> | <code>flagdata.channelavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average channels before clipping. |
+| <code>chanbin</code> | <code>parameter.chanbin@r1</code> | <code>integer</code> | <code>1</code>; optional | Clip | Channel bin mode. |
+| <code>timeavg</code> | <code>flagdata.timeavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average time before clipping. |
+| <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Clip | Averaging time bin, a time quantity as CASA writes it. |
 | <code>clipzeros</code> | <code>parameter.clipzeros@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Flag exact zero amplitudes in clip mode. |
-| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>float</code> | <code>0.0</code>; optional | Quack | Quack interval in seconds. |
-| <code>quackmode</code> | <code>parameter.quackmode@r1</code> | <code>choice (2 values)</code> | <code>"beg"</code>; optional | Quack | Quack scan edge. |
+| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>float</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |
+| <code>quackmode</code> | <code>parameter.quackmode@r2</code> | <code>choice (4 values)</code> | <code>"beg"</code>; optional | Quack | Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first. |
+| <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>bool</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
+| <code>tolerance</code> | <code>flagdata.tolerance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Shadow | Shadowing in metres that shadow mode tolerates. |
+| <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
+| <code>lowerlimit</code> | <code>flagdata.lowerlimit@r1</code> | <code>float</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
+| <code>upperlimit</code> | <code>flagdata.upperlimit@r1</code> | <code>float</code> | <code>90.0</code>; optional | Elevation | Highest elevation, in degrees, that elevation mode keeps. |
+| <code>ntime</code> | <code>flagdata.ntime@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Automatic | Time chunk the automatic modes analyse: 'scan' or a time. |
+| <code>combinescans</code> | <code>flagdata.combinescans@r1</code> | <code>bool</code> | <code>false</code>; optional | Automatic | Let the automatic modes' time chunks span scans. |
 | <code>timecutoff</code> | <code>parameter.timecutoff@r1</code> | <code>float</code> | <code>4.0</code>; optional | Automatic | TFCrop time cutoff in robust sigma units. |
 | <code>freqcutoff</code> | <code>parameter.freqcutoff@r1</code> | <code>float</code> | <code>3.0</code>; optional | Automatic | TFCrop frequency cutoff in robust sigma units. |
-| <code>timedev</code> | <code>parameter.timedev@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Automatic | Explicit RFlag time threshold. |
-| <code>freqdev</code> | <code>parameter.freqdev@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Automatic | Explicit RFlag spectral threshold. |
-| <code>extendflags</code> | <code>parameter.extendflags@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Run post-extension after automatic flagging. |
-| <code>extendpols</code> | <code>parameter.extendpols@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Extend flags across correlations. |
+| <code>timefit</code> | <code>flagdata.timefit@r1</code> | <code>string</code> | <code>"line"</code>; optional | Automatic | Fit tfcrop makes along time: 'line' or 'poly'. |
+| <code>freqfit</code> | <code>flagdata.freqfit@r1</code> | <code>string</code> | <code>"poly"</code>; optional | Automatic | Fit tfcrop makes along frequency: 'line' or 'poly'. |
+| <code>maxnpieces</code> | <code>flagdata.maxnpieces@r1</code> | <code>integer</code> | <code>7</code>; optional | Automatic | Number of pieces in tfcrop's piecewise polynomial fits. |
+| <code>flagdimension</code> | <code>flagdata.flagdimension@r1</code> | <code>string</code> | <code>"freqtime"</code>; optional | Automatic | Directions tfcrop flags along: 'freq', 'time', 'freqtime' or 'timefreq'. |
+| <code>usewindowstats</code> | <code>flagdata.usewindowstats@r1</code> | <code>string</code> | <code>"none"</code>; optional | Automatic | Sliding-window statistics tfcrop adds: 'none', 'sum', 'std' or 'both'. |
+| <code>halfwin</code> | <code>flagdata.halfwin@r1</code> | <code>integer</code> | <code>1</code>; optional | Automatic | Half-width of tfcrop's sliding window. |
+| <code>extendflags</code> | <code>parameter.extendflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Extend | Run post-extension after automatic flagging. |
+| <code>winsize</code> | <code>flagdata.winsize@r1</code> | <code>integer</code> | <code>3</code>; optional | Automatic | Number of time steps in rflag's sliding window. |
+| <code>timedev</code> | <code>parameter.timedev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag time threshold. |
+| <code>freqdev</code> | <code>parameter.freqdev@r2</code> | <code>optional&lt;float&gt; (states: , none)</code> | <code>""</code>; optional | Automatic | Explicit RFlag spectral threshold. |
+| <code>timedevscale</code> | <code>flagdata.timedevscale@r1</code> | <code>float</code> | <code>5.0</code>; optional | Automatic | Factor that scales rflag's time-deviation threshold. |
+| <code>freqdevscale</code> | <code>flagdata.freqdevscale@r1</code> | <code>float</code> | <code>5.0</code>; optional | Automatic | Factor that scales rflag's frequency-deviation threshold. |
+| <code>spectralmax</code> | <code>flagdata.spectralmax@r1</code> | <code>float</code> | <code>1000000.0</code>; optional | Automatic | rflag flags a whole spectrum whose deviation exceeds this. |
+| <code>spectralmin</code> | <code>flagdata.spectralmin@r1</code> | <code>float</code> | <code>0.0</code>; optional | Automatic | rflag flags a whole spectrum whose deviation is below this. |
+| <code>antint_ref_antenna</code> | <code>flagdata.antint_ref_antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Antint | Antenna whose baselines antint mode examines. |
+| <code>minchanfrac</code> | <code>flagdata.minchanfrac@r1</code> | <code>float</code> | <code>0.6</code>; optional | Antint | Fraction of flagged channels at which antint flags an integration. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Antint | Verbose logging. |
+| <code>extendpols</code> | <code>parameter.extendpols@r1</code> | <code>bool</code> | <code>true</code>; optional | Extend | Extend flags across correlations. |
+| <code>growtime</code> | <code>flagdata.growtime@r1</code> | <code>float</code> | <code>50.0</code>; optional | Extend | Percentage of flagged time at which extend mode flags a whole channel. |
+| <code>growfreq</code> | <code>flagdata.growfreq@r1</code> | <code>float</code> | <code>50.0</code>; optional | Extend | Percentage of flagged channels at which extend mode flags a whole time step. |
+| <code>growaround</code> | <code>flagdata.growaround@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Extend flags to points mostly surrounded by flags. |
+| <code>flagneartime</code> | <code>flagdata.flagneartime@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Flag the time steps either side of each flagged one. |
+| <code>flagnearfreq</code> | <code>flagdata.flagnearfreq@r1</code> | <code>bool</code> | <code>false</code>; optional | Extend | Flag the channels either side of each flagged one. |
+| <code>minrel</code> | <code>flagdata.minrel@r1</code> | <code>float</code> | <code>0.0</code>; optional | Summary | Smallest flagged fraction a summary entry reports. |
+| <code>maxrel</code> | <code>flagdata.maxrel@r1</code> | <code>float</code> | <code>1.0</code>; optional | Summary | Largest flagged fraction a summary entry reports. |
+| <code>minabs</code> | <code>flagdata.minabs@r1</code> | <code>integer</code> | <code>0</code>; optional | Summary | Smallest flag count a summary entry reports. |
+| <code>maxabs</code> | <code>flagdata.maxabs@r1</code> | <code>integer</code> | <code>-1</code>; optional | Summary | Largest flag count a summary entry reports; -1 for no limit. |
+| <code>spwchan</code> | <code>flagdata.spwchan@r1</code> | <code>bool</code> | <code>false</code>; optional | Summary | Report flags per spectral window and channel in the summary. |
+| <code>spwcorr</code> | <code>flagdata.spwcorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Summary | Report flags per spectral window and correlation in the summary. |
+| <code>basecnt</code> | <code>flagdata.basecnt@r1</code> | <code>bool</code> | <code>false</code>; optional | Summary | Report flags per baseline in the summary. |
+| <code>fieldcnt</code> | <code>flagdata.fieldcnt@r1</code> | <code>bool</code> | <code>false</code>; optional | Summary | Break the summary down per field. |
+| <code>name</code> | <code>flagdata.name@r1</code> | <code>string</code> | <code>"Summary"</code>; optional | Summary | Name the summary's dictionary carries. |
+| <code>action</code> | <code>flagdata.action@r2</code> | <code>choice (4 values)</code> | <code>"apply"</code>; optional | Flagging | CASA's flagdata action: 'apply' writes the flags, 'calculate' computes them without writing, 'none' or '' does neither. |
+| <code>display</code> | <code>flagdata.display@r1</code> | <code>string</code> | <code>""</code>; optional | Output | Show data or reports while flagging: '', 'data', 'report' or 'both'. |
+| <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Safety | Create a flagmanager backup before mutating flags. |
+| <code>savepars</code> | <code>flagdata.savepars@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Save the flag commands to FLAG_CMD or to outfile. |
+| <code>cmdreason</code> | <code>flagdata.cmdreason@r1</code> | <code>string</code> | <code>""</code>; optional | Output | Reason saved with the flag commands. |
+| <code>outfile</code> | <code>savepars.outfile@r1</code> | <code>string</code> | <code>""</code>; optional | Output | File that receives the saved flag commands; empty for the FLAG_CMD table. |
+| <code>overwrite</code> | <code>savepars.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Let savepars replace an existing command file. |
+| <code>writeflags</code> | <code>flagdata.writeflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Write the flags the automatic modes compute to the MeasurementSet. |
 
 <a id="surface-flagmanager"></a>
 
 ## Flag Manager (<code>flagmanager</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Flagging
 - Provider family: `flagmanager`
 - Summary: Manage MeasurementSet flag-version snapshots.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>mode</code> | <code>flagmanager.mode@r1</code> | <code>choice (5 values)</code> | <code>"list"</code>; optional | Operation | Flag-version operation. |
-| <code>versionname</code> | <code>parameter.versionname@r1</code> | <code>string</code> | <code>"none"</code>; optional | Operation | Target flag-version name. |
-| <code>oldname</code> | <code>parameter.oldname@r1</code> | <code>string</code> | <code>"none"</code>; optional | Operation | Existing flag-version name for rename. |
-| <code>comment</code> | <code>parameter.comment@r1</code> | <code>string</code> | <code>"none"</code>; optional | Operation | Comment stored with saved or renamed versions. |
+| <code>versionname</code> | <code>parameter.versionname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Target flag-version name. |
+| <code>oldname</code> | <code>parameter.oldname@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Existing flag-version name for rename. |
+| <code>comment</code> | <code>parameter.comment@r1</code> | <code>string</code> | <code>""</code>; optional | Operation | Comment stored with saved or renamed versions. |
 | <code>merge</code> | <code>parameter.merge@r1</code> | <code>choice (3 values)</code> | <code>"replace"</code>; optional | Operation | Merge policy for save and restore operations. |
 
 <a id="surface-impbcor"></a>

@@ -11,6 +11,7 @@ use casa_ms::{
     mstransform_task_schema_bundle, parse_numeric_id_selector, parse_spw_selector,
     task_selection_text,
 };
+use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -43,17 +44,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         other => TaskFailure::execution(other.to_string()),
     })?;
-    ms_task_success(&(), &report)
+    ms_task_success(CasaValue::None, &report)
 }
 
 fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, TaskFailure> {
-    let width = task.integer("width")?;
-    let width = usize::try_from(width)
-        .ok()
-        .filter(|width| *width >= 1)
-        .ok_or_else(|| {
-            TaskFailure::validation(format!("width must be at least 1, found {width}")).at("width")
-        })?;
+    let width = channel_width(task)?;
     // The selector's syntax is checked here, before the transform prepares
     // its output; the windows it names are checked against the input there.
     let spw = task_selection_text(task, "spw")?;
@@ -73,6 +68,28 @@ fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, Ta
     })
 }
 
+/// The channels averaged into each output channel: split's `width`, or
+/// mstransform's `chanbin` when its `chanaverage` is set and 1 otherwise,
+/// as CASA's tasks take them.
+fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
+    let name = if task.surface() == "split" {
+        "width"
+    } else if task.flag("chanaverage")? {
+        "chanbin"
+    } else {
+        return Ok(1);
+    };
+    let width = task.integer(name)?;
+    usize::try_from(width)
+        .ok()
+        .filter(|width| *width >= 1)
+        .ok_or_else(|| {
+            TaskFailure::validation(format!("{name} must be at least 1, found {width}")).at(name)
+        })
+}
+
+/// The row selection; the TaQL expression is split's `msselect`, a
+/// casa-rs control, and mstransform's `taql`.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
     let ids = |name: &str| -> Result<Option<Vec<i32>>, TaskFailure> {
         let text = task_selection_text(task, name)?;
@@ -99,19 +116,39 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
             .map_err(|message| TaskFailure::validation(message).at("timerange"))?;
         selection = selection.time_range(start, end);
     }
-    let msselect = task_selection_text(task, "msselect")?;
-    if !msselect.is_empty() {
-        selection = selection.taql(&msselect);
+    let taql_name = if task.surface() == "split" {
+        "msselect"
+    } else {
+        "taql"
+    };
+    let taql = task_selection_text(task, taql_name)?;
+    if !taql.is_empty() {
+        selection = selection.taql(&taql);
     }
     Ok(selection)
 }
 
+/// CASA's `datacolumn`, in any case: casa-rs copies `data` and `corrected`
+/// (also spelled `corrected_data`); CASA's other choices are #978.
 fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "DATA" => Ok(TransformDataColumn::Data),
-        "CORRECTED" | "CORRECTED_DATA" => Ok(TransformDataColumn::CorrectedData),
-        other => Err(TaskFailure::validation(format!(
-            "unsupported datacolumn {other:?}; expected DATA or CORRECTED_DATA"
+    let text = value.trim().to_ascii_lowercase();
+    match text.as_str() {
+        "data" => Ok(TransformDataColumn::Data),
+        "corrected" | "corrected_data" => Ok(TransformDataColumn::CorrectedData),
+        "model"
+        | "data,model,corrected"
+        | "float_data"
+        | "lag_data"
+        | "float_data,data"
+        | "lag_data,data"
+        | "all" => Err(TaskFailure::validation(format!(
+            "datacolumn={value:?} is not implemented by casa-rs yet (#978)"
+        ))
+        .at("datacolumn")),
+        _ => Err(TaskFailure::validation(format!(
+            "unsupported datacolumn {value:?}; CASA takes 'corrected', 'data', 'model', \
+             'data,model,corrected', 'float_data', 'lag_data', 'float_data,data', \
+             'lag_data,data' or 'all'"
         ))
         .at("datacolumn")),
     }
@@ -134,7 +171,51 @@ fn time_range(value: &str) -> Result<(f64, f64), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
     use super::*;
+
+    /// The request a `surface` command line resolves to.
+    fn request_for(surface: &str, args: &[&str]) -> Result<MsTransformRequest, TaskFailure> {
+        let args = ["--vis", "in.ms", "--outputvis", "out.ms"]
+            .iter()
+            .chain(args)
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let bundle = casa_provider_contracts::builtin_surface_bundle(surface).unwrap();
+        let line = TaskCommandLine::parse(&bundle, &args).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .unwrap();
+        transform_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+    }
+
+    #[test]
+    fn each_task_averages_channels_by_its_own_casa_parameters() {
+        let width = |surface, args| request_for(surface, args).unwrap().width;
+        assert_eq!(width("split", &["--width", "8"]), 8);
+        assert_eq!(width("mstransform", &["--chanbin", "4"]), 1);
+        assert_eq!(
+            width("mstransform", &["--chanaverage", "--chanbin", "4"]),
+            4
+        );
+        let error = request_for("mstransform", &["--chanaverage", "--chanbin", "0"]).unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("chanbin"));
+    }
+
+    #[test]
+    fn datacolumn_takes_casas_values_and_default() {
+        for surface in ["split", "mstransform"] {
+            let request = request_for(surface, &[]).unwrap();
+            assert_eq!(request.data_column, TransformDataColumn::CorrectedData);
+            let data = request_for(surface, &["--datacolumn", "data"]).unwrap();
+            assert_eq!(data.data_column, TransformDataColumn::Data);
+            let error = request_for(surface, &["--datacolumn", "model"]).unwrap_err();
+            assert!(error.message.contains("#978"), "{error:?}");
+        }
+    }
 
     #[test]
     fn provider_bundle_embeds_transform_family_parameter_contracts() {
