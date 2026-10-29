@@ -1,6 +1,6 @@
 # Imaging on the shared observation batches (M2 packet c)
 
-Status: accepted by the owner on 2026-10-27 (section 3); steps 1–4 landed, step 5 in progress (#932)
+Status: accepted by the owner on 2026-10-27 (section 3); steps 1–5 landed, step 6's prerequisites in progress (#932, #942)
 Truth class: accepted design
 Date: 2026-10-27
 Repository baseline: `84824df`
@@ -208,12 +208,11 @@ no imager parameter names. It sees only `&dyn Observation`.
   Neither route charges the tiles the table layer stages while a tiled
   column is read (up to 8 a column, #965); the source's law allows
   exactly those.
-- **Refused** until a later step: a field with `EPHEMERIS_ID` (#942); an
-  ephemeris-table phase centre (batch geometry follows a body Measures
-  names, and a table directory named like a body would be followed as the
-  body); `FLOAT_DATA`; several MeasurementSets; and a `WEIGHT_SPECTRUM`
-  that only some selected rows define (the MSv2 adapter takes the column
-  from its first cell, today's route from every selected row).
+- **Refused** until a later step: `FLOAT_DATA`; several MeasurementSets;
+  and a `WEIGHT_SPECTRUM` that only some selected rows define (the MSv2
+  adapter takes the column from its first cell, today's route from every
+  selected row). Fields that follow an ephemeris and ephemeris-table phase
+  centres were refused here until #942 (section 2.2.1).
 - **Evidence.** The route law (`casa_imaging_application::route_law`)
   images every T1 run on both routes and compares every product: all 200
   are bit-identical, the image runs with `usepointing` (AW over two
@@ -272,17 +271,16 @@ Today's route computes it for every selected row, `FLAG_ROW` rows included,
 so step 4's mask keeps flagged rows and drops only padding (a NaN weight on
 both stores) and the samples the selection excludes.
 
-A moving phase centre follows a body or source Measures names. The two
-others today's route takes, a field's own ephemeris (`TRACKFIELD`) and an
-external ephemeris table, are refused when the plan compiles. A batch whose
-frequencies convert into or out of the rest frame is refused too: that
-needs the radial velocity only an ephemeris gives. `TRACKFIELD` comes with
-the field ephemerides of #942; the external table is a request input, which
-`GeometryPlan` must take before step 4 images through it. The compiled law
-(`PhaseCentreLaw::Ephemeris`) names a body and a table alike, a table being
-a directory of that name, so it must also say which it is by then: a table
-directory named like a body (`Mars`) would otherwise be followed as the
-body.
+A moving phase centre follows a body or source Measures names, each
+field's own ephemeris (`TRACKFIELD`), or an ephemeris table. The compiled
+law (`PhaseCentreLaw::Ephemeris`) names a body and a table alike, a table
+being a directory of that name, so `GeometryPlan::compile` takes the table
+the request read beside it: with one, the law follows the table, so a table
+named like a body (`Mars`) is never followed as the body. A conversion into
+or out of the rest frame takes the radial velocity of the ephemeris the
+centre follows (`TRACKFIELD`'s field ephemeris, or the table's) at the
+time's UTC; under any other centre it is refused, as on today's route. As
+landed with #942, section 2.2.1.
 
 ### 2.2.1 What geometry needs from the boundary
 
@@ -310,8 +308,45 @@ the partitions' frequencies and frames.
 
 As landed in step 3a (trial README, "Geometry inputs"): field reference
 epochs, per-row phase-centre frames, pointing and per-partition receptors.
-Field ephemerides take a PR of their own, which must merge before the
-cutover (#942); until then the converter refuses them, as it did.
+Field ephemerides take PRs of their own, which must merge before the
+cutover (#942).
+
+*As landed for #942 on MSv2.* `FieldEntry::ephemeris` holds the body's
+geocentric samples (`casa_observation::FieldEphemeris`: times, ICRS or
+J2000 directions, distances, radial velocities and their frame), the
+field's phase centre then the offset from them; fields of one
+`EPHEMERIS_ID` share it. The MSv2 adapter reads each table once at
+opening, through the reader today's route uses, and the batch route charges
+its bytes with the opening's index. Interpolation (`FieldEphemeris::sample`),
+the topocentric correction and the true-angle offset
+(`casa_types::measures::ephemeris`) moved out of `casa-ms`, whose engine
+now calls them, so both routes evaluate a moving field with the same code.
+Batch geometry reads a field that follows an ephemeris, at each time, as
+casacore's `MSFieldColumns::phaseDirMeas` does: the body's direction from
+the observatory (samples interpolated at the time's TDB) offset by the
+field's phase centre; its reprojections, parallactic angles and frequency
+conversions are formed per time. A request without `phasecenter` over such
+a field is refused on both routes: its image centre would be read from the
+offset. Evidence: the T1 track's field attached to a distant body
+(`casars-imager` T1 `ephemeris`), imaged with `TRACKFIELD` (MFS, and a
+four-channel `cubesource` cube in the rest frame) and with the body's table
+as `phasecenter`: every geometry quantity of the two routes is
+bit-identical on all 52,650 rows, and every product is bit-identical on
+both routes. `casa-imaging-model`'s `batch_geometry_ephemeris` checks the
+same arithmetic on a hand-made catalogue, and `casa-ms`'s
+`fields_carry_the_ephemerides_they_follow` the adapter against today's
+reading of the table.
+
+Where today's route reads the offset as the direction, the batch route
+departs from it, deliberately: today's route evaluates a field's ephemeris
+only under a moving phase centre, so under a fixed one it reprojects
+from, and converts frequencies towards, the offset itself; and it takes
+parallactic angles and mosaic reprojections from the offset under any
+centre. The batch route uses the moving direction for each, as casacore
+does. No T1 or T1.5 workload images such a case, and the cutover removes
+today's route. The MSv4 store's ephemerides (reading and writing
+`field_and_source_ephemeris`, and the converter carrying them both ways)
+are the rest of #942.
 
 Two consequences:
 - **Pointing in MSv4.** XRADIO keeps one polynomial term per sample and
@@ -592,13 +627,12 @@ Each step is its own PR with its own laws. Only the last switches production.
      angles on both adapters; the converter carries pointing both ways.
      Laws: each input equals today's reading on MSv2 and survives an
      MSv2 → MSv4 → MSv2 round trip. Field ephemerides follow in their own
-     PR before the cutover (#942).
+     PRs before the cutover (#942; MSv2 and imaging landed, 2.2.1).
    - **3b. Geometry** in `casa-imaging-model`. The equality law of 2.2 runs
      both routes on every T1 workload.
 4. **`ObservationSource`** beside `MeasurementSetSource`, behind a run
-   option. T0, T1 and T1.5 run on both. Field ephemerides (#942) land first,
-   or the source refuses a field with `EPHEMERIS_ID` until they do: batch
-   geometry would read its `PHASE_DIR` offset as a direction.
+   option. T0, T1 and T1.5 run on both. The source refused a field with
+   `EPHEMERIS_ID` until #942 gave batch geometry its ephemeris (2.2.1).
 5. **Write-back** through update sessions. The model-column T1 tests and the
    counting law run on both routes. Its timing, on the write-back workload
    `standard-mfs-model-data-vla` among the rest, is step 6's blocking

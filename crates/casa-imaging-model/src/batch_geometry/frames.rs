@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The reference frames batch geometry converts in: the observatory and
-//! each antenna at a time, the fields' J2000 directions, and the
-//! parallactic angles.
+//! each antenna at a time, the fields' J2000 directions, the ephemerides
+//! moving fields follow, and the parallactic angles.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
-use casa_observation::{AntennaId, Catalogue, FieldId};
+use casa_observation::{AntennaId, Catalogue, FieldEphemeris, FieldId};
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::ephemeris::{offset_true_angle, topocentric_j2000};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::radial_velocity::MRadialVelocity;
 use casa_types::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider};
 use casa_types::quanta::Unit;
 
@@ -22,8 +25,7 @@ pub(super) struct Frames {
     measures: Arc<dyn MeasuresProvider>,
     observatory: MPosition,
     antennas: Vec<Antenna>,
-    /// Each field's phase centre in J2000.
-    fields: Vec<MDirection>,
+    fields: Vec<FieldCentre>,
     /// Each antenna's parallactic angle by time and field, NaN where not
     /// yet computed: an antenna's angle at a time is the same in every
     /// partition, and the batches visit the partitions one after another.
@@ -41,13 +43,27 @@ struct Antenna {
     dish_diameter_m: f64,
 }
 
+/// A field's phase centre.
+enum FieldCentre {
+    /// Fixed, in J2000.
+    Fixed(MDirection),
+    /// Offset by `offset_rad` (longitude, latitude), as the store states
+    /// it, from the body `ephemeris` follows, seen from the observatory.
+    Moving {
+        ephemeris: Arc<FieldEphemeris>,
+        offset_rad: [f64; 2],
+    },
+}
+
 impl Frames {
     /// The frames of `catalogue`: the observatory named by its first
     /// observation's telescope ([`MPosition::casa_observatory`], else the
     /// first antenna's position), and its fields' phase centres in J2000.
     /// A centre in another frame is converted from the observatory at its
     /// reference epoch, or with no epoch where the field states none (an
-    /// MSv4 field: ICRS or another frame whose tie to J2000 is fixed).
+    /// MSv4 field: ICRS or another frame whose tie to J2000 is fixed). A
+    /// field that follows an ephemeris keeps its centre's angles as the
+    /// offset casacore reads them as ([`Self::field_at`]).
     pub(super) fn new(
         catalogue: &Catalogue,
         measures: Arc<dyn MeasuresProvider>,
@@ -78,8 +94,15 @@ impl Frames {
             .fields
             .iter()
             .map(|field| {
+                if let Some(ephemeris) = &field.ephemeris {
+                    let (longitude, latitude) = field.phase_centre.as_angles();
+                    return Ok(FieldCentre::Moving {
+                        ephemeris: Arc::clone(ephemeris),
+                        offset_rad: [longitude, latitude],
+                    });
+                }
                 if field.phase_centre.refer() == DirectionRef::J2000 {
-                    return Ok(field.phase_centre.clone());
+                    return Ok(FieldCentre::Fixed(field.phase_centre.clone()));
                 }
                 let mut frame = MeasFrame::new();
                 if let Some(epoch) = field.reference_epoch.clone() {
@@ -88,7 +111,9 @@ impl Frames {
                 let frame = frame
                     .with_position(observatory.clone())
                     .with_measures(Arc::clone(&measures));
-                Ok(field.phase_centre.convert_to(DirectionRef::J2000, &frame)?)
+                Ok(FieldCentre::Fixed(
+                    field.phase_centre.convert_to(DirectionRef::J2000, &frame)?,
+                ))
             })
             .collect::<Result<Vec<_>, BatchGeometryError>>()?;
         Ok(Self {
@@ -100,9 +125,92 @@ impl Frames {
         })
     }
 
-    /// `field`'s phase centre in J2000.
-    pub(super) fn field(&self, field: FieldId) -> &MDirection {
-        &self.fields[field.0 as usize]
+    /// `field`'s phase centre in J2000 at `time_mjd_s` on `scale`: its
+    /// fixed centre, or, for a field that follows an ephemeris, the body's
+    /// direction ([`Self::ephemeris_direction`]) offset by the field's
+    /// centre ([`offset_true_angle`]), as casacore's
+    /// `MSFieldColumns::phaseDirMeas` reads a moving field.
+    pub(super) fn field_at(
+        &self,
+        field: FieldId,
+        time_mjd_s: f64,
+        scale: EpochRef,
+    ) -> Result<Cow<'_, MDirection>, BatchGeometryError> {
+        Ok(match &self.fields[field.0 as usize] {
+            FieldCentre::Fixed(direction) => Cow::Borrowed(direction),
+            FieldCentre::Moving {
+                ephemeris,
+                offset_rad,
+            } => Cow::Owned(offset_true_angle(
+                &self.ephemeris_direction(ephemeris, time_mjd_s, scale)?,
+                *offset_rad,
+            )?),
+        })
+    }
+
+    /// Whether `field`'s phase centre moves: it follows an ephemeris.
+    pub(super) fn moves(&self, field: FieldId) -> bool {
+        matches!(self.fields[field.0 as usize], FieldCentre::Moving { .. })
+    }
+
+    /// The ephemeris `field` follows, if it follows one.
+    pub(super) fn field_ephemeris(&self, field: FieldId) -> Option<&Arc<FieldEphemeris>> {
+        match &self.fields[field.0 as usize] {
+            FieldCentre::Fixed(_) => None,
+            FieldCentre::Moving { ephemeris, .. } => Some(ephemeris),
+        }
+    }
+
+    /// The J2000 direction of `ephemeris`'s body at `time_mjd_s` on
+    /// `scale`, seen from the observatory ([`topocentric_j2000`]), its
+    /// samples interpolated at the time's TDB as CASA's imager reads a
+    /// `MeasComet`.
+    pub(super) fn ephemeris_direction(
+        &self,
+        ephemeris: &FieldEphemeris,
+        time_mjd_s: f64,
+        scale: EpochRef,
+    ) -> Result<MDirection, BatchGeometryError> {
+        let frame = self.observatory_at(time_mjd_s, scale);
+        let position = Self::sample(ephemeris, &frame, EpochRef::TDB)?.position_m;
+        Ok(topocentric_j2000(
+            position,
+            ephemeris.frame(),
+            &self.observatory,
+            &frame,
+        )?)
+    }
+
+    /// The radial velocity of `ephemeris`'s body at `time_mjd_s` on
+    /// `scale`, its samples interpolated at the time's UTC as CASA's
+    /// imager reads a `MeasComet`'s velocity.
+    pub(super) fn ephemeris_velocity(
+        &self,
+        ephemeris: &FieldEphemeris,
+        time_mjd_s: f64,
+        scale: EpochRef,
+    ) -> Result<MRadialVelocity, BatchGeometryError> {
+        let frame = self.observatory_at(time_mjd_s, scale);
+        let velocity = Self::sample(ephemeris, &frame, EpochRef::UTC)?.radial_velocity_m_s;
+        Ok(MRadialVelocity::new(velocity, ephemeris.velocity_frame()))
+    }
+
+    /// `ephemeris` at `frame`'s epoch converted to `scale`.
+    fn sample(
+        ephemeris: &FieldEphemeris,
+        frame: &MeasFrame,
+        scale: EpochRef,
+    ) -> Result<casa_observation::EphemerisSample, BatchGeometryError> {
+        let epoch = frame
+            .epoch()
+            .ok_or(MeasureError::MissingFrameData { what: "epoch" })?;
+        let mjd = epoch.convert_to(scale, frame)?.value().as_mjd();
+        ephemeris
+            .sample(mjd)
+            .ok_or_else(|| BatchGeometryError::EphemerisCoverage {
+                body: ephemeris.name().to_string(),
+                mjd,
+            })
     }
 
     /// The observatory's frame at `time_mjd_s` on `scale`.
@@ -157,16 +265,17 @@ impl Frames {
         Ok(MDirection::from_source_name(name, &frame)?.convert_to(DirectionRef::J2000, &frame)?)
     }
 
-    /// The parallactic angles of `field` at `time_mjd_s` for every antenna,
-    /// computed for `antennas` (zero for a mount that is not alt-az; NaN
-    /// for an antenna no batch has asked for at this time):
-    /// [`MDirection::parallactic_angle`] in each antenna's frame. The cache
-    /// is consulted once a time, not once a sample.
+    /// The parallactic angles of `field`, whose direction at `time_mjd_s`
+    /// is `direction` ([`Self::field_at`]), for every antenna, computed for
+    /// `antennas` (zero for a mount that is not alt-az; NaN for an antenna
+    /// no batch has asked for at this time): [`MDirection::parallactic_angle`]
+    /// in each antenna's frame. The cache is consulted once a time, not once
+    /// a sample.
     pub(super) fn parallactic_angles(
         &self,
-        time_mjd_s: f64,
-        scale: EpochRef,
+        (time_mjd_s, scale): (f64, EpochRef),
         field: FieldId,
+        direction: &MDirection,
         antennas: &[AntennaId],
     ) -> Result<Box<[f64]>, BatchGeometryError> {
         let key = (time_mjd_s.to_bits(), scale, field);
@@ -189,7 +298,7 @@ impl Frames {
                     .with_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
                     .with_position(site.position.clone())
                     .with_measures(Arc::clone(&self.measures));
-                self.field(field).parallactic_angle(&frame)?
+                direction.parallactic_angle(&frame)?
             } else {
                 0.0
             };

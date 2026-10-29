@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
+use casa_observation::FieldEphemeris;
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
@@ -27,20 +28,9 @@ pub(crate) struct EvaluatedEphemerisSample {
     pub(crate) velocity_reference: RadialVelocityRef,
 }
 
-#[derive(Debug, Clone)]
-struct EphemerisRow {
-    mjd_days: f64,
-    geocentric_position_metres: [f64; 3],
-    radial_velocity_m_per_s: f64,
-}
-
-#[derive(Debug)]
-struct EphemerisSeries {
-    name: Box<str>,
-    position_reference: DirectionRef,
-    velocity_reference: RadialVelocityRef,
-    rows: Box<[EphemerisRow]>,
-}
+/// Bytes an ephemeris holds a sample: its time, direction, distance and
+/// radial velocity.
+const SAMPLE_BYTES: usize = 5 * size_of::<f64>();
 
 struct EphemerisSeriesPreflight {
     table: Table,
@@ -53,7 +43,7 @@ struct EphemerisSeriesPreflight {
 #[derive(Debug, Clone)]
 struct FieldEphemerisBinding {
     field_id: usize,
-    series: Arc<EphemerisSeries>,
+    series: Arc<FieldEphemeris>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +52,7 @@ enum EphemerisKind {
         target: Box<str>,
     },
     External {
-        series: Arc<EphemerisSeries>,
+        series: Arc<FieldEphemeris>,
     },
     TrackedField {
         fields: Box<[FieldEphemerisBinding]>,
@@ -225,6 +215,16 @@ impl SelectedObservationEphemeris {
         self.retained_bytes
     }
 
+    /// The external ephemeris table's samples, when the moving target is
+    /// one ([`Self::is_table`]).
+    #[must_use]
+    pub fn external_series(&self) -> Option<&Arc<FieldEphemeris>> {
+        match &self.kind {
+            EphemerisKind::External { series } => Some(series),
+            EphemerisKind::Named { .. } | EphemerisKind::TrackedField { .. } => None,
+        }
+    }
+
     pub(crate) fn named_target(&self) -> Option<&str> {
         match &self.kind {
             EphemerisKind::Named { target } => Some(target),
@@ -241,13 +241,15 @@ impl SelectedObservationEphemeris {
             EphemerisKind::Named { .. } => {
                 Err(SelectedObservationEphemerisError::NamedSampleRequiresMeasures)
             }
-            EphemerisKind::External { series } => series.sample(mjd_days),
-            EphemerisKind::TrackedField { fields } => fields
-                .binary_search_by_key(&field_id, |binding| binding.field_id)
-                .ok()
-                .map(|index| &fields[index].series)
-                .ok_or(SelectedObservationEphemerisError::MissingTrackedField { field_id })?
-                .sample(mjd_days),
+            EphemerisKind::External { series } => evaluate(series, mjd_days),
+            EphemerisKind::TrackedField { fields } => evaluate(
+                fields
+                    .binary_search_by_key(&field_id, |binding| binding.field_id)
+                    .ok()
+                    .map(|index| &fields[index].series)
+                    .ok_or(SelectedObservationEphemerisError::MissingTrackedField { field_id })?,
+                mjd_days,
+            ),
         }
     }
 
@@ -267,9 +269,43 @@ impl SelectedObservationEphemeris {
         fields
             .binary_search_by_key(&field_id, |binding| binding.field_id)
             .ok()
-            .map(|index| fields[index].series.sample(mjd_days))
+            .map(|index| evaluate(&fields[index].series, mjd_days))
             .transpose()
     }
+}
+
+/// `series` at `mjd_days` ([`FieldEphemeris::sample`]).
+fn evaluate(
+    series: &FieldEphemeris,
+    mjd_days: f64,
+) -> Result<EvaluatedEphemerisSample, SelectedObservationEphemerisError> {
+    let sample = series.sample(mjd_days).ok_or_else(|| {
+        SelectedObservationEphemerisError::OutsideCoverage {
+            target: series.name().to_string(),
+            mjd_days,
+        }
+    })?;
+    Ok(EvaluatedEphemerisSample {
+        geocentric_position_metres: sample.position_m,
+        position_reference: series.frame(),
+        radial_velocity_m_per_s: sample.radial_velocity_m_s,
+        velocity_reference: series.velocity_frame(),
+    })
+}
+
+/// The ephemeris attached to the fields of the MeasurementSet at `root`
+/// whose `EPHEMERIS_ID` is `ephemeris_id`: the one table
+/// `FIELD/EPHEM<id>_*.tab`, as the boundary holds it.
+///
+/// # Errors
+///
+/// When no table or several match, or the table is not one an ephemeris
+/// is read from ([`SelectedObservationEphemeris::external`]'s checks).
+pub(crate) fn attached_ephemeris(
+    root: &Path,
+    ephemeris_id: i32,
+) -> Result<FieldEphemeris, SelectedObservationEphemerisError> {
+    EphemerisSeriesPreflight::open(&find_field_ephemeris(root, ephemeris_id)?)?.load()
 }
 
 impl EphemerisSeriesPreflight {
@@ -315,11 +351,11 @@ impl EphemerisSeriesPreflight {
             RadialVelocityRef::GEO
         };
         let row_count = table.row_count();
-        let retained_bytes = arc_allocation_bytes::<EphemerisSeries>()?
+        let retained_bytes = arc_allocation_bytes::<FieldEphemeris>()?
             .checked_add(name_bytes)
             .and_then(|bytes| {
                 row_count
-                    .checked_mul(size_of::<EphemerisRow>())
+                    .checked_mul(SAMPLE_BYTES)
                     .and_then(|rows| bytes.checked_add(rows))
             })
             .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
@@ -332,98 +368,45 @@ impl EphemerisSeriesPreflight {
         })
     }
 
-    fn load(self) -> Result<EphemerisSeries, SelectedObservationEphemerisError> {
-        let name: Box<str> = keyword_str(&self.table, "NAME")?.into();
-        let mut rows = Vec::with_capacity(self.row_count);
+    fn load(self) -> Result<FieldEphemeris, SelectedObservationEphemerisError> {
+        let name = keyword_str(&self.table, "NAME")?.to_string();
+        let mut times = Vec::with_capacity(self.row_count);
+        let mut directions = Vec::with_capacity(self.row_count);
+        let mut distances = Vec::with_capacity(self.row_count);
+        let mut velocities = Vec::with_capacity(self.row_count);
         for row in 0..self.row_count {
             let mjd_days = scalar_f64(&self.table, row, "MJD")?;
             let longitude_rad = scalar_f64(&self.table, row, "RA")?.to_radians();
             let latitude_rad = scalar_f64(&self.table, row, "DEC")?.to_radians();
             let distance_metres = scalar_f64(&self.table, row, "Rho")? * AU_METRES;
-            let (sin_longitude, cos_longitude) = longitude_rad.sin_cos();
-            let (sin_latitude, cos_latitude) = latitude_rad.sin_cos();
-            let geocentric_position_metres = [
-                distance_metres * cos_latitude * cos_longitude,
-                distance_metres * cos_latitude * sin_longitude,
-                distance_metres * sin_latitude,
-            ];
             let radial_velocity_m_per_s =
                 scalar_f64(&self.table, row, "RadVel")? * AU_METRES / 86_400.0;
             if !mjd_days.is_finite()
                 || !longitude_rad.is_finite()
                 || !latitude_rad.is_finite()
-                || geocentric_position_metres
-                    .iter()
-                    .any(|component| !component.is_finite())
+                || !distance_metres.is_finite()
                 || distance_metres <= 0.0
                 || !radial_velocity_m_per_s.is_finite()
-                || rows
-                    .last()
-                    .is_some_and(|prior: &EphemerisRow| prior.mjd_days >= mjd_days)
+                || times.last().is_some_and(|prior: &f64| *prior >= mjd_days)
             {
                 return Err(SelectedObservationEphemerisError::InvalidRow { row });
             }
-            rows.push(EphemerisRow {
-                mjd_days,
-                geocentric_position_metres,
-                radial_velocity_m_per_s,
-            });
+            times.push(mjd_days);
+            directions.push([longitude_rad, latitude_rad]);
+            distances.push(distance_metres);
+            velocities.push(radial_velocity_m_per_s);
         }
-        if rows.len() < 2 {
+        if times.len() < 2 {
             return Err(SelectedObservationEphemerisError::InsufficientRows);
         }
-        Ok(EphemerisSeries {
+        Ok(FieldEphemeris::new(
             name,
-            position_reference: self.position_reference,
-            velocity_reference: self.velocity_reference,
-            rows: rows.into_boxed_slice(),
-        })
-    }
-}
-
-impl EphemerisSeries {
-    fn sample(
-        &self,
-        mjd_days: f64,
-    ) -> Result<EvaluatedEphemerisSample, SelectedObservationEphemerisError> {
-        if !mjd_days.is_finite()
-            || mjd_days < self.rows[0].mjd_days
-            || mjd_days > self.rows[self.rows.len() - 1].mjd_days
-        {
-            return Err(SelectedObservationEphemerisError::OutsideCoverage {
-                target: self.name.to_string(),
-                mjd_days,
-            });
-        }
-        let upper = self.rows.partition_point(|row| row.mjd_days < mjd_days);
-        if upper < self.rows.len() && self.rows[upper].mjd_days == mjd_days {
-            return Ok(EvaluatedEphemerisSample {
-                geocentric_position_metres: self.rows[upper].geocentric_position_metres,
-                position_reference: self.position_reference,
-                radial_velocity_m_per_s: self.rows[upper].radial_velocity_m_per_s,
-                velocity_reference: self.velocity_reference,
-            });
-        }
-        let lower = upper.saturating_sub(1);
-        let before = &self.rows[lower];
-        let after = &self.rows[upper];
-        let factor = (mjd_days - before.mjd_days) / (after.mjd_days - before.mjd_days);
-        Ok(EvaluatedEphemerisSample {
-            geocentric_position_metres: std::array::from_fn(|axis| {
-                interpolate(
-                    before.geocentric_position_metres[axis],
-                    after.geocentric_position_metres[axis],
-                    factor,
-                )
-            }),
-            position_reference: self.position_reference,
-            radial_velocity_m_per_s: interpolate(
-                before.radial_velocity_m_per_s,
-                after.radial_velocity_m_per_s,
-                factor,
-            ),
-            velocity_reference: self.velocity_reference,
-        })
+            times,
+            directions,
+            self.position_reference,
+            distances,
+            (velocities, self.velocity_reference),
+        )?)
     }
 }
 
@@ -509,10 +492,6 @@ fn scalar_f64(
             column: column.to_string(),
         }),
     }
-}
-
-fn interpolate(before: f64, after: f64, factor: f64) -> f64 {
-    before + factor * (after - before)
 }
 
 /// Failure to bind or evaluate one immutable moving-source reference.
@@ -620,6 +599,9 @@ pub enum SelectedObservationEphemerisError {
     /// Retained ephemeris residency overflowed the host byte domain.
     #[error("ephemeris retained byte count overflowed")]
     ByteOverflow,
+    /// The samples are not an ephemeris the boundary holds.
+    #[error(transparent)]
+    Boundary(#[from] casa_observation::ObservationError),
 }
 
 #[cfg(test)]

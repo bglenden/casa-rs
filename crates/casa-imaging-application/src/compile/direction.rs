@@ -76,11 +76,22 @@ pub(super) fn resolve_centre(
         ))
     };
     let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
-        None => (
-            PhaseCentreLaw::Fixed(field_direction),
-            None,
-            field_direction,
-        ),
+        None => {
+            let field = ms.field()?;
+            for field_id in &survey.fields {
+                let row = usize::try_from(*field_id).expect("validated FIELD_ID");
+                if field.ephemeris_id(row)?.is_some_and(|id| id >= 0) {
+                    return Err(PrepareError::EphemerisFieldWithoutCentre {
+                        field_id: *field_id,
+                    });
+                }
+            }
+            (
+                PhaseCentreLaw::Fixed(field_direction),
+                None,
+                field_direction,
+            )
+        }
         Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
             let direction = parse_phase_center_direction(text)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
@@ -146,7 +157,8 @@ pub(super) fn resolve_centre(
 ///
 /// # Errors
 ///
-/// A moving phase centre, whose beams CASA shifts with the source
+/// A moving phase centre or a selected field that follows an ephemeris,
+/// whose beams CASA shifts with the source
 /// (`SynthesisImagerVi2::getMovingDirection`); a selected field whose
 /// `PHASE_DIR` polynomial has a nonzero rate, which CASA evaluates at the
 /// field's first selected time; unreadable field directions, frame
@@ -167,6 +179,9 @@ pub(super) fn primary_beam_centres(
         .iter()
         .map(|field_id| {
             let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            if field.ephemeris_id(field_id)?.is_some_and(|id| id >= 0) {
+                return Err(PrepareError::MovingAnalyticPrimaryBeam);
+            }
             if phase_direction_varies(field.phase_dir(field_id)?) {
                 return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
             }

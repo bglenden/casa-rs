@@ -560,51 +560,14 @@ impl MsCalEngine {
         time_mjd_sec: f64,
         sample: crate::ephemeris::EvaluatedEphemerisSample,
     ) -> MsResult<MDirection> {
-        let [x, y, z] = sample.geocentric_position_metres;
-        let distance = x.hypot(y).hypot(z);
-        if !distance.is_finite() || distance <= 0.0 {
-            return Err(MsError::InvalidInput(
-                "ephemeris position has invalid distance".to_string(),
-            ));
-        }
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let [observer_x, observer_y, observer_z] = self.observatory_position.as_itrf();
-        let observer_radius = observer_x.hypot(observer_y).hypot(observer_z);
-        let observer_latitude = (observer_z / observer_radius).clamp(-1.0, 1.0).asin();
-        let epoch = frame
-            .epoch()
-            .expect("ephemeris conversion frame always contains an epoch");
-        let last_days = epoch.convert_to(EpochRef::LAST, &frame)?.value().as_mjd();
-        let last = last_days.fract() * 2.0 * std::f64::consts::PI;
-        let (sin_last, cos_last) = last.sin_cos();
-        let (sin_latitude, cos_latitude) = observer_latitude.sin_cos();
-        let observer_app = [
-            observer_radius * cos_latitude * cos_last,
-            observer_radius * cos_latitude * sin_last,
-            observer_radius * sin_latitude,
-        ];
-        let pre_topocentric = MDirection::from_cosines(
-            [
-                x + observer_app[0],
-                y + observer_app[1],
-                z + observer_app[2],
-            ],
+        Ok(casa_types::measures::ephemeris::topocentric_j2000(
+            sample.geocentric_position_metres,
             sample.position_reference,
-        );
-        let apparent = pre_topocentric.convert_to(DirectionRef::APP, &frame)?;
-        let apparent_cosines = apparent.cosines();
-        let direction = MDirection::from_cosines(
-            [
-                apparent_cosines[0] - observer_app[0] / distance,
-                apparent_cosines[1] - observer_app[1] / distance,
-                apparent_cosines[2] - observer_app[2] / distance,
-            ],
-            DirectionRef::APP,
-        );
-        direction
-            .convert_to(DirectionRef::J2000, &frame)
-            .map_err(Into::into)
+            &self.observatory_position,
+            &frame,
+        )?)
     }
 
     pub(crate) fn observation_direction_j2000(
@@ -627,7 +590,10 @@ impl MsCalEngine {
             .field_phase_offsets
             .get(field_id)
             .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        shift_direction_true_angle(direction, offset_longitude, offset_latitude)
+        Ok(casa_types::measures::ephemeris::offset_true_angle(
+            &direction,
+            [offset_longitude, offset_latitude],
+        )?)
     }
 
     /// Get the field direction for the given field_id.
@@ -1182,31 +1148,6 @@ fn uvw_phase_rotation_vector(
 
 fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
-}
-
-fn shift_direction_true_angle(
-    direction: MDirection,
-    longitude_offset: f64,
-    latitude_offset: f64,
-) -> MsResult<MDirection> {
-    let (longitude, latitude) = direction.as_angles();
-    let (sin_offset, cos_offset) = longitude_offset.sin_cos();
-    let shifted_latitude = latitude + latitude_offset;
-    let (sin_latitude, cos_latitude) = shifted_latitude.sin_cos();
-    let (sin_longitude, cos_longitude) = longitude.sin_cos();
-    let x = cos_offset * cos_latitude * cos_longitude - sin_offset * sin_longitude;
-    let y = cos_offset * cos_latitude * sin_longitude + sin_offset * cos_longitude;
-    let z = cos_offset * sin_latitude;
-    if [x, y, z].iter().any(|value| !value.is_finite()) {
-        return Err(MsError::InvalidInput(
-            "FIELD moving-source offset is not finite".to_string(),
-        ));
-    }
-    Ok(MDirection::from_angles(
-        y.atan2(x).rem_euclid(std::f64::consts::TAU),
-        z.atan2(x.hypot(y)),
-        DirectionRef::J2000,
-    ))
 }
 
 fn identity3() -> [[f64; 3]; 3] {
