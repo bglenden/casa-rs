@@ -58,12 +58,15 @@ fn imstat_outcome(returncode: i32, stdout: &str) -> OutcomeView {
 fn an_outcome_keeps_each_way_a_task_can_end() {
     let succeeded = imstat_outcome(
         0,
-        r#"{"status":"succeeded","surface":"imstat","value":{"npts":[12.0]},"result":{}}"#,
+        r#"{"status":"succeeded","surface":"imstat","value":{"kind":"dict","entries":[{"key":"npts","value":{"kind":"float_array","dtype":"float64","shape":[1],"data":[12.0]}}]},"result":{}}"#,
     );
     let OutcomeView::Succeeded { value, completion } = succeeded else {
         panic!("{succeeded:?}");
     };
-    assert_eq!(value, serde_json::json!({"npts": [12.0]}));
+    assert_eq!(
+        value,
+        CasaValue::dict([("npts", CasaValue::float64_vector([12.0]))])
+    );
     assert_eq!(completion.surface_id, "imstat");
 
     assert_eq!(
@@ -99,7 +102,7 @@ fn an_outcome_keeps_each_way_a_task_can_end() {
 fn a_reply_for_another_surface_is_malformed() {
     let reply = imstat_outcome(
         0,
-        r#"{"status":"succeeded","surface":"imhead","value":{},"result":{}}"#,
+        r#"{"status":"succeeded","surface":"imhead","value":{"kind":"none"},"result":{}}"#,
     );
     let OutcomeView::MalformedReply { reason, .. } = reply else {
         panic!("{reply:?}");

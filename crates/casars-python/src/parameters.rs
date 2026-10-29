@@ -21,10 +21,11 @@ use casa_provider_contracts::{
 };
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
-    ParameterRuntime, ParameterSession, ResolutionPatch, parse_profile,
+    ParameterRuntime, ParameterRuntimeError, ParameterSession, ParameterSessionError, ProfileError,
+    ResolutionPatch, format_profile_error, format_session_error, parse_profile,
     project_provider_invocation, render_documented_template, write_parameter_profile_atomic,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 use serde::Serialize;
@@ -186,6 +187,53 @@ impl SnapshotView {
     }
 }
 
+/// Why a resolution failed: a value of the wrong type for its parameter,
+/// which Python raises as `TypeError`, or any other refusal, `ValueError`
+/// (#931).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResolveFailure {
+    WrongType(String),
+    Refused(String),
+}
+
+impl ResolveFailure {
+    fn of_session(error: ParameterRuntimeError) -> Self {
+        let wrong_type = |diagnostics: &[casa_task_runtime::Diagnostic]| {
+            !diagnostics.is_empty()
+                && diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code == DiagnosticCode::InvalidType)
+        };
+        let (wrong_type, message) = match error {
+            ParameterRuntimeError::Profile(error) => (
+                matches!(&error, ProfileError::Diagnostics(found) if wrong_type(found)),
+                format_profile_error(error),
+            ),
+            ParameterRuntimeError::Session(error) => (
+                matches!(
+                    &error,
+                    ParameterSessionError::Profile(ProfileError::Diagnostics(found))
+                        if wrong_type(found)
+                ),
+                format_session_error(error),
+            ),
+            other => (false, other.to_string()),
+        };
+        if wrong_type {
+            Self::WrongType(message)
+        } else {
+            Self::Refused(parameter_error("resolve parameter session", message))
+        }
+    }
+
+    fn into_python(self, py: Python<'_>) -> PyErr {
+        match self {
+            Self::WrongType(message) => PyTypeError::new_err(message),
+            Self::Refused(reason) => reason_error(py, reason),
+        }
+    }
+}
+
 /// Resolve `overrides` and `unset` names over one base.
 pub(crate) fn resolve(
     surface_id: &str,
@@ -193,10 +241,10 @@ pub(crate) fn resolve(
     profile_toml: Option<String>,
     overrides: BTreeMap<String, ParameterValue>,
     unset: BTreeSet<String>,
-) -> ServiceResult<SnapshotView> {
+) -> Result<SnapshotView, ResolveFailure> {
     let session = ParameterRuntime::default()
         .open_session(OpenSessionRequest {
-            bundle: parameter_bundle(surface_id)?,
+            bundle: parameter_bundle(surface_id).map_err(ResolveFailure::Refused)?,
             workspace: PathBuf::from("."),
             source: base.source(),
             profile_text: profile_toml,
@@ -207,8 +255,8 @@ pub(crate) fn resolve(
             },
             managed_save: false,
         })
-        .map_err(|error| parameter_error("resolve parameter session", error))?;
-    SnapshotView::new(&session)
+        .map_err(ResolveFailure::of_session)?;
+    SnapshotView::new(&session).map_err(ResolveFailure::Refused)
 }
 
 fn session_from_values(
@@ -422,6 +470,7 @@ pub(crate) fn parameter_resolve<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let overrides = parameter_values(overrides)?;
     let snapshot = ProfileBase::parse(base_source, profile_path)
+        .map_err(ResolveFailure::Refused)
         .and_then(|base| {
             resolve(
                 surface_id,
@@ -431,7 +480,7 @@ pub(crate) fn parameter_resolve<'py>(
                 unset.into_iter().collect(),
             )
         })
-        .map_err(|reason| reason_error(py, reason))?;
+        .map_err(|failure| failure.into_python(py))?;
     to_python(py, &snapshot)
 }
 

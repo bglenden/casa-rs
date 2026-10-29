@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Record the shape of what CASA's tasks return, as versioned fixtures (#931).
+
+Run with CASA's own Python, which has `casatasks` and `casatools`:
+
+    "$CASA_PYTHON" -I tools/casa-compat/record_casa_returns.py \
+        --out resources/casa-compat/casa-6.7.6.14/returns.json
+
+Each case calls one task on small images built here with `casatools` and
+records the structure of the value it returns: for a dictionary its keys in
+order and the type of each key, for a NumPy array its dtype and shape, for
+anything else its Python type. Values are not recorded; the casa-rs tests
+compare the structure of casa-rs's return values with these, and the
+numbers are compared elsewhere (`TESTING.md`). A case whose call raises
+records the exception's type instead.
+
+`--check FILE` compares the installed CASA with FILE and exits 1 when they
+differ. The script exits 2 when it is not run with CASA's Python, or CASA is
+not the pinned version.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any, Callable
+
+PINNED_VERSION = "6.7.6.14"
+
+
+def describe(value: Any) -> dict[str, Any]:
+    """The structure of `value`, without its numbers."""
+    import numpy
+
+    if value is None:
+        return {"type": "None"}
+    if isinstance(value, numpy.ndarray):
+        return {"type": "ndarray", "dtype": str(value.dtype), "shape": list(value.shape)}
+    if isinstance(value, dict):
+        return {
+            "type": "dict",
+            "items": [[key, type(key).__name__, describe(item)] for key, item in value.items()],
+        }
+    if isinstance(value, (list, tuple)):
+        return {"type": type(value).__name__, "items": [describe(item) for item in value]}
+    return {"type": f"{type(value).__module__}.{type(value).__name__}".removeprefix("builtins.")}
+
+
+def make_image(path: str, *, beam: bool = True) -> None:
+    """A 16 x 16 x 1 x 8 (RA, Dec, Stokes, frequency) image of ramped values."""
+    import numpy
+    from casatools import image
+
+    tool = image()
+    tool.fromshape(path, [16, 16, 1, 8], overwrite=True)
+    data = numpy.arange(16 * 16 * 8, dtype=numpy.float32).reshape(16, 16, 1, 8) / 100.0
+    tool.putchunk(data)
+    tool.setbrightnessunit("Jy/beam")
+    if beam:
+        tool.setrestoringbeam(major="3arcsec", minor="2arcsec", pa="10deg")
+    tool.done()
+
+
+def cases(root: Path) -> dict[str, Callable[[], Any]]:
+    """Each case's name and call, on images under `root`."""
+    import casatasks as ct
+
+    image = str(root / "ramp.im")
+    other = str(root / "other.im")
+    unbeamed = str(root / "unbeamed.im")
+    make_image(image)
+    make_image(other)
+    make_image(unbeamed, beam=False)
+    fits = str(root / "ramp.fits")
+    ct.exportfits(imagename=image, fitsimage=fits)
+
+    def put() -> Any:
+        return ct.imhead(imagename=other, mode="put", hdkey="object", hdvalue="M1")
+
+    def add() -> Any:
+        return ct.imhead(imagename=other, mode="add", hdkey="extra", hdvalue="casa-rs")
+
+    def delete() -> Any:
+        return ct.imhead(imagename=other, mode="del", hdkey="extra")
+
+    return {
+        "exportfits": lambda: ct.exportfits(imagename=image, fitsimage=str(root / "x.fits")),
+        "feather": lambda: ct.feather(imagename=str(root / "f.im"), highres=image, lowres=other),
+        "imhead summary": lambda: ct.imhead(imagename=image),
+        "imhead list": lambda: ct.imhead(imagename=image, mode="list"),
+        "imhead get crval1": lambda: ct.imhead(imagename=image, mode="get", hdkey="crval1"),
+        "imhead get bunit": lambda: ct.imhead(imagename=image, mode="get", hdkey="bunit"),
+        "imhead get beammajor": lambda: ct.imhead(imagename=image, mode="get", hdkey="beammajor"),
+        "imhead put": put,
+        "imhead add": add,
+        "imhead del": delete,
+        "imhead history": lambda: ct.imhead(imagename=image, mode="history"),
+        "immath": lambda: ct.immath(imagename=image, outfile=str(root / "m.im"), expr="IM0*2"),
+        "immoments": lambda: ct.immoments(imagename=image, outfile=str(root / "mom.im")),
+        "impbcor": lambda: ct.impbcor(imagename=image, pbimage=other, outfile=str(root / "pb.im")),
+        "importfits": lambda: ct.importfits(fitsimage=fits, imagename=str(root / "i.im")),
+        "impv": lambda: ct.impv(
+            imagename=image, outfile=str(root / "pv.im"), start=[2, 2], end=[12, 12]
+        ),
+        "imregrid get": lambda: ct.imregrid(imagename=image),
+        "imregrid template": lambda: ct.imregrid(
+            imagename=image, template=other, output=str(root / "r.im")
+        ),
+        "imstat": lambda: ct.imstat(imagename=image),
+        "imstat axes": lambda: ct.imstat(imagename=image, axes=[0, 1]),
+        "imstat no beam": lambda: ct.imstat(imagename=unbeamed, box="0,0,3,3"),
+        "imsubimage": lambda: ct.imsubimage(imagename=image, outfile=str(root / "s.im"), box="0,0,7,7"),
+    }
+
+
+def run(name: str, call: Callable[[], Any]) -> dict[str, Any]:
+    try:
+        return {"returns": describe(call())}
+    except BaseException as error:
+        return {"raises": type(error).__name__}
+
+
+def records() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="casa-returns-") as directory:
+        previous = os.getcwd()
+        os.chdir(directory)
+        try:
+            calls = cases(Path(directory))
+            # In order: a later case may read an earlier case's product.
+            return {name: run(name, call) for name, call in calls.items()}
+        finally:
+            os.chdir(previous)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--out", type=Path, help="write the fixture to this file")
+    action.add_argument("--check", type=Path, help="compare the installed CASA with this fixture")
+    args = parser.parse_args()
+    try:
+        import casatasks
+    except ImportError as error:
+        print(f"record_casa_returns: casatasks is not importable ({error}); run with CASA's Python", file=sys.stderr)
+        return 2
+    version = str(casatasks.version_string())
+    if version != PINNED_VERSION:
+        print(f"record_casa_returns: CASA {version} is installed; the fixture is pinned to {PINNED_VERSION}", file=sys.stderr)
+        return 2
+    document = {"casa_version": version, "cases": records()}
+    text = json.dumps(document, indent=2) + "\n"
+    if args.out:
+        args.out.write_text(text, encoding="utf-8")
+        print(f"record_casa_returns: wrote {len(document['cases'])} cases to {args.out}")
+        return 0
+    committed = json.loads(args.check.read_text(encoding="utf-8"))
+    found = [
+        name
+        for name in sorted(set(committed.get("cases", {})) | set(document["cases"]))
+        if committed.get("cases", {}).get(name) != document["cases"].get(name)
+    ]
+    if committed.get("casa_version") != version:
+        found.insert(0, f"casa_version {committed.get('casa_version')}")
+    for name in found:
+        print(f"record_casa_returns: {name} differs from the installed CASA", file=sys.stderr)
+    if found:
+        return 1
+    print(f"record_casa_returns: {len(document['cases'])} cases match CASA {version}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

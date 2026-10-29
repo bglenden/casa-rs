@@ -12,15 +12,19 @@ mod diagnostic;
 mod front_end;
 mod invocation;
 mod normalize;
+mod overrides;
 mod profile;
 mod resolve;
 mod runtime;
 mod session;
 mod storage;
+mod unimplemented;
 
 /// The logging configuration a task binary's `main` reads and hands
 /// [`TaskFrontEnd::main`].
 pub use casa_logging::{CasaLoggingConfig, CasaLoggingError};
+/// The value a task's execution callback returns in its [`TaskSuccess`].
+pub use casa_provider_contracts::CasaValue;
 pub use cli::{TaskCliError, parse_parameter_cli_overrides, read_task_request};
 pub use completion::{
     RunProductReference, TaskCompletion, TaskCompletionError, TaskOutputValue,

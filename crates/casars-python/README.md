@@ -21,10 +21,14 @@ task's executable through the Rust resolver, and starts it directly with
 `sys.stderr` as they arrive, and its typed reply on stdout says how it ended.
 A Python task call saves no Last. Every task draft also exposes the exact
 versioned Rust provider invocation; completions retain that projection,
-requests the catalog refuses raise `ValueError` before anything starts, and a
-task that does not succeed raises `casars.tasks.TaskExecutionError`. Python
-does not own provider schemas, parameter defaults, capability interpretation,
-or task-result decoding.
+requests the catalog refuses raise `ValueError` (or `TypeError`) before
+anything starts, a task that refuses its parameters raises
+`casars.tasks.TaskParameterError`, a `ValueError`, and one that does not
+succeed raises `casars.tasks.TaskExecutionError`. A task whose surface names
+its CASA task has CASA's signature and returns CASA's value. Python does not
+own provider schemas, parameter defaults, capability interpretation, or
+task-result decoding: the generated signatures carry the contract's
+defaults.
 
 The executable comes from the task's `CASARS_<APP>_BIN` override, a suite
 root (`CASARS_SUITE_ROOT`, or the installed suite this package belongs to),

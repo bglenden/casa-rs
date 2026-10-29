@@ -237,7 +237,7 @@ impl CasaValue {
 }
 
 /// `values`, in Fortran order, as an array of `shape`.
-fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<ArrayD<T>> {
+pub(crate) fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<ArrayD<T>> {
     ArrayD::from_shape_vec(IxDyn(&shape).f(), values).map_err(|error| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("array of shape {shape:?}: {error}"))
     })

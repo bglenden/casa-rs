@@ -153,9 +153,12 @@ def _stub_functions(path: Path) -> dict[str, ast.FunctionDef]:
 
 
 def _annotations(function: ast.FunctionDef) -> dict[str, str]:
+    """A wrapper's annotations: a CASA signature's positional parameters as
+    well as the keyword-only ones."""
+
     return {
         argument.arg: ast.unparse(argument.annotation)
-        for argument in function.args.kwonlyargs
+        for argument in [*function.args.args, *function.args.kwonlyargs]
         if argument.annotation is not None
     }
 

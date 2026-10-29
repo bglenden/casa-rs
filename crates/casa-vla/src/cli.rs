@@ -45,7 +45,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let options = options_from(task)?;
     let report = run(&options).map_err(failure)?;
     let text = import_text(&report);
-    Ok(TaskSuccess::new(&(), &ImportVlaTaskResult::Import(report))?.with_text(text))
+    Ok(TaskSuccess::new(
+        casa_task_runtime::CasaValue::None,
+        &ImportVlaTaskResult::Import(report),
+    )?
+    .with_text(text))
 }
 
 /// The resolved run as [`ImportVlaOptions`]. `archivefiles` arrives as the

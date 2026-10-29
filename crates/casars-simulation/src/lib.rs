@@ -240,7 +240,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.stem,
         result.run.directory
     );
-    Ok(TaskSuccess::new(&(), &result)?.with_text(text))
+    Ok(TaskSuccess::new(casa_task_runtime::CasaValue::None, &result)?.with_text(text))
 }
 
 #[cfg(test)]

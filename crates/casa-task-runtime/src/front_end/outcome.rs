@@ -5,7 +5,7 @@
 use std::fmt;
 use std::process::ExitStatus;
 
-use casa_provider_contracts::{TaskFailureKind, TaskReply};
+use casa_provider_contracts::{CasaValue, TaskFailureKind, TaskReply};
 use serde_json::Value;
 
 /// The exit status of a finished task process.
@@ -44,7 +44,7 @@ pub enum TaskOutcome {
         /// Surface that ran.
         surface: String,
         /// CASA's return value.
-        value: Value,
+        value: CasaValue,
         /// The provider's full result.
         result: Value,
     },
@@ -187,13 +187,13 @@ mod tests {
     fn replies_classify_by_their_kind() {
         let succeeded = classify_task_exit(
             exited(0),
-            r#"{"status":"succeeded","surface":"imstat","value":{"npts":[12.0]},"result":{}}"#,
+            r#"{"status":"succeeded","surface":"imstat","value":{"kind":"bool","value":true},"result":{}}"#,
         );
         assert_eq!(
             succeeded,
             TaskOutcome::Succeeded {
                 surface: "imstat".into(),
-                value: json!({"npts": [12.0]}),
+                value: CasaValue::Bool { value: true },
                 result: json!({}),
             }
         );
@@ -244,7 +244,7 @@ mod tests {
             ),
             (
                 exited(1),
-                r#"{"status":"succeeded","surface":"x","value":null,"result":{}}"#,
+                r#"{"status":"succeeded","surface":"x","value":{"kind":"none"},"result":{}}"#,
             ),
         ] {
             assert!(

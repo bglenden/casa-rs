@@ -84,7 +84,10 @@ fn front_end(
         match image.as_str() {
             "fail.image" => Err(TaskFailure::execution("the image is unreadable")),
             "refuse.image" => Err(TaskFailure::validation("no such image").at("imagename")),
-            _ => TaskSuccess::new(&json!({"image": image}), &json!({"kind": "statistics"})),
+            _ => TaskSuccess::new(
+                CasaValue::dict([("image", CasaValue::string(image))]),
+                &json!({"kind": "statistics"}),
+            ),
         }
     })
     .unwrap()
@@ -189,7 +192,7 @@ fn json_run_writes_one_typed_reply_and_no_last() {
         reply(&ok),
         TaskReply::Succeeded {
             surface: "imhead".into(),
-            value: json!({"image": "x.image"}),
+            value: CasaValue::dict([("image", CasaValue::string("x.image"))]),
             result: json!({"kind": "statistics"}),
         }
     );
@@ -220,7 +223,7 @@ fn json_run_writes_one_typed_reply_and_no_last() {
         ),
         TaskOutcome::Succeeded {
             surface: "imhead".into(),
-            value: json!({"image": "x.image"}),
+            value: CasaValue::dict([("image", CasaValue::string("x.image"))]),
             result: json!({"kind": "statistics"}),
         }
     );
@@ -758,7 +761,7 @@ fn imregrid_front_end(
         move |run| {
             let template = run.plain_values()["template"].as_str().unwrap().to_string();
             templates.borrow_mut().push(template);
-            TaskSuccess::new(&(), &())
+            TaskSuccess::new(CasaValue::None, &())
         },
     )
     .unwrap()
@@ -838,7 +841,7 @@ fn every_front_end_spelling_does_its_action_through_full_dispatch_on_every_surfa
             &[id],
             |_: &TaskInvocation<'_>| {
                 ran.set(true);
-                TaskSuccess::new(&(), &())
+                TaskSuccess::new(CasaValue::None, &())
             },
         )
         .unwrap();
@@ -900,7 +903,7 @@ fn every_front_end_spelling_does_its_action_through_full_dispatch_on_every_surfa
 #[test]
 fn a_front_end_hosts_only_surfaces_its_contract_carries() {
     let error = TaskFrontEnd::new("x", contract(), &["split"], |_: &TaskInvocation<'_>| {
-        TaskSuccess::new(&(), &())
+        TaskSuccess::new(CasaValue::None, &())
     })
     .err()
     .unwrap();

@@ -9,8 +9,10 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import functools
+import inspect
 import os
 from os import PathLike
 from pathlib import Path
@@ -54,7 +56,24 @@ class TaskResultError(RuntimeError):
 
 
 class TaskExecutionError(RuntimeError):
-    """Raised when a task does not succeed; ``completion`` says how it ended."""
+    """Raised when a task starts and does not succeed; ``completion`` says
+    how it ended."""
+
+    def __init__(self, completion: TaskCompletion) -> None:
+        self.completion = completion
+        super().__init__(completion.describe())
+
+
+class TaskParameterError(ValueError):
+    """Raised when a task refuses its parameters before it changes anything;
+    ``completion`` says why (#931).
+
+    A value the parameter contract refuses raises ``ValueError``, or
+    ``TypeError`` for a value of the wrong type, before the task starts; this
+    is the refusal of a value only the task itself can judge, such as an
+    input that does not exist. CASA raises ``AssertionError`` from its
+    generated parameter checker in both cases.
+    """
 
     def __init__(self, completion: TaskCompletion) -> None:
         self.completion = completion
@@ -136,9 +155,11 @@ def run(
     The call loads and saves no Last profile: those record command-line runs.
     :meth:`TaskParameters.last` and :meth:`TaskParameters.write_last` stay
     explicit. CASA's own parameters, such as ``overwrite``, are the consent
-    to replace or change data. A task that does not succeed raises
-    :class:`TaskExecutionError`; an interrupt (Ctrl-C) is passed to the task,
-    which is given time to stop, and then raised here.
+    to replace or change data. A task that refuses its parameters raises
+    :class:`TaskParameterError`, a ``ValueError``, and one that starts and
+    does not succeed :class:`TaskExecutionError`, a ``RuntimeError``; an
+    interrupt (Ctrl-C) is passed to the task, which is given time to stop,
+    and then raised here.
     """
 
     resolved_workspace = _resolve_workspace(workspace, parameters)
@@ -156,9 +177,50 @@ def run(
 
 
 def _run(task: str, values: Mapping[str, ParameterData]) -> TaskCompletion:
-    """Run ``task`` in the current directory: the CASA-named wrappers' call."""
+    """Run ``task`` in the current directory: the keyword wrappers' call."""
 
     return run(task, **values)
+
+
+def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any:
+    """Run the task of a CASA-signature ``wrapper`` with the ``arguments`` it
+    was called with, in the current directory, and return CASA's value.
+
+    An argument left at its default, or given a scalar equal to it, is not
+    sent: the task resolves it to the same default itself, so only the
+    values the caller changed are explicit. A default is never mutated, so
+    every call sees CASA's defaults afresh.
+    """
+
+    defaults = _signature_defaults(wrapper)
+    values = {
+        name: value
+        for name, value in arguments.items()
+        if not _is_default(value, defaults.get(name, _MISSING))
+    }
+    return run(wrapper.__name__, **values).value
+
+
+_MISSING = object()
+
+
+def _is_default(value: Any, default: Any) -> bool:
+    if value is default:
+        return True
+    return (
+        type(value) is type(default)
+        and isinstance(default, (str, int, float))
+        and value == default
+    )
+
+
+@functools.cache
+def _signature_defaults(wrapper: Callable[..., Any]) -> dict[str, Any]:
+    return {
+        name: parameter.default
+        for name, parameter in inspect.signature(wrapper).parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    }
 
 
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
@@ -215,6 +277,8 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
             else None
         ),
     )
+    if completion.status == "refused":
+        raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
     return completion
@@ -341,6 +405,7 @@ __all__ = [
     "TaskCompletion",
     "TaskExecutionError",
     "TaskInvocationError",
+    "TaskParameterError",
     "TaskResultError",
     "run",
 ]

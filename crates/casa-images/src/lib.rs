@@ -61,6 +61,7 @@
 
 pub mod analysis;
 pub mod beam;
+mod casa_return;
 pub mod convolve2d;
 pub mod error;
 pub mod expr_file;
@@ -92,6 +93,7 @@ pub use analysis::{
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
+pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
 pub use fits_read::{FitsImage, read_fits_image};
@@ -107,5 +109,5 @@ pub use image_info::{ImageInfo, ImageType};
 pub use regrid::{RegridMethod, RegridTemplate, Regridded, check_regrid, regrid};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
-pub use task_front_end::{image_task_bool_text, image_task_front_end, image_task_success};
+pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};
 pub use temp_image::TempImage;

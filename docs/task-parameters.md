@@ -249,7 +249,7 @@ request stdin.
 `tasks.run(task, parameters=None, /, *, workspace=None, **values)` accepts
 every catalog task. It starts from the draft, or Defaults, sets `values`,
 and runs in `workspace`: the draft's, or the current directory. The
-CASA-named wrappers take CASA's parameters only and run in the current
+CASA-named wrappers take the surface's parameters and run in the current
 directory. Each call starts the task's own executable, found by the resolver
 ([Install](install.md)), with `--json-run -`, and passes its log lines to
 `sys.stderr` as they arrive. The log reaches stderr at the logging
@@ -259,21 +259,36 @@ its start and completion. Ctrl-C (`KeyboardInterrupt`) is passed to the task
 as SIGINT; the task has ten seconds to stop before it is killed, and the
 `KeyboardInterrupt` is then raised again.
 
-A request the catalog refuses, such as a parameter its gridder does not read,
-raises `ValueError` before anything starts. A task that does not succeed
-raises `casars.tasks.TaskExecutionError`, a `RuntimeError` whose
-`.completion.status` is `refused`, `failed`, `interrupted`, `signalled` or
-`malformed_reply`, with its `message` and the `parameter` it names.
-`TaskBinaryNotFoundError`, a `FileNotFoundError`, says what the resolver
-lacked; `TaskInvocationError` means the executable could not be started, and
-`TaskResultError` that a success's result was malformed. A success returns a
-`TaskCompletion` with the `command` run, its `workspace`, `returncode`,
-`stdout` (the reply), `stderr` (the log), the `provider_invocation`, CASA's
-return `value` from the reply, and the declared products (`result`,
-`products`); result projection remains Rust-owned. Catalog-generated
-CASA-named keyword wrappers and type stubs are available directly under
-`casars.tasks` without copying defaults into Python signatures; there is no
-second provider-specific task API.
+A value the contract refuses, such as a parameter its gridder does not read,
+raises `ValueError` before anything starts, or `TypeError` when the value
+has the wrong type. A task that refuses its parameters itself, such as an
+input that does not exist, raises `casars.tasks.TaskParameterError`, a
+`ValueError`; one that starts and does not succeed raises
+`casars.tasks.TaskExecutionError`, a `RuntimeError`. Both carry the
+`.completion`, whose `status` is `refused`, `failed`, `interrupted`,
+`signalled` or `malformed_reply`, with its `message` and the `parameter` it
+names. `TaskBinaryNotFoundError`, a `FileNotFoundError`, says what the
+resolver lacked; `TaskInvocationError` means the executable could not be
+started, and `TaskResultError` that a success's result was malformed.
+`tasks.run` returns a `TaskCompletion` with the `command` run, its
+`workspace`, `returncode`, `stdout` (the reply), `stderr` (the log), the
+`provider_invocation`, CASA's return `value` from the reply, and the
+declared products (`result`, `products`); result projection remains
+Rust-owned.
+
+The CASA-named wrappers and their type stubs are generated from the catalog,
+under `casars.tasks`; there is no second provider-specific task API. A
+surface that names its CASA task (`casa_task`; the image tasks and
+`simobserve` so far) has CASA's exact signature: CASA's parameters in CASA's
+order, positional or by keyword, with CASA's defaults, then casa-rs's own
+controls, keyword-only. Its wrapper returns CASA's value: `imstat`'s
+statistics dictionary with NumPy arrays, `immath`'s `True`, `None` for most
+tasks. A parameter casa-rs does not implement yet is taken only at CASA's
+default and refused at any other value, naming its issue; the wrapper's
+docstring lists them. The other wrappers take keyword arguments and return
+the `TaskCompletion` until their families are converted (#931).
+[CASA compatibility](reference/casa-compatibility.md) compares each surface
+with its CASA task.
 
 ## What profiles intentionally exclude
 

@@ -9,9 +9,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_put, imstat,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_list_record,
+    imhead_put, imhead_summary_record, imstat, imstat_record,
 };
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
     image_task_front_end("imexplore", &["imhead", "imstat"], run).main(
@@ -30,10 +31,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
 }
 
-/// CASA's `imhead` returns its header record, as `imstat` returns its
-/// statistics record; both are the reply's value.
+/// CASA's `imhead` returns its header record for `summary` and `list`, and
+/// `None` for `put`; `imstat` returns its statistics record.
 fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     let summary = match mode.as_str() {
         "summary" | "list" => imhead(&path).map_err(|error| image_error("imhead", &path, error))?,
@@ -41,9 +42,16 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            let hdvalue = task.text("hdvalue")?.ok_or_else(|| {
-                TaskFailure::validation("imhead mode put requires hdvalue").at("hdvalue")
-            })?;
+            if !hdkey.eq_ignore_ascii_case("bunit") {
+                return Err(TaskFailure::validation(format!(
+                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977); \
+                     it puts bunit"
+                ))
+                .at("hdkey"));
+            }
+            // CASA's default '' is a value here: it clears the key, as
+            // `hdkey='bunit', hdvalue=''` clears the brightness unit.
+            let hdvalue = task.text("hdvalue")?.unwrap_or_default();
             imhead_put(&path, &hdkey, &hdvalue)
                 .map_err(|error| image_error("imhead", &path, error))?
         }
@@ -54,12 +62,18 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .at("mode"));
         }
     };
+    let value = match mode.as_str() {
+        "summary" => imhead_summary_record(&summary),
+        "list" => imhead_list_record(&summary),
+        // CASA's put returns None.
+        _ => CasaValue::None,
+    };
     let text = header_text(&summary);
-    Ok(TaskSuccess::new(&summary, &summary)?.with_text(text))
+    Ok(TaskSuccess::new(value, &summary)?.with_text(text))
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("imagename")?;
+    let path = task.input_path("imagename")?;
     let summary = imstat(
         &path,
         task.text("box")?.as_deref(),
@@ -69,7 +83,7 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     )
     .map_err(|error| image_error("imstat", &path, error))?;
     let text = statistics_text(&summary);
-    Ok(TaskSuccess::new(&summary, &summary)?.with_text(text))
+    Ok(TaskSuccess::new(imstat_record(&summary), &summary)?.with_text(text))
 }
 
 fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure {

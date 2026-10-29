@@ -20,9 +20,18 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let template = task.path("template")?;
+    // CASA's default, `template='get'`, returns the input's coordinate
+    // system and shape instead of regridding.
+    if template.as_os_str().eq_ignore_ascii_case("get") {
+        return Err(TaskFailure::validation(
+            "template='get' is not implemented by casa-rs yet (#977); give a template image",
+        )
+        .at("template"));
+    }
     let request = ImregridRequest {
-        imagename: task.path("imagename")?,
-        template: task.path("template")?,
+        imagename: task.input_path("imagename")?,
+        template: task.input_path("template")?,
         output: task.path("output")?,
         interpolation: task.required_text("interpolation")?,
         overwrite: task.flag("overwrite")?,

@@ -750,8 +750,11 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
+ "casa-provider-contracts",
  "casa-task-runtime",
+ "casa-types",
  "ndarray",
+ "serde_json",
  "tempfile",
 ]
 
