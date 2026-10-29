@@ -61,6 +61,7 @@ pub mod baseline;
 pub mod direction;
 pub mod doppler;
 pub mod earth_magnetic;
+pub mod ephemeris;
 pub mod epoch;
 pub mod error;
 pub mod frame;

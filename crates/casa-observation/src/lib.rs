@@ -101,6 +101,7 @@ mod buffers;
 mod catalogue;
 mod creation;
 mod cursor;
+mod ephemeris;
 mod grouping;
 mod pointing;
 mod pool;
@@ -120,6 +121,7 @@ pub use catalogue::{
 };
 pub use creation::TimeBaselineGrid;
 pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, VisibilityCursor};
+pub use ephemeris::{EphemerisSample, FieldEphemeris};
 pub use grouping::{
     FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent, WorkToken,
 };

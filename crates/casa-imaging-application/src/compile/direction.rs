@@ -62,9 +62,7 @@ pub(super) fn resolve_centre(
         column: "FIELD_ID",
         value: selected_field,
     })?;
-    let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
-    let (field_longitude, field_latitude) = engine.field_direction_j2000(field_id)?.as_angles();
-    let field_direction = SkyDirection::new(DirectionFrame::J2000, field_longitude, field_latitude);
+    let mut stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
     let anchor_time = survey.first_time_mjd_seconds;
     let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
@@ -76,11 +74,15 @@ pub(super) fn resolve_centre(
         ))
     };
     let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
-        None => (
-            PhaseCentreLaw::Fixed(field_direction),
-            None,
-            field_direction,
-        ),
+        None => {
+            let field_direction =
+                field_reference_direction(ms, field_id, engine, anchor_time, &mut stored_phase)?;
+            (
+                PhaseCentreLaw::Fixed(field_direction),
+                None,
+                field_direction,
+            )
+        }
         Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
             let direction = parse_phase_center_direction(text)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
@@ -102,7 +104,7 @@ pub(super) fn resolve_centre(
             )
         }
         Some(text) => {
-            let ephemeris = named_ephemeris(text, ms, survey, budget)?;
+            let ephemeris = named_ephemeris(text, survey, engine, budget)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
                 PhaseCentreLaw::Ephemeris(text.to_string()),
@@ -146,7 +148,8 @@ pub(super) fn resolve_centre(
 ///
 /// # Errors
 ///
-/// A moving phase centre, whose beams CASA shifts with the source
+/// A moving phase centre or a selected field that follows an ephemeris,
+/// whose beams CASA shifts with the source
 /// (`SynthesisImagerVi2::getMovingDirection`); a selected field whose
 /// `PHASE_DIR` polynomial has a nonzero rate, which CASA evaluates at the
 /// field's first selected time; unreadable field directions, frame
@@ -167,6 +170,9 @@ pub(super) fn primary_beam_centres(
         .iter()
         .map(|field_id| {
             let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            if engine.field_moves(field_id) {
+                return Err(PrepareError::MovingAnalyticPrimaryBeam);
+            }
             if phase_direction_varies(field.phase_dir(field_id)?) {
                 return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
             }
@@ -242,6 +248,38 @@ fn pointing_pixel(
     Ok(Some([pixel[0], pixel[1]]))
 }
 
+/// casacore's `phaseDirMeas(field_id)` asked at no time, in J2000: the
+/// field's `PHASE_DIR`, or, for a field that follows an ephemeris, the
+/// body's direction at its FIELD row's `TIME` offset by `PHASE_DIR`
+/// (`MsCalEngine::moving_field_reference_direction`), which then also
+/// replaces `stored`, the direction the image records. CASA's `tclean`
+/// centres an image without a phase centre there and holds it fixed, also
+/// over a field that moves (#987).
+fn field_reference_direction(
+    ms: &MeasurementSet,
+    field_id: usize,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+    anchor_time: f64,
+    stored: &mut MDirection,
+) -> Result<SkyDirection, PrepareError> {
+    let j2000 = match engine.moving_field_reference_direction(ms, field_id)? {
+        Some(reference) => {
+            let frame =
+                engine.spectral_frame_observatory_direction(anchor_time, reference.clone())?;
+            let j2000 = reference.convert_to(DirectionRef::J2000, &frame)?;
+            *stored = reference;
+            j2000
+        }
+        None => engine.field_direction_j2000(field_id)?.clone(),
+    };
+    let (longitude, latitude) = j2000.as_angles();
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        longitude,
+        latitude,
+    ))
+}
+
 /// The image's reference direction and the frame it records: ICRS at the
 /// anchor time for a moving source, the field's stored direction in its
 /// own frame when the request names no centre, else the J2000 phase
@@ -279,44 +317,33 @@ fn image_centre(
     Ok((centre, frame))
 }
 
-/// A named ephemeris (or an external table), joined with the selected
-/// fields' attached ephemerides when they have them.
+/// A named ephemeris (or an external table).
 fn named_ephemeris(
     text: &str,
-    ms: &MeasurementSet,
     survey: &Survey,
+    engine: &casa_ms::derived::engine::MsCalEngine,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationEphemeris, PrepareError> {
     let budget = budget.reference_data_budget();
-    let mut ephemeris = if Path::new(text).is_dir() {
+    let ephemeris = if Path::new(text).is_dir() {
         SelectedObservationEphemeris::external(text, budget)?
     } else {
         SelectedObservationEphemeris::named(text, budget)?
     };
-    let field = ms.field()?;
-    let mut attached = Vec::new();
+    // The engine observes each attached field towards its own body
+    // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
+    // of which only some move is refused.
+    let mut moving = 0;
     for field_id in &survey.fields {
         let field_id = usize::try_from(*field_id).map_err(|_| PrepareError::NegativeMainId {
             column: "FIELD_ID",
             value: *field_id,
         })?;
-        if field
-            .ephemeris_id(field_id)?
-            .is_some_and(|value| value >= 0)
-        {
-            attached.push(field_id);
-        }
+        moving += usize::from(engine.field_moves(field_id));
     }
-    if attached.is_empty() {
-        return Ok(ephemeris);
-    }
-    if attached.len() != survey.fields.len() {
+    if moving != 0 && moving != survey.fields.len() {
         return Err(PrepareError::MixedEphemerisFields);
     }
-    ephemeris = ephemeris.with_attached_fields(
-        SelectedObservationEphemeris::tracked_fields(ms, attached, budget)?,
-        budget,
-    )?;
     Ok(ephemeris)
 }
 

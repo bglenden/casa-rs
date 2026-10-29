@@ -383,14 +383,19 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
             for epoch in self.epochs.values().filter(|epoch| {
                 window_of.get(&epoch.data_description_id) == Some(&window.spectral_window_id)
             }) {
-                let direction = if let Some(direction) = directions.get(&epoch.field_id) {
+                let field_id = usize::try_from(epoch.field_id).map_err(|_| {
+                    MsError::InvalidInput(
+                        "selected spectral envelope observed a negative FIELD_ID".to_string(),
+                    )
+                })?;
+                // A field that follows an ephemeris moves: its direction at
+                // the epoch, not its `PHASE_DIR`, which is then an offset.
+                let direction = if self.geometry_engine.field_moves(field_id) {
+                    self.geometry_engine
+                        .observation_direction_j2000(epoch.time_mjd_seconds, field_id)?
+                } else if let Some(direction) = directions.get(&epoch.field_id) {
                     direction.clone()
                 } else {
-                    let field_id = usize::try_from(epoch.field_id).map_err(|_| {
-                        MsError::InvalidInput(
-                            "selected spectral envelope observed a negative FIELD_ID".to_string(),
-                        )
-                    })?;
                     let direction = raw_field_phase_direction(self.measurement_set, field_id)?;
                     directions.insert(epoch.field_id, direction.clone());
                     direction
@@ -494,10 +499,16 @@ impl MeasurementSet {
                 }
                 last_time = Some(row.time_mjd_seconds().to_bits());
                 let result = (|| -> MsResult<()> {
-                    let frame = geometry_engine.spectral_frame_observatory_direction(
-                        row.time_mjd_seconds(),
-                        direction.clone(),
-                    )?;
+                    // A field that follows an ephemeris is converted towards
+                    // its direction at the time, not its offset.
+                    let direction = if geometry_engine.field_moves(field_id) {
+                        geometry_engine
+                            .observation_direction_j2000(row.time_mjd_seconds(), field_id)?
+                    } else {
+                        direction.clone()
+                    };
+                    let frame = geometry_engine
+                        .spectral_frame_observatory_direction(row.time_mjd_seconds(), direction)?;
                     let conversion = prepare_frequency_conversion(
                         output_frequency_reference,
                         window.source_frequency_reference,
