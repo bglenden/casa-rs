@@ -13,7 +13,7 @@ mod casa_signature;
 #[path = "migration_set.rs"]
 mod migration_set;
 
-pub use casa_signature::{UnimplementedParameter, python_repr};
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
 
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -731,6 +731,10 @@ pub struct SurfaceParameterBinding {
     /// Set for a CASA parameter casa-rs accepts only at its default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unimplemented: Option<UnimplementedParameter>,
+    /// Set for a CASA parameter whose other CASA forms casa-rs does not
+    /// take yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimplemented_forms: Option<UnimplementedForms>,
 }
 
 /// Profile kind pinned in the TOML header.
@@ -2211,6 +2215,7 @@ mod tests {
             aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
+            unimplemented_forms: None,
         }
     }
 

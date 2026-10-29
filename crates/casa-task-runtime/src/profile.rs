@@ -1064,6 +1064,7 @@ mod tests {
             aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
+            unimplemented_forms: None,
         }
     }
 

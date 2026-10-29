@@ -679,12 +679,13 @@ pub enum NormalizationError {
 }
 
 impl NormalizationError {
-    /// The note a refusal of a value for `binding` ends with: for a value of
-    /// a type the binding does not take, its surface note, which says the
-    /// forms it takes (flagdata's `timedev` names #978's), and nothing else.
+    /// What a refusal of a value for `binding` ends with: for a value of a
+    /// type the binding does not take, the CASA forms it does not take yet
+    /// and their issue (flagdata's per-field `timedev`, #978); otherwise
+    /// nothing.
     pub fn binding_note(&self, binding: &SurfaceParameterBinding) -> String {
-        match (self, &binding.surface_note) {
-            (Self::Type(_), Some(note)) => format!(" ({note})"),
+        match (self, &binding.unimplemented_forms) {
+            (Self::Type(_), Some(forms)) => format!("; {}", forms.refusal()),
             _ => String::new(),
         }
     }
