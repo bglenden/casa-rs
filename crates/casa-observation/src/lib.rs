@@ -136,8 +136,9 @@ pub use request::{
 pub use selection::{FieldSelection, TimeRuns};
 pub use split::{SliceCompletion, SplitCompletion, TimeSplit};
 pub use update::{
-    AliasScope, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport, UpdateTarget, Updater,
-    WeightChannels, WritableRole, check_values, uniform_over_channels,
+    AliasScope, BatchAddress, PatchValues, ResolvedTarget, UpdateGuarantees, UpdateReport,
+    UpdateTarget, Updater, WeightChannels, WritableRole, check_values, refuse_payload_checks,
+    uniform_over_channels,
 };
 
 /// Why a request could not be bound or a traversal failed.

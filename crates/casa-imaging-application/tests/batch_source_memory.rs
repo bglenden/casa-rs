@@ -11,14 +11,18 @@
 //! the parallactic cache by `casa-imaging-model`'s `batch_geometry_memory`,
 //! a traversal's batches (the survey's among them) by the adapters' laws,
 //! and the pointing and opening bounds by `casa-ms`'s
-//! `msv2_opening_memory`. This binary's global allocator counts the live
-//! heap; it holds this one law, so the law runs in a process of its own.
+//! `msv2_opening_memory`. A request that writes visibilities back is also
+//! driven through its writing pass (step 5): the source and the sink hold
+//! at most the route's charge and the write's, whose updater term
+//! `casa-ms`'s `msv2_update_memory` holds. This binary's global allocator
+//! counts the live heap; it holds this one law, so the law runs in a
+//! process of its own.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use casa_imaging_application::source_law::{SourceDrive, drive_batch_source};
+use casa_imaging_application::source_law::{SourceDrive, drive_batch_source, drive_batch_write};
 use casa_imaging_application::{HostResources, ImagingRequest, ResourcePolicy, RunContext};
 use serde_json::{Value, json};
 
@@ -143,26 +147,34 @@ fn tile_staging(measurement_set: &Path) -> i64 {
 }
 
 /// Drive `request`'s batch source under a `memory`-byte policy in waves of
-/// `planes_per_wave` planes: the peak live heap of its measured reading
-/// ([`drive_batch_source`]), beside what it admitted.
+/// `planes_per_wave` planes, or, for a request that writes back, its
+/// writing pass ([`drive_batch_write`]): the peak live heap of the measured
+/// drive, beside what it admitted.
 fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (SourceDrive, i64) {
     let context = RunContext {
         host: HOST,
         ..imaging::context(ResourcePolicy::Explicit { workers: 2, memory })
     };
     let mut baseline = 0;
-    let drive = drive_batch_source(request, &context, planes_per_wave, &mut || {
+    let mut mark = || {
         baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
-    })
-    .expect("the source reads");
+    };
+    let drive = if request.savemodel || request.save_continuum_residual {
+        drive_batch_write(request, &context, &mut mark).expect("the write")
+    } else {
+        drive_batch_source(request, &context, planes_per_wave, &mut mark).expect("the source reads")
+    };
     (drive, PEAK.load(Ordering::Relaxed) - baseline)
 }
 
 /// Continuum and cube sources, a cube resident and in waves, a window of
 /// 101 channels whole and gapped (`0:0~1;100`, whose batches span every
-/// channel between) and a mosaic that reads pointing: each holds at most
-/// its charge and its block, and the drives fill blocks.
+/// channel between), a mosaic that reads pointing, and the writing passes
+/// of a continuum and a gapped cube that save the model (the first
+/// creating and seeding `MODEL_DATA`), the continuum's again under a policy
+/// that splits its times into several batches: each holds at most its
+/// charge and its block, and the drives fill blocks.
 #[test]
 fn the_batch_source_holds_at_most_its_charge() {
     let root = tempfile::tempdir().expect("test root");
@@ -183,39 +195,64 @@ fn the_batch_source_holds_at_most_its_charge() {
         "start": "0",
         "width": "1",
     });
-    let cases: [(&str, &Path, Value, u32); 6] = [
-        ("continuum", &narrow, json!({}), 1),
-        ("cube resident", &narrow, cube.clone(), 16),
-        ("cube in waves", &narrow, cube, 3),
-        ("continuum of 101 channels", &wide, json!({}), 1),
-        (
-            "gapped linear cube in waves",
-            &wide,
-            json!({
-                "specmode": "cube",
-                "outframe": "LSRK",
-                "spw": "0:0~1;100",
-                "channel_count": 10,
-                "start": "44.64GHz",
-                "width": "1.28GHz",
-                "interpolation": "linear",
-            }),
-            3,
-        ),
+    let gapped = json!({
+        "specmode": "cube",
+        "outframe": "LSRK",
+        "spw": "0:0~1;100",
+        "channel_count": 10,
+        "start": "44.64GHz",
+        "width": "1.28GHz",
+        "interpolation": "linear",
+    });
+    let mut gapped_write = gapped.clone();
+    gapped_write.as_object_mut().expect("controls").extend([
+        ("savemodel".to_string(), json!("modelcolumn")),
+        ("niter".to_string(), json!(10)),
+    ]);
+    let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
+    let ample = 4 << 30;
+    let cases: [(&str, &Path, Value, u32, u64); 9] = [
+        ("continuum", &narrow, json!({}), 1, ample),
+        ("cube resident", &narrow, cube.clone(), 16, ample),
+        ("cube in waves", &narrow, cube, 3, ample),
+        ("continuum of 101 channels", &wide, json!({}), 1, ample),
+        ("gapped linear cube in waves", &wide, gapped, 3, ample),
         (
             "mosaic with pointing",
             &alma,
             json!({ "gridder": "mosaic", "usepointing": true }),
             1,
+            ample,
+        ),
+        (
+            "continuum saving the model",
+            &narrow,
+            save.clone(),
+            1,
+            ample,
+        ),
+        (
+            "gapped cube saving the model",
+            &wide,
+            gapped_write,
+            10,
+            ample,
+        ),
+        (
+            "continuum saving the model in batches",
+            &narrow,
+            save,
+            1,
+            128 << 20,
         ),
     ];
     let mut breaches = Vec::new();
-    for (label, measurement_set, controls, planes_per_wave) in cases {
+    for (label, measurement_set, controls, planes_per_wave, memory) in cases {
         let image = root.path().join(label.replace(' ', "-"));
         let (drive, peak) = measure(
             &request(measurement_set, &image, 256, controls),
             planes_per_wave,
-            4 << 30,
+            memory,
         );
         let held = peak - drive.block as i64 - tile_staging(measurement_set);
         eprintln!(
@@ -224,6 +261,10 @@ fn the_batch_source_holds_at_most_its_charge() {
             drive.charged, drive.blocks, drive.block
         );
         assert!(drive.blocks > 0, "{label}: the drive filled no block");
+        assert!(
+            memory == ample || drive.blocks > 1,
+            "{label}: the drive filled one block"
+        );
         if held > drive.charged as i64 {
             breaches.push(format!(
                 "{label}: the source held {held} bytes, {} more than its charge",

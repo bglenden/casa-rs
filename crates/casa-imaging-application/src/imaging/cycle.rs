@@ -68,7 +68,7 @@ pub(crate) struct ImagingInputs<'a> {
     /// model from.
     pub(crate) start_model: Option<StartModel>,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
-    pub(crate) visibility_write: Option<VisibilityWriteTarget>,
+    pub(crate) visibility_write: Option<VisibilityWriteTarget<'a>>,
     pub(crate) host: HostResources,
     pub(crate) policy: ResourcePolicy,
     /// Where the run's worker teams go once its setup forms them
@@ -144,7 +144,7 @@ struct Run<'a> {
     backend: BackendChoice,
     /// Whether each Metal backend logs its timing.
     metal_stage_timing: bool,
-    visibility_write: Option<VisibilityWriteTarget>,
+    visibility_write: Option<VisibilityWriteTarget<'a>>,
     /// What the visibility write holds, admitted with the pass that writes;
     /// zero when nothing is written.
     visibility_write_bytes: u64,

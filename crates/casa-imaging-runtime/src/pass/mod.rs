@@ -46,6 +46,7 @@ pub use row_work::{
 pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
 pub use weights::WeightCache;
 
+pub use stream::SLOTS as STREAM_SLOTS;
 use stream::stream_blocks;
 use wave::Wave;
 

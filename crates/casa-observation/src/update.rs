@@ -5,22 +5,30 @@
 //!
 //! An update addresses the samples of a batch the same session delivered:
 //! the store maps them to its own native units (MAIN rows, Zarr chunks),
-//! and a sample with no native address (MSv2 padding) receives nothing. The
-//! targets are declared when the session opens, so the structural preflight
-//! (the variable exists, the data groups sharing it are accepted) runs
-//! before any payload. Values are checked against the batch before anything
-//! is written; a refused write writes nothing of its batch.
+//! and a sample with no native address (MSv2 padding) receives nothing. A
+//! batch's address ([`BatchAddress`]) outlives its buffers, so a consumer
+//! that hands a batch's samples to another thread writes them back without
+//! keeping the batch. The targets are declared when the session opens, so
+//! the structural preflight (the variable exists, the data groups sharing
+//! it are accepted) runs before any payload. Values are checked against the
+//! batch before anything is written; a refused write writes nothing of its
+//! batch.
 //!
 //! **Trial status.** This is the write-back trial (`docs/measurement-set/
-//! trial/README.md`, "Write-back"): one updater per traversal, written batch
-//! for batch in delivery order, boolean flags only; the slices of a
+//! trial/README.md`, "Write-back"): one updater per traversal, written
+//! batch for batch in any order, boolean flags only; the slices of a
 //! [`TimeSplit`](crate::TimeSplit) each have their own updater, live at
 //! once.
 
-use ndarray::{ArrayView3, Axis};
+use std::ops::Range;
+use std::sync::Arc;
+
+use casa_types::Correlation;
+use casa_types::measures::{EpochRef, EpochView, MjdHighPrec};
+use ndarray::{ArrayView1, ArrayView3, Axis};
 use num_complex::Complex32;
 
-use crate::{ObservationError, VisibilityBatch, WeightRule};
+use crate::{Catalogue, ObservationError, PartitionId, VisibilityBatch, WeightRule};
 
 /// A role a session writes, of one data group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -127,8 +135,16 @@ pub enum WeightChannels {
 /// the batch they are written against, each `[sample, channel, product]`.
 #[derive(Clone, Copy, Debug)]
 pub enum PatchValues<'a> {
-    /// Replace the visibilities.
-    Visibilities(ArrayView3<'a, Complex32>),
+    /// Replace the visibilities where `written` holds, or every one when it
+    /// is `None`. An element it leaves keeps its stored value, and a
+    /// sample it leaves wholly is not touched: a pass that images some of
+    /// a batch's samples and channels writes back exactly those.
+    Visibilities {
+        /// The visibilities.
+        values: ArrayView3<'a, Complex32>,
+        /// Which elements are written.
+        written: Option<ArrayView3<'a, bool>>,
+    },
     /// Change element flags: `set` sets and `clear` clears where true;
     /// elements neither names keep their stored flag. A sample may not be
     /// both set and cleared.
@@ -147,15 +163,161 @@ pub enum PatchValues<'a> {
     },
 }
 
-impl PatchValues<'_> {
+impl<'a> PatchValues<'a> {
+    /// Replace every visibility.
+    #[must_use]
+    pub fn visibilities(values: ArrayView3<'a, Complex32>) -> Self {
+        Self::Visibilities {
+            values,
+            written: None,
+        }
+    }
+
     /// The role these values write.
     #[must_use]
     pub fn role(&self) -> WritableRole {
         match self {
-            Self::Visibilities(_) => WritableRole::Visibilities,
+            Self::Visibilities { .. } => WritableRole::Visibilities,
             Self::Flags { .. } => WritableRole::Flags,
             Self::Weights { .. } => WritableRole::Weights,
         }
+    }
+
+    /// Whether checking these values needs the batch's payload, not only
+    /// its address: clearing a flag or writing a weight must not turn
+    /// padding into an acquisition, and an MSv4 store knows its padding
+    /// only from the batch's weights ([`Updater::write_at`]).
+    #[must_use]
+    pub fn needs_payload(&self) -> bool {
+        match self {
+            Self::Visibilities { .. } => false,
+            Self::Flags { clear, .. } => clear.is_some(),
+            Self::Weights { .. } => true,
+        }
+    }
+
+    /// Whether the patch writes anything of `sample`: always for flags and
+    /// weights, and for visibilities when `written` holds one of its
+    /// elements.
+    #[must_use]
+    pub fn writes_sample(&self, sample: usize) -> bool {
+        match self {
+            Self::Visibilities {
+                written: Some(written),
+                ..
+            } => written
+                .index_axis(Axis(0), sample)
+                .iter()
+                .any(|written| *written),
+            _ => true,
+        }
+    }
+}
+
+/// Where a delivered batch's samples lie, without its payload: its
+/// partition, times, channels and correlation products, and the catalogue
+/// and weight rule it was delivered with ([`VisibilityBatch::address`]).
+///
+/// The address is owned, so it outlives the buffers the batch borrowed: a
+/// consumer that packs a batch's samples and hands them to another thread
+/// writes them back through [`Updater::write_at`] once those buffers hold
+/// the next batch. Only a delivered batch gives one, so an address names
+/// samples a store delivered, as a batch does.
+#[derive(Clone, Debug)]
+pub struct BatchAddress {
+    catalogue: Arc<Catalogue>,
+    partition: PartitionId,
+    time_scale: EpochRef,
+    time_origin: MjdHighPrec,
+    offsets_s: Vec<f64>,
+    first_channel: usize,
+    channels: usize,
+    correlations: Vec<Correlation>,
+    weight_rule: WeightRule,
+}
+
+impl VisibilityBatch<'_> {
+    /// The batch's address, which outlives its buffers.
+    #[must_use]
+    pub fn address(&self) -> BatchAddress {
+        BatchAddress {
+            catalogue: Arc::clone(self.catalogue),
+            partition: self.partition,
+            time_scale: self.time.reference(),
+            time_origin: self.time.origin(),
+            offsets_s: self.time.offsets_s().to_vec(),
+            first_channel: self.first_channel,
+            channels: self.channel_count(),
+            correlations: self.correlations.to_vec(),
+            weight_rule: self.group.weight_rule,
+        }
+    }
+}
+
+impl BatchAddress {
+    /// The catalogue the batch was delivered with: the store's opening that
+    /// delivered it.
+    #[must_use]
+    pub fn catalogue(&self) -> &Arc<Catalogue> {
+        &self.catalogue
+    }
+
+    /// The partition.
+    #[must_use]
+    pub fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    /// The batch's times, in the partition's scale and origin.
+    #[must_use]
+    pub fn time(&self) -> EpochView<'_> {
+        EpochView::new(
+            self.time_scale,
+            self.time_origin,
+            ArrayView1::from(self.offsets_s.as_slice()),
+        )
+    }
+
+    /// Number of times.
+    #[must_use]
+    pub fn times(&self) -> usize {
+        self.offsets_s.len()
+    }
+
+    /// Samples per time: the partition's baselines.
+    #[must_use]
+    pub fn samples_per_time(&self) -> usize {
+        self.catalogue.partition(self.partition).baselines.len()
+    }
+
+    /// Number of samples.
+    #[must_use]
+    pub fn samples(&self) -> usize {
+        self.times() * self.samples_per_time()
+    }
+
+    /// The partition's native channels the batch holds.
+    #[must_use]
+    pub fn channels(&self) -> Range<usize> {
+        self.first_channel..self.first_channel + self.channels
+    }
+
+    /// The delivered correlation products, in the partition's order.
+    #[must_use]
+    pub fn correlations(&self) -> &[Correlation] {
+        &self.correlations
+    }
+
+    /// What the batch's weights were: stored, or made from the sigmas.
+    #[must_use]
+    pub fn weight_rule(&self) -> WeightRule {
+        self.weight_rule
+    }
+
+    /// The shape of every patch array: `[samples, channels, correlations]`.
+    #[must_use]
+    pub fn shape(&self) -> [usize; 3] {
+        [self.samples(), self.channels, self.correlations.len()]
     }
 }
 
@@ -186,7 +348,9 @@ pub struct UpdateReport {
 /// An updater is bound to a traversal and to some of its session's
 /// targets (`casa_ms::observation_io::UpdateSession::updater`); each call
 /// gives the values of those targets, in that order, for one delivered
-/// batch.
+/// batch. It takes the traversal's batches in any order, and any of them:
+/// the times it is not given keep what they hold, as the elements and
+/// samples a visibility patch leaves do.
 ///
 /// Only [`Self::finish`] completes an update: an updater dropped without
 /// it leaves what it wrote and discards what it held (an MSv4 updater's
@@ -197,14 +361,31 @@ pub trait Updater: Send {
     /// # Errors
     ///
     /// When a value disagrees with its target or the batch, the batch is
-    /// not the traversal's next, or a change is refused (a weight shared by
+    /// not of the traversal (another observation's, other channels, times
+    /// outside its selection), or a change is refused (a weight shared by
     /// channels the patch does not address, a flag cleared or a finite
     /// weight written where the store holds padding). Nothing of `batch` is
-    /// then written. A storage failure
-    /// leaves what the store's guarantees state.
+    /// then written. A storage failure leaves what the store's guarantees
+    /// state.
     fn write(
         &mut self,
         batch: &VisibilityBatch<'_>,
+        values: &[PatchValues<'_>],
+    ) -> Result<(), ObservationError>;
+
+    /// Write `values` for the samples of the delivered batch `address`
+    /// names, as [`Self::write`] writes them for the batch, once its
+    /// buffers are gone. A change whose check reads the batch's payload
+    /// ([`PatchValues::needs_payload`]: a flag cleared, a weight written)
+    /// is refused, on every store: an MSv4 store knows its padding only from
+    /// the batch's weights.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::write`], and when a value needs the batch's payload.
+    fn write_at(
+        &mut self,
+        address: &BatchAddress,
         values: &[PatchValues<'_>],
     ) -> Result<(), ObservationError>;
 
@@ -212,21 +393,40 @@ pub trait Updater: Send {
     ///
     /// # Errors
     ///
-    /// When a batch of the traversal was never written (a store that plans
-    /// its writes up front needs every one), or storage fails.
+    /// When storage fails.
     fn finish(self: Box<Self>) -> Result<UpdateReport, ObservationError>;
 }
 
-/// Check `values` against the bound `roles` and `batch` before anything is
-/// written: one value per role, in order, each of the batch's shape; no
-/// sample both set and cleared; and a weight patch for every channel giving
-/// each sample and product one value.
+/// Refuse, for [`Updater::write_at`], values whose check needs the batch's
+/// payload ([`PatchValues::needs_payload`]).
+///
+/// # Errors
+///
+/// [`ObservationError::InvalidRequest`] naming the first such value.
+pub fn refuse_payload_checks(values: &[PatchValues<'_>]) -> Result<(), ObservationError> {
+    match values.iter().position(PatchValues::needs_payload) {
+        Some(index) => Err(ObservationError::InvalidRequest {
+            reason: format!(
+                "patch value {index} clears flags or writes weights, which must not turn \
+                 padding into an acquisition: write it against the batch, whose weights mark \
+                 padding, not its address"
+            ),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Check `values` against the bound `roles` and the batch at `address`
+/// before anything is written: one value per role, in order, each of the
+/// batch's shape (a visibility patch's mask too); no sample both set and
+/// cleared; and a weight patch for every channel giving each sample and
+/// product one value.
 ///
 /// # Errors
 ///
 /// [`ObservationError::InvalidRequest`] naming the first disagreement.
 pub fn check_values(
-    batch: &VisibilityBatch<'_>,
+    address: &BatchAddress,
     roles: &[WritableRole],
     values: &[PatchValues<'_>],
 ) -> Result<(), ObservationError> {
@@ -238,7 +438,7 @@ pub fn check_values(
             roles.len()
         ));
     }
-    let shape = batch.shape();
+    let shape = address.shape();
     for (index, (value, role)) in values.iter().zip(roles).enumerate() {
         if value.role() != *role {
             return refuse(format!(
@@ -247,7 +447,9 @@ pub fn check_values(
             ));
         }
         let shapes: Vec<&[usize]> = match value {
-            PatchValues::Visibilities(values) => vec![values.shape()],
+            PatchValues::Visibilities { values, written } => std::iter::once(values.shape())
+                .chain(written.iter().map(|mask| mask.shape()))
+                .collect(),
             PatchValues::Flags { set, clear } => {
                 set.iter().chain(clear).map(|mask| mask.shape()).collect()
             }
@@ -267,12 +469,12 @@ pub fn check_values(
             }
             // Weights patched from weights made from the sigmas would write
             // sigmas back as weights, unannounced.
-            PatchValues::Weights { .. } if batch.group.weight_rule != WeightRule::Stored => {
+            PatchValues::Weights { .. } if address.weight_rule != WeightRule::Stored => {
                 return refuse(format!(
                     "patch value {index} writes weights for a batch whose weights were made \
                      from the sigmas ({:?}); patch weights from a traversal of the stored \
                      weights",
-                    batch.group.weight_rule
+                    address.weight_rule
                 ));
             }
             PatchValues::Weights {

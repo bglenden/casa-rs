@@ -113,6 +113,41 @@ pub fn prepare_write_holding(
     prepare(ms, column, adds, Some(main_lock))
 }
 
+/// Storage managers whose selected-row save patches the written rows' tiles
+/// in place: the managers CASA and casa-rs store visibilities in.
+pub(crate) const BOUNDED_WRITE_MANAGERS: [&str; 2] = ["TiledShapeStMan", "TiledColumnStMan"];
+
+/// Why MAIN's `column` cannot be written in place in bounded memory, or
+/// `None` when it can: a column stored outside [`BOUNDED_WRITE_MANAGERS`]
+/// is saved by rewriting every row of its storage group, once a save. A
+/// column the writer creates (`created`) clones `DATA`'s manager, which must
+/// be one of them and hold `DATA` alone.
+pub(crate) fn unbounded_destination(main: &Table, column: &str, created: bool) -> Option<String> {
+    let stored = if created { "DATA" } else { column };
+    let Some(manager) = main
+        .data_manager_info()
+        .iter()
+        .find(|manager| manager.columns.iter().any(|name| name == stored))
+    else {
+        return Some(format!("{stored} has no storage manager on disk"));
+    };
+    let storage = if created {
+        format!(
+            "it would be created in a clone of DATA's {}",
+            manager.dm_type
+        )
+    } else {
+        format!("it is stored in {}", manager.dm_type)
+    };
+    if !BOUNDED_WRITE_MANAGERS.contains(&manager.dm_type.as_str()) {
+        return Some(format!(
+            "{storage}; only TiledShapeStMan and TiledColumnStMan columns are written in place"
+        ));
+    }
+    (created && manager.columns.len() != 1)
+        .then(|| format!("{storage}, which DATA shares with other columns"))
+}
+
 fn prepare(
     ms: &mut MeasurementSet,
     column: VisibilityDataColumn,

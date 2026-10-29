@@ -371,6 +371,11 @@ impl Observation {
             unreachable!("parameters are an object");
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
+        if !route_law::written_columns(&request).is_empty() {
+            // The batch route writes a copy of the MeasurementSet as it is
+            // before either route writes.
+            route_law::copy_for_batches(&request.vis).expect("copy the MeasurementSet");
+        }
         let result = run(parameters.clone(), &request)?;
         assert_geometry_law(name, &request);
         assert_route_law(name, parameters, &request, &result.artifacts);
@@ -516,25 +521,24 @@ fn assert_geometry_law(name: &str, request: &ImagingRequest) {
     );
 }
 
-/// Imaging port step 4's route law (#932): the run imaged again on the
-/// observation-batch route gives every product of `reported` to a
-/// normalized RMS of [`route_law::TOLERANCE`]. A run that writes a column
-/// back is not run there: the batch route writes nothing yet (step 5).
+/// Imaging port's route law (#932, steps 4 and 5): the run imaged again
+/// on the observation-batch route gives every product of `reported`, and
+/// every column it writes back (to the copy of the MeasurementSet taken
+/// before), to a normalized RMS of [`route_law::TOLERANCE`].
 fn assert_route_law(
     name: &str,
     mut parameters: ImagingParameters,
     request: &ImagingRequest,
     reported: &[ImagerArtifact],
 ) {
-    if !route_law::applies_to(request) {
-        eprintln!("{name}: route law not run, the run writes visibilities back");
-        return;
-    }
     let batches = route_law::on_batches(request);
     parameters.0.insert(
         "imagename".to_string(),
         json!(batches.imagename.display().to_string()),
     );
+    parameters
+        .0
+        .insert("vis".to_string(), json!(batches.vis.display().to_string()));
     let result = run(parameters, &batches)
         .unwrap_or_else(|error| panic!("{name}: the observation-batch route: {error}"));
     let prefix = request.imagename.display().to_string();
@@ -556,6 +560,16 @@ fn assert_route_law(
         assert!(
             nrms <= route_law::TOLERANCE,
             "{name}{suffix}: the observation-batch route departs from today's by NRMS {nrms:.3e}"
+        );
+    }
+    for column in route_law::written_columns(request) {
+        let nrms = route_law::column_nrms(&request.vis, &batches.vis, column)
+            .unwrap_or_else(|error| panic!("{name} {column}: {error}"));
+        eprintln!("{name} {column}: route law NRMS {nrms:.3e}");
+        assert!(
+            nrms <= route_law::TOLERANCE,
+            "{name} {column}: the observation-batch route writes it departing from today's by \
+             NRMS {nrms:.3e}"
         );
     }
 }
