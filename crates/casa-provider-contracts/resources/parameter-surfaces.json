@@ -17447,7 +17447,7 @@
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "antenna",
@@ -17911,7 +17911,7 @@
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "antenna",
@@ -18098,7 +18098,7 @@
             "presentation": {"label": "Normalization Type", "group": "Solve", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "A gain solve's normtype chooses how solnorm averages the solutions, distinct from the imager's normalization."},
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "solnorm", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "gaintype",
@@ -18217,7 +18217,7 @@
             "python": {"name": "splinetime"},
             "presentation": {"label": "Spline Time", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
         },
         {
           "name": "npointaver",
@@ -18232,7 +18232,7 @@
             "python": {"name": "npointaver"},
             "presentation": {"label": "Phase Points Averaged", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
         },
         {
           "name": "phasewrap",
@@ -18247,7 +18247,7 @@
             "python": {"name": "phasewrap"},
             "presentation": {"label": "Phase Wrap", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "gaintype", "value": {"kind": "string", "value": "GSPLINE"}}}
         },
         {
           "name": "docallib",
@@ -18618,7 +18618,7 @@
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "antenna",
@@ -18835,7 +18835,7 @@
             "python": {"name": "fillgaps"},
             "presentation": {"label": "Fill Gaps", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "B"}}}
         },
         {
           "name": "degamp",
@@ -18878,7 +18878,7 @@
             "python": {"name": "visnorm"},
             "presentation": {"label": "Normalize Visibilities", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "maskcenter",
@@ -18893,7 +18893,7 @@
             "python": {"name": "maskcenter"},
             "presentation": {"label": "Mask Center", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "maskedge",
@@ -18908,7 +18908,7 @@
             "python": {"name": "maskedge"},
             "presentation": {"label": "Mask Edge", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "docallib",
@@ -19318,7 +19318,7 @@
             "python": {"name": "timerange"},
             "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "antenna", "value": {"kind": "string", "value": ""}}}}
         },
         {
           "name": "scan",
@@ -19333,7 +19333,7 @@
             "python": {"name": "scan"},
             "presentation": {"label": "Scan", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "antenna", "value": {"kind": "string", "value": ""}}}}
         },
         {
           "name": "incremental",
@@ -19566,7 +19566,14 @@
             "python": {"name": "infile"},
             "presentation": {"label": "Input File", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gc"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gceff"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
+          ]}}
         },
         {
           "name": "endpoint",
@@ -19581,7 +19588,7 @@
             "python": {"name": "endpoint"},
             "presentation": {"label": "Endpoint", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
         },
         {
           "name": "timeout",
@@ -19596,7 +19603,7 @@
             "python": {"name": "timeout"},
             "presentation": {"label": "Timeout", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
         },
         {
           "name": "retry",
@@ -19611,7 +19618,7 @@
             "python": {"name": "retry"},
             "presentation": {"label": "Retries", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
         },
         {
           "name": "retry_wait_time",
@@ -19626,7 +19633,7 @@
             "python": {"name": "retry_wait_time"},
             "presentation": {"label": "Retry Wait", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}}}
         },
         {
           "name": "ant_pos_time_limit",
@@ -19641,7 +19648,7 @@
             "python": {"name": "ant_pos_time_limit"},
             "presentation": {"label": "Antenna Position Time Limit", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}}}
         },
         {
           "name": "spw",
@@ -19715,7 +19722,7 @@
             "python": {"name": "uniform"},
             "presentation": {"label": "Uniform", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}}}
         },
         {
           "name": "output",
