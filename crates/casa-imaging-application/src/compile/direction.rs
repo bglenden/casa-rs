@@ -62,9 +62,8 @@ pub(super) fn resolve_centre(
         column: "FIELD_ID",
         value: selected_field,
     })?;
+    let mut stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
     let anchor_time = survey.first_time_mjd_seconds;
-    let (stored_phase, field_direction) =
-        field_reference_direction(ms, field_id, engine, anchor_time)?;
     let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
@@ -75,11 +74,15 @@ pub(super) fn resolve_centre(
         ))
     };
     let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
-        None => (
-            PhaseCentreLaw::Fixed(field_direction),
-            None,
-            field_direction,
-        ),
+        None => {
+            let field_direction =
+                field_reference_direction(ms, field_id, engine, anchor_time, &mut stored_phase)?;
+            (
+                PhaseCentreLaw::Fixed(field_direction),
+                None,
+                field_direction,
+            )
+        }
         Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
             let direction = parse_phase_center_direction(text)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
@@ -245,42 +248,42 @@ fn pointing_pixel(
     Ok(Some([pixel[0], pixel[1]]))
 }
 
-/// The image's reference direction and the frame it records: ICRS at the
-/// anchor time for a moving source, the field's stored direction in its
-/// own frame when the request names no centre, else the J2000 phase
-/// centre.
-/// casacore's `phaseDirMeas(field_id)` asked at no time, as stored and in
-/// J2000: the field's `PHASE_DIR`, or, for a field that follows an
-/// ephemeris, the body's direction at its FIELD row's `TIME` offset by
-/// `PHASE_DIR` (`MsCalEngine::moving_field_reference_direction`). CASA's
-/// `tclean` centres an image without a phase centre there and holds it
-/// fixed, also over a field that moves (#987).
+/// casacore's `phaseDirMeas(field_id)` asked at no time, in J2000: the
+/// field's `PHASE_DIR`, or, for a field that follows an ephemeris, the
+/// body's direction at its FIELD row's `TIME` offset by `PHASE_DIR`
+/// (`MsCalEngine::moving_field_reference_direction`), which then also
+/// replaces `stored`, the direction the image records. CASA's `tclean`
+/// centres an image without a phase centre there and holds it fixed, also
+/// over a field that moves (#987).
 fn field_reference_direction(
     ms: &MeasurementSet,
     field_id: usize,
     engine: &casa_ms::derived::engine::MsCalEngine,
     anchor_time: f64,
-) -> Result<(MDirection, SkyDirection), PrepareError> {
-    let origin = casa_ms::derived::engine::field_reference_epoch(ms, field_id)?;
-    let (stored, j2000) = match engine.moving_field_reference_direction(field_id, &origin)? {
+    stored: &mut MDirection,
+) -> Result<SkyDirection, PrepareError> {
+    let j2000 = match engine.moving_field_reference_direction(ms, field_id)? {
         Some(reference) => {
             let frame =
                 engine.spectral_frame_observatory_direction(anchor_time, reference.clone())?;
             let j2000 = reference.convert_to(DirectionRef::J2000, &frame)?;
-            (reference, j2000)
+            *stored = reference;
+            j2000
         }
-        None => (
-            casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?,
-            engine.field_direction_j2000(field_id)?.clone(),
-        ),
+        None => engine.field_direction_j2000(field_id)?.clone(),
     };
     let (longitude, latitude) = j2000.as_angles();
-    Ok((
-        stored,
-        SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        longitude,
+        latitude,
     ))
 }
 
+/// The image's reference direction and the frame it records: ICRS at the
+/// anchor time for a moving source, the field's stored direction in its
+/// own frame when the request names no centre, else the J2000 phase
+/// centre.
 fn image_centre(
     request: &ImagingRequest,
     engine: &casa_ms::derived::engine::MsCalEngine,

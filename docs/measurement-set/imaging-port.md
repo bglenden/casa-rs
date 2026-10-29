@@ -345,9 +345,10 @@ field's ephemeris, whatever the phase centre. A request without
 field that follows an ephemeris is the body's geocentric direction at the
 FIELD row's `TIME` (UTC), offset by `PHASE_DIR` in the ephemeris's frame
 (`MsCalEngine::moving_field_reference_direction`, #987). The image stays
-fixed while the field moves; before, today's route centred it on the
-offset. An analytic primary beam over such a field is refused, as for a
-moving centre.
+fixed while the field moves. Before #942, today's route centred it on the
+offset itself. The FIELD row's `TIME` enters nothing else: with it outside
+the table, only this case is refused, as casacore refuses it. An analytic
+primary beam over such a field is refused, as for a moving centre.
 
 The MSv2 adapter refuses to open a MeasurementSet whose attached table
 today's reader refuses (no table or several for an id, a non-geocentric

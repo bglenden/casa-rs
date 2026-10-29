@@ -172,6 +172,36 @@ fn a_moving_field_without_a_phase_centre_is_centred_where_casa_centres_it() {
     }
 }
 
+/// The FIELD row's `TIME` enters only the centre of an image without a
+/// phase centre: with it outside the body's table, `TRACKFIELD` images as
+/// before and only the empty phase centre is refused, as casacore refuses
+/// `phaseDirMeas` there.
+#[test]
+fn only_an_empty_phase_centre_reads_the_moving_field_time() {
+    let observation = moving_track();
+    let mut ms =
+        MeasurementSet::open(observation.measurement_set()).expect("the T1 MeasurementSet");
+    ms.subtable_mut(SubtableId::Field)
+        .expect("FIELD")
+        .fill_column_range(
+            "TIME",
+            casa_tables::RowRange::new(0, 1),
+            Value::Scalar(ScalarValue::Float64(0.0)),
+        )
+        .expect("a FIELD TIME outside the table");
+    ms.save().expect("save");
+    drop(ms);
+    observation.image(
+        "trackfield-unanchored",
+        json!({ "phasecenter": "TRACKFIELD", "niter": 0 }),
+    );
+    let refused = observation
+        .try_image("no-centre-unanchored", json!({ "niter": 0 }))
+        .err()
+        .expect("no body at the FIELD row's TIME");
+    assert!(refused.contains("T1BODY"), "{refused}");
+}
+
 /// [`body`]'s geocentric ICRS direction at `mjd` (UTC), its positions
 /// interpolated linearly in time, as casacore's `MeasComet` reads them.
 fn geocentric_body_direction(mjd: f64) -> MDirection {

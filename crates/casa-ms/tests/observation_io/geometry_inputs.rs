@@ -830,12 +830,6 @@ fn receptors_are_each_partitions_own() {
         .expect("no FEED loss to accept");
 }
 
-/// A field that follows an ephemeris carries it (#942): the table its
-/// `EPHEMERIS_ID` names, read once however many fields share it and equal
-/// to the samples today's route reads from it, while its phase centre
-/// keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
-/// counts each shared ephemeris once. An `EPHEMERIS_ID` whose table is
-/// missing refuses opening.
 /// casacore's `phaseDirMeas(field)` at no time, which CASA's `tclean`
 /// centres an image on when its phase centre is left empty (#987): for a
 /// field that follows an ephemeris, the body's geocentric direction at the
@@ -885,9 +879,8 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
     .and_then(|engine| engine.with_field_ephemerides(&ms))
     .expect("an engine");
     let at_no_time = |field| {
-        let origin = casa_ms::derived::engine::field_reference_epoch(&ms, field).expect("TIME");
         engine
-            .moving_field_reference_direction(field, &origin)
+            .moving_field_reference_direction(&ms, field)
             .expect("a direction")
     };
     let actual = at_no_time(0).expect("field 0 moves");
@@ -905,6 +898,12 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
     assert!(at_no_time(1).is_none(), "a fixed field has its PHASE_DIR");
 }
 
+/// A field that follows an ephemeris carries it (#942): the table its
+/// `EPHEMERIS_ID` names, read once however many fields share it and equal
+/// to the samples today's route reads from it, while its phase centre
+/// keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
+/// counts each shared ephemeris once. An `EPHEMERIS_ID` whose table is
+/// missing refuses opening.
 #[test]
 fn fields_carry_the_ephemerides_they_follow() {
     let root = tempfile::tempdir().expect("root");

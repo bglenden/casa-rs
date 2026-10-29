@@ -643,11 +643,11 @@ impl MsCalEngine {
     }
 
     /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,
-    /// for a field that follows an attached ephemeris
+    /// for a field of `ms` that follows an attached ephemeris
     /// ([`Self::with_field_ephemerides`]): the body's geocentric direction at
-    /// `origin`, the field row's `TIME` ([`field_reference_epoch`]), in UTC,
-    /// shifted by `PHASE_DIR`'s true angle in the ephemeris's frame. `None`
-    /// for a fixed field, whose direction is its `PHASE_DIR`.
+    /// the field row's `TIME` in UTC, shifted by `PHASE_DIR`'s true angle in
+    /// the ephemeris's frame. `None` for a fixed field, whose direction is
+    /// its `PHASE_DIR`.
     ///
     /// CASA's `tclean` centres an image there when its phase centre is left
     /// empty (#987). Geocentric and at no row's time, it is not the direction
@@ -655,12 +655,12 @@ impl MsCalEngine {
     ///
     /// # Errors
     ///
-    /// An unknown field, an ephemeris that cannot be read or does not cover
-    /// `origin`, or a failed conversion.
+    /// An unknown field, an unreadable FIELD `TIME`, an ephemeris that
+    /// cannot be read or does not cover that time, or a failed conversion.
     pub fn moving_field_reference_direction(
         &self,
+        ms: &MeasurementSet,
         field_id: usize,
-        origin: &MEpoch,
     ) -> MsResult<Option<MDirection>> {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(None);
@@ -670,14 +670,9 @@ impl MsCalEngine {
             Some(measures) => frame.with_measures(Arc::clone(measures)),
             None => frame,
         };
+        let origin = field_reference_epoch(ms, field_id)?;
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        let sample = crate::ephemeris::evaluate(ephemeris, mjd_utc)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let body =
-            MDirection::from_cosines(sample.geocentric_position_metres, sample.position_reference);
-        Ok(Some(casa_types::measures::ephemeris::offset_true_angle(
-            &body, offset,
-        )?))
+        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset).map(Some)
     }
 
     /// The ephemeris `field_id` follows and its `PHASE_DIR` offset, or
@@ -1342,7 +1337,7 @@ pub fn raw_field_phase_direction(ms: &MeasurementSet, field_id: usize) -> MsResu
 /// polynomial and the time casacore evaluates its ephemeris at when asked
 /// for its direction at no time
 /// ([`MsCalEngine::moving_field_reference_direction`]).
-pub fn field_reference_epoch(ms: &MeasurementSet, field_id: usize) -> MsResult<MEpoch> {
+fn field_reference_epoch(ms: &MeasurementSet, field_id: usize) -> MsResult<MEpoch> {
     let field = ms.field()?;
     Ok(MEpoch::from_mjd(
         selected_f64_value(field.table(), field_id, "TIME")? / 86_400.0,

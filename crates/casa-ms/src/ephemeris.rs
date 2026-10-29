@@ -11,7 +11,7 @@ use std::{
 
 use casa_observation::FieldEphemeris;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::radial_velocity::RadialVelocityRef;
 use casa_types::{ScalarValue, Value};
 use thiserror::Error;
@@ -299,6 +299,28 @@ pub(crate) fn field_ephemeris_ids(
             _ => None,
         })
         .collect())
+}
+
+/// The direction casacore's `MSFieldColumns::extractDirMeas` gives a field
+/// that follows `series` at `mjd_utc` (days): the body's geocentric
+/// direction, shifted by the field's `PHASE_DIR` offset (`offset_rad`) by
+/// its true angle, in the ephemeris's frame.
+///
+/// # Errors
+///
+/// A time the samples do not cover, or a non-finite offset direction.
+pub(crate) fn reference_direction(
+    series: &FieldEphemeris,
+    mjd_utc: f64,
+    offset_rad: [f64; 2],
+) -> Result<MDirection, MsError> {
+    let sample =
+        evaluate(series, mjd_utc).map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    let body =
+        MDirection::from_cosines(sample.geocentric_position_metres, sample.position_reference);
+    Ok(casa_types::measures::ephemeris::offset_true_angle(
+        &body, offset_rad,
+    )?)
 }
 
 /// What a FIELD row's direction follows.
