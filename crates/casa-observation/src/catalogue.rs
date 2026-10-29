@@ -20,6 +20,13 @@ use casa_types::quanta::Quantity;
 use crate::ObservationError;
 use crate::ephemeris::FieldEphemeris;
 
+mod metadata;
+
+pub use metadata::{
+    IntentError, ProcessorEntry, ProcessorId, SourceEntry, SourceId, SourceRecord, SourceWindow,
+    StateEntry, StateId, Velocity, WindowEntry, WindowId,
+};
+
 /// An antenna of one opened observation.
 ///
 /// The number is an index into [`Catalogue::antennas`], valid only for the
@@ -101,6 +108,8 @@ pub struct AntennaEntry {
     pub mount: String,
     /// Dish diameter.
     pub dish_diameter: Quantity,
+    /// `FLAG_ROW`; `None` when the store states none.
+    pub flagged: Option<bool>,
 }
 
 impl AntennaEntry {
@@ -151,6 +160,17 @@ pub struct FieldEntry {
     pub reference_epoch: Option<MEpoch>,
     /// The source observed, when the store names one.
     pub source_name: Option<String>,
+    /// The logical source the field observes ([`Catalogue::sources`]):
+    /// MSv2 `SOURCE_ID`, never a single `SOURCE` row.
+    pub source: Option<SourceId>,
+    /// `CODE`.
+    pub code: Option<String>,
+    /// `DELAY_DIR`, in the phase centre's frame.
+    pub delay_centre: Option<MDirection>,
+    /// `REFERENCE_DIR`, in the phase centre's frame.
+    pub reference_centre: Option<MDirection>,
+    /// `FLAG_ROW`.
+    pub flagged: Option<bool>,
     /// The ephemeris the field follows, when it follows one: its phase
     /// centre is then an offset from the body's direction seen from the
     /// observatory (MSv2 `EPHEMERIS_ID`; MSv4
@@ -177,7 +197,7 @@ pub struct ScanEntry {
 /// The archive identifiers are MSv4's; an MSv2 holds them only where an
 /// importer recorded them, and the adapter reads them where XRADIO's
 /// converter does. A session lacking one is not distinguished by it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct ObservationEntry {
     /// Telescope name (`TELESCOPE_NAME`; MSv4 `antenna_xds.telescope_name`).
     pub telescope: String,
@@ -195,6 +215,43 @@ pub struct ObservationEntry {
     /// The scheduling block's archive UID (MSv4 `scheduling_block_UID`; in
     /// MSv2 the `SchedulingBlock` UID of `OBSERVATION::SCHEDULE`).
     pub scheduling_block: Option<String>,
+    /// The observation's extent as the store states it (MSv2
+    /// `TIME_RANGE`), never derived from its samples: two pieces split in
+    /// time from one observation keep its whole extent.
+    pub time_range: Option<[MEpoch; 2]>,
+    /// `RELEASE_DATE` (MSv4 `observation_info.release_date`).
+    pub release_date: Option<MEpoch>,
+    /// `FLAG_ROW`.
+    pub flagged: Option<bool>,
+}
+
+/// Equal in every member, epochs in the same scale at the same instant;
+/// an unstated member equals only an unstated one.
+impl PartialEq for ObservationEntry {
+    fn eq(&self, other: &Self) -> bool {
+        let epoch = |a: &MEpoch, b: &MEpoch| {
+            a.refer() == b.refer() && a.value().as_mjd() == b.value().as_mjd()
+        };
+        let range = match (&self.time_range, &other.time_range) {
+            (Some([a0, a1]), Some([b0, b1])) => epoch(a0, b0) && epoch(a1, b1),
+            (None, None) => true,
+            _ => false,
+        };
+        let release = match (&self.release_date, &other.release_date) {
+            (Some(a), Some(b)) => epoch(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.telescope == other.telescope
+            && self.observers == other.observers
+            && self.project == other.project
+            && self.execution_block == other.execution_block
+            && self.session_reference == other.session_reference
+            && self.scheduling_block == other.scheduling_block
+            && range
+            && release
+            && self.flagged == other.flagged
+    }
 }
 
 impl ObservationEntry {
@@ -268,6 +325,9 @@ pub struct DataGroupEntry {
 pub struct PartitionEntry {
     /// The spectral window's name as stored.
     pub spectral_window: String,
+    /// The spectral window ([`Catalogue::windows`]), with what defines it
+    /// besides the channels below.
+    pub window: WindowId,
     /// Channel centres in hertz.
     pub frequencies_hz: Vec<f64>,
     /// Their spectral frame.
@@ -304,6 +364,15 @@ pub struct PartitionEntry {
     /// partition's spectral window; an antenna the store states none for
     /// is absent.
     pub receptors: BTreeMap<AntennaId, Receptors>,
+    /// The states its rows use ([`Catalogue::states`]), sorted: one or
+    /// more `STATE` rows of the partition's `OBS_MODE`, which may differ in
+    /// `CAL`, `LOAD`, `SIG`, `REF`, `SUB_SCAN` or their flag. Empty for a
+    /// store without states (MSv4) or rows without one.
+    pub states: Vec<StateId>,
+    /// Its rows' processor ([`Catalogue::processors`]); `None` when the
+    /// store states none, or names one its table does not hold (CASA's
+    /// simulator writes `PROCESSOR_ID` 0 without a `PROCESSOR` row).
+    pub processor: Option<ProcessorId>,
 }
 
 impl PartitionEntry {
@@ -354,6 +423,15 @@ pub struct Catalogue {
     pub observations: Vec<ObservationEntry>,
     /// Partitions; [`PartitionId`] indexes them.
     pub partitions: Vec<PartitionEntry>,
+    /// Spectral windows, every one the store states, a window no partition
+    /// uses included; [`WindowId`] indexes them.
+    pub windows: Vec<WindowEntry>,
+    /// Logical sources; [`SourceId`] indexes them.
+    pub sources: Vec<SourceEntry>,
+    /// States; [`StateId`] indexes them.
+    pub states: Vec<StateEntry>,
+    /// Processors; [`ProcessorId`] indexes them.
+    pub processors: Vec<ProcessorEntry>,
 }
 
 /// How far two catalogues' antennas and fields may differ and still bind
@@ -460,7 +538,9 @@ impl Catalogue {
     /// (frame and angles within `tolerance`), scans by casacore number (by
     /// name when a scan has none), observing sessions by
     /// [`ObservationEntry::same_session`], and partitions by
-    /// [`PartitionEntry::same_content`] together with the bound session, the
+    /// [`PartitionEntry::same_content`] together with compatible window
+    /// metadata ([`WindowEntry::compatible`]: a member one store leaves
+    /// unstated does not distinguish), the bound session, the
     /// bound sets of fields and of scans (scans when both stores name
     /// them) and the feed pair (when both stores have one). Names and list
     /// positions decide nothing: converters rename antennas and fields.
@@ -507,8 +587,16 @@ impl Catalogue {
             &other.observations,
             ObservationEntry::same_session,
         )?;
+        let windows_agree = |a: WindowId, b: WindowId| match (
+            self.windows.get(a.0 as usize),
+            other.windows.get(b.0 as usize),
+        ) {
+            (Some(a), Some(b)) => a.compatible(b),
+            _ => true,
+        };
         let partitions = bind_each("partition", &self.partitions, &other.partitions, |a, b| {
             a.same_content(b)
+                && windows_agree(a.window, b.window)
                 && observations.get(a.observation.0 as usize) == Some(&b.observation.0)
                 && (a.feeds.is_none() || b.feeds.is_none() || a.feeds == b.feeds)
                 && same_set(&a.fields, &b.fields, |field| field.0, &fields)
@@ -614,6 +702,9 @@ mod tests {
             time_origin: MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
             receptors: BTreeMap::new(),
+            window: WindowId(0),
+            states: Vec::new(),
+            processor: None,
         }
     }
 
@@ -623,6 +714,11 @@ mod tests {
             phase_centre: MDirection::from_angles(longitude, 0.0, DirectionRef::J2000),
             reference_epoch: None,
             source_name: None,
+            source: None,
+            code: None,
+            delay_centre: None,
+            reference_centre: None,
+            flagged: None,
             ephemeris: None,
         }
     }
@@ -763,6 +859,7 @@ mod tests {
             position: MPosition::new_itrf(x, 0.0, 0.0),
             mount: "ALT-AZ".to_string(),
             dish_diameter: Quantity::new(25.0, "m").expect("quantity"),
+            flagged: None,
         }
     }
 

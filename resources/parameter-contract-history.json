@@ -3901,7 +3901,7 @@
     {
       "id": "imhead",
       "contract_version": 5,
-      "fingerprint": "1d87d6094b21a997ce1329608f14fd1a0d69d7e64d0a5b28d108fd19a3a35a77"
+      "fingerprint": "6bdb3d05425a3fe777fbe6c9c8defa146cf4c22f3a4b18ba8e9d628cba5a35cb"
     },
     {
       "id": "immath",
@@ -4076,7 +4076,7 @@
     {
       "id": "imregrid",
       "contract_version": 5,
-      "fingerprint": "977687498084f087a9a031c7393d263c90eefc801c3ba3167e58f9ad43663850"
+      "fingerprint": "7e1e448b0940f2a59807acd4be20dcd2c2003dce69b4ac666e218dca52efba2b"
     },
     {
       "id": "imstat",
@@ -4096,7 +4096,7 @@
     {
       "id": "imstat",
       "contract_version": 4,
-      "fingerprint": "c3d1b3bd94e6a3ac0d60a37d2198ac6561a1985b61c714f667bcc558a7052330"
+      "fingerprint": "f96fa23f2be8fedb2dd4b33ef0e7d4f9c6dcf2e61462688c69b125ed0fd03218"
     },
     {
       "id": "imsubimage",

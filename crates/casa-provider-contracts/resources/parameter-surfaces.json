@@ -14395,7 +14395,10 @@
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}
+          }
         },
         {
           "name": "imagename",
@@ -14905,7 +14908,8 @@
           },
           "unimplemented": {
             "issue": 977,
-            "equivalent": [{"kind": "string", "value": "a"}, {"kind": "string", "value": "au"}, {"kind": "string", "value": "aut"}]
+            "equivalent": [{"kind": "string", "value": "a"}, {"kind": "string", "value": "au"}, {"kind": "string", "value": "aut"}],
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "classic"}}
           }
         },
         {
@@ -27753,7 +27757,8 @@
           },
           "unimplemented": {
             "issue": 977,
-            "equivalent": [{"kind": "array", "value": []}]
+            "equivalent": [{"kind": "array", "value": []}],
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "template", "value": {"kind": "string", "value": "get"}}}
           }
         },
         {
