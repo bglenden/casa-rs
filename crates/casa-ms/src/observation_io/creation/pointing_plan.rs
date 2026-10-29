@@ -23,6 +23,7 @@
 //! memory until it is saved: #950.)
 
 use std::path::Path;
+use std::slice;
 
 use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
@@ -30,7 +31,9 @@ use casa_observation::{
 use casa_tables::Table;
 
 use super::Loss;
+use super::lockstep::{Sizing, WEIGHTS};
 use super::losses::Store;
+use super::memory::grid_bytes;
 use super::msv2_pointing::gathered_bytes;
 use super::pointing_scan::{self, Partition, Scan};
 use crate::observation_io::msv2::{POLYNOMIAL_TERMS, scan_rows};
@@ -46,6 +49,9 @@ pub(crate) struct PointingPlan {
     /// An MSv2 destination: the most samples the reads gather, and their
     /// coefficients.
     gathered: (usize, usize),
+    /// An MSv2 destination: the most its gathering holds, the gathered
+    /// samples beside the largest read.
+    peak: usize,
 }
 
 impl PointingPlan {
@@ -66,6 +72,44 @@ impl PointingPlan {
     pub(super) fn gathered(&self) -> (usize, usize) {
         self.gathered
     }
+
+    /// The most an MSv2 destination's gathering holds: the gathered samples
+    /// beside its largest read.
+    pub(super) fn peak(&self) -> usize {
+        self.peak
+    }
+}
+
+/// The most [`plan`] holds for `observation` (at `source`) within
+/// `budget`: a partition's grid at a time beside every partition's
+/// antennas, then an MSv2's scan of `POINTING`, or an MSv4's reads, each
+/// within `budget`.
+///
+/// # Errors
+///
+/// Any error estimating a partition's reads.
+pub(super) fn planning_bytes(
+    source: &Path,
+    observation: &dyn Observation,
+    budget: usize,
+) -> Result<usize, ObservationError> {
+    let catalogue = observation.catalogue();
+    let (mut grid, mut antennas) = (0, 0);
+    for id in catalogue.partition_ids() {
+        let entry = catalogue.partition(id);
+        let Some(group) = entry.data_groups.first() else {
+            continue;
+        };
+        let times = Sizing::of(observation, id, slice::from_ref(&group.name), WEIGHTS)?.times;
+        grid = grid.max(grid_bytes(times, entry.baselines.len()));
+        antennas += 2 * entry.baselines.len();
+    }
+    let reading = if source.join("zarr.json").is_file() {
+        budget
+    } else {
+        pointing_scan::scan_bytes(antennas)
+    };
+    Ok(antennas * size_of::<AntennaId>() + grid.max(reading))
 }
 
 /// What converting `observation` (at `source`) into `destination` carries
@@ -196,7 +240,12 @@ fn msv4(
     }
     if destination == Store::Msv4 {
         let gathered = (0, 0);
-        return Ok((PointingPlan { reads, gathered }, Vec::new()));
+        let plan = PointingPlan {
+            reads,
+            gathered,
+            peak: 0,
+        };
+        return Ok((plan, Vec::new()));
     }
     // An MSv4 holds a frame per dataset, an MSv2 one for its `POINTING`.
     if frames.len() > 1 {
@@ -209,8 +258,12 @@ fn msv4(
         read.budget_bytes = left;
         observation.pointing(read)?;
     }
-    let gathered = (samples, 2 * samples);
-    Ok((PointingPlan { reads, gathered }, Vec::new()))
+    let plan = PointingPlan {
+        reads,
+        gathered: (samples, 2 * samples),
+        peak: budget,
+    };
+    Ok((plan, Vec::new()))
 }
 
 /// An MSv2 source: scan `POINTING` once, then plan its reads.
@@ -246,14 +299,17 @@ fn msv2(
         Store::Msv4 => PointingPlan {
             reads: partition_reads(&scan, partitions, budget)?,
             gathered: (0, 0),
+            peak: 0,
         },
         Store::Msv2 => {
             let samples: usize = scan.antenna_rows.values().sum();
             let coefficients = samples * 2 * scan.most_terms.max(1);
             let left = read_budget(samples, coefficients, budget)?;
+            let (reads, largest) = antenna_reads(&scan, partitions, left)?;
             PointingPlan {
-                reads: antenna_reads(&scan, partitions, left)?,
+                reads,
                 gathered: (samples, coefficients),
+                peak: gathered_bytes(samples, coefficients) + largest,
             }
         }
     };
@@ -346,29 +402,32 @@ fn partition_reads(
 
 /// An MSv2 destination's reads from an MSv2 source: each named antenna's
 /// rows once, over every row's time, the antennas in ascending groups each
-/// read within `budget`. An MSv2's partitions share its `POINTING` and its
-/// time system, so a group's read is in any partition naming an antenna.
+/// read within `budget`; and the most one read holds. An MSv2's partitions
+/// share its `POINTING` and its time system, so a group's read is in any
+/// partition naming an antenna.
 fn antenna_reads(
     scan: &Scan,
     partitions: &[Partition],
     budget: usize,
-) -> Result<Vec<PointingRequest>, ObservationError> {
+) -> Result<(Vec<PointingRequest>, usize), ObservationError> {
     let Some((first, last)) = scan.times else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), 0));
     };
     let bytes = |rows: usize, antennas: usize| {
         catalog_peak_bytes(rows, antennas, scan_rows(budget), POLYNOMIAL_TERMS)
             .unwrap_or(usize::MAX)
     };
     let mut reads: Vec<PointingRequest> = Vec::new();
-    let mut held = 0;
+    let (mut held, mut largest) = (0, 0);
     for (antenna, rows) in &scan.antenna_rows {
         let grows = reads
             .last()
             .is_some_and(|read| bytes(held + rows, read.antennas.len() + 1) <= budget);
         if grows {
             held += rows;
-            reads.last_mut().expect("a read").antennas.push(*antenna);
+            let read = reads.last_mut().expect("a read");
+            read.antennas.push(*antenna);
+            largest = largest.max(bytes(held, read.antennas.len()));
             continue;
         }
         if bytes(*rows, 1) > budget {
@@ -383,6 +442,7 @@ fn antenna_reads(
             .position(|partition| partition.antennas.binary_search(antenna).is_ok())
             .expect("a scanned antenna is named");
         held = *rows;
+        largest = largest.max(bytes(held, 1));
         reads.push(PointingRequest {
             partition: PartitionId(partition as u32),
             direction: PointingDirection::Beam,
@@ -391,7 +451,7 @@ fn antenna_reads(
             budget_bytes: budget,
         });
     }
-    Ok(reads)
+    Ok((reads, largest))
 }
 
 /// `POINTING`'s columns the destination does not hold, as one table loss:
@@ -456,7 +516,12 @@ mod tests {
         };
         let budget = 1 << 20;
         assert!(fits(300, 3, budget));
-        let one_read = antenna_reads(&scan, &partitions, budget).unwrap();
+        let (one_read, largest) = antenna_reads(&scan, &partitions, budget).unwrap();
+        assert_eq!(
+            largest,
+            catalog_peak_bytes(300, 3, scan_rows(budget), POLYNOMIAL_TERMS).unwrap(),
+            "the one read holds the most"
+        );
         assert_eq!(one_read.len(), 1);
         assert_eq!(
             one_read[0].antennas,
@@ -469,7 +534,7 @@ mod tests {
             .step_by(64)
             .find(|budget| fits(200, 2, *budget) && !fits(300, 3, *budget))
             .expect("a budget for two antennas");
-        let reads = antenna_reads(&scan, &partitions, tight).unwrap();
+        let (reads, _) = antenna_reads(&scan, &partitions, tight).unwrap();
         let groups: Vec<_> = reads
             .iter()
             .map(|read| (read.partition.0, read.antennas.clone()))

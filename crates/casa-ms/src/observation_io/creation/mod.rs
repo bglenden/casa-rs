@@ -20,6 +20,11 @@
 //! every role, the others their visibilities only), so the writer writes
 //! every column of a time range together.
 //!
+//! What making and writing a plan hold is admitted against
+//! [`CreationOptions::memory_bytes`] before it is allocated
+//! ([`MemoryCharges`]); a batch must hold one integration of every selected
+//! group ([`CreationOptions::batch_bytes`]).
+//!
 //! The conversions between MSv2 and MSv4 (`convert`, with the `msv4`
 //! feature) share this machinery; converting into an MSv2 is a plan over
 //! one input.
@@ -28,6 +33,7 @@ mod combine;
 mod inputs;
 pub(crate) mod lockstep;
 pub(crate) mod losses;
+mod memory;
 mod msv2_identity;
 mod msv2_pointing;
 mod msv2_rows;
@@ -40,10 +46,12 @@ mod pointing_scan;
 mod preservation;
 mod replace;
 mod scans;
+mod writing;
 
 use std::fmt;
 use std::path::PathBuf;
 
+pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;
@@ -188,8 +196,14 @@ pub struct CreationOptions {
     /// The losses accepted; any other refuses the plan.
     pub accept: Vec<LossKind>,
     /// The most bytes one time range of every selected group's batches
-    /// may hold together.
+    /// may hold together, and the pointing a read gathers; a batch that
+    /// cannot hold one integration (one time of every group) is refused,
+    /// not rounded up.
     pub batch_bytes: usize,
+    /// The most memory making and writing the plan hold, admitted before
+    /// it is allocated ([`MemoryCharges`]); [`default_memory_bytes`] is the
+    /// host's usual share.
+    pub memory_bytes: usize,
     /// What a padded grid cell becomes; partitions combined from several
     /// inputs need it omitted.
     pub padding: PaddingRows,

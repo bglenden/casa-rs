@@ -5,21 +5,24 @@
 //!
 //! ```text
 //! ms_create_from DESTINATION INPUT[=SCALE]... [--sort] [--batch-mib M]
-//!     [--accept KIND,...]
+//!     [--memory-mib M] [--accept KIND,...]
 //! ```
 //!
 //! Each `INPUT` may carry its weight scale (`part2.ms=2.0`, CASA's
 //! `visweightscale`). `--sort` orders the inputs by their earliest time, as
-//! CASA's `concat` task does. Padding is omitted. `KIND` is `sigma`,
-//! `row-flags`, `flag-categories`, `data-groups`, `tables`, `columns` or
-//! `defaulted`. Prints one JSON object: elapsed seconds, the inputs in the
-//! order created, the report and the merge's notices.
+//! CASA's `concat` task does. Padding is omitted. The memory budget is the
+//! host's usual share unless `--memory-mib` says otherwise. `KIND` is
+//! `sigma`, `row-flags`, `flag-categories`, `data-groups`, `tables`,
+//! `columns` or `defaulted`. Prints one JSON object: elapsed seconds, the
+//! inputs in the order created, the report, the memory charged and the
+//! merge's notices.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use casa_ms::observation_io::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, LossKind, PaddingRows,
+    default_memory_bytes,
 };
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::MergeTolerance;
@@ -67,6 +70,7 @@ fn main() -> Result<(), Error> {
         data_groups: None,
         accept: Vec::new(),
         batch_bytes: 256 << 20,
+        memory_bytes: default_memory_bytes()?,
         padding: PaddingRows::Omitted,
         tolerance: MergeTolerance::default(),
         history: Vec::new(),
@@ -77,6 +81,10 @@ fn main() -> Result<(), Error> {
             "--batch-mib" => {
                 let value = args.next().ok_or("--batch-mib needs a value")?;
                 options.batch_bytes = value.parse::<usize>()? << 20;
+            }
+            "--memory-mib" => {
+                let value = args.next().ok_or("--memory-mib needs a value")?;
+                options.memory_bytes = value.parse::<usize>()? << 20;
             }
             "--accept" => {
                 let value = args.next().ok_or("--accept needs a value")?;
@@ -105,6 +113,7 @@ fn main() -> Result<(), Error> {
     let started = Instant::now();
     let plan = CreationPlan::new(&inputs, &options, Destination::New(destination))?;
     let notices = plan.notices().to_vec();
+    let charges = plan.charges();
     let report = plan.write()?;
     println!(
         "{}",
@@ -119,6 +128,15 @@ fn main() -> Result<(), Error> {
             "samples": report.samples,
             "rows": report.rows,
             "losses": report.losses.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "memory": {
+                "budget": options.memory_bytes,
+                "kept": charges.kept,
+                "planning": charges.planning,
+                "writing": charges.writing,
+                "writer": charges.writer,
+                "batch": charges.batch,
+                "least": charges.least,
+            },
             "notices": notices,
         })
     );

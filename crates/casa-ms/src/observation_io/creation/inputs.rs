@@ -8,6 +8,14 @@ use std::path::PathBuf;
 use casa_observation::{Observation, ObservationError, ObservationId};
 
 use super::CreationInput;
+#[cfg(feature = "msv4")]
+use std::slice;
+
+#[cfg(feature = "msv4")]
+use super::lockstep::{Sizing, WEIGHTS};
+#[cfg(feature = "msv4")]
+use super::memory::grid_bytes;
+use super::memory::{Ledger, catalogue_bytes};
 use crate::observation_io::update::request_error;
 use crate::observation_io::{Msv2Observation, OpenOptions};
 
@@ -29,14 +37,39 @@ pub(super) struct Input {
 }
 
 impl Input {
-    /// Open `input`, its weight scale checked.
-    pub(super) fn open(input: &CreationInput) -> Result<Self, ObservationError> {
+    /// Open `input`, its weight scale checked, admitting what the opening
+    /// keeps to `ledger`: an MSv2's index, each increase asked for before
+    /// it is allocated ([`Msv2Observation::open_granted`]) and the charge
+    /// then trimmed to the index kept, and its catalogue once read; an
+    /// MSv4's catalogue and coordinates once read.
+    pub(super) fn open(
+        input: &CreationInput,
+        ledger: &mut Ledger,
+    ) -> Result<Self, ObservationError> {
         let weight_scale = weight_scale(input)?;
         let path = input.path.clone();
         if path.join("zarr.json").is_file() {
-            return msv4(path, weight_scale);
+            return msv4(path, weight_scale, ledger);
         }
-        let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
+        let mut granted = 0;
+        let observation =
+            Msv2Observation::open_granted(&path, &OpenOptions::default(), &mut |total| {
+                if total > granted {
+                    ledger.admit("an input's opening", total - granted)?;
+                    granted = total;
+                }
+                Ok(())
+            })?;
+        let index = observation.index_bytes();
+        if index <= granted {
+            ledger.release(granted - index);
+        } else {
+            ledger.admit("an input's opening", index - granted)?;
+        }
+        ledger.admit(
+            "an input's catalogue",
+            catalogue_bytes(observation.catalogue()),
+        )?;
         let catalogue = observation.catalogue();
         let mut first = vec![None; catalogue.observations.len()];
         for id in catalogue.partition_ids() {
@@ -54,19 +87,39 @@ impl Input {
     }
 }
 
-/// An MSv4 input, its sessions by earliest time.
+/// An MSv4 input, its sessions by earliest time, its catalogue and its
+/// datasets' coordinates (their grids, held whole) admitted to `ledger`.
 #[cfg(feature = "msv4")]
-fn msv4(path: PathBuf, weight_scale: f32) -> Result<Input, ObservationError> {
+fn msv4(path: PathBuf, weight_scale: f32, ledger: &mut Ledger) -> Result<Input, ObservationError> {
     let observation =
         crate::observation_io::Msv4Observation::open_with(&path, &OpenOptions::default())?;
     let catalogue = observation.catalogue().clone();
+    let mut coordinates = 0;
+    for id in catalogue.partition_ids() {
+        let entry = catalogue.partition(id);
+        if let Some(group) = entry.data_groups.first() {
+            let sizing = Sizing::of(&observation, id, slice::from_ref(&group.name), WEIGHTS)?;
+            coordinates += entry.data_groups.len() * grid_bytes(sizing.times, 0);
+        }
+    }
+    ledger.admit(
+        "an input's catalogue",
+        catalogue_bytes(&catalogue) + coordinates,
+    )?;
     let mut first: Vec<Option<f64>> = vec![None; catalogue.observations.len()];
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);
         let Some(group) = entry.data_groups.first() else {
             continue;
         };
-        let grid = observation.grid(id, &group.name)?;
+        let bytes = grid_bytes(
+            Sizing::of(&observation, id, slice::from_ref(&group.name), WEIGHTS)?.times,
+            entry.baselines.len(),
+        );
+        ledger.admit("a partition's grid", bytes)?;
+        let grid = observation.grid(id, &group.name);
+        ledger.release(bytes);
+        let grid = grid?;
         let Some(time) = grid.times_s.first() else {
             continue;
         };
@@ -86,7 +139,11 @@ fn msv4(path: PathBuf, weight_scale: f32) -> Result<Input, ObservationError> {
 
 /// Without the `msv4` feature an MSv4 cannot be opened.
 #[cfg(not(feature = "msv4"))]
-fn msv4(_path: PathBuf, _weight_scale: f32) -> Result<Input, ObservationError> {
+fn msv4(
+    _path: PathBuf,
+    _weight_scale: f32,
+    _ledger: &mut Ledger,
+) -> Result<Input, ObservationError> {
     Err(ObservationError::Unsupported {
         what: "an MSv4 store without casa-ms's msv4 feature",
     })

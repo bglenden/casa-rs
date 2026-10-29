@@ -15,16 +15,17 @@ use casa_types::measures::direction::DirectionRef;
 
 use super::combine::{self, Combined};
 use super::inputs::Input;
+use super::memory::{Ledger, MemoryCharges, catalogue_bytes};
 use super::msv2_pointing::{self, Pointed};
 use super::msv2_rows::{MainRows, Occupancy};
 use super::pointing_plan::{self, PointingPlan};
 use super::replace::Replacing;
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
-    losses, msv2_tables, occupancy,
+    losses, msv2_tables, occupancy, writing,
 };
 use crate::observation_io::update::{request_error, storage};
-use crate::write_session::MeasurementSetCreateTarget;
+use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWritePlan};
 use crate::{MeasurementSet, OptionalMainColumn};
 
 /// A new MeasurementSet v2 planned from observations, checked before
@@ -64,6 +65,9 @@ pub struct CreationPlan {
     losses: Vec<Loss>,
     occupancy: Occupancy,
     output: Catalogue,
+    /// MAIN's write plan, within the memory admitted.
+    main: MeasurementSetWritePlan,
+    charges: MemoryCharges,
     options: CreationOptions,
     publication: Publication,
 }
@@ -82,11 +86,18 @@ impl CreationPlan {
     /// `destination`, in input order, reading what the plan must know before
     /// writing: each input's losses, its pointing, its grids and, with
     /// padding omitted, its acquisitions. A [`Destination::Replace`]
-    /// destination is locked first.
+    /// destination is locked first. What making the plan holds, and what
+    /// writing it will hold, are admitted against
+    /// [`CreationOptions::memory_bytes`] before they are allocated
+    /// ([`Self::charges`]).
     ///
     /// # Errors
     ///
-    /// Nothing is written by a plan. An existing path for a
+    /// Nothing is written by a plan. Memory beyond
+    /// [`CreationOptions::memory_bytes`], or a batch of
+    /// [`CreationOptions::batch_bytes`] that cannot hold one integration of
+    /// every selected group ([`ObservationError::OverBudget`]). An existing
+    /// path for a
     /// [`Destination::New`], or for a [`Destination::Replace`] no
     /// MeasurementSet, one another process holds for writing, or a
     /// filesystem that cannot exchange directories. A weight scale that is
@@ -120,9 +131,10 @@ impl CreationPlan {
             ),
             Destination::Replace(path) => Publication::Replace(Replacing::hold(&path)?),
         };
+        let mut ledger = Ledger::new(options.memory_bytes);
         let inputs = inputs
             .iter()
-            .map(Input::open)
+            .map(|input| Input::open(input, &mut ledger))
             .collect::<Result<Vec<_>, _>>()?;
         let groups = selected_groups(&inputs, options.data_groups.as_deref())?;
         let names = groups
@@ -132,19 +144,16 @@ impl CreationPlan {
         let mut found = Vec::new();
         let mut pointing = Vec::with_capacity(inputs.len());
         for input in &inputs {
-            let catalogue = input.observation.catalogue();
-            found.extend(losses::inventory(
-                &input.path,
-                catalogue,
-                &groups,
-                losses::Store::Msv2,
-            )?);
-            let (plan, lost) = pointing_plan::plan(
-                &input.path,
-                input.observation.as_ref(),
-                losses::Store::Msv2,
-                options.batch_bytes,
-            )?;
+            let (path, observation) = (&input.path, input.observation.as_ref());
+            let catalogue = observation.catalogue();
+            let scans = losses::scan_bytes(catalogue);
+            found.extend(ledger.during("an input's loss scans", scans, |_| {
+                losses::inventory(path, catalogue, &groups, losses::Store::Msv2)
+            })?);
+            let scan = pointing_plan::planning_bytes(path, observation, options.batch_bytes)?;
+            let (plan, lost) = ledger.during("an input's pointing scan", scan, |_| {
+                pointing_plan::plan(path, observation, losses::Store::Msv2, options.batch_bytes)
+            })?;
             found.extend(lost);
             pointing.push(plan);
         }
@@ -156,6 +165,8 @@ impl CreationPlan {
             refuse_unwritable(input.observation.catalogue())?;
         }
         let combined = combine::combine(&inputs, &groups, &options.tolerance)?;
+        let merged = catalogue_bytes(&combined.catalogue);
+        ledger.admit("the merged catalogue", merged)?;
         if options.padding == PaddingRows::Flagged
             && combined
                 .contributors
@@ -170,28 +181,42 @@ impl CreationPlan {
         }
         refuse_unwritable(&combined.catalogue)?;
         found.extend(combined.losses.iter().cloned());
-        let grids = occupancy::grids(&inputs, &combined)?;
+        let grids = occupancy::grids(&inputs, &combined, &mut ledger)?;
         // What writing the subtables defaults or leaves out, found by writing
         // them in memory, and where they put each partition.
-        let (layout, rehearsed) =
-            msv2_tables::rehearse(&combined.catalogue, &grids.spans, &combined.intents)?;
+        let (layout, rehearsed) = ledger.during("the subtables rehearsed", merged, |_| {
+            msv2_tables::rehearse(&combined.catalogue, &grids.spans, &combined.intents)
+        })?;
         found.extend(rehearsed);
         found.sort();
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
-        let columns = names
+        let columns: Vec<(OptionalMainColumn, Option<String>)> = names
             .into_iter()
             .zip(&combined.units)
             .map(|(name, units)| (name, unit(units)))
             .collect();
         let output = written(&combined, &layout);
-        let occupancy =
-            grids.occupancy(&inputs, &combined, (options.padding, options.batch_bytes))?;
+        ledger.admit("the written catalogue", catalogue_bytes(&output))?;
+        let occupancy = grids.occupancy(
+            &inputs,
+            &combined,
+            (options.padding, options.batch_bytes),
+            &mut ledger,
+        )?;
         if occupancy.rows.iter().sum::<usize>() == 0 {
             return Err(request_error(
                 "the inputs hold nothing to write as an MSv2 row",
             ));
         }
+        let data_columns: Vec<&'static str> =
+            columns.iter().map(|(column, _)| column.name()).collect();
+        let writing = writing::admit(
+            &mut ledger,
+            (&inputs, &combined, &pointing),
+            (&data_columns, &occupancy),
+            options.batch_bytes,
+        )?;
         Ok(Self {
             inputs,
             pointing,
@@ -200,9 +225,19 @@ impl CreationPlan {
             losses: found,
             occupancy,
             output,
+            main: writing.plan,
+            charges: writing.charges,
             options: options.clone(),
             publication,
         })
+    }
+
+    /// The memory the plan admitted against
+    /// [`CreationOptions::memory_bytes`]: what it keeps, the most making it
+    /// held, and what writing it will hold.
+    #[must_use]
+    pub fn charges(&self) -> MemoryCharges {
+        self.charges
     }
 
     /// Every loss the MeasurementSet takes, all accepted, found before
@@ -312,7 +347,7 @@ impl CreationPlan {
         super::msv2_identity::history(&mut ms, &self.options.history)?;
         let names = optional.iter().map(|column| column.name()).collect();
         let mut main = MainRows::start(
-            staging,
+            (staging, self.main.clone()),
             catalogue,
             names,
             &self.occupancy,

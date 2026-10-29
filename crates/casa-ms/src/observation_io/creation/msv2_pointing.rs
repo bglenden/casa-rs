@@ -40,6 +40,10 @@ struct Row {
     terms: usize,
 }
 
+/// About the bytes a `POINTING` row holds in the created MeasurementSet's
+/// table until it is saved (#950), as the counting laws measure it.
+pub(super) const TABLE_ROW_BYTES: usize = 2_560;
+
 /// The bytes the writer holds for `samples` gathered samples of
 /// `coefficients` coefficients in all: it reserves exactly that and
 /// removes repeats in place.

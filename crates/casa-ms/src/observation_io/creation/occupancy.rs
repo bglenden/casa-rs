@@ -8,28 +8,17 @@
 //! and a cell two inputs both acquire is refused, naming them. Times are
 //! compared as `MainRows` writes them, MJD seconds from the grid's origin.
 
-use casa_observation::{ObservationError, ObservationId, OrderedBaseline, Roles, TimeBaselineGrid};
+use casa_observation::{ObservationError, ObservationId, OrderedBaseline, TimeBaselineGrid};
 use casa_types::measures::MjdHighPrec;
 use ndarray::Axis;
 
 use super::combine::Combined;
 use super::inputs::Input;
+use super::lockstep::{Sizing, WEIGHTS};
+use super::memory::{Ledger, grid_bytes};
 use super::msv2_rows::{Occupancy, Spans, acquired};
 use super::{PaddingRows, lockstep};
 use crate::observation_io::update::request_error;
-
-/// The occupancy pass's roles: the weights, whose non-finite values are
-/// padding's one mark.
-const WEIGHTS: Roles = Roles {
-    values: false,
-    flags: false,
-    weights: true,
-    uvw: false,
-    time_centroid: false,
-    interval: false,
-    exposure: false,
-    scan: false,
-};
 
 /// Seconds per day, for times as MJD seconds.
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -157,6 +146,9 @@ impl Combination {
 /// any weight is.
 pub(super) struct Grids {
     combinations: Vec<Combination>,
+    /// The bytes admitted for the combinations, released once the rows
+    /// are counted.
+    combined_bytes: usize,
     intervals: Vec<f64>,
     /// Each output partition's grid cells: its rows with padding flagged.
     cells: Vec<usize>,
@@ -164,15 +156,28 @@ pub(super) struct Grids {
     pub(super) spans: Spans,
 }
 
+/// The bytes a combination of grids of `times` times in all holds: the
+/// times gathered (deduplicated in place), and a field and scan for each.
+fn combination_bytes(times: usize) -> usize {
+    times * (size_of::<f64>() + 2 * size_of::<Option<i32>>())
+}
+
 /// The grids of `combined`'s output partitions, from `inputs`: each one's
 /// combined grid checked for one interval and one field and scan at a
-/// time, and the times they span.
-pub(super) fn grids(inputs: &[Input], combined: &Combined) -> Result<Grids, ObservationError> {
+/// time, and the times they span. Each partition's grids are admitted to
+/// `ledger` while they are combined, and their combination until the rows
+/// are counted ([`Grids::occupancy`]).
+pub(super) fn grids(
+    inputs: &[Input],
+    combined: &Combined,
+    ledger: &mut Ledger,
+) -> Result<Grids, ObservationError> {
     let output = &combined.catalogue;
     let mut spanned = Spanning::new(output.observations.len());
     let count = output.partitions.len();
     let mut read = Grids {
         combinations: Vec::with_capacity(count),
+        combined_bytes: 0,
         intervals: Vec::with_capacity(count),
         cells: Vec::with_capacity(count),
         spans: Spanning::new(0).finish(),
@@ -180,10 +185,20 @@ pub(super) fn grids(inputs: &[Input], combined: &Combined) -> Result<Grids, Obse
     for (index, contributors) in combined.contributors.iter().enumerate() {
         let mut grids = Vec::with_capacity(contributors.len());
         let mut identities = Vec::with_capacity(contributors.len());
+        let mut held = 0;
         for (input, id) in contributors {
             let map = &combined.rows[*input];
             let placement = &map.partitions[id.0 as usize];
-            let grid = inputs[*input].observation.grid(*id, &placement.groups[0])?;
+            let observation = inputs[*input].observation.as_ref();
+            let group = &placement.groups[0];
+            let times = Sizing::of(observation, *id, std::slice::from_ref(group), WEIGHTS)?.times;
+            let bytes = grid_bytes(
+                times,
+                observation.catalogue().partition(*id).baselines.len(),
+            ) + times * size_of::<(i32, i32)>();
+            ledger.admit("a partition's grids", bytes)?;
+            held += bytes;
+            let grid = observation.grid(*id, group)?;
             spanned.add(&grid, output.partitions[index].observation);
             identities.push(
                 grid.field_per_time
@@ -206,8 +221,13 @@ pub(super) fn grids(inputs: &[Input], combined: &Combined) -> Result<Grids, Obse
                 .map(|grid| grid.times_s.len() * grid.baselines.len())
                 .sum(),
         );
+        let bytes = combination_bytes(grids.iter().map(|grid| grid.times_s.len()).sum());
+        ledger.admit("a partition's combined times", bytes)?;
+        read.combined_bytes += bytes;
         read.combinations
             .push(Combination::new(&grids, &identities)?);
+        drop((grids, identities));
+        ledger.release(held);
     }
     read.spans = spanned.finish();
     Ok(read)
@@ -216,12 +236,15 @@ pub(super) fn grids(inputs: &[Input], combined: &Combined) -> Result<Grids, Obse
 impl Grids {
     /// The occupancy of `combined`'s output partitions under `padding`:
     /// their grid cells, or with padding omitted their acquisitions, read
-    /// from `inputs`' weights with `budget` bytes per batch.
+    /// from `inputs`' weights with `budget` bytes per batch, each batch and
+    /// the cells acquired admitted to `ledger` while they are read; the
+    /// combinations' bytes are released after.
     pub(super) fn occupancy(
         self,
         inputs: &[Input],
         combined: &Combined,
         (padding, budget): (PaddingRows, usize),
+        ledger: &mut Ledger,
     ) -> Result<Occupancy, ObservationError> {
         let rows = match padding {
             PaddingRows::Flagged => self.cells,
@@ -236,11 +259,13 @@ impl Grids {
                         combined,
                         (contributors, &entry.baselines),
                         combination,
-                        budget,
+                        (budget, &mut *ledger),
                     )
                 })
                 .collect::<Result<_, _>>()?,
         };
+        drop(self.combinations);
+        ledger.release(self.combined_bytes);
         Ok(Occupancy {
             rows,
             intervals: self.intervals,
@@ -287,7 +312,9 @@ fn one_interval(grids: &[TimeBaselineGrid]) -> Result<f64, ObservationError> {
 
 /// The acquisitions of an output partition's `contributors`, whose
 /// combined grid is `combination` over its `baselines`: each contributor's
-/// weights read, and a cell acquired twice refused.
+/// weights read in batches of `budget` bytes, and a cell acquired twice
+/// refused; the bit of each cell and each batch admitted to `ledger` while
+/// they are held.
 fn acquisitions(
     inputs: &[Input],
     combined: &Combined,
@@ -296,74 +323,105 @@ fn acquisitions(
         &[OrderedBaseline],
     ),
     combination: &Combination,
-    budget: usize,
+    (budget, ledger): (usize, &mut Ledger),
 ) -> Result<usize, ObservationError> {
     let cells = combination.times.len() * baselines.len();
-    let mut filled = if contributors.len() > 1 {
-        vec![0_u64; cells.div_ceil(64)]
+    let words = if contributors.len() > 1 {
+        cells.div_ceil(64)
     } else {
-        Vec::new()
+        0
     };
-    let mut count = 0;
-    for (position, (input, id)) in contributors.iter().enumerate() {
-        let map = &combined.rows[*input];
-        let placement = &map.partitions[id.0 as usize];
-        let groups = [placement.groups[0].clone()];
-        lockstep::read(
-            inputs[*input].observation.as_ref(),
-            *id,
-            &groups,
-            WEIGHTS,
-            (budget, None),
-            |batches| {
-                let batch = &batches[0];
-                let weights = batch
-                    .group
-                    .weights
-                    .ok_or_else(|| request_error("an occupancy batch carries its weights"))?;
-                let origin = MjdHighPrec::new(0.0, 0.0);
-                for (sample, weights) in weights.axis_iter(Axis(0)).enumerate() {
-                    if !acquired(weights)? {
-                        continue;
-                    }
-                    count += 1;
-                    if filled.is_empty() {
-                        continue;
-                    }
-                    let time = combination.time(
-                        batch
-                            .time
-                            .seconds_since(sample / batch.samples_per_time(), origin),
-                    )?;
-                    let baseline = batch.sample(sample).baseline;
-                    let antenna = |antenna: casa_observation::AntennaId| {
-                        casa_observation::AntennaId(map.antennas[antenna.0 as usize] as u32)
-                    };
-                    let remapped = OrderedBaseline {
-                        antenna1: antenna(baseline.antenna1),
-                        antenna2: antenna(baseline.antenna2),
-                    };
-                    let b = baselines
-                        .binary_search(&remapped)
-                        .map_err(|_| request_error("a batch's baseline is not on its grid"))?;
-                    let cell = time * baselines.len() + b;
-                    let (word, bit) = (cell / 64, 1_u64 << (cell % 64));
-                    if filled[word] & bit != 0 {
-                        let earlier: Vec<usize> = contributors[..position]
-                            .iter()
-                            .map(|(input, _)| *input)
-                            .collect();
-                        return Err(request_error(format!(
-                            "input {input} acquires baseline {}-{} at {} s, which input(s) \
-                             {earlier:?} also acquire; an MSv2 holds one row there",
-                            remapped.antenna1.0, remapped.antenna2.0, combination.times[time]
-                        )));
-                    }
-                    filled[word] |= bit;
-                }
+    ledger.during("a partition's acquired cells", words * 8, |ledger| {
+        let mut filled = vec![0_u64; words];
+        let mut count = 0;
+        for (position, (input, id)) in contributors.iter().enumerate() {
+            let map = &combined.rows[*input];
+            let placement = &map.partitions[id.0 as usize];
+            let groups = [placement.groups[0].clone()];
+            let observation = inputs[*input].observation.as_ref();
+            let sizing = Sizing::of(observation, *id, &groups, WEIGHTS)?;
+            let batch = sizing.times_per_batch(budget, None) * sizing.integration();
+            ledger.during("a weights batch", batch, |_| {
+                count += contributor(
+                    (observation, *id, &groups, budget),
+                    (combination, baselines, &map.antennas),
+                    &mut filled,
+                    (&contributors[..position], *input),
+                )?;
                 Ok(())
-            },
-        )?;
-    }
+            })?;
+        }
+        Ok(count)
+    })
+}
+
+/// The acquisitions of one contributor (input `input`, partition `id` of
+/// `observation`, read in batches of `budget`), each marked in `filled`
+/// when it is not empty and refused where it is already marked, naming the
+/// `earlier` contributors; antennas are the output's through `antennas`.
+fn contributor(
+    (observation, id, groups, budget): (
+        &dyn casa_observation::Observation,
+        casa_observation::PartitionId,
+        &[String],
+        usize,
+    ),
+    (combination, baselines, antennas): (&Combination, &[OrderedBaseline], &[i32]),
+    filled: &mut [u64],
+    (earlier, input): (&[(usize, casa_observation::PartitionId)], usize),
+) -> Result<usize, ObservationError> {
+    let mut count = 0;
+    lockstep::read(
+        observation,
+        id,
+        groups,
+        WEIGHTS,
+        (budget, None),
+        |batches| {
+            let batch = &batches[0];
+            let weights = batch
+                .group
+                .weights
+                .ok_or_else(|| request_error("an occupancy batch carries its weights"))?;
+            let origin = MjdHighPrec::new(0.0, 0.0);
+            for (sample, weights) in weights.axis_iter(Axis(0)).enumerate() {
+                if !acquired(weights)? {
+                    continue;
+                }
+                count += 1;
+                if filled.is_empty() {
+                    continue;
+                }
+                let time = combination.time(
+                    batch
+                        .time
+                        .seconds_since(sample / batch.samples_per_time(), origin),
+                )?;
+                let baseline = batch.sample(sample).baseline;
+                let antenna = |antenna: casa_observation::AntennaId| {
+                    casa_observation::AntennaId(antennas[antenna.0 as usize] as u32)
+                };
+                let remapped = OrderedBaseline {
+                    antenna1: antenna(baseline.antenna1),
+                    antenna2: antenna(baseline.antenna2),
+                };
+                let b = baselines
+                    .binary_search(&remapped)
+                    .map_err(|_| request_error("a batch's baseline is not on its grid"))?;
+                let cell = time * baselines.len() + b;
+                let (word, bit) = (cell / 64, 1_u64 << (cell % 64));
+                if filled[word] & bit != 0 {
+                    let earlier: Vec<usize> = earlier.iter().map(|(input, _)| *input).collect();
+                    return Err(request_error(format!(
+                        "input {input} acquires baseline {}-{} at {} s, which input(s) {earlier:?} \
+                     also acquire; an MSv2 holds one row there",
+                        remapped.antenna1.0, remapped.antenna2.0, combination.times[time]
+                    )));
+                }
+                filled[word] |= bit;
+            }
+            Ok(())
+        },
+    )?;
     Ok(count)
 }

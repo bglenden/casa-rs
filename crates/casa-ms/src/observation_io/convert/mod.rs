@@ -21,7 +21,9 @@ use std::path::Path;
 
 use casa_observation::ObservationError;
 
-use super::creation::{CreationInput, CreationOptions, CreationPlan, Destination};
+use super::creation::{
+    CreationInput, CreationOptions, CreationPlan, Destination, default_memory_bytes,
+};
 pub use super::creation::{Loss, LossKind, PaddingRows};
 pub use to_msv4::to_msv4;
 
@@ -107,6 +109,7 @@ pub fn to_msv2(
             data_groups: options.data_groups.clone(),
             accept: options.accept.clone(),
             batch_bytes: options.batch_bytes,
+            memory_bytes: default_memory_bytes()?,
             padding: options.padding,
             tolerance: casa_observation::MergeTolerance::default(),
             history: Vec::new(),

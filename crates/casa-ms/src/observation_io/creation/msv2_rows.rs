@@ -21,8 +21,8 @@ use super::msv2_tables::Layout;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    ScalarColumnId, standard_main_scalar_column_plans,
+    MeasurementSetWritePlan, MeasurementSetWriteSession, ScalarColumnId,
+    standard_main_scalar_column_plans,
 };
 use crate::{MeasurementSet, initial_model_visibility};
 
@@ -218,12 +218,13 @@ pub(super) struct MainRows {
 }
 
 impl MainRows {
-    /// Plan and start MAIN's writers at `staging` for the `occupancy` of
-    /// `catalogue`'s (output) partitions, with `data_columns` (`DATA`,
-    /// `CORRECTED_DATA`, `MODEL_DATA`), the subtables' `layout` and the
-    /// `padding` policy the occupancy was counted under.
+    /// Start MAIN's writers at `staging` under `plan` ([`write_plan`]) for
+    /// the `occupancy` of `catalogue`'s (output) partitions, with
+    /// `data_columns` (`DATA`, `CORRECTED_DATA`, `MODEL_DATA`), the
+    /// subtables' `layout` and the `padding` policy the occupancy was
+    /// counted under.
     pub(super) fn start(
-        staging: &Path,
+        (staging, plan): (&Path, MeasurementSetWritePlan),
         catalogue: &Catalogue,
         data_columns: Vec<&'static str>,
         occupancy: &Occupancy,
@@ -231,7 +232,6 @@ impl MainRows {
         padding: PaddingRows,
     ) -> Result<Self, ObservationError> {
         let planned = occupancy.rows.iter().sum();
-        let plan = plan(catalogue, &data_columns, &occupancy.rows, planned)?;
         let session = MeasurementSetWriteSession::start(staging, plan).map_err(storage)?;
         let id = |name: &str| session.scalar_column(name).map_err(storage);
         let scalars = Scalars {
@@ -541,14 +541,47 @@ fn contiguous<'a, T: Copy>(view: ArrayView2<'a, T>, scratch: &'a mut Vec<T>) -> 
     }
 }
 
-/// The variable-shape creation plan: one hypercube per visibility shape
-/// and per correlation count, sized by the rows each holds.
-fn plan(
+/// MAIN's variable-shape creation plan for the `occupancy` of
+/// `catalogue`'s partitions with `data_columns`, each array column's writer
+/// given `column_bytes` ([`array_columns`]).
+pub(super) fn write_plan(
+    columns: Vec<MeasurementSetArrayColumnPlan>,
+    occupancy: &Occupancy,
+    column_bytes: usize,
+) -> Result<MeasurementSetWritePlan, ObservationError> {
+    let scalars = standard_main_scalar_column_plans();
+    let resources = MeasurementSetWritePlan::variable_array_creation_resources(
+        columns.len(),
+        scalars.len(),
+        column_bytes,
+    )
+    .ok_or_else(|| request_error("the MAIN writers' memory overflows"))?;
+    MeasurementSetWritePlan::variable_array_creation(
+        occupancy.rows.iter().sum(),
+        columns,
+        scalars,
+        resources,
+    )
+    .map_err(storage)
+}
+
+/// What one batch's rows hold in [`MainRows`] beside the writers: the keys
+/// of `samples` samples, and a cell of `cell` elements of each kind.
+pub(super) fn held_bytes(samples: usize, cell: usize) -> usize {
+    let keys = 4 * size_of::<i32>() + 4 * size_of::<f64>();
+    let scratch = 2 * size_of::<Complex32>() + size_of::<bool>() + 2 * size_of::<f32>();
+    samples * keys + cell * scratch
+}
+
+/// MAIN's array columns for the `occupancy` of `catalogue`'s partitions
+/// with `data_columns`: one hypercube per visibility shape and per
+/// correlation count, sized by the rows each holds.
+pub(super) fn array_columns(
     catalogue: &Catalogue,
     data_columns: &[&'static str],
-    rows: &[usize],
-    total: usize,
-) -> Result<MeasurementSetWritePlan, ObservationError> {
+    occupancy: &Occupancy,
+) -> Result<Vec<MeasurementSetArrayColumnPlan>, ObservationError> {
+    let (rows, total) = (&occupancy.rows, occupancy.rows.iter().sum::<usize>());
     if total == 0 {
         return Err(request_error(
             "the source holds nothing to write as an MSv2 row",
@@ -645,14 +678,7 @@ fn plan(
             shaped,
         ),
     ]);
-    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(storage)?;
-    MeasurementSetWritePlan::variable_array_creation(
-        total,
-        columns,
-        standard_main_scalar_column_plans(),
-        resources,
-    )
-    .map_err(storage)
+    Ok(columns)
 }
 
 #[cfg(test)]

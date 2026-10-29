@@ -35,6 +35,9 @@ use super::OpenOptions;
 use crate::{MeasurementSet, MsError};
 use index::{Grid, Index, ROWS_PER_CHUNK};
 
+/// The most rows [`Msv2Observation::grid`] reads at once.
+pub(crate) const GRID_READ_ROWS: usize = ROWS_PER_CHUNK;
+
 fn storage(error: impl Into<MsError>) -> ObservationError {
     ObservationError::Storage(Box::new(error.into()))
 }
@@ -620,7 +623,8 @@ impl Msv2Observation {
 
     /// Partition `id`'s grid ([`Observation::grid`]): its times, fields and
     /// scans from the opening index, and the one `INTERVAL` of its rows,
-    /// read in bounded row chunks. Padding has no row, so no interval.
+    /// read in row chunks of at most [`GRID_READ_ROWS`]. Padding has no
+    /// row, so no interval.
     ///
     /// # Errors
     ///
@@ -637,19 +641,24 @@ impl Msv2Observation {
             });
         }
         let grid = &partition.grid;
-        let rows: Vec<usize> = grid
+        let mut rows = grid
             .cells
             .iter()
             .filter(|&&row| row != index::NO_ROW)
-            .map(|&row| row as usize)
-            .collect();
+            .map(|&row| row as usize);
         let main = self.ms.main_table();
         let mut interval = None;
-        let mut values = Vec::new();
-        for chunk in rows.chunks(ROWS_PER_CHUNK) {
+        let mut chunk = Vec::with_capacity(GRID_READ_ROWS.min(grid.cells.len()));
+        let mut values = Vec::with_capacity(chunk.capacity());
+        loop {
+            chunk.clear();
+            chunk.extend(rows.by_ref().take(GRID_READ_ROWS));
+            if chunk.is_empty() {
+                break;
+            }
             values.clear();
             main.required_scalar_columns_for_rows_into(
-                chunk,
+                &chunk,
                 &mut [RequiredScalarColumnDestination::new(
                     "INTERVAL",
                     RequiredScalarColumnValuesMut::Float64(&mut values),

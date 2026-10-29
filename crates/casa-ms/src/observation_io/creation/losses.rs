@@ -119,6 +119,21 @@ pub(crate) fn inventory(
     Ok(losses)
 }
 
+/// The most [`inventory`] holds reading an MSv2 of `catalogue`: a block of
+/// MAIN's row keys, and a block of `FLAG_CATEGORY` cells of three
+/// categories (casacore's `FLAG_CMD`, `ORIGINAL` and `USER`) of its widest
+/// partition.
+pub(super) fn scan_bytes(catalogue: &Catalogue) -> usize {
+    let keys = ROW_CHUNK * (size_of::<usize>() + size_of::<bool>() + 2 * size_of::<i32>());
+    let cell = catalogue
+        .partitions
+        .iter()
+        .map(|entry| entry.frequencies_hz.len() * entry.correlations.len())
+        .max()
+        .unwrap_or(0);
+    keys + CATEGORY_CHUNK * (3 * cell + size_of::<Option<casa_types::ArrayValue>>())
+}
+
 /// The antennas of `catalogue` that no partition's baselines name, as a
 /// loss when there are any: an MSv4 dataset holds only its baselines'
 /// antennas.

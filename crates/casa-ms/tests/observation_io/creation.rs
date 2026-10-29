@@ -33,6 +33,7 @@ fn options() -> CreationOptions {
         data_groups: None,
         accept: ACCEPT.to_vec(),
         batch_bytes: 1 << 20,
+        memory_bytes: 1 << 30,
         padding: PaddingRows::Flagged,
         tolerance: MergeTolerance::default(),
         history: Vec::new(),

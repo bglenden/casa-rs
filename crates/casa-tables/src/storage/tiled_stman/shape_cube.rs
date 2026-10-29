@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use super::{
     StreamedPrimitiveTilePlan, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
-    compute_tile_layout, copy_cube_to_tile, linear_to_nd,
+    StreamingTiledShapeWriter, compute_tile_layout, copy_cube_to_tile, linear_to_nd,
 };
 use crate::storage::StorageError;
 use crate::storage::canonical::write_bool_bits_from_bytes;
@@ -75,14 +75,41 @@ impl ShapeCubeWorkingSet {
     }
 }
 
-impl DirectShapeCubeWriter {
-    /// Create the cube's file at `temp_data_path`, sized for every planned
-    /// row, and return the writer with the bytes it works in per row.
-    pub(super) fn create(
-        temp_data_path: PathBuf,
-        layout: StreamedTiledShapeCubeLayout,
+/// What a cube of one layout is: the bytes it works in per row, its tiles
+/// along each axis of the cube (the row axis last), and one tile's bytes.
+struct Geometry {
+    working_set: ShapeCubeWorkingSet,
+    tiles_per_dim: Vec<usize>,
+    tile_cell_nelem: usize,
+    bucket_size: usize,
+}
+
+impl Geometry {
+    /// The geometry of a cube of `layout`, which it checks: rows, cell
+    /// extents and a tile of the cell's rank and the row axis, none empty.
+    fn of(
+        layout: &StreamedTiledShapeCubeLayout,
         value_type: StreamedTiledShapeValueType,
-    ) -> Result<(Self, ShapeCubeWorkingSet), StorageError> {
+    ) -> Result<Self, StorageError> {
+        if layout.row_count == 0 {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed TiledShape layout {:?} has no rows",
+                layout.cell_shape
+            )));
+        }
+        if layout.cell_shape.is_empty() || layout.cell_shape.contains(&0) {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed TiledShape cell dimensions must be positive: {:?}",
+                layout.cell_shape
+            )));
+        }
+        if layout.tile_shape.len() != layout.cell_shape.len() + 1 || layout.tile_shape.contains(&0)
+        {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed TiledShape tile rank must be cell rank + row axis; cell={:?} tile={:?}",
+                layout.cell_shape, layout.tile_shape
+            )));
+        }
         let elem_size = value_type.elem_size();
         let overflow = |what: &str| {
             StorageError::FormatMismatch(format!("streamed TiledShape {what} overflows usize"))
@@ -113,7 +140,6 @@ impl DirectShapeCubeWriter {
             packed_bool_bytes,
         };
         working_set.bytes().ok_or_else(|| overflow("working set"))?;
-
         let mut cube_shape = layout.cell_shape.clone();
         cube_shape.push(layout.row_count);
         let tiles_per_dim: Vec<usize> = cube_shape
@@ -121,6 +147,77 @@ impl DirectShapeCubeWriter {
             .zip(layout.tile_shape.iter())
             .map(|(&cube, &tile)| cube.div_ceil(tile))
             .collect();
+        product(&tiles_per_dim, "tile count")?;
+        let (bucket_size, _) =
+            compute_tile_layout(&[value_type.casacore_type()], &layout.tile_shape);
+        Ok(Self {
+            working_set,
+            tiles_per_dim,
+            tile_cell_nelem,
+            bucket_size,
+        })
+    }
+
+    /// Tiles across the cell: one band's.
+    fn non_row_tile_count(&self) -> usize {
+        self.tiles_per_dim[..self.tiles_per_dim.len() - 1]
+            .iter()
+            .product()
+    }
+}
+
+/// The budget from which a column writer of `rows` rows, working in
+/// `working` bytes, assembles its cubes' bands (`bands` bytes) in memory:
+/// both, beside the largest row map the rows can need.
+pub(super) fn buffered_bytes(working: usize, bands: usize, rows: usize) -> usize {
+    working
+        .saturating_add(bands)
+        .saturating_add(rows.saturating_mul(3 * size_of::<u32>()))
+}
+
+impl StreamingTiledShapeWriter {
+    /// The bytes a writer of `value_type` cells in `layouts` works in, the
+    /// least budget it is created with (its largest encoded row, tile row
+    /// and packed Bool tile row), and the budget from which it assembles
+    /// its bands in memory ([`buffered_bytes`]), which it then holds.
+    ///
+    /// # Errors
+    ///
+    /// A layout the writer refuses, or sizes that overflow.
+    pub fn resident_bytes(
+        value_type: StreamedTiledShapeValueType,
+        layouts: &[StreamedTiledShapeCubeLayout],
+    ) -> Result<(usize, usize), StorageError> {
+        let mut working_set = ShapeCubeWorkingSet::default();
+        let (mut bands, mut rows) = (0usize, 0usize);
+        for layout in layouts {
+            let geometry = Geometry::of(layout, value_type)?;
+            working_set = working_set.max(geometry.working_set);
+            bands = bands.saturating_add(geometry.non_row_tile_count() * geometry.bucket_size);
+            rows = rows.saturating_add(layout.row_count);
+        }
+        let working = working_set.bytes().ok_or_else(|| {
+            StorageError::FormatMismatch("streamed TiledShape working set overflows usize".into())
+        })?;
+        Ok((working, buffered_bytes(working, bands, rows)))
+    }
+}
+
+impl DirectShapeCubeWriter {
+    /// Create the cube's file at `temp_data_path`, sized for every planned
+    /// row, and return the writer with the bytes it works in per row.
+    pub(super) fn create(
+        temp_data_path: PathBuf,
+        layout: StreamedTiledShapeCubeLayout,
+        value_type: StreamedTiledShapeValueType,
+    ) -> Result<(Self, ShapeCubeWorkingSet), StorageError> {
+        let Geometry {
+            working_set,
+            tiles_per_dim,
+            tile_cell_nelem,
+            bucket_size,
+        } = Geometry::of(&layout, value_type)?;
+        let cell_rank = layout.cell_shape.len();
         let cell_tiles_per_dim = &tiles_per_dim[..cell_rank];
         let non_row_tile_count = cell_tiles_per_dim.iter().product::<usize>();
         let tile_plans = (0..non_row_tile_count)
@@ -144,11 +241,13 @@ impl DirectShapeCubeWriter {
                 }
             })
             .collect();
-        let (bucket_size, _) =
-            compute_tile_layout(&[value_type.casacore_type()], &layout.tile_shape);
-        let file_bytes = product(&tiles_per_dim, "tile count")?
+        let file_bytes = tiles_per_dim
+            .iter()
+            .product::<usize>()
             .checked_mul(bucket_size)
-            .ok_or_else(|| overflow("file size"))?;
+            .ok_or_else(|| {
+                StorageError::FormatMismatch("streamed TiledShape file size overflows usize".into())
+            })?;
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -385,6 +484,40 @@ mod tests {
             assert_eq!(direct.row_map, banded.row_map);
             assert_eq!(direct.cube_map, banded.cube_map);
             assert_eq!(direct.pos_map, banded.pos_map);
+        }
+    }
+
+    /// [`StreamingTiledShapeWriter::resident_bytes`] states the least
+    /// budget a writer is created with and the budget from which it
+    /// buffers its bands.
+    #[test]
+    fn resident_bytes_are_the_least_and_the_band_buffering_budgets() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for value_type in [
+            StreamedTiledShapeValueType::Complex32,
+            StreamedTiledShapeValueType::Bool,
+        ] {
+            let (working, buffered) =
+                StreamingTiledShapeWriter::resident_bytes(value_type, &layouts()).expect("bytes");
+            let refused = StreamingTiledShapeWriter::create(
+                dir.path().join(format!("{value_type:?}.less")),
+                value_type,
+                layouts(),
+                working - 1,
+                true,
+            );
+            assert!(refused.is_err(), "{value_type:?}: below the working set");
+            let peak = |name: &str, budget| {
+                write(dir.path(), name, value_type, budget)
+                    .0
+                    .max_resident_bytes()
+            };
+            let (below, at) = (
+                peak(&format!("{value_type:?}.below"), buffered - 1),
+                peak(&format!("{value_type:?}.at"), buffered),
+            );
+            assert!(below < at, "{value_type:?}: bands buffer from {buffered}");
+            assert!(at <= buffered, "{value_type:?}: held {at}, beyond {buffered}");
         }
     }
 }

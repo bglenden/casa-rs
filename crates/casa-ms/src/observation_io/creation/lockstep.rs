@@ -24,6 +24,18 @@ const VISIBILITIES: Roles = Roles {
     scan: false,
 };
 
+/// The weights alone, whose non-finite values are padding's one mark.
+pub(crate) const WEIGHTS: Roles = Roles {
+    values: false,
+    flags: false,
+    weights: true,
+    uvw: false,
+    time_centroid: false,
+    interval: false,
+    exposure: false,
+    scan: false,
+};
+
 /// What a lockstep read delivered.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Read {
@@ -31,6 +43,77 @@ pub(crate) struct Read {
     pub(crate) batches: usize,
     /// Samples of each group.
     pub(crate) samples: usize,
+}
+
+/// The reads of one partition in lockstep: a request per group, and what
+/// each holds per time.
+pub(crate) struct Sizing {
+    requests: Vec<AccessRequest>,
+    per_time: Vec<usize>,
+    /// The partition's times.
+    pub(crate) times: usize,
+    /// The source's natural time block.
+    natural: usize,
+    /// The samples (baselines) of one time.
+    pub(crate) samples_per_time: usize,
+}
+
+impl Sizing {
+    /// The reads of partition `id` of `observation`, every channel and
+    /// product of each of `groups`, the first with `first` roles and every
+    /// other with its visibilities only.
+    pub(crate) fn of(
+        observation: &dyn Observation,
+        id: PartitionId,
+        groups: &[String],
+        first: Roles,
+    ) -> Result<Self, ObservationError> {
+        let entry = observation.catalogue().partition(id);
+        let channels = entry.frequencies_hz.len();
+        let requests: Vec<AccessRequest> = groups
+            .iter()
+            .enumerate()
+            .map(|(index, group)| AccessRequest {
+                partitions: vec![id],
+                data_group: group.clone(),
+                roles: if index == 0 { first } else { VISIBILITIES },
+                channels: 0..channels,
+                times: TimeSelection::All,
+                fields: casa_observation::FieldSelection::All,
+                weights: WeightRequest::Stored,
+                correlations: CorrelationRequest::ALL,
+                grouping: Grouping::None,
+                batch_bytes: usize::MAX,
+            })
+            .collect();
+        let mut sizing = Self {
+            per_time: Vec::with_capacity(requests.len()),
+            requests: Vec::new(),
+            times: 0,
+            natural: 1,
+            samples_per_time: entry.baselines.len(),
+        };
+        for request in &requests {
+            let estimate = &observation.estimate(request)?.partitions[0];
+            sizing.per_time.push(estimate.held_bytes_per_time());
+            sizing.times = estimate.times;
+            sizing.natural = estimate.natural_blocks.times;
+        }
+        sizing.requests = requests;
+        Ok(sizing)
+    }
+
+    /// One integration: what one time of every group's batches holds.
+    pub(crate) fn integration(&self) -> usize {
+        self.per_time.iter().sum()
+    }
+
+    /// Whole times per batch within `budget`, a multiple of `chunk` times
+    /// where that fits (with `None` the source's natural block).
+    pub(crate) fn times_per_batch(&self, budget: usize, chunk: Option<usize>) -> usize {
+        let chunk = chunk.unwrap_or(self.natural).max(1);
+        times_per_batch(budget, self.integration(), chunk, self.times)
+    }
 }
 
 /// Read partition `id` of `observation`, every channel and product of
@@ -47,34 +130,10 @@ pub(crate) fn read(
     (budget, chunk): (usize, Option<usize>),
     mut each: impl FnMut(&[VisibilityBatch<'_>]) -> Result<(), ObservationError>,
 ) -> Result<Read, ObservationError> {
-    let channels = observation.catalogue().partition(id).frequencies_hz.len();
-    let mut requests: Vec<AccessRequest> = groups
-        .iter()
-        .enumerate()
-        .map(|(index, group)| AccessRequest {
-            partitions: vec![id],
-            data_group: group.clone(),
-            roles: if index == 0 { first } else { VISIBILITIES },
-            channels: 0..channels,
-            times: TimeSelection::All,
-            fields: casa_observation::FieldSelection::All,
-            weights: WeightRequest::Stored,
-            correlations: CorrelationRequest::ALL,
-            grouping: Grouping::None,
-            batch_bytes: usize::MAX,
-        })
-        .collect();
-    let mut per_time = Vec::with_capacity(requests.len());
-    let (mut times, mut natural) = (0, 1);
-    for request in &requests {
-        let estimate = &observation.estimate(request)?.partitions[0];
-        per_time.push(estimate.held_bytes_per_time());
-        times = estimate.times;
-        natural = estimate.natural_blocks.times;
-    }
-    let chunk = chunk.unwrap_or(natural).max(1);
-    let times = times_per_batch(budget, per_time.iter().sum(), chunk, times);
-    for (request, bytes) in requests.iter_mut().zip(&per_time) {
+    let mut sizing = Sizing::of(observation, id, groups, first)?;
+    let times = sizing.times_per_batch(budget, chunk);
+    let mut requests = std::mem::take(&mut sizing.requests);
+    for (request, bytes) in requests.iter_mut().zip(&sizing.per_time) {
         request.batch_bytes = bytes * times;
     }
     let mut traversals = requests
@@ -111,7 +170,8 @@ pub(crate) fn read(
 
 /// Whole times per batch for `budget` bytes of `bytes_per_time` each: a
 /// multiple of `chunk` times where that fits, so that no chunk is held,
-/// and never more than the partition's `total`.
+/// and never more than the partition's `total`. A budget below one time
+/// still reads one (a plan refuses it first: `CreationPlan::new`).
 fn times_per_batch(budget: usize, bytes_per_time: usize, chunk: usize, total: usize) -> usize {
     let fit = (budget / bytes_per_time.max(1)).max(1);
     let aligned = if fit >= chunk { fit - fit % chunk } else { fit };

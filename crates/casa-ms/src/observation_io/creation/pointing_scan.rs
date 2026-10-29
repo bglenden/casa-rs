@@ -21,6 +21,15 @@ use crate::observation_io::update::storage;
 /// `POINTING` rows scanned at a time.
 const SCAN_ROWS: usize = 1 << 16;
 
+/// The most [`scan`] holds for partitions naming `antennas` antennas in
+/// all: a block of rows (each one's number, antenna, order, time, interval
+/// and origin), and each antenna's nearest rows either side and its count.
+pub(super) fn scan_bytes(antennas: usize) -> usize {
+    let row = size_of::<usize>() + 2 * size_of::<i32>() + 3 * size_of::<f64>();
+    let antenna = size_of::<[Option<Candidate>; 2]>() + 2 * size_of::<(AntennaId, usize)>();
+    SCAN_ROWS * row + antennas * antenna
+}
+
 /// One partition as the scan sees it: the antennas its baselines name and
 /// its times.
 pub(super) struct Partition {
