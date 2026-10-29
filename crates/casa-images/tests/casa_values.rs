@@ -435,6 +435,53 @@ fn impbcor_refuses_its_selection_controls_before_it_starts() {
     assert!(!root.join("pixels.im").exists());
 }
 
+/// A contract-4 impbcor profile, whose `stretch` was text read without
+/// regard to case or surrounding space, runs: every spelling the old
+/// reader took migrates to CASA's boolean.
+#[test]
+fn an_old_impbcor_profile_migrates_every_stretch_spelling() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    write_image(&root.join("in.image"), 2.0);
+    write_image(&root.join("pb.image"), 1.0);
+    let impbcor = env!("CARGO_BIN_EXE_impbcor");
+    for (index, stretch) in [" FALSE ", "f", "False", "false"].into_iter().enumerate() {
+        let profile = root.join(format!("old{index}.toml"));
+        std::fs::write(
+            &profile,
+            format!(
+                "[casars]\nformat = 1\nsurface = \"impbcor\"\nkind = \"task\"\ncontract = 4\n\n\
+                 [parameters]\nimagename = \"in.image\"\npbimage = \"pb.image\"\n\
+                 outfile = \"old{index}.im\"\nstretch = \"{stretch}\"\n"
+            ),
+        )
+        .unwrap();
+        let output = run(impbcor, &["--params", profile.to_str().unwrap()], root);
+        assert!(
+            output.status.success(),
+            "{stretch:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(root.join(format!("old{index}.im")).exists(), "{stretch:?}");
+    }
+    // A true one migrates too, and is then CASA's stretch without a mask,
+    // which CASA ignores.
+    let profile = root.join("true.toml");
+    std::fs::write(
+        &profile,
+        "[casars]\nformat = 1\nsurface = \"impbcor\"\nkind = \"task\"\ncontract = 4\n\n\
+         [parameters]\nimagename = \"in.image\"\npbimage = \"pb.image\"\n\
+         outfile = \"true.im\"\nstretch = \"T\"\n",
+    )
+    .unwrap();
+    let output = run(impbcor, &["--params", profile.to_str().unwrap()], root);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// A missing input is a refusal naming its parameter (exit 2), before the
 /// task starts, as CASA's `imstat('does-not-exist.im')` is; an error the
 /// task meets once it runs stays an execution failure.

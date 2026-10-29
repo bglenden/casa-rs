@@ -28047,12 +28047,12 @@
           "from_contract": 4,
           "to_contract": 5,
           "steps": [
+            {"kind": "transform", "parameter": "stretch", "transform": {"kind": "trim"}},
+            {"kind": "transform", "parameter": "stretch", "transform": {"kind": "lowercase"}},
             {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "false"}, "to": {"kind": "bool", "value": false}},
             {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "true"}, "to": {"kind": "bool", "value": true}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "False"}, "to": {"kind": "bool", "value": false}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "True"}, "to": {"kind": "bool", "value": true}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "F"}, "to": {"kind": "bool", "value": false}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "T"}, "to": {"kind": "bool", "value": true}}
+            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "f"}, "to": {"kind": "bool", "value": false}},
+            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "t"}, "to": {"kind": "bool", "value": true}}
           ],
           "changed_defaults": ["pbimage", "box", "region", "chans", "stokes", "mask", "stretch"]
         }
