@@ -16,7 +16,7 @@ specification (ADR-0018).</p>
 <p><strong>CASA’s numbers to the last bit.</strong> Pointing lists are compared with
 CASA’s as strings, so the arithmetic follows CASA’s: every <code>qa</code> call goes
 through casacore’s <code>Quantum</code> arithmetic
-(<a href="../../casa_types/quanta/casacore/index.html" title="mod casa_types::quanta::casacore"><code>casa_types::quanta::casacore</code></a>), which converts units as casacore
+([<code>casa_types::quanta::casacore</code>]), which converts units as casacore
 rounds and names them as casacore names them, and numbers that CASA
 writes into strings and reads back (<code>str(x)+"arcsec"</code>,
 <code>'%17.12fdeg' % x</code>) are written and read back the same way. The tests
