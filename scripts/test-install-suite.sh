@@ -168,11 +168,14 @@ assert "vis" in inspect.signature(tasks.calibrate).parameters
 assert TaskParameters.defaults("calibrate").surface == "calibrate"
 
 # The suite's Python runs the suite's own executable.
-completion = tasks.flagmanager(vis="mssel_test_small.ms", mode="list")
+completion = tasks.run("flagmanager", vis="mssel_test_small.ms", mode="list")
 assert completion.successful, completion.describe()
 executable = pathlib.Path(completion.command[0]).resolve()
 assert executable.parent == suite / "bin", executable
-assert completion.value[0]["name"] == "main", completion.value
+# The CASA-signature wrapper returns CASA's value: no saved versions, and
+# the MeasurementSet's absolute path.
+ms = str(pathlib.Path("mssel_test_small.ms").resolve())
+assert tasks.flagmanager(vis="mssel_test_small.ms", mode="list") == {"MS": ms}
 PY
 deactivate
 

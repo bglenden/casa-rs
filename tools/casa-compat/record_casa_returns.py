@@ -7,7 +7,8 @@ Run with CASA's own Python, which has `casatasks` and `casatools`:
     "$CASA_PYTHON" -I tools/casa-compat/record_casa_returns.py \
         --out resources/casa-compat/casa-6.7.6.14/returns.json
 
-Each case calls one task on small images built here with `casatools` and
+Each case calls one task on small images or a small MeasurementSet built
+here with `casatools` and
 records the structure of the value it returns: for a dictionary its keys in
 order and the type of each key, for a NumPy array its dtype and shape, for
 anything else its Python type. Values are not recorded; the casa-rs tests
@@ -66,8 +67,64 @@ def make_image(path: str, *, beam: bool = True) -> None:
     tool.done()
 
 
+def make_ms(path: str) -> None:
+    """A MeasurementSet of four antennas, one field and one 8-channel window
+    in XX and YY: one 60 s scan of 10 s integrations, simulated with no
+    noise."""
+    from casatools import measures, simulator
+
+    me = measures()
+    sm = simulator()
+    sm.open(path)
+    sm.setconfig(
+        telescopename="ALMA",
+        x=[0.0, 30.0, 0.0, 30.0],
+        y=[0.0, 0.0, 30.0, 30.0],
+        z=[0.0] * 4,
+        dishdiameter=[12.0] * 4,
+        mount=["alt-az"] * 4,
+        antname=["A0", "A1", "A2", "A3"],
+        padname=["P0", "P1", "P2", "P3"],
+        coordsystem="local",
+        referencelocation=me.observatory("ALMA"),
+    )
+    sm.setspwindow(
+        spwname="SPW0", freq="100GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=8, stokes="XX YY"
+    )
+    sm.setfeed(mode="perfect X Y")
+    sm.setfield(sourcename="SRC", sourcedirection=me.direction("J2000", "0h0m0s", "-30d0m0s"))
+    sm.setlimits(shadowlimit=0.001, elevationlimit="8.0deg")
+    sm.setauto(autocorrwt=0.0)
+    sm.settimes(integrationtime="10s", usehourangle=True, referencetime=me.epoch("UTC", "2020/01/01/00:00:00"))
+    sm.observe("SRC", "SPW0", starttime="0s", stoptime="60s")
+    sm.close()
+
+
+def ms_cases(root: Path) -> dict[str, Callable[[], Any]]:
+    """Each MeasurementSet case's name and call, on a MeasurementSet under
+    `root`; they run in order, so `flagmanager list` sees the versions the
+    cases before it saved."""
+    import casatasks as ct
+
+    vis = str(root / "sim.ms")
+    make_ms(vis)
+    return {
+        "flagdata summary": lambda: ct.flagdata(vis=vis, mode="summary"),
+        "flagdata manual": lambda: ct.flagdata(vis=vis, mode="manual", antenna="A0"),
+        "flagdata action none": lambda: ct.flagdata(vis=vis, mode="manual", action=""),
+        "flagdata unflag": lambda: ct.flagdata(vis=vis, mode="unflag"),
+        "flagmanager save": lambda: ct.flagmanager(vis=vis, mode="save", versionname="v1"),
+        "flagmanager list": lambda: ct.flagmanager(vis=vis, mode="list"),
+        "split": lambda: ct.split(vis=vis, outputvis=str(root / "split.ms"), datacolumn="data"),
+        "mstransform": lambda: ct.mstransform(
+            vis=vis, outputvis=str(root / "mstransform.ms"), datacolumn="data", chanaverage=True, chanbin=2
+        ),
+    }
+
+
 def cases(root: Path) -> dict[str, Callable[[], Any]]:
-    """Each case's name and call, on images under `root`."""
+    """Each case's name and call, on images and a MeasurementSet under
+    `root`."""
     import casatasks as ct
 
     image = str(root / "ramp.im")
@@ -115,6 +172,7 @@ def cases(root: Path) -> dict[str, Callable[[], Any]]:
         "imstat axes": lambda: ct.imstat(imagename=image, axes=[0, 1]),
         "imstat no beam": lambda: ct.imstat(imagename=unbeamed, box="0,0,3,3"),
         "imsubimage": lambda: ct.imsubimage(imagename=image, outfile=str(root / "s.im"), box="0,0,7,7"),
+        **ms_cases(root),
     }
 
 

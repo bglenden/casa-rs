@@ -2238,6 +2238,473 @@
       "returns": {
         "type": "None"
       }
+    },
+    "flagdata summary": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "antenna",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "A0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "A1",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "A2",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "A3",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "array",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "correlation",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "XX",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "YY",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "field",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "SRC",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "flagged",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "name",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observation",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "scan",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "1",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "spw",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "flagged",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ],
+                      [
+                        "total",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "total",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "type",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "flagdata manual": {
+      "returns": {
+        "type": "dict",
+        "items": []
+      }
+    },
+    "flagdata action none": {
+      "returns": {
+        "type": "dict",
+        "items": []
+      }
+    },
+    "flagdata unflag": {
+      "returns": {
+        "type": "dict",
+        "items": []
+      }
+    },
+    "flagmanager save": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "flagmanager list": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            0,
+            "int",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "name",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "comment",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            1,
+            "int",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "name",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "comment",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            2,
+            "int",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "name",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "comment",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "MS",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "split": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "mstransform": {
+      "returns": {
+        "type": "None"
+      }
     }
   }
 }
