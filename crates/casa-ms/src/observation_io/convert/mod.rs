@@ -2,7 +2,7 @@
 //! Converting between MeasurementSet v2 and MSv4 through the observation
 //! boundary: the source is read as batches like any consumer reads it, and
 //! the destination is created from those batches and the source's
-//! catalogue ([`to_msv4`], [`to_msv2`]).
+//! catalogue ([`to_msv4`](fn@to_msv4), [`to_msv2`]).
 //!
 //! A conversion first inventories what the destination cannot hold (a
 //! [`Loss`]) and refuses, before any byte is written, every loss the

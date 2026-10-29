@@ -102,6 +102,7 @@ mod catalogue;
 mod creation;
 mod cursor;
 mod grouping;
+mod merge;
 mod pointing;
 mod pool;
 mod request;
@@ -125,6 +126,7 @@ pub use cursor::{BoundCursor, Observation, OwnedEvent, Step, Traversal, Visibili
 pub use grouping::{
     FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent, WorkToken,
 };
+pub use merge::{InputMap, MergeTolerance, Merged, merge};
 pub use pointing::{
     AntennaPointing, PointingBracket, PointingCandidate, PointingDirection, PointingRequest,
     PointingSeries,
