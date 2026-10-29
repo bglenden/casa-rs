@@ -46,8 +46,8 @@ pub use row_work::{
 pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
 pub use weights::WeightCache;
 
-pub use stream::SLOTS as STREAM_SLOTS;
 use stream::stream_blocks;
+pub use stream::{OVERLAPPED_BLOCKS, SLOTS as STREAM_SLOTS};
 use wave::Wave;
 
 /// A failure reported by a [`BoundedSource`] or a pass callback.

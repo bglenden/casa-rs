@@ -118,7 +118,8 @@ pub(crate) fn prepare(
     // The one Measures provider of the run: compile's geometry and the bound
     // observation's both evaluate with it.
     let measures = casa_ms::open_measures_runtime()?;
-    let engine = MsCalEngine::with_measures(&ms, Arc::clone(&measures))?;
+    let engine =
+        MsCalEngine::with_measures(&ms, Arc::clone(&measures))?.with_field_ephemerides(&ms)?;
     // An MFS run's spectral envelope is held beside the survey walk and
     // admitted on its own, against the run's memory.
     let envelope_bytes = if request.specmode == SpecMode::Mfs {

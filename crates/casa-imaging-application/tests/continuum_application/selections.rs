@@ -186,33 +186,3 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     .expect("a state sharing its OBS_MODE with an unselected one");
     assert!(error.to_string().contains("sharing an OBS_MODE"), "{error}");
 }
-
-/// The observation-batch route (#932, step 4) refuses what it does not
-/// read yet, before anything is imaged: a field that follows an ephemeris
-/// (#942), whose `PHASE_DIR` batch geometry would read as a direction.
-#[test]
-fn the_observation_batch_route_refuses_what_it_does_not_read_yet() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let root = tempfile::tempdir().expect("test root");
-    let path = tiny_measurement_set(root.path());
-    let on_batches = |name: &str, controls: serde_json::Value| {
-        let mut imaging = request(&path, &root.path().join(name), controls);
-        imaging.source_route = SourceRoute::ObservationBatches;
-        imaging
-    };
-    execute(&on_batches("reads", json!({ "niter": 0 }))).expect("the batch route images the field");
-    let mut ms = MeasurementSet::open(&path).unwrap();
-    ms.subtable_mut(SubtableId::Field)
-        .unwrap()
-        .add_column(
-            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", PrimitiveType::Int32),
-            Some(Value::Scalar(ScalarValue::Int32(0))),
-        )
-        .unwrap();
-    ms.save().unwrap();
-    drop(ms);
-    let error = execute(&on_batches("moving", json!({ "niter": 0 })))
-        .err()
-        .expect("an ephemeris field");
-    assert!(error.to_string().contains("#942"), "{error}");
-}

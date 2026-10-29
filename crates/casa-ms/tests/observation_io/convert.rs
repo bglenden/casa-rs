@@ -840,16 +840,7 @@ fn keys_and_subtable_rows_the_destination_drops_are_losses() {
 fn moving_fields_are_refused() {
     let ephemeris_root = tempfile::tempdir().expect("root");
     let ephemeris = fixture(ephemeris_root.path(), "ms_trial.ms");
-    let mut ms = casa_ms::MeasurementSet::open(&ephemeris).expect("ms");
-    ms.subtable_mut(casa_ms::SubtableId::Field)
-        .expect("FIELD")
-        .add_column(
-            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0))),
-        )
-        .expect("an ephemeris");
-    ms.save().expect("save");
-    drop(ms);
+    super::follow_ephemerides(&ephemeris, &[0]);
     let polynomial_root = tempfile::tempdir().expect("root");
     let polynomial = fixture(polynomial_root.path(), "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&polynomial).expect("ms");
@@ -1182,6 +1173,7 @@ fn an_unused_moving_field_is_refused_only_where_it_is_written() {
     fields.add_row(comet).expect("an unused comet");
     ms.save().expect("save");
     drop(ms);
+    casa_test_support::ephemeris_table::write_field_ephemeris(&v2, 0, "comet", &super::COMET);
     let accept = [LossKind::Sigma, LossKind::Tables];
     to_msv4(&v2, &root.path().join("comet.ps.zarr"), &options(&accept)).expect("to MSv4");
     let out = root.path().join("comet.ms");

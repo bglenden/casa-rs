@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use casa_imaging_application::source_law::{SourceDrive, drive_batch_source, drive_batch_write};
 use casa_imaging_application::{HostResources, ImagingRequest, ResourcePolicy, RunContext};
+use casa_imaging_runtime::pass::OVERLAPPED_BLOCKS;
 use serde_json::{Value, json};
 
 #[path = "common/imaging.rs"]
@@ -273,4 +274,23 @@ fn the_batch_source_holds_at_most_its_charge() {
         }
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// With memory to spare, a traversal still streams in several batches (one
+/// part in `OVERLAPPED_BLOCKS` of a partition's times each), so the stream
+/// reads the next while the passes grid one: the fixture's ten times in
+/// five batches, where one batch held them all before.
+#[test]
+fn a_pass_streams_in_overlapped_batches() {
+    const TIMES: usize = 10;
+    let root = tempfile::tempdir().expect("test root");
+    let narrow = observation(root.path(), 16);
+    let (drive, _) = measure(
+        &request(&narrow, &root.path().join("overlapped"), 256, json!({})),
+        1,
+        4 << 30,
+    );
+    let batches = TIMES.div_ceil(TIMES.div_ceil(OVERLAPPED_BLOCKS));
+    // The flags and weights, then the visibilities, each over every time.
+    assert_eq!(drive.blocks, 2 * batches, "{drive:?}");
 }

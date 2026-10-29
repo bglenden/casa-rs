@@ -6,7 +6,9 @@
 //! run opens the source.
 
 use casa_imaging_model::{CompiledProblem, GeometryPlan};
-use casa_imaging_runtime::pass::{BlockShape, RowSamples, chunk_bytes_per_row, source_block_bytes};
+use casa_imaging_runtime::pass::{
+    BlockShape, OVERLAPPED_BLOCKS, RowSamples, chunk_bytes_per_row, source_block_bytes,
+};
 use casa_imaging_runtime::{
     Admitted, Demand, HostResources, ResourcePolicy, admit, bootstrap_source_budget, free_memory,
     row_layout,
@@ -89,12 +91,13 @@ fn estimate(
 /// what the source holds for them beside the passes' blocks.
 ///
 /// As the selected-observation route does for its rows, the batches hold
-/// at least one time of each partition and at most all its selected times,
-/// and grow beyond one time by at most the bootstrap budget
-/// ([`bootstrap_source_budget`]) or the source's share of a quarter of what
-/// `policy` leaves free on `host`, shared with the passes' per-row storage
-/// in proportion to their bytes per sample. A row of [`row_layout`]
-/// produces at most `row` samples. The charge holds the largest batch's
+/// at least one time of each partition, and grow beyond one time by at most
+/// the bootstrap budget ([`bootstrap_source_budget`]) or the source's share
+/// of a quarter of what `policy` leaves free on `host`, shared with the
+/// passes' per-row storage in proportion to their bytes per sample. They
+/// hold at most one part in [`OVERLAPPED_BLOCKS`] of a partition's selected
+/// times, so a pass streams in several batches and reads the next while it
+/// grids one. A row of [`row_layout`] produces at most `row` samples. The charge holds the largest batch's
 /// buffers, its geometry, the plan's parallactic cache at every selected
 /// (time, field), the pointing answers the source keeps within
 /// `pointing_budget` bytes when the geometry reads pointing, the survey's
@@ -170,11 +173,15 @@ pub(crate) fn admit_batches(
         .available_bytes()
         .min(usize::try_from(share).unwrap_or(usize::MAX));
     let target = (minimum_rows * source_per_row + growth) / source_per_row.max(1);
-    // As today's blocks hold at most the selected rows, a batch holds at
-    // most its partition's selected times.
+    // A batch holds at most one part in OVERLAPPED_BLOCKS of its
+    // partition's selected times, and at least one time.
     let times_per_batch = costs
         .iter()
-        .map(|cost| (target / cost.baselines).clamp(1, cost.times.max(1)))
+        .map(|cost| {
+            (target / cost.baselines)
+                .min(cost.times.div_ceil(OVERLAPPED_BLOCKS))
+                .max(1)
+        })
         .collect::<Vec<_>>();
     let rows = costs
         .iter()
