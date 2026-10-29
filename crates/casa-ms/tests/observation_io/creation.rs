@@ -63,7 +63,10 @@ fn a_plan_over_one_input_writes_what_converting_writes() {
     )
     .expect("plan");
     let losses = plan.losses().to_vec();
-    assert!(losses.contains(&Loss::SigmaDerived), "{losses:?}");
+    assert!(
+        !losses.iter().any(|loss| loss.kind() == LossKind::Sigma),
+        "the fixture's SIGMA is 1/√WEIGHT, so deriving it loses nothing: {losses:?}"
+    );
     assert!(!planned.exists(), "a plan writes nothing");
     let report = plan.write().expect("write");
     assert_eq!(report.losses, losses);
@@ -127,6 +130,58 @@ fn weights_are_scaled_and_sigmas_follow_them() {
             );
         }
     }
+}
+
+/// Deriving SIGMA from the weights is a loss only where an input's stored
+/// SIGMA is not already `1/√WEIGHT` to within one unit in the last place.
+#[test]
+fn sigma_is_lost_only_where_it_does_not_follow_the_weight() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let mut ms = MeasurementSet::open(&v2).expect("ms");
+    let main = ms.main_table();
+    let cell = |name: &str, row: usize| match main
+        .column_accessor(name)
+        .and_then(|column| column.array_cells_owned(&[row]))
+        .expect(name)
+        .pop()
+        .flatten()
+    {
+        Some(ArrayValue::Float32(values)) => values,
+        other => panic!("{name}: {other:?}"),
+    };
+    let row = (0..main.row_count())
+        .find(|row| cell("WEIGHT", *row)[0] > 0.0)
+        .expect("a row of positive weight");
+    let weight = cell("WEIGHT", row)[0];
+    let mut sigma = cell("SIGMA", row);
+    let derived = 1.0 / weight.sqrt();
+    let mut losses = |ms: &mut MeasurementSet, value: f32| {
+        sigma[0] = value;
+        let table = ms.main_table_mut();
+        set(
+            table,
+            row,
+            &[("SIGMA", Value::Array(ArrayValue::Float32(sigma.clone())))],
+        );
+        ms.save().expect("save");
+        CreationPlan::new(
+            &[CreationInput::new(&v2)],
+            &options(),
+            Destination::New(root.path().join("unwritten.ms")),
+        )
+        .expect("plan")
+        .losses()
+        .iter()
+        .filter(|loss| loss.kind() == LossKind::Sigma)
+        .cloned()
+        .collect::<Vec<_>>()
+    };
+    assert!(losses(&mut ms, f32::from_bits(derived.to_bits() + 1)).is_empty());
+    assert_eq!(
+        losses(&mut ms, 2.0 * derived),
+        [Loss::Sigma, Loss::SigmaDerived]
+    );
 }
 
 /// A weight scale that is not finite and positive is refused by the plan.

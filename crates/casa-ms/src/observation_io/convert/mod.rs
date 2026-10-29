@@ -90,8 +90,9 @@ pub struct ConversionReport {
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
 /// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
 /// row, which reproduces an original sparse MSv2. `SIGMA` is derived
-/// from the weights ([`Loss::SigmaDerived`]), so the caller must accept
-/// [`LossKind::Sigma`]. Names are the source's: an MSv4 converted from an
+/// from the weights, a loss the caller must accept as [`LossKind::Sigma`]
+/// ([`Loss::SigmaDerived`]) unless the source's stored `SIGMA` is already
+/// `1/√WEIGHT`. Names are the source's: an MSv4 converted from an
 /// MSv2 holds XRADIO's suffixed names (`NAME_FIELDID`, `NAME_STATION`,
 /// ...), so a round trip renames.
 ///

@@ -47,9 +47,12 @@ use crate::{MeasurementSet, OptionalMainColumn};
 /// (its flags already exclude it), as D23 decided. With
 /// [`PaddingRows::Omitted`], which partitions combined from several inputs
 /// need, padding becomes no row. `WEIGHT` is the input's times its
-/// [`CreationInput::weight_scale`], and `SIGMA` is derived from it
-/// ([`Loss::SigmaDerived`]), so the caller must accept
-/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the inputs': an
+/// [`CreationInput::weight_scale`], and `SIGMA` is derived from it: a
+/// loss ([`Loss::SigmaDerived`], which the caller must accept as
+/// [`LossKind::Sigma`](super::LossKind::Sigma)) unless the input's stored
+/// `SIGMA` is already `1/√WEIGHT` to within one unit in the last place
+/// (an MSv4, or an MSv2 with `WEIGHT_SPECTRUM`, always takes it). Names
+/// are the inputs': an
 /// MSv4 converted from an MSv2 holds XRADIO's suffixed names
 /// (`NAME_FIELDID`, `NAME_STATION`, ...), so a round trip renames.
 ///
@@ -157,7 +160,6 @@ impl CreationPlan {
             found.extend(lost);
             pointing.push(plan);
         }
-        found.push(Loss::SigmaDerived);
         found.sort();
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;

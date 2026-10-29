@@ -125,7 +125,7 @@ pub(super) fn acquired(weights: ArrayView2<'_, f32>) -> Result<bool, Observation
 
 /// CASA's `SIGMA` for a weight, as `mstransform` derives it
 /// (`weightToSigma`): `1/√w`, and -1 where `w` is not positive.
-fn sigma(weight: f32) -> f32 {
+pub(super) fn sigma(weight: f32) -> f32 {
     if weight > f32::MIN_POSITIVE {
         1.0 / weight.sqrt()
     } else {
