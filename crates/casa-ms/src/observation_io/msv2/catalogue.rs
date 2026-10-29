@@ -18,7 +18,6 @@ use casa_types::quanta::Quantity;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
-use crate::columns::direction_columns::DirectionColumn;
 use crate::derived::engine::resolve_direction_reference_selected;
 use crate::{MeasurementSet, SubtableId};
 
@@ -138,6 +137,32 @@ pub(crate) fn phase_frames(table: &Table) -> Result<Vec<DirectionRef>, Observati
         .collect()
 }
 
+/// The constant term of FIELD `column` at `row`, a direction polynomial of
+/// shape `[2, NUM_POLY + 1]` (the row's `num_poly`), refused at any other
+/// shape; `None` where the column is absent or the cell undefined.
+fn field_angles(
+    table: &Table,
+    column: &str,
+    row: usize,
+    num_poly: i32,
+) -> Result<Option<(f64, f64)>, ObservationError> {
+    let Some(value) = crate::subtables::optional_array(table, row, column).map_err(storage)? else {
+        return Ok(None);
+    };
+    let ArrayValue::Float64(values) = value else {
+        return Err(invalid(format!("FIELD {column} is not a Float64 array")));
+    };
+    let terms = usize::try_from(num_poly).ok().map(|order| order + 1);
+    if values.shape() != [2, terms.unwrap_or(0)] || terms.is_none() {
+        return Err(invalid(format!(
+            "FIELD {column} of row {row} has shape {:?}; NUM_POLY {num_poly} makes it [2, {}]",
+            values.shape(),
+            i64::from(num_poly) + 1
+        )));
+    }
+    Ok(Some((values[[0, 0]], values[[1, 0]])))
+}
+
 /// The fields, their ephemerides, and the UVW convention; `sources` gives
 /// each stored `SOURCE_ID`'s logical source.
 pub(super) fn fields_and_uvw(
@@ -183,26 +208,23 @@ pub(super) fn fields_and_uvw(
             }
         })
         .collect::<Result<Vec<_>, ObservationError>>()?;
-    let phase_dir = DirectionColumn::phase_dir(field_table);
-    let other_centres = [
-        ("DELAY_DIR", DirectionColumn::delay_dir(field_table)),
-        ("REFERENCE_DIR", DirectionColumn::reference_dir(field_table)),
-    ];
-    for (column, _) in &other_centres {
+    for column in ["DELAY_DIR", "REFERENCE_DIR"] {
         require_units(field_table, column, "rad")?;
     }
-    let centre = |row: usize, (column, values): &(&str, DirectionColumn<'_>)| {
-        if !crate::subtables::has_column(field_table, column) {
+    // A delay or reference centre the row leaves undefined is unstated.
+    let centre = |row: usize, column: &str, num_poly: i32| {
+        let Some((longitude, latitude)) = field_angles(field_table, column, row, num_poly)? else {
             return Ok(None);
-        }
+        };
         let frame = resolve_direction_reference_selected(field_table, "FIELD", column, row)
             .map_err(storage)?;
-        let (longitude, latitude) = values.get_angles(row).map_err(storage)?;
         Ok::<_, ObservationError>(Some(MDirection::from_angles(longitude, latitude, frame)))
     };
     let fields = (0..field.row_count())
         .map(|row| {
-            let (longitude, latitude) = phase_dir.get_angles(row).map_err(storage)?;
+            let num_poly = field.num_poly(row).map_err(storage)?;
+            let (longitude, latitude) = field_angles(field_table, "PHASE_DIR", row, num_poly)?
+                .ok_or_else(|| invalid(format!("FIELD PHASE_DIR of row {row} is undefined")))?;
             let source = field.source_id(row).map_err(storage)?;
             let time_s = field.time(row).map_err(storage)?;
             Ok(FieldEntry {
@@ -213,8 +235,8 @@ pub(super) fn fields_and_uvw(
                 source: sources.get(&source).copied(),
                 code: crate::subtables::optional_string(field_table, row, "CODE")
                     .map_err(storage)?,
-                delay_centre: centre(row, &other_centres[0])?,
-                reference_centre: centre(row, &other_centres[1])?,
+                delay_centre: centre(row, "DELAY_DIR", num_poly)?,
+                reference_centre: centre(row, "REFERENCE_DIR", num_poly)?,
                 flagged: crate::subtables::optional_bool(field_table, row, "FLAG_ROW")
                     .map_err(storage)?,
                 ephemeris: attached[row].clone(),
