@@ -60,6 +60,10 @@ struct Partition {
     data_description_id: u32,
     /// The `SPECTRAL_WINDOW` row of its data description.
     spectral_window_id: u32,
+    /// Whether its weights are `WEIGHT_SPECTRUM` ([`has_content`] at its
+    /// first row): CASA's iterator asks again at each new spectral window,
+    /// on the first row it meets there.
+    spectral_weights: bool,
 }
 
 /// An opened MeasurementSet v2 and its catalogue.
@@ -74,7 +78,8 @@ struct Partition {
 /// `STATE` rows partitions differently. Each partition's rows are
 /// placed on its time × baseline grid (the `index` module). Each partition
 /// has one data group, `base`, associating `DATA`, `FLAG`,
-/// `WEIGHT_SPECTRUM` (when MAIN has it, else `WEIGHT`) and `UVW`. Antenna,
+/// `WEIGHT_SPECTRUM` (when its first row has content, else `WEIGHT`) and
+/// `UVW`. Antenna,
 /// field and observation identities are the subtable rows; scans are the
 /// distinct `SCAN_NUMBER`s in ascending order.
 ///
@@ -91,8 +96,8 @@ pub struct Msv2Observation {
     state_modes: Vec<String>,
     /// The `STATE_ID`s MAIN's rows hold.
     main_states: BTreeSet<i32>,
-    spectral_weights: bool,
-    /// Whether MAIN has `SIGMA_SPECTRUM`.
+    /// Whether MAIN's first row has `SIGMA_SPECTRUM` content: CASA's
+    /// iterator asks once per MeasurementSet.
     spectral_sigmas: bool,
     /// Each data group's visibility column and its tile shape, read when
     /// the observation opened: an estimate does not read `table.dat` again,
@@ -183,10 +188,7 @@ impl Msv2Observation {
         let time_scale = catalogue::time_scale(main)?;
         let setups = catalogue::spectral_setups(&ms)?;
         let modes = catalogue::read_state_modes(&ms)?;
-        let (spectral_weights, spectral_sigmas) = (
-            has_content(main, "WEIGHT_SPECTRUM")?,
-            has_content(main, "SIGMA_SPECTRUM")?,
-        );
+        let spectral_sigmas = has_content(main, "SIGMA_SPECTRUM", 0)?;
         let index = Index::build(
             main,
             options.partition_scheme,
@@ -194,15 +196,13 @@ impl Msv2Observation {
             ROWS_PER_CHUNK,
             grant,
         )?;
-        let groups = data_groups(main, spectral_weights, uvw_frame);
         // A shape is a hint for an estimate's natural blocks: a header that
         // cannot be read leaves its group the hint's fallback, as a column
         // without tiles has, and refuses nothing until the group is read.
-        let tile_shapes = groups
-            .iter()
-            .map(|group| {
-                let shape = main.array_column_tile_shape(&group.visibilities);
-                (group.visibilities.clone(), shape.ok().flatten())
+        let tile_shapes = visibility_columns(main)
+            .map(|(_, column)| {
+                let shape = main.array_column_tile_shape(column);
+                (column.to_string(), shape.ok().flatten())
             })
             .collect();
         let mut partitions = Vec::new();
@@ -238,6 +238,7 @@ impl Msv2Observation {
                 setup.spectral_window_id as i32,
             )?;
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
+            let spectral_weights = has_content(main, "WEIGHT_SPECTRUM", grid.first_row())?;
             // A state or processor a row names that its table does not hold
             // (CASA's simulator writes PROCESSOR_ID 0 without a row) has no
             // entry.
@@ -266,7 +267,7 @@ impl Msv2Observation {
                 baselines: grid.baselines.clone(),
                 time_scale,
                 time_origin: MjdHighPrec::new(0.0, 0.0),
-                data_groups: groups.clone(),
+                data_groups: data_groups(main, spectral_weights, uvw_frame),
                 receptors,
                 window: WindowId(setup.spectral_window_id),
                 states: partition_states,
@@ -277,6 +278,7 @@ impl Msv2Observation {
                 obs_mode: key.obs_mode,
                 data_description_id,
                 spectral_window_id: setup.spectral_window_id,
+                spectral_weights,
             });
         }
         Ok(Self {
@@ -294,7 +296,6 @@ impl Msv2Observation {
             partitions,
             state_modes: modes,
             main_states: index.states,
-            spectral_weights,
             spectral_sigmas,
             tile_shapes,
             options: options.clone(),
@@ -493,7 +494,7 @@ impl Msv2Observation {
         let weights = weight_source(
             request.weights,
             &entry.data_groups[resolved.data_group],
-            self.spectral_weights,
+            partition.spectral_weights,
             self.spectral_sigmas,
         );
         let per_channel = weights.per_channel;
@@ -819,13 +820,20 @@ fn weight_source(
     }
 }
 
-/// Whether MAIN's `column` holds content, as casacore's
-/// `TableColumn::hasContent` tells, by which CASA's `VisBufferImpl2` picks
-/// `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` over `WEIGHT` and `SIGMA`: the
-/// column is there, its first cell is defined, and no axis of that cell is
-/// empty. A column added and never filled holds none.
-fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, ObservationError> {
-    if main.row_count() == 0
+/// Whether MAIN's `column` holds content at `row`, as casacore's
+/// `TableColumn::hasContent` tells, by which CASA's `VisibilityIteratorImpl2`
+/// picks `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` over `WEIGHT` and `SIGMA`
+/// (`weightSpectrumExists`, `sigmaSpectrumExists`): the column is there,
+/// the cell is defined, and no axis of it is empty. CASA asks at the first
+/// row of the rows it iterates: for `WEIGHT_SPECTRUM` again at each new
+/// spectral window, for `SIGMA_SPECTRUM` once per MeasurementSet. A column
+/// added and never filled holds none.
+fn has_content(
+    main: &casa_tables::Table,
+    column: &str,
+    row: usize,
+) -> Result<bool, ObservationError> {
+    if row >= main.row_count()
         || !main
             .schema()
             .is_some_and(|schema| schema.contains_column(column))
@@ -838,7 +846,7 @@ fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, Observat
     // content, and reading it reports the error, as before.
     let Ok(first) = main
         .column_accessor(column)
-        .and_then(|cells| cells.array_cells_owned_uncached(&[0]))
+        .and_then(|cells| cells.array_cells_owned_uncached(&[row]))
     else {
         return Ok(true);
     };
@@ -848,9 +856,27 @@ fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, Observat
     }))
 }
 
-/// The data groups MAIN's visibility columns form, named as XRADIO's
-/// converter names them: `base` (`DATA`), and `corrected`
+/// MAIN's visibility columns and the data groups they form, named as
+/// XRADIO's converter names them: `base` (`DATA`), and `corrected`
 /// (`CORRECTED_DATA`) and `model` (`MODEL_DATA`) where the columns exist.
+fn visibility_columns(
+    main: &casa_tables::Table,
+) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    let has = |column: &str| {
+        main.schema()
+            .is_some_and(|schema| schema.contains_column(column))
+    };
+    [
+        ("base", "DATA"),
+        ("corrected", "CORRECTED_DATA"),
+        ("model", "MODEL_DATA"),
+    ]
+    .into_iter()
+    .filter(move |(name, column)| *name == "base" || has(column))
+}
+
+/// The data groups of a partition ([`visibility_columns`]), whose weights
+/// are `WEIGHT_SPECTRUM` when `spectral_weights` says so, else `WEIGHT`.
 /// Every group reads the same flags, weights and UVW.
 pub(super) fn data_groups(
     main: &casa_tables::Table,
@@ -862,27 +888,17 @@ pub(super) fn data_groups(
     } else {
         "WEIGHT"
     };
-    let has = |column: &str| {
-        main.schema()
-            .is_some_and(|schema| schema.contains_column(column))
-    };
-    [
-        ("base", "DATA"),
-        ("corrected", "CORRECTED_DATA"),
-        ("model", "MODEL_DATA"),
-    ]
-    .into_iter()
-    .filter(|(name, column)| *name == "base" || has(column))
-    .map(|(name, column)| DataGroupEntry {
-        name: name.to_string(),
-        visibilities: column.to_string(),
-        flags: "FLAG".to_string(),
-        weights: weights.to_string(),
-        uvw: "UVW".to_string(),
-        units: catalogue::data_units(main, column),
-        uvw_frame,
-    })
-    .collect()
+    visibility_columns(main)
+        .map(|(name, column)| DataGroupEntry {
+            name: name.to_string(),
+            visibilities: column.to_string(),
+            flags: "FLAG".to_string(),
+            weights: weights.to_string(),
+            uvw: "UVW".to_string(),
+            units: catalogue::data_units(main, column),
+            uvw_frame,
+        })
+        .collect()
 }
 
 #[cfg(test)]
