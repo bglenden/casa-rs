@@ -492,15 +492,13 @@ mod tests {
             fs::read_to_string(temp.path().join("bare.toml")).unwrap(),
             "bare\n"
         );
-        assert!(
-            fs::read_dir(temp.path())
+        assert!(fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
                 .unwrap()
-                .all(|entry| !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .contains(".tmp."))
-        );
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp.")
+        }));
     }
 
     /// The child half of the test above; it does nothing unless that test
