@@ -8,7 +8,7 @@
 //! modes are native robust-statistics implementations of the CASA algorithm
 //! families rather than a binding to CASA C++.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,14 +42,13 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod extend;
 mod summary;
 pub use summary::{FlagCounts, FlagSummaryBreakdown};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
-type FlagSampleKey = (usize, usize, usize);
-type FlagSampleSet = HashSet<FlagSampleKey>;
 
 /// Input visibility column used by automatic flagging modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -143,9 +142,11 @@ pub struct FlagDataRequest {
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
     pub freqcutoff: f64,
-    /// RFlag time threshold scale.
+    /// RFlag time threshold scale, applied to a given threshold and a
+    /// computed one alike, as CASA applies it.
     pub timedevscale: f64,
-    /// RFlag spectral threshold scale.
+    /// RFlag spectral threshold scale, applied to a given threshold and a
+    /// computed one alike.
     pub freqdevscale: f64,
     /// RFlag maximum acceptable spectral standard deviation before flagging
     /// the full row spectrum.
@@ -153,9 +154,11 @@ pub struct FlagDataRequest {
     /// RFlag minimum acceptable spectral standard deviation before flagging
     /// the full row spectrum.
     pub spectralmin: f64,
-    /// Optional RFlag time threshold. `None` computes one from the data.
+    /// Optional RFlag time threshold, before [`Self::timedevscale`]. `None`
+    /// computes one from the data.
     pub timedev: Option<f64>,
-    /// Optional RFlag spectral threshold. `None` computes one from the data.
+    /// Optional RFlag spectral threshold, before [`Self::freqdevscale`].
+    /// `None` computes one from the data.
     pub freqdev: Option<f64>,
     /// Run CASA's automatic post-extension agent after TFCrop/RFlag.
     pub extendflags: bool,
@@ -636,7 +639,7 @@ fn apply_manual_flags(
     action: FlagDataAction,
 ) -> Result<ChangeSet, FlaggingError> {
     let new_flag = action.value();
-    mutate_selected_samples(ms, selected_rows, channel_selections, |_amp, old| {
+    mutate_selected_samples(ms, selected_rows, channel_selections, |old| {
         if old != new_flag {
             Some(new_flag)
         } else {
@@ -651,9 +654,8 @@ fn apply_clip_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    if !request.clipzeros {
-        return Ok(ChangeSet::default());
-    }
+    // With no clip range, CASA's clipping agent flags NaNs always, and
+    // zeros too with clipzeros (`FlagAgentClipping.cc`).
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let mut changed = ChangeSet::default();
@@ -708,70 +710,46 @@ fn apply_clip_flags(
                     });
                 }
             };
-            let data_value = data_cells
-                .get(row_slot)
-                .and_then(Option::as_ref)
-                .ok_or_else(|| FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("{} row {row} is undefined", request.data_column.name()),
-                })?;
-            let data_shape = numeric_array_value_shape(data_value).ok_or_else(|| {
-                FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!(
-                        "{} row {row} must be numeric array, found {data_value:?}",
-                        request.data_column.name()
-                    ),
-                }
-            })?;
-            if data_shape != flags.shape() {
+            let column = request.data_column.name();
+            let data_value = checked_row_data(data_cells.get(row_slot), flags, row, column, &path)?;
+            if flags.ndim() != 2 {
                 return Err(FlaggingError::MutateFlags {
                     path: path.clone(),
-                    reason: format!(
-                        "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
-                        request.data_column.name(),
-                        data_shape,
-                        flags.shape()
-                    ),
+                    reason: format!("{column} row {row} is not rank-2"),
                 });
             }
-            if data_shape.len() != 2 {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("{} row {row} is not rank-2", request.data_column.name()),
-                });
-            }
+            let nchan = flags.shape()[1];
             total_samples += flags.len();
             flagged_samples += flags.iter().filter(|flag| **flag).count();
-            let channels = if let Some(ddids) = ddids.as_ref() {
-                let ddid = ddids[row_slot];
-                let spw =
-                    ddid_to_spw
-                        .get(&ddid)
-                        .copied()
-                        .ok_or_else(|| FlaggingError::MutateFlags {
+            let channels =
+                if let Some(ddids) = ddids.as_ref() {
+                    let ddid = ddids[row_slot];
+                    let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+                        FlaggingError::MutateFlags {
                             path: path.clone(),
                             reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
-                        })?;
-                Some(
-                    match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-                        Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
-                            FlaggingError::MutateFlags {
-                                path: path.clone(),
-                                reason: format!("resolve SPW {spw} channels: {source}"),
-                            }
-                        })?,
-                        None => (0..data_shape[1]).collect(),
-                    },
-                )
-            } else {
-                None
-            };
+                        }
+                    })?;
+                    Some(
+                        match channel_selections.and_then(|selectors| selectors.get(&spw)) {
+                            Some(selection) => selection.indices(nchan).map_err(|source| {
+                                FlaggingError::MutateFlags {
+                                    path: path.clone(),
+                                    reason: format!("resolve SPW {spw} channels: {source}"),
+                                }
+                            })?,
+                            None => (0..nchan).collect(),
+                        },
+                    )
+                } else {
+                    None
+                };
             row_changes.clear();
-            apply_clip_zero_array(
+            apply_clip_array(
                 data_value,
                 flags,
                 channels.as_deref(),
+                request.clipzeros,
                 &path,
                 row,
                 &mut row_changes,
@@ -828,10 +806,12 @@ fn apply_quack_flags(
         }) else {
             continue;
         };
+        // CASA's quack agent flags the row at exactly `quackinterval` from
+        // the scan's first or last time as well (`FlagAgentQuack.cc`).
         for &(row, time) in rows.iter() {
             let in_edge = match request.quackmode {
-                QuackMode::Beg => time - edge_time < request.quackinterval,
-                QuackMode::End => edge_time - time < request.quackinterval,
+                QuackMode::Beg => time <= edge_time + request.quackinterval,
+                QuackMode::End => time >= edge_time - request.quackinterval,
             };
             if in_edge {
                 quack_rows.push(row);
@@ -848,7 +828,12 @@ fn apply_tfcrop_flags(
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
-    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
+    let loaded = load_samples(
+        ms,
+        selected_rows,
+        channel_selections,
+        Some(request.data_column),
+    )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
     let mut modified = vec![false; samples.len()];
@@ -922,7 +907,12 @@ fn apply_rflag_flags(
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
-    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
+    let loaded = load_samples(
+        ms,
+        selected_rows,
+        channel_selections,
+        Some(request.data_column),
+    )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
     let groups = group_samples(&samples);
@@ -988,41 +978,10 @@ fn apply_extend_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
-    let samples = loaded.samples;
-    let mut to_flag = FlagSampleSet::new();
-    if request.extendpols {
-        for group in samples_by_row_chan(&samples).values() {
-            if group.iter().any(|sample| sample.flag) {
-                for sample in group {
-                    to_flag.insert((sample.row, sample.corr, sample.chan));
-                }
-            }
-        }
-    }
-    if request.growtime > 0.0 {
-        for group in group_samples(&samples).values() {
-            for by_chan in samples_by_chan(group).values() {
-                let frac = percent_flagged(by_chan);
-                if frac >= request.growtime {
-                    for sample in by_chan {
-                        to_flag.insert((sample.row, sample.corr, sample.chan));
-                    }
-                }
-            }
-        }
-    }
-    if request.growfreq > 0.0 {
-        for by_row in samples_by_row(&samples).values() {
-            let frac = percent_flagged(by_row);
-            if frac >= request.growfreq {
-                for sample in by_row {
-                    to_flag.insert((sample.row, sample.corr, sample.chan));
-                }
-            }
-        }
-    }
-    apply_flag_set_with_preloaded(ms, &to_flag, loaded.flags_by_row)
+    // CASA's extension agent reads flags only: no data column.
+    let loaded = load_samples(ms, selected_rows, channel_selections, None)?;
+    let grown = extend::grow(&loaded.samples, request);
+    apply_flag_mask_with_preloaded(&loaded.samples, &grown, loaded.flags_by_row, ms)
 }
 
 fn extend_autoflag_grouped(
@@ -1106,14 +1065,15 @@ fn mutate_selected_samples<F>(
     mut edit: F,
 ) -> Result<ChangeSet, FlaggingError>
 where
-    F: FnMut(f64, bool) -> Option<bool>,
+    F: FnMut(bool) -> Option<bool>,
 {
-    let loaded = load_samples(ms, selected_rows, channel_selections, FlagDataColumn::Data)?;
+    // Manual flagging, as CASA's, reads the flags alone.
+    let loaded = load_samples(ms, selected_rows, channel_selections, None)?;
     let samples = loaded.samples;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     for sample in samples {
-        let Some(new_flag) = edit(sample.amp, sample.flag) else {
+        let Some(new_flag) = edit(sample.flag) else {
             continue;
         };
         let Some(flags) = updates.get_mut(&sample.row) else {
@@ -1127,29 +1087,6 @@ where
         }
     }
     write_flag_updates(ms, updates, &mut changed)?;
-    Ok(changed)
-}
-
-fn apply_flag_set_with_preloaded(
-    ms: &mut MeasurementSet,
-    to_flag: &FlagSampleSet,
-    mut updates: BTreeMap<usize, ArrayD<bool>>,
-) -> Result<ChangeSet, FlaggingError> {
-    let mut changed = ChangeSet::default();
-    let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-    for &(row, corr, chan) in to_flag {
-        let Some(flags) = updates.get_mut(&row) else {
-            continue;
-        };
-        if let Some(value) = flags.get_mut(IxDyn(&[corr, chan]))
-            && !*value
-        {
-            *value = true;
-            changed.changed_samples += 1;
-            touched_rows.insert(row);
-        }
-    }
-    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
     Ok(changed)
 }
 
@@ -1372,22 +1309,30 @@ fn load_i32_cells(
         .collect()
 }
 
+/// The selected rows' samples and flags. Each sample carries its value in
+/// `data_column`, or zero when the caller reads the flags alone (`None`):
+/// manual flagging and extension, as CASA's, need no data column.
 fn load_samples(
     ms: &MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    data_column: FlagDataColumn,
+    data_column: Option<FlagDataColumn>,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let table = ms.main_table();
-    let data_cells = table
-        .column_accessor(data_column.name())
-        .and_then(|column| column.array_cells_owned(selected_rows))
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!("read selected {} rows: {source}", data_column.name()),
-        })?;
+    let data_cells = data_column
+        .map(|column| {
+            table
+                .column_accessor(column.name())
+                .and_then(|accessor| accessor.array_cells_owned(selected_rows))
+                .map(|cells| (column.name(), cells))
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("read selected {} rows: {source}", column.name()),
+                })
+        })
+        .transpose()?;
     let flag_cells = table
         .column_accessor(FLAG_COLUMN)
         .and_then(|column| column.array_cells_owned(selected_rows))
@@ -1426,68 +1371,51 @@ fn load_samples(
                 });
             }
         };
-        let data_value = data_cells
-            .get(row_slot)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("{} row {row} is undefined", data_column.name()),
-            })?;
-        let data_shape =
-            numeric_array_value_shape(data_value).ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!(
-                    "{} row {row} must be numeric array, found {data_value:?}",
-                    data_column.name()
-                ),
-            })?;
-        if data_shape != flags.shape() {
+        let data = data_cells
+            .as_ref()
+            .map(|(column, cells)| {
+                checked_row_data(cells.get(row_slot), &flags, row, column, &path)
+                    .map(|value| (*column, value))
+            })
+            .transpose()?;
+        if flags.ndim() != 2 {
             return Err(FlaggingError::MutateFlags {
                 path: path.clone(),
-                reason: format!(
-                    "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
-                    data_column.name(),
-                    data_shape,
-                    flags.shape()
-                ),
+                reason: format!("FLAG row {row} is not rank-2"),
             });
         }
-        if data_shape.len() != 2 {
-            return Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("{} row {row} is not rank-2", data_column.name()),
-            });
-        }
-        let channels =
-            match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-                Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
-                    FlaggingError::MutateFlags {
+        let nchan = flags.shape()[1];
+        let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
+            Some(selection) => {
+                selection
+                    .indices(nchan)
+                    .map_err(|source| FlaggingError::MutateFlags {
                         path: path.clone(),
                         reason: format!("resolve SPW {spw} channels: {source}"),
-                    }
-                })?,
-                None => (0..data_shape[1]).collect(),
-            };
-        let field = fields[row_slot];
-        let scan = scans[row_slot];
-        let ant1 = ant1s[row_slot];
-        let ant2 = ant2s[row_slot];
-        push_row_samples(
-            data_value,
-            &flags,
-            &channels,
-            RowSampleMetadata {
-                row,
-                field,
-                spw,
-                scan,
-                ant1,
-                ant2,
-            },
-            &path,
-            data_column.name(),
-            &mut samples,
-        )?;
+                    })?
+            }
+            None => (0..nchan).collect(),
+        };
+        let metadata = RowSampleMetadata {
+            row,
+            field: fields[row_slot],
+            spw,
+            scan: scans[row_slot],
+            ant1: ant1s[row_slot],
+            ant2: ant2s[row_slot],
+        };
+        match data {
+            Some((column, value)) => push_row_samples(
+                value,
+                &flags,
+                &channels,
+                metadata,
+                &path,
+                column,
+                &mut samples,
+            )?,
+            None => push_flag_samples(&flags, &channels, metadata, &mut samples),
+        }
         flags_by_row.insert(row, flags);
     }
     Ok(LoadedSamples {
@@ -1496,22 +1424,70 @@ fn load_samples(
     })
 }
 
-fn is_casa_clip_zero(value: f64) -> bool {
-    value.is_nan() || value <= f64::from(f32::EPSILON)
+/// `row`'s cell of `column`: a numeric array of its flags' shape.
+fn checked_row_data<'a>(
+    cell: Option<&'a Option<ArrayValue>>,
+    flags: &ArrayD<bool>,
+    row: usize,
+    column: &str,
+    path: &str,
+) -> Result<&'a ArrayValue, FlaggingError> {
+    let invalid = |reason: String| FlaggingError::MutateFlags {
+        path: path.to_string(),
+        reason,
+    };
+    let value = cell
+        .and_then(Option::as_ref)
+        .ok_or_else(|| invalid(format!("{column} row {row} is undefined")))?;
+    let shape = numeric_array_value_shape(value).ok_or_else(|| {
+        invalid(format!(
+            "{column} row {row} must be numeric array, found {value:?}"
+        ))
+    })?;
+    if shape != flags.shape() {
+        return Err(invalid(format!(
+            "{column} and FLAG shapes differ on row {row}: {shape:?} vs {:?}",
+            flags.shape()
+        )));
+    }
+    Ok(value)
 }
 
-fn is_casa_clip_zero_complex32(value: Complex32) -> bool {
-    value.re.is_nan()
-        || value.im.is_nan()
-        || f64::from(value.re * value.re + value.im * value.im)
-            <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON)
+/// The samples of a row read for its flags alone, each value zero.
+fn push_flag_samples(
+    flags: &ArrayD<bool>,
+    channels: &[usize],
+    metadata: RowSampleMetadata,
+    samples: &mut Vec<Sample>,
+) {
+    for corr in 0..flags.shape()[0] {
+        for &chan in channels {
+            push_sample(samples, metadata, corr, chan, 0.0, 0.0, flags[[corr, chan]]);
+        }
+    }
 }
 
-fn is_casa_clip_zero_complex64(value: Complex64) -> bool {
+/// Whether clip mode with no clip range flags the amplitude `value`: a NaN,
+/// and with `zeros` a value at or below `f32::EPSILON` too, as CASA's
+/// `FlagAgentBase::isNaN` and `isNaNOrZero` test it.
+fn is_casa_clip(value: f64, zeros: bool) -> bool {
+    value.is_nan() || (zeros && value <= f64::from(f32::EPSILON))
+}
+
+fn is_casa_clip_complex32(value: Complex32, zeros: bool) -> bool {
     value.re.is_nan()
         || value.im.is_nan()
-        || value.re * value.re + value.im * value.im
-            <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON)
+        || (zeros
+            && f64::from(value.re * value.re + value.im * value.im)
+                <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON))
+}
+
+fn is_casa_clip_complex64(value: Complex64, zeros: bool) -> bool {
+    value.re.is_nan()
+        || value.im.is_nan()
+        || (zeros
+            && value.re * value.re + value.im * value.im
+                <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON))
 }
 
 fn numeric_array_value_shape(value: &ArrayValue) -> Option<&[usize]> {
@@ -1684,10 +1660,15 @@ fn push_sample(
     });
 }
 
-fn apply_clip_zero_array(
+/// The unflagged samples of a row's `data`, in `channels` or in every
+/// channel, that clip mode flags with no clip range: CASA's clipping agent
+/// flags a NaN always, and with `zeros` an amplitude at or below
+/// `f32::EPSILON` too.
+fn apply_clip_array(
     data: &ArrayValue,
     flags: &ArrayD<bool>,
     channels: Option<&[usize]>,
+    zeros: bool,
     path: &str,
     row: usize,
     changed: &mut Vec<(usize, usize)>,
@@ -1700,111 +1681,45 @@ fn apply_clip_zero_array(
             reason: format!("FLAG row {row} must be rank-2: {source}"),
         })?;
     match data {
-        ArrayValue::Complex32(values) => {
-            let values = values
-                .view()
-                .into_dimensionality::<Ix2>()
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!("DATA row {row} must be rank-2: {source}"),
-                })?;
-            for corr in 0..values.shape()[0] {
-                if let Some(channels) = channels {
-                    for &chan in channels {
-                        if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)])
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                } else {
-                    for chan in 0..values.shape()[1] {
-                        if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)])
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                }
-            }
+        ArrayValue::Complex32(values) => clip_cells(values, flags, channels, changed, |value| {
+            is_casa_clip_complex32(value, zeros)
+        }),
+        ArrayValue::Complex64(values) => clip_cells(values, flags, channels, changed, |value| {
+            is_casa_clip_complex64(value, zeros)
+        }),
+        ArrayValue::Float32(values) => clip_cells(values, flags, channels, changed, |value| {
+            is_casa_clip(f64::from(value).abs(), zeros)
+        }),
+        ArrayValue::Float64(values) => clip_cells(values, flags, channels, changed, |value| {
+            is_casa_clip(value.abs(), zeros)
+        }),
+        _ => Ok(()),
+    }
+    .map_err(|source| FlaggingError::MutateFlags {
+        path: path.to_string(),
+        reason: format!("DATA row {row} must be rank-2: {source}"),
+    })
+}
+
+/// Each unflagged `(corr, chan)` of `values` that `clip` flags.
+fn clip_cells<T: Copy>(
+    values: &ArrayD<T>,
+    flags: ndarray::ArrayView2<'_, bool>,
+    channels: Option<&[usize]>,
+    changed: &mut Vec<(usize, usize)>,
+    clip: impl Fn(T) -> bool,
+) -> Result<(), ndarray::ShapeError> {
+    let values = values.view().into_dimensionality::<Ix2>()?;
+    let mut visit = |corr: usize, chan: usize| {
+        if !flags[(corr, chan)] && clip(values[(corr, chan)]) {
+            changed.push((corr, chan));
         }
-        ArrayValue::Complex64(values) => {
-            let values = values
-                .view()
-                .into_dimensionality::<Ix2>()
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!("DATA row {row} must be rank-2: {source}"),
-                })?;
-            for corr in 0..values.shape()[0] {
-                if let Some(channels) = channels {
-                    for &chan in channels {
-                        if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)])
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                } else {
-                    for chan in 0..values.shape()[1] {
-                        if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)])
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                }
-            }
+    };
+    for corr in 0..values.shape()[0] {
+        match channels {
+            Some(channels) => channels.iter().for_each(|&chan| visit(corr, chan)),
+            None => (0..values.shape()[1]).for_each(|chan| visit(corr, chan)),
         }
-        ArrayValue::Float32(values) => {
-            let values = values
-                .view()
-                .into_dimensionality::<Ix2>()
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!("DATA row {row} must be rank-2: {source}"),
-                })?;
-            for corr in 0..values.shape()[0] {
-                if let Some(channels) = channels {
-                    for &chan in channels {
-                        if !flags[(corr, chan)]
-                            && is_casa_clip_zero(f64::from(values[(corr, chan)]))
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                } else {
-                    for chan in 0..values.shape()[1] {
-                        if !flags[(corr, chan)]
-                            && is_casa_clip_zero(f64::from(values[(corr, chan)]))
-                        {
-                            changed.push((corr, chan));
-                        }
-                    }
-                }
-            }
-        }
-        ArrayValue::Float64(values) => {
-            let values = values
-                .view()
-                .into_dimensionality::<Ix2>()
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!("DATA row {row} must be rank-2: {source}"),
-                })?;
-            for corr in 0..values.shape()[0] {
-                if let Some(channels) = channels {
-                    for &chan in channels {
-                        if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
-                            changed.push((corr, chan));
-                        }
-                    }
-                } else {
-                    for chan in 0..values.shape()[1] {
-                        if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
-                            changed.push((corr, chan));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -2210,24 +2125,19 @@ struct RFlagHistograms {
 }
 
 impl RFlagHistograms {
+    /// Each window's thresholds: the request's, or the one its histogram
+    /// gives, times the request's scale either way, as CASA's RFlag agent
+    /// scales a given threshold and a computed one alike.
     fn into_thresholds(self, request: &FlagDataRequest) -> RFlagThresholds {
         let mut timedev = BTreeMap::new();
         let mut freqdev = BTreeMap::new();
         for (key, histogram) in self.time {
-            timedev.insert(
-                key,
-                request
-                    .timedev
-                    .unwrap_or_else(|| histogram.threshold() * request.timedevscale),
-            );
+            let threshold = request.timedev.unwrap_or_else(|| histogram.threshold());
+            timedev.insert(key, threshold * request.timedevscale);
         }
         for (key, histogram) in self.freq {
-            freqdev.insert(
-                key,
-                request
-                    .freqdev
-                    .unwrap_or_else(|| histogram.threshold() * request.freqdevscale),
-            );
+            let threshold = request.freqdev.unwrap_or_else(|| histogram.threshold());
+            freqdev.insert(key, threshold * request.freqdevscale);
         }
         RFlagThresholds { timedev, freqdev }
     }
@@ -2479,13 +2389,6 @@ fn format_threshold_map(thresholds: &BTreeMap<FieldSpwKey, f64>) -> BTreeMap<Str
         .collect()
 }
 
-fn percent_flagged(samples: &[Sample]) -> f64 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    100.0 * samples.iter().filter(|sample| sample.flag).count() as f64 / samples.len() as f64
-}
-
 fn summary_after_flag_only(samples: &[Sample], changed_samples: usize) -> FlagSummary {
     FlagSummary {
         flagged_samples: samples.iter().filter(|sample| sample.flag).count() + changed_samples,
@@ -2568,22 +2471,6 @@ fn samples_by_corr(samples: &[Sample]) -> Vec<Vec<Sample>> {
         .into_iter()
         .filter(|group| !group.is_empty())
         .collect()
-}
-
-fn samples_by_row(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
-    let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
-    for sample in samples {
-        groups.entry(sample.row).or_default().push(*sample);
-    }
-    groups
-}
-
-fn samples_by_chan(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
-    let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
-    for sample in samples {
-        groups.entry(sample.chan).or_default().push(*sample);
-    }
-    groups
 }
 
 fn samples_by_chan_dense(samples: &[Sample]) -> Vec<Vec<Sample>> {
@@ -3459,12 +3346,17 @@ mod tests {
 
     #[test]
     fn clip_zero_and_sample_loading_helpers_cover_numeric_families() {
-        assert!(is_casa_clip_zero(f64::NAN));
-        assert!(is_casa_clip_zero(f64::from(f32::EPSILON)));
-        assert!(!is_casa_clip_zero(f64::from(f32::EPSILON) * 2.0));
-        assert!(is_casa_clip_zero_complex32(Complex32::new(f32::NAN, 0.0)));
-        assert!(is_casa_clip_zero_complex64(Complex64::new(0.0, f64::NAN)));
-        assert!(!is_casa_clip_zero_complex64(Complex64::new(1.0, 0.0)));
+        assert!(is_casa_clip(f64::NAN, true));
+        assert!(is_casa_clip(f64::from(f32::EPSILON), true));
+        assert!(!is_casa_clip(f64::from(f32::EPSILON) * 2.0, true));
+        assert!(is_casa_clip_complex32(Complex32::new(f32::NAN, 0.0), true));
+        assert!(is_casa_clip_complex64(Complex64::new(0.0, f64::NAN), true));
+        assert!(!is_casa_clip_complex64(Complex64::new(1.0, 0.0), true));
+        // Without clipzeros CASA's clip mode flags NaNs alone (#997 F4).
+        assert!(is_casa_clip(f64::NAN, false));
+        assert!(!is_casa_clip(0.0, false));
+        assert!(is_casa_clip_complex32(Complex32::new(0.0, f32::NAN), false));
+        assert!(!is_casa_clip_complex64(Complex64::new(0.0, 0.0), false));
 
         let flags = ArrayD::from_elem(IxDyn(&[2, 3]), false);
         let mut changed = Vec::new();
@@ -3483,20 +3375,32 @@ mod tests {
             ]
             .into_dyn(),
         );
-        apply_clip_zero_array(&c64, &flags, Some(&[0, 2]), "<test>", 4, &mut changed)
+        apply_clip_array(&c64, &flags, Some(&[0, 2]), true, "<test>", 4, &mut changed)
             .expect("clip complex64");
         assert_eq!(changed, vec![(0, 0), (0, 2)]);
+        changed.clear();
+        apply_clip_array(
+            &c64,
+            &flags,
+            Some(&[0, 2]),
+            false,
+            "<test>",
+            4,
+            &mut changed,
+        )
+        .expect("clip complex64 NaNs");
+        assert_eq!(changed, vec![(0, 2)]);
 
         changed.clear();
         let flags_2x2 = ArrayD::from_elem(IxDyn(&[2, 2]), false);
         let f32s = ArrayValue::Float32(array![[0.0_f32, 1.0], [f32::EPSILON, 2.0]].into_dyn());
-        apply_clip_zero_array(&f32s, &flags_2x2, None, "<test>", 5, &mut changed)
+        apply_clip_array(&f32s, &flags_2x2, None, true, "<test>", 5, &mut changed)
             .expect("clip float32");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
         changed.clear();
         let f64s = ArrayValue::Float64(array![[0.0_f64, 5.0], [f64::NAN, 6.0]].into_dyn());
-        apply_clip_zero_array(&f64s, &flags_2x2, None, "<test>", 6, &mut changed)
+        apply_clip_array(&f64s, &flags_2x2, None, true, "<test>", 6, &mut changed)
             .expect("clip float64");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
@@ -3605,12 +3509,24 @@ mod tests {
         let request = FlagDataRequest {
             timedev: Some(1.0),
             freqdev: Some(2.0),
+            timedevscale: 1.0,
+            freqdevscale: 1.0,
             spectralmax: 0.1,
             spectralmin: 0.0,
             ..FlagDataRequest::default()
         };
         let thresholds = rflag_threshold_maps_for_groups(&groups, &request);
         assert_eq!(thresholds.representative_pair(), (1.0, 2.0));
+        // CASA scales a given threshold as it scales a computed one.
+        let scaled = rflag_threshold_maps_for_groups(
+            &groups,
+            &FlagDataRequest {
+                timedevscale: 5.0,
+                freqdevscale: 3.0,
+                ..request.clone()
+            },
+        );
+        assert_eq!(scaled.representative_pair(), (5.0, 6.0));
         assert_eq!(
             format_threshold_map(&thresholds.timedev).get("field0_spw0"),
             Some(&1.0)
@@ -3681,14 +3597,11 @@ mod tests {
         assert!(modified[5]);
 
         assert_eq!(samples_by_corr(&samples).len(), 2);
-        assert_eq!(samples_by_row(&samples).len(), 2);
-        assert_eq!(samples_by_chan(&samples).len(), 3);
         assert_eq!(samples_by_chan_dense(&samples).len(), 3);
         assert_eq!(sample_row_runs(&samples).len(), 2);
         assert_eq!(unique_sample_rows(&samples), vec![0, 1]);
         assert_eq!(unique_sample_chans(&samples), vec![0, 1, 2]);
         assert_eq!(samples_by_row_chan(&samples).len(), 6);
-        assert_eq!(percent_flagged(&samples), 100.0 / 12.0);
         assert_eq!(percent_modified(&samples, &modified), 100.0);
         assert_eq!(count_mask(&modified), 12);
         assert_eq!(
@@ -3717,15 +3630,31 @@ mod tests {
         let data_rank2 = ArrayValue::Float32(array![[0.0_f32, 1.0]].into_dyn());
         let mut changed = Vec::new();
         assert!(
-            apply_clip_zero_array(&data_rank2, &flags_rank1, None, "<test>", 12, &mut changed,)
-                .is_err()
+            apply_clip_array(
+                &data_rank2,
+                &flags_rank1,
+                None,
+                true,
+                "<test>",
+                12,
+                &mut changed
+            )
+            .is_err()
         );
 
         let flags_rank2 = ArrayD::from_elem(IxDyn(&[1, 2]), false);
         let data_rank1 = ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[2]), 1.0_f64));
         assert!(
-            apply_clip_zero_array(&data_rank1, &flags_rank2, None, "<test>", 13, &mut changed,)
-                .is_err()
+            apply_clip_array(
+                &data_rank1,
+                &flags_rank2,
+                None,
+                true,
+                "<test>",
+                13,
+                &mut changed
+            )
+            .is_err()
         );
 
         let metadata = RowSampleMetadata {

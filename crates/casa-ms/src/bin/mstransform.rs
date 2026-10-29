@@ -70,21 +70,27 @@ fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, Ta
 
 /// The channels averaged into each output channel: split's `width`, or
 /// mstransform's `chanbin` when its `chanaverage` is set and 1 otherwise,
-/// as CASA's tasks take them.
+/// as CASA's tasks take them. CASA's mstransform refuses to average by one
+/// channel; split's `width=1` averages nothing.
 fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
-    let name = if task.surface() == "split" {
-        "width"
+    let (name, least) = if task.surface() == "split" {
+        ("width", 1)
     } else if task.flag("chanaverage")? {
-        "chanbin"
+        ("chanbin", 2)
     } else {
         return Ok(1);
     };
     let width = task.integer(name)?;
     usize::try_from(width)
         .ok()
-        .filter(|width| *width >= 1)
+        .filter(|width| *width >= least)
         .ok_or_else(|| {
-            TaskFailure::validation(format!("{name} must be at least 1, found {width}")).at(name)
+            let message = if least > 1 {
+                format!("Parameter {name} must be > 1 to do channel averaging, found {width}")
+            } else {
+                format!("{name} must be at least 1, found {width}")
+            };
+            TaskFailure::validation(message).at(name)
         })
 }
 
@@ -203,6 +209,12 @@ mod tests {
         );
         let error = request_for("mstransform", &["--chanaverage", "--chanbin", "0"]).unwrap_err();
         assert_eq!(error.parameter.as_deref(), Some("chanbin"));
+        // CASA's mstransform: "Parameter chanbin must be > 1 to do channel
+        // averaging"; split's width=1 is no averaging (#997 F8).
+        let error = request_for("mstransform", &["--chanaverage"]).unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("chanbin"));
+        assert!(error.message.contains("must be > 1"), "{}", error.message);
+        assert_eq!(width("split", &["--width", "1"]), 1);
     }
 
     #[test]

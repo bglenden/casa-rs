@@ -78,6 +78,7 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         "save" => {
             let name = required("versionname", request.versionname.clone())?;
             let comment = request.comment.as_deref().unwrap_or("");
+            keep_existing_version(&ms, &name)?;
             save_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
             mutation("save", Some(name), None)
         }
@@ -105,6 +106,30 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         ))
         .at("mode")),
     }
+}
+
+/// CASA's task keeps a version that a save would replace: it is renamed
+/// `<name>.old.<seconds since 1970>` first, so the save adds a new version
+/// and the old flags stay restorable (`task_flagmanager.py`). CASA writes
+/// the new comment onto the renamed version; casa-rs keeps its own (see
+/// `docs/CASA (C++) bugs.md`).
+fn keep_existing_version(ms: &MeasurementSet, name: &str) -> Result<(), TaskFailure> {
+    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    // `main`, the working copy, is listed but is no saved version.
+    let Some(existing) = list_flag_versions(ms)
+        .map_err(failed)?
+        .into_iter()
+        .skip(1)
+        .find(|version| version.name == name)
+    else {
+        return Ok(());
+    };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let kept = format!("{name}.old.{seconds}");
+    tracing::warn!("Version name '{name}' already exist. Will rename it to {kept}");
+    rename_flag_version(ms, name, &kept, &existing.comment).map_err(failed)
 }
 
 #[cfg(test)]

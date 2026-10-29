@@ -111,6 +111,73 @@ pub fn create_msexplore_fixture_ms_with_flags(
     ms_path
 }
 
+/// The [`create_msexplore_fixture_ms_with_flags`] fixture with a second
+/// polarization, `corr_type` (casacore Stokes codes), sharing spectral
+/// window 0 through DATA_DESC_ID 1. Rows 0 and 1 keep DATA_DESC_ID 0 (RR,
+/// RL, LR, LL) in observation and array 0; rows 2 and 3 take DATA_DESC_ID 1
+/// in observation and array 1. Every row is scan 1.
+pub fn create_two_polarization_fixture_ms(
+    root: &Path,
+    corr_type: [i32; NUM_CORR],
+    flagged_samples: &[(usize, usize, usize)],
+) -> PathBuf {
+    let ms_path = create_msexplore_fixture_ms_with_flags(root, flagged_samples);
+    let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
+    {
+        let pol_table = ms.subtable_mut(SubtableId::Polarization).expect("pol");
+        let corr_product = ArrayValue::Int32(
+            ArrayD::from_shape_vec(vec![2, 4], vec![0, 0, 1, 1, 0, 1, 0, 1]).unwrap(),
+        );
+        let row = make_subtable_row(
+            schema::polarization::REQUIRED_COLUMNS,
+            &[
+                (
+                    "NUM_CORR",
+                    Value::Scalar(ScalarValue::Int32(NUM_CORR as i32)),
+                ),
+                (
+                    "CORR_TYPE",
+                    Value::Array(ArrayValue::Int32(
+                        ArrayD::from_shape_vec(vec![NUM_CORR], corr_type.to_vec()).unwrap(),
+                    )),
+                ),
+                ("CORR_PRODUCT", Value::Array(corr_product)),
+                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            ],
+        );
+        pol_table.add_row(row).unwrap();
+    }
+    {
+        let dd_table = ms.subtable_mut(SubtableId::DataDescription).expect("dd");
+        let row = make_subtable_row(
+            schema::data_description::REQUIRED_COLUMNS,
+            &[
+                ("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+                ("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(1))),
+                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            ],
+        );
+        dd_table.add_row(row).unwrap();
+    }
+    for row in 0..4 {
+        let second = i32::from(row >= 2);
+        for (column, value) in [
+            ("DATA_DESC_ID", second),
+            ("OBSERVATION_ID", second),
+            ("ARRAY_ID", second),
+            ("SCAN_NUMBER", 1),
+        ] {
+            ms.main_table_mut()
+                .cell_accessor_mut(row, column)
+                .expect("MAIN cell")
+                .set(Value::Scalar(ScalarValue::Int32(value)))
+                .expect("set MAIN cell");
+        }
+    }
+    ms.save().expect("save MS");
+    ms_path
+}
+
 /// Create an on-disk MS fixture with multiple scans, fields, baselines, and
 /// spectral windows so averaging controls can be exercised deterministically.
 #[expect(

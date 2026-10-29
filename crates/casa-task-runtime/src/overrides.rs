@@ -41,12 +41,21 @@ pub(crate) fn normalize_overrides(
                 normalized.insert(name.clone(), value);
             }
             Err(error) => {
-                let code = match error {
-                    NormalizationError::Type(_) => DiagnosticCode::InvalidType,
-                    _ => DiagnosticCode::InvalidValue,
+                // A value of a form the surface does not take is told what
+                // the surface's note says it takes.
+                let (code, note) = match error {
+                    NormalizationError::Type(_) => (
+                        DiagnosticCode::InvalidType,
+                        binding
+                            .surface_note
+                            .as_ref()
+                            .map(|note| format!(" ({note})"))
+                            .unwrap_or_default(),
+                    ),
+                    _ => (DiagnosticCode::InvalidValue, String::new()),
                 };
                 refusals.push(
-                    Diagnostic::error(code, format!("invalid value for {name}: {error}"))
+                    Diagnostic::error(code, format!("invalid value for {name}: {error}{note}"))
                         .for_parameter(name.clone()),
                 );
             }

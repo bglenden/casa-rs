@@ -65,6 +65,79 @@ fn flagdata_unflag_action_becomes_casas_unflag_mode() {
 }
 
 #[test]
+fn flagdata_unflag_action_outside_manual_mode_keeps_its_old_meaning() {
+    // Astra's #997 F5. The old action applied in manual mode only: another
+    // explicit mode ran as itself, flagging, and keeps doing so.
+    for mode in ["quack", "summary", "clip"] {
+        let resolved = load(
+            "flagdata",
+            &format!("vis = \"in.ms\"\nmode = \"{mode}\"\naction = \"unflag\"\n"),
+        );
+        assert_eq!(
+            values(&resolved, &["mode", "action"]),
+            BTreeMap::from([
+                ("mode".into(), text(mode)),
+                ("action".into(), text("apply"))
+            ]),
+            "{mode}"
+        );
+    }
+    // With mode omitted, the mode adopts CASA's manual, with ADR-0006's
+    // warning, and the explicit unflag is CASA's unflag mode.
+    let resolved = load("flagdata", "vis = \"in.ms\"\naction = \"unflag\"\n");
+    assert_eq!(
+        values(&resolved, &["mode", "action"]),
+        BTreeMap::from([
+            ("mode".into(), text("unflag")),
+            ("action".into(), text("apply"))
+        ])
+    );
+    assert!(changed_defaults(&resolved).contains(&"mode".to_string()));
+    // A profile of the action alone lacks only the MeasurementSet.
+    let bundle = builtin_surface_bundle("flagdata").unwrap();
+    let profile = parse_profile(
+        "[casars]\nformat = 1\nsurface = \"flagdata\"\nkind = \"task\"\ncontract = 4\n\n\
+         [parameters]\naction = \"unflag\"\n",
+    )
+    .unwrap();
+    let Err(casa_task_runtime::ProfileError::Diagnostics(diagnostics)) =
+        resolve_profile(&profile, &bundle)
+    else {
+        panic!("a profile without vis does not resolve");
+    };
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code == DiagnosticCode::MissingRequired
+                && diagnostic.parameter.as_deref() == Some("vis")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn flagdata_old_explicit_thresholds_stay_unscaled() {
+    // Astra's #997 F2: CASA scales a given timedev and freqdev by
+    // timedevscale and freqdevscale; casa-rs's old ones were used as given.
+    let resolved = load(
+        "flagdata",
+        "vis = \"in.ms\"\nmode = \"rflag\"\ntimedev = 0.5\nfreqdev = \"none\"\n",
+    );
+    assert_eq!(
+        values(
+            &resolved,
+            &["timedev", "timedevscale", "freqdev", "freqdevscale"]
+        ),
+        BTreeMap::from([
+            ("timedev".into(), ParameterValue::Float(0.5)),
+            ("timedevscale".into(), ParameterValue::Float(1.0)),
+            // The old absence: rflag computes it, scaled by CASA's 5.
+            ("freqdev".into(), text("none")),
+            ("freqdevscale".into(), ParameterValue::Float(5.0)),
+        ])
+    );
+}
+
+#[test]
 fn flagdata_old_values_take_casas_spellings() {
     let resolved = load(
         "flagdata",
@@ -116,6 +189,20 @@ fn mstransform_width_becomes_chanaverage_and_chanbin() {
         ParameterValue::Bool(false)
     );
     assert!(changed_defaults(&unaveraged).contains(&"datacolumn".to_string()));
+
+    // Astra's #997 F8: CASA refuses chanaverage with chanbin 1, so the old
+    // explicit width 1, no averaging, stays no averaging.
+    let width_one = load(
+        "mstransform",
+        "vis = \"in.ms\"\noutputvis = \"out.ms\"\nwidth = 1\n",
+    );
+    assert_eq!(
+        values(&width_one, &["chanaverage", "chanbin"]),
+        BTreeMap::from([
+            ("chanaverage".into(), ParameterValue::Bool(false)),
+            ("chanbin".into(), ParameterValue::Integer(1)),
+        ])
+    );
 }
 
 #[test]

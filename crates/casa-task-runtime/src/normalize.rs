@@ -207,6 +207,14 @@ fn normalize_domain(
             ParameterValue::String(value) if states.contains(value) => {
                 Ok(ParameterValue::String(value.clone()))
             }
+            // CASA spells the empty value of a parameter of several types
+            // both '' and [] (flagdata's timedev): where '' is an absence
+            // state, [] is that state (#931).
+            ParameterValue::Array(items)
+                if items.is_empty() && states.iter().any(String::is_empty) =>
+            {
+                Ok(ParameterValue::String(String::new()))
+            }
             value => normalize_domain(value, inner),
         },
     }

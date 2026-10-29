@@ -16945,6 +16945,7 @@
           "steps": [
             {"kind": "rename", "from": "width", "to": "chanbin"},
             {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "chanbin"}},
+            {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": false}, "when": {"kind": "equals", "parameter": "chanbin", "value": {"kind": "integer", "value": 1}}},
             {"kind": "rename", "from": "msselect", "to": "taql"}
           ],
           "changed_defaults": ["datacolumn"]
@@ -26521,11 +26522,8 @@
             "python": {"name": "ntime"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
-          ]}}
+          "surface_note": "CASA's flagdata parses ntime in every mode before it runs one, so a value other than 'scan' is refused in every mode until #978.",
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "combinescans",
@@ -27789,7 +27787,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
+          "surface_note": "One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it. CASA's per-field and per-window thresholds and threshold files are not implemented yet (#978).",
           "projections": {
             "cli": {
               "positional": null,
@@ -27839,7 +27837,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
+          "surface_note": "One threshold for every field and window, scaled by freqdevscale; '', 'none' or [] lets rflag compute it. CASA's per-field and per-window thresholds and threshold files are not implemented yet (#978).",
           "projections": {
             "cli": {
               "positional": null,
@@ -27995,11 +27993,15 @@
           "to_contract": 5,
           "steps": [
             {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
-            {"kind": "set", "parameter": "action", "value": {"kind": "string", "value": "apply"}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
+            {"kind": "set", "parameter": "action", "value": {"kind": "string", "value": "apply"}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "mode"}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
+            {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}},
+            {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "unflag"}, "to": {"kind": "string", "value": "apply"}},
             {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "flag"}, "to": {"kind": "string", "value": "apply"}},
-            {"kind": "replace_value", "parameter": "quackmode", "from": {"kind": "string", "value": "end"}, "to": {"kind": "string", "value": "endb"}}
+            {"kind": "replace_value", "parameter": "quackmode", "from": {"kind": "string", "value": "end"}, "to": {"kind": "string", "value": "endb"}},
+            {"kind": "set", "parameter": "timedevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "timedev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "timedev", "value": {"kind": "string", "value": "none"}}}]}},
+            {"kind": "set", "parameter": "freqdevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "freqdev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "freqdev", "value": {"kind": "string", "value": "none"}}}]}}
           ],
-          "changed_defaults": ["mode", "quackinterval", "extendflags", "extendpols"]
+          "changed_defaults": ["mode", "quackinterval", "extendflags", "extendpols", "growtime", "growfreq"]
         }
       ]
     },
