@@ -276,6 +276,7 @@ impl CreationPlan {
             })
             .collect();
         msv2_pointing::write(&mut ms, &pointed)?;
+        super::msv2_identity::history(&mut ms, &self.options.history)?;
         let names = optional.iter().map(|column| column.name()).collect();
         let mut main = MainRows::start(
             staging,

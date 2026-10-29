@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::convert::{ConversionOptions, to_msv2};
 use casa_ms::observation_io::creation::{
-    CreationInput, CreationOptions, CreationPlan, Destination, Loss, LossKind, PaddingRows,
+    CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, Loss, LossKind,
+    PaddingRows,
 };
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
@@ -33,6 +34,7 @@ fn options() -> CreationOptions {
         batch_bytes: 1 << 20,
         padding: PaddingRows::Flagged,
         tolerance: MergeTolerance::default(),
+        history: Vec::new(),
     }
 }
 
@@ -524,6 +526,16 @@ fn a_split_observation_is_created_whole_again() {
     let whole = root.path().join("whole.ms");
     let options = CreationOptions {
         padding: PaddingRows::Omitted,
+        history: vec![HistoryRow {
+            time_s: 5.0e9,
+            observation: -1,
+            message: "taskname=concat".to_string(),
+            priority: "NORMAL".to_string(),
+            origin: "concat".to_string(),
+            application: "casa-rs".to_string(),
+            parameters: vec!["vis=['early', 'late']".to_string()],
+            command: Vec::new(),
+        }],
         ..options()
     };
     let inputs: Vec<CreationInput> = halves.iter().map(CreationInput::new).collect();
@@ -549,6 +561,13 @@ fn a_split_observation_is_created_whole_again() {
     assert_eq!(
         described(reopened.catalogue(), &every),
         described(&promised, &every)
+    );
+    let mut ms = MeasurementSet::open(&whole).expect("ms");
+    let history = subtable(&mut ms, SubtableId::History).row_accessor();
+    assert_eq!(history.row_count(), 1, "the task's row, not the inputs'");
+    assert_eq!(
+        history.row(0).expect("row").get("ORIGIN"),
+        Some(&text("concat"))
     );
 }
 

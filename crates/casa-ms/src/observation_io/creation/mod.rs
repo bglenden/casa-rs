@@ -194,6 +194,32 @@ pub struct CreationOptions {
     /// How close the inputs' entities must be to be one, as CASA's `concat`
     /// matches them.
     pub tolerance: casa_observation::MergeTolerance,
+    /// The `HISTORY` rows to write: what the task creating the
+    /// MeasurementSet records of itself (CASA's `concat` records its
+    /// parameters). The inputs' own history is not carried
+    /// ([`Loss::Table`]).
+    pub history: Vec<HistoryRow>,
+}
+
+/// One `HISTORY` row a plan writes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryRow {
+    /// When, MJD seconds in UTC.
+    pub time_s: f64,
+    /// The observing session it concerns, -1 for none.
+    pub observation: i32,
+    /// The message.
+    pub message: String,
+    /// Its priority, as CASA's logger names them (`NORMAL`, `WARN`, ...).
+    pub priority: String,
+    /// Where it comes from (CASA's task name).
+    pub origin: String,
+    /// The application (`casa-rs`).
+    pub application: String,
+    /// The application's parameters, one per element.
+    pub parameters: Vec<String>,
+    /// The command line, one per element.
+    pub command: Vec<String>,
 }
 
 /// Where a plan writes its MeasurementSet.

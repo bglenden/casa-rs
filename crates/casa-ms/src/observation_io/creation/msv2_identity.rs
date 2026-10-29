@@ -13,9 +13,9 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
 
-use super::Loss;
 use super::msv2_sources::{self, NamedSources};
 use super::msv2_tables::Notes;
+use super::{HistoryRow, Loss};
 use crate::MeasurementSet;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId, optional_columns};
@@ -455,6 +455,37 @@ pub(super) fn processors(
             record.push(casa_types::RecordField::new("PASS_ID", i(pass)));
         }
         table.add_row(record).map_err(storage)?;
+    }
+    Ok(())
+}
+
+/// The `HISTORY` rows of `history`, in order.
+pub(super) fn history(
+    ms: &mut MeasurementSet,
+    history: &[HistoryRow],
+) -> Result<(), ObservationError> {
+    let table = subtable_mut(ms, SubtableId::History).map_err(storage)?;
+    for entry in history {
+        let parameters: Vec<&str> = entry.parameters.iter().map(String::as_str).collect();
+        let command: Vec<&str> = entry.command.iter().map(String::as_str).collect();
+        let row = row_from_defs(
+            schema::history::REQUIRED_COLUMNS,
+            &[
+                ("APPLICATION", s(&entry.application)),
+                (
+                    "APP_PARAMS",
+                    string_array(&parameters, vec![parameters.len()]),
+                ),
+                ("CLI_COMMAND", string_array(&command, vec![command.len()])),
+                ("MESSAGE", s(&entry.message)),
+                ("OBJECT_ID", i(0)),
+                ("OBSERVATION_ID", i(entry.observation)),
+                ("ORIGIN", s(&entry.origin)),
+                ("PRIORITY", s(&entry.priority)),
+                ("TIME", f(entry.time_s)),
+            ],
+        );
+        table.add_row(row).map_err(storage)?;
     }
     Ok(())
 }
