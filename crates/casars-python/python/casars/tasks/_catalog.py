@@ -314,7 +314,8 @@ def imhead(
     """Inspect or update CASA image header metadata.
 
     CASA's ``imhead``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``verbose``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``verbose``.
     """
     return _call_casa(imhead, locals())
 
@@ -343,10 +344,10 @@ def imstat(
     """Compute CASA image statistics over optional pixel, region, and channel selections.
 
     CASA's ``imstat``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``axes``, ``stokes``,
-    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``,
-    ``algorithm``, ``fence``, ``center``, ``lside``, ``zscore``,
-    ``maxiter``, ``clmethod``, ``niter``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``axes``, ``stokes``, ``listit``, ``verbose``, ``mask``, ``stretch``,
+    ``logfile``, ``append``, ``algorithm``, ``fence``, ``center``,
+    ``lside``, ``zscore``, ``maxiter``, ``clmethod``, ``niter``.
     """
     return _call_casa(imstat, locals())
 
@@ -369,8 +370,8 @@ def immoments(
     """Create CASA-style image moment maps
 
     CASA's ``immoments``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``axis``, ``region``,
-    ``box``, ``stokes``, ``excludepix``, ``stretch``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``axis``, ``region``, ``box``, ``stokes``, ``excludepix``, ``stretch``.
     """
     return _call_casa(immoments, locals())
 
@@ -391,9 +392,9 @@ def exportfits(
     """Export CASA images to FITS
 
     CASA's ``exportfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``optical``, ``bitpix``,
-    ``minpix``, ``maxpix``, ``dropstokes``, ``stokeslast``, ``history``,
-    ``dropdeg``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``optical``, ``bitpix``, ``minpix``, ``maxpix``, ``dropstokes``,
+    ``stokeslast``, ``history``, ``dropdeg``.
     """
     return _call_casa(exportfits, locals())
 
@@ -708,9 +709,9 @@ def impv(
     """Extract a CASA-style position-velocity image
 
     CASA's ``impv``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``mode``, ``center``,
-    ``length``, ``pa``, ``unit``, ``region``, ``stokes``, ``mask``,
-    ``stretch``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``mode``, ``center``, ``length``, ``pa``, ``unit``, ``region``,
+    ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impv, locals())
 
@@ -731,8 +732,9 @@ def imsubimage(
     """Extract a CASA-style image section
 
     CASA's ``imsubimage``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``region``, ``stokes``,
-    ``mask``, ``dropdeg``, ``verbose``, ``stretch``, ``keepaxes``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,
+    ``keepaxes``.
     """
     return _call_casa(imsubimage, locals())
 
@@ -758,9 +760,9 @@ def immath(
     """Evaluate tutorial image arithmetic expressions
 
     CASA's ``immath``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``mode``, ``varnames``,
-    ``sigma``, ``polithresh``, ``mask``, ``region``, ``box``, ``chans``,
-    ``stokes``, ``stretch``, ``imagemd``, ``prec``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``mode``, ``varnames``, ``sigma``, ``polithresh``, ``mask``, ``region``,
+    ``box``, ``chans``, ``stokes``, ``stretch``, ``imagemd``, ``prec``.
     """
     return _call_casa(immath, locals())
 
@@ -779,8 +781,8 @@ def imregrid(
     """Regrid a CASA image onto a template image
 
     CASA's ``imregrid``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``asvelocity``, ``axes``,
-    ``shape``, ``decimate``, ``replicate``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``asvelocity``, ``axes``, ``shape``, ``decimate``, ``replicate``.
     """
     return _call_casa(imregrid, locals())
 
@@ -797,8 +799,8 @@ def feather(
     """Combine high-resolution and low-resolution images in the Fourier domain
 
     CASA's ``feather``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``effdishdiam``,
-    ``lowpassfiltersd``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``effdishdiam``, ``lowpassfiltersd``.
     """
     return _call_casa(feather, locals())
 
@@ -816,8 +818,9 @@ def importfits(
     """Import a FITS primary image into a CASA image
 
     CASA's ``importfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default until #977: ``whichrep``, ``whichhdu``,
-    ``zeroblanks``, ``defaultaxes``, ``defaultaxesvalues``, ``beam``.
+    Accepted only at CASA's default, where CASA reads them, until #977:
+    ``whichrep``, ``whichhdu``, ``zeroblanks``, ``defaultaxes``,
+    ``defaultaxesvalues``, ``beam``.
     """
     return _call_casa(importfits, locals())
 

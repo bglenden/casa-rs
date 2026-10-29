@@ -14643,7 +14643,10 @@
             "python": {"name": "axes"},
             "presentation": {"label": "Axes", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "array", "value": [{"kind": "integer", "value": -1}]}]
+          }
         },
         {
           "name": "stokes",
@@ -14719,7 +14722,10 @@
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "logfile",
@@ -14749,7 +14755,10 @@
             "python": {"name": "append"},
             "presentation": {"label": "Append to Log File", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "logfile", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "algorithm",
@@ -14764,7 +14773,16 @@
             "python": {"name": "algorithm"},
             "presentation": {"label": "Algorithm", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [
+              {"kind": "string", "value": "cl"},
+              {"kind": "string", "value": "cla"},
+              {"kind": "string", "value": "clas"},
+              {"kind": "string", "value": "class"},
+              {"kind": "string", "value": "classi"}
+            ]
+          }
         },
         {
           "name": "fence",
@@ -14779,7 +14797,10 @@
             "python": {"name": "fence"},
             "presentation": {"label": "Fence", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "hinges-fences"}}
+          }
         },
         {
           "name": "center",
@@ -14794,7 +14815,10 @@
             "python": {"name": "center"},
             "presentation": {"label": "Center", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
+          }
         },
         {
           "name": "lside",
@@ -14809,7 +14833,10 @@
             "python": {"name": "lside"},
             "presentation": {"label": "Left Side", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
+          }
         },
         {
           "name": "zscore",
@@ -14824,7 +14851,10 @@
             "python": {"name": "zscore"},
             "presentation": {"label": "Z-score", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
+          }
         },
         {
           "name": "maxiter",
@@ -14839,7 +14869,10 @@
             "python": {"name": "maxiter"},
             "presentation": {"label": "Maximum Iterations", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
+          }
         },
         {
           "name": "clmethod",
@@ -14854,7 +14887,10 @@
             "python": {"name": "clmethod"},
             "presentation": {"label": "Classic Method", "group": "Statistics", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "string", "value": "a"}, {"kind": "string", "value": "au"}, {"kind": "string", "value": "aut"}]
+          }
         },
         {
           "name": "niter",
@@ -14873,7 +14909,10 @@
             "review_id": "ADR-0006",
             "reason": "imstat's biweight iteration limit is distinct from the imager's minor-cycle iteration budget."
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "biweight"}}
+          }
         },
         {
           "name": "imagename",
@@ -15299,7 +15338,10 @@
             "python": {"name": "excludepix"},
             "presentation": {"label": "Exclude Pixels", "group": "Moments", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "array", "value": []}]
+          }
         },
         {
           "name": "stretch",
@@ -15314,7 +15356,10 @@
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "moments",
@@ -15682,7 +15727,10 @@
             "python": {"name": "minpix"},
             "presentation": {"label": "Minimum Pixel", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
+          }
         },
         {
           "name": "maxpix",
@@ -15697,7 +15745,10 @@
             "python": {"name": "maxpix"},
             "presentation": {"label": "Maximum Pixel", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
+          }
         },
         {
           "name": "dropstokes",
@@ -28066,7 +28117,10 @@
             "review_id": "ADR-0006",
             "reason": "impv's center is a point in the direction plane, distinct from imstat's fit-half center estimator."
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
+          }
         },
         {
           "name": "length",
@@ -28081,7 +28135,10 @@
             "python": {"name": "length"},
             "presentation": {"label": "Length", "group": "Slice", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
+          }
         },
         {
           "name": "pa",
@@ -28096,7 +28153,10 @@
             "python": {"name": "pa"},
             "presentation": {"label": "Position Angle", "group": "Slice", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
+          }
         },
         {
           "name": "unit",
@@ -28173,7 +28233,10 @@
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "imagename",
@@ -28922,7 +28985,10 @@
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "keepaxes",
@@ -28937,7 +29003,10 @@
             "python": {"name": "keepaxes"},
             "presentation": {"label": "Keep Axes", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "dropdeg", "value": {"kind": "bool", "value": true}}
+          }
         }
       ],
       "migrations": [
@@ -29082,7 +29151,10 @@
             "python": {"name": "varnames"},
             "presentation": {"label": "Variable Names", "group": "Math", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "array", "value": []}]
+          }
         },
         {
           "name": "sigma",
@@ -29097,7 +29169,14 @@
             "python": {"name": "sigma"},
             "presentation": {"label": "Noise Sigma", "group": "Polarization", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "any", "predicates": [
+              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "poli"}},
+              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "lpoli"}},
+              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tpoli"}}
+            ]}
+          }
         },
         {
           "name": "polithresh",
@@ -29112,7 +29191,10 @@
             "python": {"name": "polithresh"},
             "presentation": {"label": "Polarization Threshold", "group": "Polarization", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "pola"}}
+          }
         },
         {
           "name": "mask",
@@ -29204,7 +29286,10 @@
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          }
         },
         {
           "name": "imagemd",
@@ -29494,7 +29579,10 @@
             "python": {"name": "shape"},
             "presentation": {"label": "Shape", "group": "Regrid", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "equivalent": [{"kind": "array", "value": []}]
+          }
         },
         {
           "name": "decimate",
@@ -30396,7 +30484,10 @@
             "python": {"name": "defaultaxesvalues"},
             "presentation": {"label": "Default Axis Values", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 977}
+          "unimplemented": {
+            "issue": 977,
+            "applies_when": {"kind": "equals", "parameter": "defaultaxes", "value": {"kind": "bool", "value": true}}
+          }
         },
         {
           "name": "beam",

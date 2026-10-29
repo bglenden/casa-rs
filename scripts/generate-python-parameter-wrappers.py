@@ -344,7 +344,8 @@ def casa_signature_lines(
                 f"``{binding['name']}``"
             )
     notes = [
-        f"Accepted only at CASA's default until #{issue}: {', '.join(names)}."
+        f"Accepted only at CASA's default, where CASA reads them, until #{issue}: "
+        f"{', '.join(names)}."
         for issue, names in sorted(pending.items())
     ]
     return [

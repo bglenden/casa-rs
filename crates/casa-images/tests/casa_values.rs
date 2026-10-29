@@ -114,6 +114,14 @@ fn immoments_takes_casas_moments_and_includepix() {
         "{reply:?}"
     );
     assert!(root.join("py.mom0").exists());
+    // CASA reads excludepix=[] as its -1: nothing excluded.
+    let reply = json_run(
+        immoments,
+        "immoments",
+        json!({"imagename": "in.image", "outfile": "ex.mom0", "excludepix": []}),
+        root,
+    );
+    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
     // Several moments in one run are not yet.
     assert_refused(
         &run(
@@ -270,6 +278,73 @@ fn immath_returns_true() {
         "{reply:?}"
     );
     assert!(root.join("twice.im").exists());
+}
+
+/// immath takes CASA's spellings of its defaults and ignores what CASA
+/// ignores outside its polarization modes; CASA 6.7.6.14 runs each of
+/// these as the plain expression.
+#[test]
+fn immath_takes_casas_spellings_of_its_defaults() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    write_image(&root.join("in.image"), 1.0);
+    let immath = env!("CARGO_BIN_EXE_immath");
+    for (index, values) in [
+        json!({"varnames": []}),
+        json!({"varnames": ""}),
+        json!({"sigma": "0Jy/beam"}),
+        json!({"sigma": "5mJy/beam", "polithresh": "1Jy/beam", "stretch": true}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut request = values.clone();
+        request["imagename"] = json!(["in.image"]);
+        request["expr"] = json!("IM0*2");
+        request["outfile"] = json!(format!("ok{index}.im"));
+        let reply = json_run(immath, "immath", request, root);
+        assert!(
+            matches!(
+                reply,
+                TaskReply::Succeeded {
+                    value: CasaValue::Bool { value: true },
+                    ..
+                }
+            ),
+            "{values}: {reply:?}"
+        );
+    }
+    let output = run(
+        immath,
+        &[
+            "--imagename",
+            "in.image",
+            "--expr",
+            "IM0*2",
+            "--outfile",
+            "cli.im",
+            "--sigma",
+            "0Jy/beam",
+            "--polithresh",
+            "1Jy/beam",
+        ],
+        root,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // A name of its own, or a polarization mode, is not yet.
+    let refused = |values: Value, parameter: &str| {
+        let mut request = values;
+        request["imagename"] = json!(["in.image"]);
+        request["outfile"] = json!("refused.im");
+        assert_refuses(json_run(immath, "immath", request, root), parameter, "#977");
+        assert!(!root.join("refused.im").exists());
+    };
+    refused(json!({"expr": "A*2", "varnames": ["A"]}), "varnames");
+    refused(json!({"mode": "poli", "sigma": "5mJy/beam"}), "mode");
 }
 
 #[test]

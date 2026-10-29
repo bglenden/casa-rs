@@ -8450,11 +8450,11 @@
       "semantic_revision": 1,
       "casa_name": "algorithm",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "normalization": {"kind": "lowercase"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match.", "details": null, "examples": ["classic"]},
+      "documentation": {"summary": "Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match, in any case.", "details": null, "examples": ["classic"]},
       "persistence_class": "profile"
     },
     {
@@ -8462,11 +8462,11 @@
       "semantic_revision": 1,
       "casa_name": "clmethod",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "normalization": {"kind": "lowercase"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "How the classic algorithm computes its statistics: auto, tiled or framework.", "details": null, "examples": ["auto"]},
+      "documentation": {"summary": "How the classic algorithm computes its statistics: auto, tiled or framework, by first letter, in any case.", "details": null, "examples": ["auto"]},
       "persistence_class": "profile"
     },
     {

@@ -476,6 +476,70 @@ fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
     assert_eq!(describe(&put), casa("imhead put"));
 }
 
+/// CASA's `imhead(image, mode='put', hdkey='bunit', hdvalue='')` clears the
+/// brightness unit, whether the empty value is given or left at its
+/// default, as the Python wrapper leaves it, and on the command line.
+#[test]
+fn imhead_put_of_an_empty_bunit_clears_it() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("ramp.im");
+    let units = || {
+        casa_images::PagedImage::<f32>::open(&image)
+            .unwrap()
+            .units()
+            .to_string()
+    };
+    for values in [
+        json!({"mode": "put", "hdkey": "bunit", "hdvalue": ""}),
+        json!({"mode": "put", "hdkey": "BUNIT"}),
+    ] {
+        write_ramp(&image, true);
+        assert_eq!(units(), "Jy/beam");
+        let mut request = values.clone();
+        request["imagename"] = json!(image);
+        let put = returned(workspace.path(), "imhead", request);
+        assert_eq!(put, CasaValue::None, "{values}");
+        assert_eq!(units(), "", "{values}");
+    }
+    write_ramp(&image, true);
+    let command_line = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+        .args([
+            "imhead",
+            image.to_str().unwrap(),
+            "--mode",
+            "put",
+            "--hdkey",
+            "bunit",
+        ])
+        .arg("--no-save-last")
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    assert!(
+        command_line.status.success(),
+        "{}",
+        String::from_utf8_lossy(&command_line.stderr)
+    );
+    assert_eq!(units(), "");
+    // Another key is refused at hdkey, before the image is touched.
+    write_ramp(&image, true);
+    let (output, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": image, "mode": "put", "hdkey": "object", "hdvalue": "M31"}),
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let Some(TaskReply::Failed {
+        message, parameter, ..
+    }) = reply
+    else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(parameter.as_deref(), Some("hdkey"));
+    assert!(message.contains("#977"), "{message}");
+    assert_eq!(units(), "Jy/beam");
+}
+
 #[test]
 fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
     let workspace = tempfile::tempdir().unwrap();
@@ -518,6 +582,70 @@ fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
         String::from_utf8_lossy(&command_line.stderr).contains("#977"),
         "{}",
         String::from_utf8_lossy(&command_line.stderr)
+    );
+}
+
+/// imstat takes CASA's own spellings of its defaults and ignores what CASA
+/// ignores under the classic algorithm; CASA 6.7.6.14 runs each of these
+/// with classic's statistics.
+#[test]
+fn imstat_takes_casas_spellings_of_its_defaults() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("ramp.im");
+    write_ramp(&image, false);
+    let expected = statistic(
+        &returned(workspace.path(), "imstat", json!({"imagename": image})),
+        "sum",
+    );
+    for values in [
+        // CASA's algorithm and clmethod are case-blind and minimum match;
+        // its axes=-1 is its [].
+        json!({"algorithm": "CLASSIC", "clmethod": "AU", "axes": -1}),
+        json!({"algorithm": "cl", "axes": [-1]}),
+        // The robust algorithms' controls, and stretch without a mask.
+        json!({"fence": 5.0, "center": "median", "lside": false, "zscore": 3.0,
+               "maxiter": 2, "niter": 7, "stretch": true, "append": false}),
+    ] {
+        let mut request = values.clone();
+        request["imagename"] = json!(image);
+        let record = returned(workspace.path(), "imstat", request);
+        assert_eq!(statistic(&record, "sum"), expected, "{values}");
+    }
+    // The command line reads them the same way.
+    let command_line = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+        .args([
+            "imstat",
+            image.to_str().unwrap(),
+            "--algorithm",
+            "Classic",
+            "--axes=-1",
+        ])
+        .args(["--fence", "5", "--stretch", "--no-save-last"])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    assert!(
+        command_line.status.success(),
+        "{}",
+        String::from_utf8_lossy(&command_line.stderr)
+    );
+    // Another algorithm is not yet, and with it the control it reads.
+    let (output, reply) = json_run(
+        workspace.path(),
+        "imstat",
+        json!({"imagename": image, "algorithm": "chauvenet", "zscore": 3.0}),
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let Some(TaskReply::Failed {
+        message, parameter, ..
+    }) = reply
+    else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(parameter.as_deref(), Some("algorithm"));
+    assert!(
+        message.contains("#977") && message.contains("zscore"),
+        "{message}"
     );
 }
 

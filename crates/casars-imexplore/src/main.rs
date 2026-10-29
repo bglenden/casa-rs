@@ -42,9 +42,16 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            let hdvalue = task.text("hdvalue")?.ok_or_else(|| {
-                TaskFailure::validation("imhead mode put requires hdvalue").at("hdvalue")
-            })?;
+            if !hdkey.eq_ignore_ascii_case("bunit") {
+                return Err(TaskFailure::validation(format!(
+                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977); \
+                     it puts bunit"
+                ))
+                .at("hdkey"));
+            }
+            // CASA's default '' is a value here: it clears the key, as
+            // `hdkey='bunit', hdvalue=''` clears the brightness unit.
+            let hdvalue = task.text("hdvalue")?.unwrap_or_default();
             imhead_put(&path, &hdkey, &hdvalue)
                 .map_err(|error| image_error("imhead", &path, error))?
         }
