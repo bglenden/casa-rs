@@ -10,6 +10,7 @@
 //! that direction from the observatory, its samples interpolated at the
 //! time's TDB ([`casa_types::measures::ephemeris`]).
 
+use std::f64::consts::{PI, TAU};
 use std::mem::size_of;
 
 use casa_types::measures::direction::DirectionRef;
@@ -22,6 +23,8 @@ use crate::ObservationError;
 /// Built only through [`Self::new`], which checks them, so every
 /// ephemeris has at least two samples, at strictly increasing finite
 /// times, with finite directions and velocities and positive distances.
+/// Its last samples may be extrapolated rather than the store's
+/// ([`Self::extrapolated_to`], [`Self::extrapolated`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldEphemeris {
     name: String,
@@ -31,6 +34,7 @@ pub struct FieldEphemeris {
     distances_m: Vec<f64>,
     radial_velocities_m_s: Vec<f64>,
     velocity_frame: RadialVelocityRef,
+    extrapolated: usize,
 }
 
 /// An ephemeris at one time.
@@ -107,7 +111,64 @@ impl FieldEphemeris {
             distances_m,
             radial_velocities_m_s,
             velocity_frame,
+            extrapolated: 0,
         })
+    }
+
+    /// This ephemeris with a sample more at each of `times_mjd`, after its
+    /// last: each series continued along the straight line through its
+    /// last two samples, directions in angle, as XRADIO interpolates
+    /// between samples (a longitude crossing a turn continues from the last
+    /// one's). The samples are not the store's, so [`Self::extrapolated`]
+    /// counts them.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::InvalidRequest`] when `times_mjd` are not
+    /// increasing after the last sample, or the line reaches no positive
+    /// distance at one.
+    pub fn extrapolated_to(&self, times_mjd: &[f64]) -> Result<Self, ObservationError> {
+        let last = self.times_mjd.len() - 1;
+        let span = self.times_mjd[last] - self.times_mjd[last - 1];
+        let [[longitude_0, latitude_0], [longitude_1, latitude_1]] =
+            [self.directions_rad[last - 1], self.directions_rad[last]];
+        let turn = (longitude_1 - longitude_0 + PI).rem_euclid(TAU) - PI;
+        let (mut times, mut directions, mut distances, mut velocities) = (
+            self.times_mjd.clone(),
+            self.directions_rad.clone(),
+            self.distances_m.clone(),
+            self.radial_velocities_m_s.clone(),
+        );
+        for time in times_mjd {
+            let factor = (time - self.times_mjd[last - 1]) / span;
+            let along =
+                |series: &[f64]| series[last - 1] + factor * (series[last] - series[last - 1]);
+            times.push(*time);
+            directions.push([
+                longitude_1 + (factor - 1.0) * turn,
+                latitude_0 + factor * (latitude_1 - latitude_0),
+            ]);
+            distances.push(along(&self.distances_m));
+            velocities.push(along(&self.radial_velocities_m_s));
+        }
+        let mut extended = Self::new(
+            self.name.clone(),
+            times,
+            directions,
+            self.frame,
+            distances,
+            (velocities, self.velocity_frame),
+        )?;
+        extended.extrapolated = self.extrapolated + times_mjd.len();
+        Ok(extended)
+    }
+
+    /// How many of the last samples are extrapolated
+    /// ([`Self::extrapolated_to`]) rather than the store's: none unless a
+    /// reader added them.
+    #[must_use]
+    pub const fn extrapolated(&self) -> usize {
+        self.extrapolated
     }
 
     /// The body's name.
@@ -253,6 +314,42 @@ mod tests {
         assert!(ephemeris.sample(59_999.9).is_none());
         assert!(ephemeris.sample(60_001.1).is_none());
         assert!(ephemeris.sample(f64::NAN).is_none());
+    }
+
+    #[test]
+    fn an_extrapolated_sample_continues_the_last_two_along_a_line() {
+        let ephemeris = ephemeris();
+        assert_eq!(ephemeris.extrapolated(), 0);
+        let extended = ephemeris
+            .extrapolated_to(&[60_001.25, 60_001.5])
+            .expect("after the last");
+        assert_eq!(extended.extrapolated(), 2);
+        assert_eq!(
+            extended.times_mjd(),
+            [60_000.0, 60_000.5, 60_001.0, 60_001.25, 60_001.5]
+        );
+        let close = |a: f64, b: f64| assert!((a - b).abs() < 1.0e-12, "{a} and {b}");
+        close(extended.directions_rad()[3][0], 0.35);
+        close(extended.directions_rad()[3][1], 0.175);
+        close(extended.distances_m()[3], 4.05e8);
+        close(extended.radial_velocities_m_s()[3], 50.0);
+        close(extended.directions_rad()[4][0], 0.4);
+        close(extended.radial_velocities_m_s()[4], 60.0);
+        // Longitude continues from the last across a turn, not back around.
+        let across = FieldEphemeris::new(
+            "Moon",
+            vec![60_000.0, 60_000.5],
+            vec![[TAU - 0.1, 0.0], [0.0, 0.0]],
+            DirectionRef::ICRS,
+            vec![3.8e8; 2],
+            (vec![0.0; 2], RadialVelocityRef::GEO),
+        )
+        .expect("an ephemeris")
+        .extrapolated_to(&[60_001.0])
+        .expect("after the last");
+        close(across.directions_rad()[2][0], 0.1);
+        assert!(ephemeris.extrapolated_to(&[60_000.75]).is_err());
+        assert!(ephemeris.extrapolated_to(&[60_001.5, 60_001.25]).is_err());
     }
 
     #[test]

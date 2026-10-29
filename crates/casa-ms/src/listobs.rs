@@ -2319,22 +2319,49 @@ pub(crate) fn format_float_compact(value: f64, decimals: usize) -> String {
     formatted
 }
 
+/// casacore's `Stokes::name` of a `CORR_TYPE` code, from `I` (1) to
+/// `Pangle` (32); `??` for a code casacore does not define.
 pub(crate) fn stokes_name(code: i32) -> &'static str {
-    match code {
-        1 => "I",
-        2 => "Q",
-        3 => "U",
-        4 => "V",
-        5 => "RR",
-        6 => "RL",
-        7 => "LR",
-        8 => "LL",
-        9 => "XX",
-        10 => "XY",
-        11 => "YX",
-        12 => "YY",
-        _ => "??",
-    }
+    const NAMES: [&str; 32] = [
+        "I",
+        "Q",
+        "U",
+        "V",
+        "RR",
+        "RL",
+        "LR",
+        "LL",
+        "XX",
+        "XY",
+        "YX",
+        "YY",
+        "RX",
+        "RY",
+        "LX",
+        "LY",
+        "XR",
+        "XL",
+        "YR",
+        "YL",
+        "PP",
+        "PQ",
+        "QP",
+        "QQ",
+        "RCircular",
+        "LCircular",
+        "Linear",
+        "Ptotal",
+        "Plinear",
+        "PFtotal",
+        "PFlinear",
+        "Pangle",
+    ];
+    usize::try_from(code)
+        .ok()
+        .and_then(|code| code.checked_sub(1))
+        .and_then(|index| NAMES.get(index))
+        .copied()
+        .unwrap_or("??")
 }
 
 #[cfg(test)]

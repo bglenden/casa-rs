@@ -145,7 +145,7 @@ def test_a_task_runs_its_executable_with_the_values_set(
     assert completion.stderr == "flagmanager started\nflagmanager completed\n"
     assert capsys.readouterr().err == completion.stderr
     # The draft is the caller's, unchanged.
-    assert draft["comment"] == "none"
+    assert draft["comment"] == ""
 
 
 def test_task_parameters_run_delegates_to_the_runner(tmp_path: Path, fake) -> None:
@@ -164,13 +164,15 @@ def test_a_wrapper_runs_in_the_current_directory(
     output.mkdir()
     monkeypatch.chdir(tmp_path)
 
-    completion = tasks.split(vis="input.ms", outputvis="selected.ms")
+    tasks.split(vis="input.ms", outputvis="selected.ms")
 
     invocation = recorded(log)
     # mstransform hosts split too; the request names the surface to run.
     assert invocation["argv"] == ["--json-run", "-"]
     assert invocation["request"]["surface"] == "split"
     assert invocation["cwd"] == str(tmp_path)
+    # split returns CASA's value; `run`'s completion names the product.
+    completion = tasks.run("split", vis="input.ms", outputvis="selected.ms")
     assert completion.result.surface_id == "split"
     assert len(completion.products) == 1
     assert completion.products[0].path == str(output)
