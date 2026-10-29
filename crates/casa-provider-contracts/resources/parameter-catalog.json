@@ -3877,7 +3877,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Range of pixel values to include, [min, max]; -1 includes all.",
+        "summary": "Inclusive range of pixel values to include: [min, max] in either order; one value b is [-|b|, |b|]; -1 includes all.",
         "details": null,
         "examples": [
           "[0.002, 100.0]"

@@ -114,7 +114,7 @@ fn immoments_takes_casas_moments_and_includepix() {
         "{reply:?}"
     );
     assert!(root.join("py.mom0").exists());
-    // Several moments in one run, and a lone threshold, are not yet.
+    // Several moments in one run are not yet.
     assert_refused(
         &run(
             immoments,
@@ -123,17 +123,96 @@ fn immoments_takes_casas_moments_and_includepix() {
         ),
         "#977",
     );
-    assert_refuses(
-        json_run(
+    assert!(!root.join("two.mom").exists());
+}
+
+/// The first pixel of the moment image at `path` and whether it is valid.
+fn moment_pixel(path: &Path) -> (f32, bool) {
+    let image = casa_images::PagedImage::<f32>::open(path).unwrap();
+    let pixels = image.get().unwrap();
+    let valid = image
+        .get_mask()
+        .unwrap()
+        .is_none_or(|mask| *mask.iter().next().unwrap());
+    (*pixels.iter().next().unwrap(), valid)
+}
+
+/// `includepix` reads as CASA 6.7.6.14 reads it, on a cube whose spectrum
+/// is [-10, -2, 3, 11] at every pixel, where the mean moment of every
+/// channel is 0.5 (CASA's values, from its own immoments).
+#[test]
+fn immoments_includepix_is_casas_inclusive_range() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    support::write_spectrum_cube(&root.join("cube.image"), &[-10.0, -2.0, 3.0, 11.0]);
+    let immoments = env!("CARGO_BIN_EXE_immoments");
+    for (index, (includepix, expected)) in [
+        // Only -1 (or no value) includes every pixel.
+        (json!(-1), Some(0.5)),
+        (json!([]), Some(0.5)),
+        // One value b is [-|b|, |b|], whatever its sign.
+        (json!(-2), Some(-2.0)),
+        (json!([2]), Some(-2.0)),
+        // Nothing in [0, 0]: CASA's masked pixel.
+        (json!([0]), None),
+        // Two ends in either order.
+        (json!([5, 2]), Some(3.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let outfile = format!("mean{index}.im");
+        let reply = json_run(
             immoments,
             "immoments",
-            json!({"imagename": "in.image", "outfile": "thr.mom", "includepix": [5]}),
+            json!({"imagename": "cube.image", "outfile": outfile, "moments": -1,
+                   "includepix": includepix}),
             root,
-        ),
-        "includepix",
-        "#977",
+        );
+        assert!(
+            matches!(reply, TaskReply::Succeeded { .. }),
+            "{includepix}: {reply:?}"
+        );
+        let (value, valid) = moment_pixel(&root.join(&outfile));
+        match expected {
+            Some(expected) => {
+                assert!(valid, "{includepix}: masked");
+                assert!((value - expected).abs() < 1e-6, "{includepix}: {value}");
+            }
+            None => assert!(!valid, "{includepix}: {value} is not masked"),
+        }
+    }
+    // The command line reads the same ranges.
+    let output = run(
+        immoments,
+        &[
+            "cube.image",
+            "--outfile",
+            "cli.im",
+            "--moments=-1",
+            "--includepix=5,2",
+        ],
+        root,
     );
-    assert!(!root.join("two.mom").exists() && !root.join("thr.mom").exists());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (value, _) = moment_pixel(&root.join("cli.im"));
+    assert!((value - 3.0).abs() < 1e-6, "{value}");
+    // CASA takes one or two values; three are refused, writing nothing.
+    let reply = json_run(
+        immoments,
+        "immoments",
+        json!({"imagename": "cube.image", "outfile": "three.im", "includepix": [1, 2, 3]}),
+        root,
+    );
+    assert!(
+        matches!(&reply, TaskReply::Failed { parameter: Some(name), .. } if name == "includepix"),
+        "{reply:?}"
+    );
+    assert!(!root.join("three.im").exists());
 }
 
 #[test]

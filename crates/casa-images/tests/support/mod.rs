@@ -12,6 +12,32 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+/// A 4x4 direction image with one channel per value of `spectrum`, the
+/// same spectrum at every direction pixel, in Jy/beam.
+pub fn write_spectrum_cube(path: &Path, spectrum: &[f32]) {
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [1.2, -0.4],
+        [-2.0e-6, 3.0e-6],
+        [1.5, 1.5],
+    ));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.415e9,
+        1.0e3,
+        0.0,
+        1.415e9,
+    ));
+    let shape = vec![4, 4, spectrum.len()];
+    let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
+    let data = ArrayD::from_shape_fn(IxDyn(&shape), |index| spectrum[index[2]]);
+    image.put_slice(&data, &[0, 0, 0]).unwrap();
+    image.set_units("Jy/beam").unwrap();
+    image.save().unwrap();
+}
+
 /// A 4x4x3 direction-and-frequency image with a beam, whose pixels are
 /// `1..=48` times `scale`.
 pub fn write_image(path: &Path, scale: f32) {

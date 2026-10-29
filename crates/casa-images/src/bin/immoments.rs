@@ -48,14 +48,20 @@ fn one_moment(moments: &[i64]) -> Result<i32, TaskFailure> {
     }
 }
 
-/// CASA's `includepix`: `-1` includes every pixel, `[min, max]` a range.
+/// CASA's `includepix`, an inclusive range of the pixel values a moment
+/// reads: `-1` (or `[]`) includes every pixel; one value `b` is
+/// `[-|b|, |b|]`; two values are the range's ends, in either order
+/// (casacore's `MomentsBase::setInExCludeRange`; CASA 6.7.6.14 runs
+/// `includepix=-2` as `[-2, 2]` and `[5, 2]` as `[2, 5]`).
 fn include_range(values: &[f64]) -> Result<Option<[f64; 2]>, TaskFailure> {
-    match values {
+    match *values {
         [] => Ok(None),
-        [value] if *value < 0.0 => Ok(None),
-        [min, max] => Ok(Some([*min, *max])),
+        [value] if value == -1.0 => Ok(None),
+        [value] => Ok(Some([-value.abs(), value.abs()])),
+        [a, b] => Ok(Some([a.min(b), a.max(b)])),
         _ => Err(TaskFailure::validation(format!(
-            "includepix {values:?} is not implemented by casa-rs yet (#977); give -1 or [min, max]"
+            "includepix {values:?}: give -1 for every pixel, one value b for [-|b|, |b|], or two \
+             for a range, as CASA takes it"
         ))
         .at("includepix")),
     }
@@ -74,9 +80,18 @@ mod tests {
     }
 
     #[test]
-    fn includepix_is_minus_one_or_a_range() {
+    fn includepix_reads_as_casa_does() {
+        // Only -1 is CASA's "every pixel".
+        assert_eq!(include_range(&[]).unwrap(), None);
         assert_eq!(include_range(&[-1.0]).unwrap(), None);
+        // Any other single value b is [-|b|, |b|].
+        assert_eq!(include_range(&[-2.0]).unwrap(), Some([-2.0, 2.0]));
+        assert_eq!(include_range(&[2.0]).unwrap(), Some([-2.0, 2.0]));
+        assert_eq!(include_range(&[-1.5]).unwrap(), Some([-1.5, 1.5]));
+        assert_eq!(include_range(&[0.0]).unwrap(), Some([0.0, 0.0]));
+        // Two values are the ends, in either order.
         assert_eq!(include_range(&[0.1, 10.0]).unwrap(), Some([0.1, 10.0]));
-        assert!(include_range(&[5.0]).is_err());
+        assert_eq!(include_range(&[5.0, 2.0]).unwrap(), Some([2.0, 5.0]));
+        assert!(include_range(&[1.0, 2.0, 3.0]).is_err());
     }
 }
