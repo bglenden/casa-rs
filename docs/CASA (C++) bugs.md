@@ -99,6 +99,9 @@ Calibration behaviours casa-rs does not follow:
 [`incell` as two cells](#modifymodel-indexes-the-map-it-makes-of-two-cells),
 [the component-only model's unset width](#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment),
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
+Flagging behaviours casa-rs does not follow:
+[a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2433,3 +2436,35 @@ A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is
 physically sound for a continuum model, and casa-rs keeps it. A cube's start
 model must have the cube's spectral axis.
+
+## `flagmanager` gives the version a save renames the new comment
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatasks `private/task_flagmanager.py` (mode `save`,
+  lines 51–83)
+
+Saving a version under a name that already exists first renames the old
+version to `<name>.old.<seconds since 1970>`, so both stay restorable. The
+task then rewrites the old entry of `FLAG_VERSION_LIST` as
+`tmpname + ' : ' + comment`, where `comment` is the comment of the new save.
+CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
+1: {'name': 'v1', 'comment': 'second'}}` after saving `v1` with `'first'`
+and then `'second'`; the first comment is lost. casa-rs renames the version
+the same way and keeps its own comment (`flagmanager`'s
+`keep_existing_version`).
+
+## `flagdata`'s summary aborts on a correlation it cannot name
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatools `flagging/Flagging/FlagMSHandler.cc` (`open`) and
+  `FlagDataHandler.cc` (`generatePolarizationsMap`)
+
+With a polarization whose `CORR_TYPE` is RX, RY, LX and LY (casacore Stokes
+types 13 to 16), CASA 6.7.6.14's `flagdata(mode='summary')` warns
+"Correlation product unknown found: 13" and "The 0 th correlation is
+unknown: 13", then aborts the Python process with an uncaught
+`std::out_of_range` from `map::at`; there is no summary. casa-rs names
+every correlation by casacore's `Stokes::name`, so the summary keys those
+correlations `RX`, `RY`, `LX` and `LY` (`listobs::stokes_name`).

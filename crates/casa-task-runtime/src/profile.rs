@@ -236,9 +236,10 @@ pub fn resolve_profile(
                 canonical.insert(binding.name.clone(), value);
             }
             Err(error) => {
+                let note = error.binding_note(binding);
                 let mut diagnostic = Diagnostic::error(
                     DiagnosticCode::InvalidValue,
-                    format!("invalid value for {}: {error}", binding.name),
+                    format!("invalid value for {}: {error}{note}", binding.name),
                 )
                 .for_parameter(binding.name.clone());
                 diagnostic.location = profile.locations.get(&source_name).copied();
@@ -587,6 +588,15 @@ fn apply_migration_step(
                     parameter.clone(),
                     transform_value(value, transform, parameter)?,
                 );
+            }
+        }
+        MigrationStep::Set {
+            parameter,
+            value,
+            when,
+        } => {
+            if when.holds_for_overrides(parameters) {
+                parameters.insert(parameter.clone(), value.clone());
             }
         }
     }
@@ -1054,6 +1064,7 @@ mod tests {
             aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
+            unimplemented_forms: None,
         }
     }
 

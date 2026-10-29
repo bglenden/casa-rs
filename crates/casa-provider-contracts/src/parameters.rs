@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
+#[path = "migration_set.rs"]
+mod migration_set;
 
-pub use casa_signature::{UnimplementedParameter, python_repr};
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
 
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -729,6 +731,10 @@ pub struct SurfaceParameterBinding {
     /// Set for a CASA parameter casa-rs accepts only at its default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unimplemented: Option<UnimplementedParameter>,
+    /// Set for a CASA parameter whose other CASA forms casa-rs does not
+    /// take yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimplemented_forms: Option<UnimplementedForms>,
 }
 
 /// Profile kind pinned in the TOML header.
@@ -898,6 +904,15 @@ pub enum MigrationStep {
     Transform {
         parameter: String,
         transform: MigrationTransform,
+    },
+    /// Set `parameter` to `value` when the profile's explicit overrides
+    /// satisfy `when`: a value that moves between parameters (#931). `when`
+    /// holds only of values a profile set, so an omitted value still adopts
+    /// the current default (ADR-0006); see [`Predicate::holds_for_overrides`].
+    Set {
+        parameter: String,
+        value: ParameterValue,
+        when: Predicate,
     },
 }
 
@@ -2057,9 +2072,16 @@ fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractVal
             let current_name = match step {
                 MigrationStep::Rename { to, .. } => Some(to),
                 MigrationStep::ReplaceValue { parameter, .. }
-                | MigrationStep::Transform { parameter, .. } => Some(parameter),
+                | MigrationStep::Transform { parameter, .. }
+                | MigrationStep::Set { parameter, .. } => Some(parameter),
                 MigrationStep::Remove { .. } => None,
             };
+            if let MigrationStep::Set {
+                parameter, when, ..
+            } = step
+            {
+                migration_set::validate_condition(surface, parameter, when, errors);
+            }
             if let Some(name) = current_name
                 && !known.contains(name.as_str())
             {
@@ -2193,6 +2215,7 @@ mod tests {
             aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
+            unimplemented_forms: None,
         }
     }
 

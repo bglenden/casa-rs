@@ -154,13 +154,15 @@
     },
     {
       "id": "flagdata.action",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "action",
       "value_domain": {
         "kind": "choice",
         "values": [
-          "flag",
-          "unflag"
+          "",
+          "apply",
+          "calculate",
+          "none"
         ]
       },
       "normalization": {
@@ -170,28 +172,34 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Manual mode flagging action.",
-        "details": null,
+        "summary": "CASA's flagdata action: 'apply' writes the flags, 'calculate' computes them without writing, 'none' or '' does neither.",
+        "details": "Revision 2 takes CASA's actions (#931); unflagging is CASA's mode 'unflag'.",
         "examples": [
-          "flag"
+          "apply"
         ]
       },
       "persistence_class": "profile"
     },
     {
       "id": "flagdata.mode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "antint",
           "clip",
+          "elevation",
           "extend",
+          "list",
           "manual",
+          "manualflag",
           "quack",
           "rflag",
+          "shadow",
           "summary",
-          "tfcrop"
+          "tfcrop",
+          "unflag"
         ]
       },
       "normalization": {
@@ -1268,7 +1276,7 @@
     },
     {
       "id": "parameter.archivefiles",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "archivefiles",
       "value_domain": {
         "kind": "array",
@@ -1276,7 +1284,7 @@
           "kind": "path",
           "resource_kind": "archive"
         },
-        "min_items": 1,
+        "min_items": 0,
         "max_items": null,
         "allow_scalar": true
       },
@@ -1510,11 +1518,12 @@
     },
     {
       "id": "parameter.bandname",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "bandname",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "",
           "4",
           "C",
           "K",
@@ -1524,8 +1533,7 @@
           "Q",
           "S",
           "U",
-          "X",
-          "none"
+          "X"
         ]
       },
       "normalization": {
@@ -3096,7 +3104,7 @@
     },
     {
       "id": "parameter.freqdev",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "freqdev",
       "value_domain": {
         "kind": "optional",
@@ -3104,6 +3112,7 @@
           "kind": "float"
         },
         "states": [
+          "",
           "none"
         ]
       },
@@ -3115,7 +3124,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag spectral threshold.",
-        "details": null,
+        "details": "Scaled by freqdevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -5542,13 +5551,15 @@
     },
     {
       "id": "parameter.quackmode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "quackmode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "beg",
-          "end"
+          "end",
+          "endb",
+          "tail"
         ]
       },
       "normalization": {
@@ -5558,7 +5569,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Quack scan edge.",
+        "summary": "Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first.",
         "details": null,
         "examples": [
           "beg"
@@ -6815,10 +6826,10 @@
     },
     {
       "id": "parameter.timebin",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "timebin",
       "value_domain": {
-        "kind": "float"
+        "kind": "string"
       },
       "normalization": {
         "kind": "identity"
@@ -6827,10 +6838,11 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Time bin.",
+        "summary": "Averaging time bin, a time quantity as CASA writes it.",
         "details": null,
         "examples": [
-          "1"
+          "'0s'",
+          "'10s'"
         ]
       },
       "persistence_class": "profile"
@@ -6859,7 +6871,7 @@
     },
     {
       "id": "parameter.timedev",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "timedev",
       "value_domain": {
         "kind": "optional",
@@ -6867,6 +6879,7 @@
           "kind": "float"
         },
         "states": [
+          "",
           "none"
         ]
       },
@@ -6878,7 +6891,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit RFlag time threshold.",
-        "details": null,
+        "details": "Scaled by timedevscale, as CASA scales it. '' and 'none' are absence, and so is CASA's [], which reads as '': RFlag computes the threshold.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -8887,6 +8900,978 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Filter the single-dish image's high spatial frequencies out.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.autocorr",
+      "semantic_revision": 1,
+      "casa_name": "autocorr",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Flag only the autocorrelations of the selection.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.inpfile",
+      "semantic_revision": 1,
+      "casa_name": "inpfile",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {"summary": "File, files or list of flag commands to apply in list mode.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.reason",
+      "semantic_revision": 1,
+      "casa_name": "reason",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Select list-mode flag commands by their reason.", "details": null, "examples": ["'any'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.tbuff",
+      "semantic_revision": 1,
+      "casa_name": "tbuff",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Time buffer in seconds that pads each flag command's time range.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.clipminmax",
+      "semantic_revision": 1,
+      "casa_name": "clipminmax",
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": 2, "allow_scalar": false},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Range of data values that clip mode keeps; values outside it are flagged.", "details": null, "examples": ["[]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.clipoutside",
+      "semantic_revision": 1,
+      "casa_name": "clipoutside",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Clip outside clipminmax's range rather than inside it.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.channelavg",
+      "semantic_revision": 1,
+      "casa_name": "channelavg",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average channels before clipping.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.timeavg",
+      "semantic_revision": 1,
+      "casa_name": "timeavg",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average time before clipping.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.quackincrement",
+      "semantic_revision": 1,
+      "casa_name": "quackincrement",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Quack successive intervals, taking existing flags into account.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.tolerance",
+      "semantic_revision": 1,
+      "casa_name": "tolerance",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Shadowing in metres that shadow mode tolerates.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.addantenna",
+      "semantic_revision": 1,
+      "casa_name": "addantenna",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Antennas, from a file or dictionary, that shadow mode adds.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.lowerlimit",
+      "semantic_revision": 1,
+      "casa_name": "lowerlimit",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Lowest elevation, in degrees, that elevation mode keeps.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.upperlimit",
+      "semantic_revision": 1,
+      "casa_name": "upperlimit",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Highest elevation, in degrees, that elevation mode keeps.", "details": null, "examples": ["90.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.ntime",
+      "semantic_revision": 1,
+      "casa_name": "ntime",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Time chunk the automatic modes analyse: 'scan' or a time.", "details": null, "examples": ["'scan'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.combinescans",
+      "semantic_revision": 1,
+      "casa_name": "combinescans",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Let the automatic modes' time chunks span scans.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.timefit",
+      "semantic_revision": 1,
+      "casa_name": "timefit",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fit tfcrop makes along time: 'line' or 'poly'.", "details": null, "examples": ["'line'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.freqfit",
+      "semantic_revision": 1,
+      "casa_name": "freqfit",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fit tfcrop makes along frequency: 'line' or 'poly'.", "details": null, "examples": ["'poly'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.maxnpieces",
+      "semantic_revision": 1,
+      "casa_name": "maxnpieces",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Number of pieces in tfcrop's piecewise polynomial fits.", "details": null, "examples": ["7"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.flagdimension",
+      "semantic_revision": 1,
+      "casa_name": "flagdimension",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Directions tfcrop flags along: 'freq', 'time', 'freqtime' or 'timefreq'.", "details": null, "examples": ["'freqtime'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.usewindowstats",
+      "semantic_revision": 1,
+      "casa_name": "usewindowstats",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Sliding-window statistics tfcrop adds: 'none', 'sum', 'std' or 'both'.", "details": null, "examples": ["'none'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.halfwin",
+      "semantic_revision": 1,
+      "casa_name": "halfwin",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Half-width of tfcrop's sliding window.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.winsize",
+      "semantic_revision": 1,
+      "casa_name": "winsize",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Number of time steps in rflag's sliding window.", "details": null, "examples": ["3"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.timedevscale",
+      "semantic_revision": 1,
+      "casa_name": "timedevscale",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Factor that scales rflag's time-deviation threshold.", "details": null, "examples": ["5.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.freqdevscale",
+      "semantic_revision": 1,
+      "casa_name": "freqdevscale",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Factor that scales rflag's frequency-deviation threshold.", "details": null, "examples": ["5.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.spectralmax",
+      "semantic_revision": 1,
+      "casa_name": "spectralmax",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "rflag flags a whole spectrum whose deviation exceeds this.", "details": null, "examples": ["1000000.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.spectralmin",
+      "semantic_revision": 1,
+      "casa_name": "spectralmin",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "rflag flags a whole spectrum whose deviation is below this.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.antint_ref_antenna",
+      "semantic_revision": 1,
+      "casa_name": "antint_ref_antenna",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Antenna whose baselines antint mode examines.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.minchanfrac",
+      "semantic_revision": 1,
+      "casa_name": "minchanfrac",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fraction of flagged channels at which antint flags an integration.", "details": null, "examples": ["0.6"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.growtime",
+      "semantic_revision": 1,
+      "casa_name": "growtime",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Percentage of flagged time at which extend mode flags a whole channel.", "details": null, "examples": ["50.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.growfreq",
+      "semantic_revision": 1,
+      "casa_name": "growfreq",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Percentage of flagged channels at which extend mode flags a whole time step.", "details": null, "examples": ["50.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.growaround",
+      "semantic_revision": 1,
+      "casa_name": "growaround",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Extend flags to points mostly surrounded by flags.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.flagneartime",
+      "semantic_revision": 1,
+      "casa_name": "flagneartime",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Flag the time steps either side of each flagged one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.flagnearfreq",
+      "semantic_revision": 1,
+      "casa_name": "flagnearfreq",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Flag the channels either side of each flagged one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.minrel",
+      "semantic_revision": 1,
+      "casa_name": "minrel",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Smallest flagged fraction a summary entry reports.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.maxrel",
+      "semantic_revision": 1,
+      "casa_name": "maxrel",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Largest flagged fraction a summary entry reports.", "details": null, "examples": ["1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.minabs",
+      "semantic_revision": 1,
+      "casa_name": "minabs",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Smallest flag count a summary entry reports.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.maxabs",
+      "semantic_revision": 1,
+      "casa_name": "maxabs",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Largest flag count a summary entry reports; -1 for no limit.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.spwchan",
+      "semantic_revision": 1,
+      "casa_name": "spwchan",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Report flags per spectral window and channel in the summary.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.spwcorr",
+      "semantic_revision": 1,
+      "casa_name": "spwcorr",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Report flags per spectral window and correlation in the summary.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.basecnt",
+      "semantic_revision": 1,
+      "casa_name": "basecnt",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Report flags per baseline in the summary.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.fieldcnt",
+      "semantic_revision": 1,
+      "casa_name": "fieldcnt",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Break the summary down per field.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.name",
+      "semantic_revision": 1,
+      "casa_name": "name",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Name the summary's dictionary carries.", "details": null, "examples": ["'Summary'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.display",
+      "semantic_revision": 1,
+      "casa_name": "display",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Show data or reports while flagging: '', 'data', 'report' or 'both'.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.savepars",
+      "semantic_revision": 1,
+      "casa_name": "savepars",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Save the flag commands to FLAG_CMD or to outfile.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.cmdreason",
+      "semantic_revision": 1,
+      "casa_name": "cmdreason",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Reason saved with the flag commands.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "savepars.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "File that receives the saved flag commands; empty for the FLAG_CMD table.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "savepars.overwrite",
+      "semantic_revision": 1,
+      "casa_name": "overwrite",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Let savepars replace an existing command file.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "flagdata.writeflags",
+      "semantic_revision": 1,
+      "casa_name": "writeflags",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Write the flags the automatic modes compute to the MeasurementSet.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.createmms",
+      "semantic_revision": 1,
+      "casa_name": "createmms",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Write a multi-MS rather than one MeasurementSet.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.separationaxis",
+      "semantic_revision": 1,
+      "casa_name": "separationaxis",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Axis a multi-MS is partitioned along.", "details": null, "examples": ["'auto'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.numsubms",
+      "semantic_revision": 1,
+      "casa_name": "numsubms",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Number of sub-MeasurementSets in a multi-MS: 'auto' or a count.", "details": null, "examples": ["'auto'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.tileshape",
+      "semantic_revision": 1,
+      "casa_name": "tileshape",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 1, "max_items": 3, "allow_scalar": false},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Tile shape of the output data columns.", "details": null, "examples": ["[0]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.realmodelcol",
+      "semantic_revision": 1,
+      "casa_name": "realmodelcol",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Write a virtual MODEL column as a real one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.usewtspectrum",
+      "semantic_revision": 1,
+      "casa_name": "usewtspectrum",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Create WEIGHT_SPECTRUM and SIGMA_SPECTRUM in the output.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.combinespws",
+      "semantic_revision": 1,
+      "casa_name": "combinespws",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Combine the selected spectral windows into one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.chanaverage",
+      "semantic_revision": 1,
+      "casa_name": "chanaverage",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average chanbin channels into one.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.hanning",
+      "semantic_revision": 1,
+      "casa_name": "hanning",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Hanning-smooth the spectra.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.regridms",
+      "semantic_revision": 1,
+      "casa_name": "regridms",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Regrid the spectral axis.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.mode",
+      "semantic_revision": 1,
+      "casa_name": "mode",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "How the regridded spectral axis is given: 'channel', 'velocity', 'frequency' or 'channel_b'.", "details": null, "examples": ["'channel'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.nchan",
+      "semantic_revision": 1,
+      "casa_name": "nchan",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Number of channels of the regridded spectral axis; -1 for all.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.start",
+      "semantic_revision": 1,
+      "casa_name": "start",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "First channel of the regridded spectral axis.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.width",
+      "semantic_revision": 1,
+      "casa_name": "width",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Channel width of the regridded spectral axis.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.nspw",
+      "semantic_revision": 1,
+      "casa_name": "nspw",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Number of spectral windows the regridded axis is split into.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.interpolation",
+      "semantic_revision": 1,
+      "casa_name": "interpolation",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Interpolation the spectral regridding uses.", "details": null, "examples": ["'linear'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.outframe",
+      "semantic_revision": 1,
+      "casa_name": "outframe",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Reference frame of the regridded spectral axis; empty keeps the input's.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.veltype",
+      "semantic_revision": 1,
+      "casa_name": "veltype",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Velocity definition: 'radio' or 'optical'.", "details": null, "examples": ["'radio'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "regridms.preaverage",
+      "semantic_revision": 1,
+      "casa_name": "preaverage",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average channels before regridding to wider ones.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.timeaverage",
+      "semantic_revision": 1,
+      "casa_name": "timeaverage",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average in time over timebin.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.timespan",
+      "semantic_revision": 1,
+      "casa_name": "timespan",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Let time averages span 'scan', 'state' or both.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.maxuvwdistance",
+      "semantic_revision": 1,
+      "casa_name": "maxuvwdistance",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Largest UVW change, in metres, a time average may span.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.docallib",
+      "semantic_revision": 1,
+      "casa_name": "docallib",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Apply calibration from callib on the fly.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.douvcontsub",
+      "semantic_revision": 1,
+      "casa_name": "douvcontsub",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Subtract the continuum, as uvcontsub does.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvcontsub.want_cont",
+      "semantic_revision": 1,
+      "casa_name": "want_cont",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Write the continuum fit rather than the subtracted data.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvcontsub.denoising_lib",
+      "semantic_revision": 1,
+      "casa_name": "denoising_lib",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fit the continuum with the GSL denoising library.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvcontsub.nthreads",
+      "semantic_revision": 1,
+      "casa_name": "nthreads",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Threads for the continuum fit.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvcontsub.niter",
+      "semantic_revision": 1,
+      "casa_name": "niter",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Iterations of the continuum's re-weighted linear fit.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.disableparallel",
+      "semantic_revision": 1,
+      "casa_name": "disableparallel",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "CASA's internal control of parallel processing.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.ddistart",
+      "semantic_revision": 1,
+      "casa_name": "ddistart",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "CASA's internal first data-description id.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.taql",
+      "semantic_revision": 1,
+      "casa_name": "taql",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "TaQL expression that selects rows.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.monolithic_processing",
+      "semantic_revision": 1,
+      "casa_name": "monolithic_processing",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "CASA's internal control of multi-MS processing.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.reindex",
+      "semantic_revision": 1,
+      "casa_name": "reindex",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Re-index the output's subtable ids from zero.", "details": null, "examples": ["true"]},
       "persistence_class": "profile"
     }
   ]

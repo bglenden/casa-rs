@@ -6,9 +6,11 @@ use std::process::ExitCode;
 
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, MeasurementSet,
-    delete_flag_version, flagmanager_task_schema_bundle, list_flag_versions, ms_task_success,
-    rename_flag_version, restore_flag_version, save_flag_version, task_flag_merge,
+    delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
+    list_flag_versions, ms_task_success, rename_flag_version, restore_flag_version,
+    save_flag_version, task_flag_merge,
 };
+use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -31,8 +33,9 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let vis = task.path("vis")?;
     let request = FlagManagerTaskRequest {
-        vis: task.path("vis")?,
+        vis: vis.clone(),
         mode: task.required_text("mode")?.to_ascii_lowercase(),
         versionname: task.text("versionname")?,
         oldname: task.text("oldname")?,
@@ -41,10 +44,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     };
     let result = execute(request)?;
     // CASA's `list` returns the versions; the other modes return None.
-    match &result {
-        FlagManagerTaskResult::Versions(versions) => ms_task_success(versions, &result),
-        FlagManagerTaskResult::Mutation(_) => ms_task_success(&(), &result),
-    }
+    let value = match &result {
+        FlagManagerTaskResult::Versions(versions) => flagmanager_list_record(versions, &vis),
+        FlagManagerTaskResult::Mutation(_) => CasaValue::None,
+    };
+    ms_task_success(value, &result)
 }
 
 fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {
@@ -74,6 +78,7 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         "save" => {
             let name = required("versionname", request.versionname.clone())?;
             let comment = request.comment.as_deref().unwrap_or("");
+            keep_existing_version(&ms, &name)?;
             save_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
             mutation("save", Some(name), None)
         }
@@ -101,6 +106,30 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         ))
         .at("mode")),
     }
+}
+
+/// CASA's task keeps a version that a save would replace: it is renamed
+/// `<name>.old.<seconds since 1970>` first, so the save adds a new version
+/// and the old flags stay restorable (`task_flagmanager.py`). CASA writes
+/// the new comment onto the renamed version; casa-rs keeps its own (see
+/// `docs/CASA (C++) bugs.md`).
+fn keep_existing_version(ms: &MeasurementSet, name: &str) -> Result<(), TaskFailure> {
+    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    // `main`, the working copy, is listed but is no saved version.
+    let Some(existing) = list_flag_versions(ms)
+        .map_err(failed)?
+        .into_iter()
+        .skip(1)
+        .find(|version| version.name == name)
+    else {
+        return Ok(());
+    };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let kept = format!("{name}.old.{seconds}");
+    tracing::warn!("Version name '{name}' already exist. Will rename it to {kept}");
+    rename_flag_version(ms, name, &kept, &existing.comment).map_err(failed)
 }
 
 #[cfg(test)]

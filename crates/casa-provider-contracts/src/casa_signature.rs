@@ -104,6 +104,28 @@ impl UnimplementedParameter {
     }
 }
 
+/// CASA forms of a parameter casa-rs implements that it does not take yet,
+/// until `issue` implements them (#931): flagdata's `timedev` as
+/// per-field thresholds or a threshold file. Such a value has a type the
+/// binding's concept refuses, and the refusal names `issue`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UnimplementedForms {
+    /// The casa-rs GitHub issue that tracks implementing the forms.
+    pub issue: u32,
+    /// The forms, as the refusal names them.
+    pub forms: String,
+}
+
+impl UnimplementedForms {
+    /// What a refusal of a value of the wrong type adds.
+    pub fn refusal(&self) -> String {
+        format!(
+            "CASA's {} are not implemented by casa-rs yet (#{})",
+            self.forms, self.issue
+        )
+    }
+}
+
 /// `value` as Python writes it, the spelling CASA's signatures show.
 pub fn python_repr(value: &ParameterValue) -> String {
     match value {
@@ -215,6 +237,19 @@ pub(super) fn validate_unimplemented(
 ) {
     let surface = bundle.surface.id();
     for binding in bundle.surface.bindings() {
+        if binding
+            .unimplemented_forms
+            .as_ref()
+            .is_some_and(|forms| forms.forms.trim().is_empty())
+        {
+            errors.push(
+                ContractValidationError::new(
+                    "unimplemented_forms",
+                    "a binding's unimplemented forms must say which forms they are",
+                )
+                .at(surface, Some(&binding.name)),
+            );
+        }
         let Some(unimplemented) = &binding.unimplemented else {
             continue;
         };

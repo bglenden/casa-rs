@@ -4,10 +4,11 @@ import ast
 import importlib.util
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from casars import parameters, tasks
-from casars.tasks import _catalog
+from casars.tasks import _catalog, _runner
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -58,15 +59,17 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
 
 
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
+    # importvla takes CASA's signature (#931 PR 4c): its wrapper runs the
+    # task through the runner's `run` and returns CASA's value.
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, values: dict[str, Any]) -> object:
+    def fake_run(task: str, **values: Any) -> object:
         captured.update(task=task, overrides=values)
-        return object()
+        return SimpleNamespace(value=None)
 
-    monkeypatch.setattr(_catalog, "_run", fake_run)
+    monkeypatch.setattr(_runner, "run", fake_run)
     archivefiles = ["raw/one.exp", "raw/two.xp1"]
-    tasks.importvla(archivefiles=archivefiles)
+    assert tasks.importvla(archivefiles=archivefiles) is None
 
     assert captured["task"] == "importvla"
     assert captured["overrides"] == {"archivefiles": archivefiles}

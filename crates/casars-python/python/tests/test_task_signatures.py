@@ -32,16 +32,11 @@ CASA_RS_ONLY = {"calibrate", "msexplore"}
 PENDING = {
     "applycal": "#931 PR 4d",
     "bandpass": "#931 PR 4d",
-    "flagdata": "#931 PR 4c",
-    "flagmanager": "#931 PR 4c",
     "fluxscale": "#931 PR 4d",
     "gaincal": "#931 PR 4d",
     "gencal": "#931 PR 4d",
     "imager": "#931 PR 4e, as tclean",
-    "importvla": "#931 PR 4c",
-    "mstransform": "#931 PR 4c",
     "plotms": "its own decision (#931)",
-    "split": "#931 PR 4c",
 }
 
 
