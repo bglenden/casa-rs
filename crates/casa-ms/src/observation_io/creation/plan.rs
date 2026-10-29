@@ -1,64 +1,53 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! A new MeasurementSet v2 planned from observations, then written:
-//! subtables from the catalogue, and one MAIN row per grid cell (or per
-//! acquisition, padding omitted), partition after partition, each
-//! partition's rows in time and baseline order.
+//! subtables from the merged catalogue, and one MAIN row per grid cell (or
+//! per acquisition, padding omitted), input after input, each input's
+//! partitions in output-partition order and each partition's rows in time
+//! and baseline order.
 
 use std::fs;
 use std::path::Path;
 
-use casa_observation::{
-    Catalogue, Observation, ObservationError, ObservationId, Roles, TimeBaselineGrid,
-    VisibilityUnits,
-};
+use casa_observation::{Catalogue, ObservationError, Roles, VisibilityUnits};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_types::measures::EpochRef;
 use casa_types::measures::direction::DirectionRef;
-use ndarray::Axis;
 
-use super::msv2_rows::{MainRows, Occupancy, Spans, acquired};
+use super::combine::{self, Combined};
+use super::inputs::Input;
+use super::msv2_pointing::{self, Pointed};
+use super::msv2_rows::{MainRows, Occupancy};
 use super::pointing_plan::{self, PointingPlan};
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
-    losses, msv2_pointing, msv2_tables,
+    losses, msv2_tables, occupancy,
 };
 use crate::observation_io::update::{request_error, storage};
-use crate::observation_io::{OpenOptions, open};
 use crate::write_session::MeasurementSetCreateTarget;
 use crate::{MeasurementSet, OptionalMainColumn};
-
-/// The occupancy pass's roles: the weights, whose non-finite values are
-/// padding's one mark.
-const WEIGHTS: Roles = Roles {
-    values: false,
-    flags: false,
-    weights: true,
-    uvw: false,
-    time_centroid: false,
-    interval: false,
-    exposure: false,
-    scan: false,
-};
-
-/// Seconds per day, for MSv2 `TIME` (MJD seconds).
-const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// A new MeasurementSet v2 planned from observations, checked before
 /// anything is written ([`CreationPlan::new`]) and then written
 /// ([`CreationPlan::write`]).
 ///
-/// The selected data groups ([`CreationOptions::data_groups`]) become
+/// The inputs' catalogues are merged as CASA's `concat` merges
+/// MeasurementSets' subtables (`casa_observation::merge`), their scans
+/// offset as it offsets them, and their partitions combined by the key the
+/// MSv2 reader partitions rows by; a combined partition's inputs must not
+/// acquire one time and baseline twice. The selected data groups
+/// ([`CreationOptions::data_groups`], by default every input's) become
 /// `DATA` (`base`), `CORRECTED_DATA` (`corrected`) and `MODEL_DATA`
-/// (`model`), sharing the first group's flags, weights and UVW. Partitions
-/// sharing a spectral window, polarization or intents share their
-/// subtable rows. Every grid cell becomes one row; padding becomes a row
-/// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
-/// interval, no exposure and `FLAG_ROW` false (its flags already exclude
-/// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
-/// row, which reproduces an original sparse MSv2. `WEIGHT` is the input's
-/// times its [`CreationInput::weight_scale`], and `SIGMA` is derived from
-/// it ([`Loss::SigmaDerived`]), so the caller must accept
-/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the input's: an
+/// (`model`), sharing the first group's flags, weights and UVW; an input
+/// without `corrected` is written from its `base`, and one without `model`
+/// with CASA's initial model. Every grid cell of one input becomes one
+/// row; padding becomes a row whose every `FLAG` is set, with NaN data,
+/// weights and `UVW`, the grid's interval, no exposure and `FLAG_ROW` false
+/// (its flags already exclude it), as D23 decided. With
+/// [`PaddingRows::Omitted`], which partitions combined from several inputs
+/// need, padding becomes no row. `WEIGHT` is the input's times its
+/// [`CreationInput::weight_scale`], and `SIGMA` is derived from it
+/// ([`Loss::SigmaDerived`]), so the caller must accept
+/// [`LossKind::Sigma`](super::LossKind::Sigma). Names are the inputs': an
 /// MSv4 converted from an MSv2 holds XRADIO's suffixed names
 /// (`NAME_FIELDID`, `NAME_STATION`, ...), so a round trip renames.
 ///
@@ -66,100 +55,128 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 /// padding omitted it is the acquisitions, which only the weights record,
 /// so the plan reads them to count; otherwise it is the grids' cells.
 pub struct CreationPlan {
-    observation: Box<dyn Observation>,
-    weight_scale: f32,
-    groups: Vec<String>,
-    /// Each group's column, and the units it declares.
+    inputs: Vec<Input>,
+    pointing: Vec<PointingPlan>,
+    combined: Combined,
+    /// Each data column, and the units it declares.
     columns: Vec<(OptionalMainColumn, Option<String>)>,
     losses: Vec<Loss>,
-    pointing: PointingPlan,
     occupancy: Occupancy,
+    output: Catalogue,
     options: CreationOptions,
 }
 
 impl CreationPlan {
-    /// Open `inputs` and plan the MeasurementSet created from them, reading
-    /// what the plan must know before writing: each input's losses, its
-    /// pointing and, with padding omitted, its acquisitions.
+    /// Open `inputs` and plan the MeasurementSet created from them, in
+    /// input order, reading what the plan must know before writing: each
+    /// input's losses, its pointing, its grids and, with padding omitted,
+    /// its acquisitions.
     ///
     /// # Errors
     ///
     /// Nothing is written by a plan. A weight scale that is not finite and
-    /// positive, or no input ([`ObservationError::InvalidRequest`]); more
-    /// than one input, for now ([`ObservationError::Unsupported`]); a loss
-    /// not accepted ([`ObservationError::InvalidRequest`]); fields that
-    /// follow an ephemeris or whose direction is a polynomial in time; a
-    /// data group without an MSv2 column, or selected twice; times in
-    /// another scale than UTC; feeds other than 0; a window without
-    /// channels; fields in another frame than J2000; a scan without a
-    /// casacore number; feeds whose receptors differ; a correlation product
-    /// the feeds cannot name (a Stokes product, or a receptor they lack);
-    /// one column's groups in different units; an input with nothing to
-    /// write. Weights that vary over channels (an MSv2 `WEIGHT` holds one
+    /// positive, no input, or padding flagged where partitions combine
+    /// ([`ObservationError::InvalidRequest`]); a loss not accepted
+    /// ([`ObservationError::InvalidRequest`]); fields that follow an
+    /// ephemeris or whose direction is a polynomial in time; a data group
+    /// without an MSv2 column, or selected twice; times in another scale
+    /// than UTC; feeds other than 0; a window without channels; fields in
+    /// another frame than J2000; a scan without a casacore number; feeds
+    /// whose receptors differ; a correlation product the feeds cannot name
+    /// (a Stokes product, or a receptor they lack); one column's groups in
+    /// different units; what the merge and the combination refuse; a time
+    /// and baseline two inputs both acquire, or two fields or scans at one
+    /// time, or two intervals, of a combined partition; inputs with nothing
+    /// to write. Weights that vary over channels (an MSv2 `WEIGHT` holds one
     /// per correlation), refused here when padding is omitted and otherwise
     /// when writing reaches them. Any error opening or reading an input.
     pub fn new(
         inputs: &[CreationInput],
         options: &CreationOptions,
     ) -> Result<Self, ObservationError> {
-        let input = match inputs {
-            [] => return Err(request_error("a MeasurementSet is created from an input")),
-            [input] => input,
-            _ => {
-                return Err(ObservationError::Unsupported {
-                    what: "creating a MeasurementSet from several observations",
-                });
-            }
-        };
-        let weight_scale = weight_scale(input)?;
-        let source = input.path.as_path();
-        let observation = open(source, &OpenOptions::default())?;
-        let catalogue = observation.catalogue();
-        let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-        let columns = groups
+        if inputs.is_empty() {
+            return Err(request_error("a MeasurementSet is created from an input"));
+        }
+        let inputs = inputs
+            .iter()
+            .map(Input::open)
+            .collect::<Result<Vec<_>, _>>()?;
+        let groups = selected_groups(&inputs, options.data_groups.as_deref())?;
+        let names = groups
             .iter()
             .map(|group| column(group))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut found = losses::inventory(source, catalogue, &groups, losses::Store::Msv2)?;
-        let (pointing, lost) = pointing_plan::plan(
-            source,
-            observation.as_ref(),
-            losses::Store::Msv2,
-            options.batch_bytes,
-        )?;
-        found.extend(lost);
+        let mut found = Vec::new();
+        let mut pointing = Vec::with_capacity(inputs.len());
+        for input in &inputs {
+            let catalogue = input.observation.catalogue();
+            found.extend(losses::inventory(
+                &input.path,
+                catalogue,
+                &groups,
+                losses::Store::Msv2,
+            )?);
+            let (plan, lost) = pointing_plan::plan(
+                &input.path,
+                input.observation.as_ref(),
+                losses::Store::Msv2,
+                options.batch_bytes,
+            )?;
+            found.extend(lost);
+            pointing.push(plan);
+        }
         found.push(Loss::SigmaDerived);
-        found.sort();
-        losses::refuse_unaccepted(&found, &options.accept)?;
-        refuse_unwritable(catalogue)?;
-        // What writing the subtables defaults or leaves out, found by writing
-        // them in memory.
-        found.extend(msv2_tables::rehearse(
-            catalogue,
-            &spans(observation.as_ref(), &groups[0])?,
-        )?);
         found.sort();
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
-        let columns = columns
+        for input in &inputs {
+            refuse_unwritable(input.observation.catalogue())?;
+        }
+        let combined = combine::combine(&inputs, &groups, &options.tolerance)?;
+        if options.padding == PaddingRows::Flagged
+            && combined
+                .contributors
+                .iter()
+                .any(|contributors| contributors.len() > 1)
+        {
+            return Err(request_error(
+                "partitions combined from several inputs are written with padding omitted \
+                 (PaddingRows::Omitted): a padded row of one input could fall on an \
+                 acquisition of another",
+            ));
+        }
+        refuse_unwritable(&combined.catalogue)?;
+        found.extend(combined.losses.iter().cloned());
+        let grids = occupancy::grids(&inputs, &combined)?;
+        // What writing the subtables defaults or leaves out, found by writing
+        // them in memory, and where they put each partition.
+        let (layout, rehearsed) =
+            msv2_tables::rehearse(&combined.catalogue, &grids.spans, &combined.intents)?;
+        found.extend(rehearsed);
+        found.sort();
+        found.dedup();
+        losses::refuse_unaccepted(&found, &options.accept)?;
+        let columns = names
             .into_iter()
-            .zip(&groups)
-            .map(|(column, group)| Ok((column, group_unit(catalogue, group)?)))
-            .collect::<Result<Vec<_>, ObservationError>>()?;
-        let occupancy = occupancy(observation.as_ref(), &groups[0], options)?;
+            .zip(&combined.units)
+            .map(|(name, units)| (name, unit(units)))
+            .collect();
+        let output = written(&combined, &layout);
+        let occupancy =
+            grids.occupancy(&inputs, &combined, (options.padding, options.batch_bytes))?;
         if occupancy.rows.iter().sum::<usize>() == 0 {
             return Err(request_error(
-                "the source holds nothing to write as an MSv2 row",
+                "the inputs hold nothing to write as an MSv2 row",
             ));
         }
         Ok(Self {
-            observation,
-            weight_scale,
-            groups,
+            inputs,
+            pointing,
+            combined,
             columns,
             losses: found,
-            pointing,
             occupancy,
+            output,
             options: options.clone(),
         })
     }
@@ -171,8 +188,27 @@ impl CreationPlan {
         &self.losses
     }
 
+    /// What reopening the MeasurementSet written gives, entity by entity:
+    /// the merged antennas, fields, sources, states, processors and
+    /// observing sessions, the windows a partition uses, the output's scans,
+    /// and its partitions in the MSv2 reader's order with the states their
+    /// rows are written with. A member written as MSv2's default
+    /// ([`Loss::Defaulted`]) stays unstated here.
+    #[must_use]
+    pub fn output(&self) -> &Catalogue {
+        &self.output
+    }
+
+    /// Entities the merge appended because a predicate lacked what it
+    /// needs, each said once.
+    #[must_use]
+    pub fn notices(&self) -> &[String] {
+        &self.combined.notices
+    }
+
     /// Write the planned MeasurementSet at `destination`, by one thread, in
-    /// a staging directory renamed into place when complete.
+    /// a staging directory renamed into place when complete. No input is
+    /// written.
     ///
     /// # Errors
     ///
@@ -206,10 +242,9 @@ impl CreationPlan {
     }
 
     /// Create the MeasurementSet at `staging`: its subtables, then MAIN's
-    /// rows from a lockstep read of every partition.
+    /// rows from a lockstep read of every input partition.
     fn create(&self, staging: &Path) -> Result<CreationReport, ObservationError> {
-        let observation = self.observation.as_ref();
-        let catalogue = observation.catalogue();
+        let catalogue = &self.combined.catalogue;
         let optional: Vec<OptionalMainColumn> =
             self.columns.iter().map(|(column, _)| *column).collect();
         let builder = msv2_tables::builder(catalogue, &optional);
@@ -223,8 +258,24 @@ impl CreationPlan {
                     .map_err(storage)?;
             }
         }
-        let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &self.occupancy.spans)?;
-        msv2_pointing::write(&mut ms, observation, &self.pointing)?;
+        let (layout, _) = msv2_tables::populate(
+            &mut ms,
+            catalogue,
+            &self.occupancy.spans,
+            &self.combined.intents,
+        )?;
+        let pointed: Vec<Pointed<'_>> = self
+            .inputs
+            .iter()
+            .zip(&self.pointing)
+            .zip(&self.combined.rows)
+            .map(|((input, plan), map)| Pointed {
+                observation: input.observation.as_ref(),
+                plan,
+                antennas: &map.antennas,
+            })
+            .collect();
+        msv2_pointing::write(&mut ms, &pointed)?;
         let names = optional.iter().map(|column| column.name()).collect();
         let mut main = MainRows::start(
             staging,
@@ -232,39 +283,69 @@ impl CreationPlan {
             names,
             &self.occupancy,
             layout,
-            (self.options.padding, self.weight_scale),
+            self.options.padding,
         )?;
         let mut report = CreationReport::default();
-        for id in catalogue.partition_ids() {
-            let read = lockstep::read(
-                observation,
-                id,
-                &self.groups,
-                Roles::ALL,
-                (self.options.batch_bytes, None),
-                |batches| main.push(batches),
-            )?;
-            report.partitions += 1;
-            report.batches += read.batches;
-            report.samples += read.samples;
+        for (input, map) in self.inputs.iter().zip(&self.combined.rows) {
+            let observation = input.observation.as_ref();
+            let mut ids = observation.catalogue().partition_ids();
+            ids.sort_by_key(|id| map.partitions[id.0 as usize].output);
+            for id in ids {
+                let placement = &map.partitions[id.0 as usize];
+                let read = lockstep::read(
+                    observation,
+                    id,
+                    &placement.groups,
+                    Roles::ALL,
+                    (self.options.batch_bytes, None),
+                    |batches| main.push(map, batches),
+                )?;
+                report.partitions += 1;
+                report.batches += read.batches;
+                report.samples += read.samples;
+            }
         }
         report.rows = main.finish(&mut ms)?;
         Ok(report)
     }
 }
 
-/// `input`'s weight scale, which must be finite and positive.
-fn weight_scale(input: &CreationInput) -> Result<f32, ObservationError> {
-    let scale = input.weight_scale as f32;
-    if scale.is_finite() && scale > 0.0 {
-        Ok(scale)
-    } else {
-        Err(request_error(format!(
-            "the weight scale of {} is {}; it must be finite and positive",
-            input.path.display(),
-            input.weight_scale
-        )))
+/// The data groups to write: `requested`, or every input's, `base` first.
+fn selected_groups(
+    inputs: &[Input],
+    requested: Option<&[String]>,
+) -> Result<Vec<String>, ObservationError> {
+    let groups: Vec<String> = match requested {
+        Some(requested) => requested.to_vec(),
+        None => {
+            let mut groups = vec!["base".to_string()];
+            for input in inputs {
+                for entry in &input.observation.catalogue().partitions {
+                    for group in &entry.data_groups {
+                        if !groups.contains(&group.name) {
+                            groups.push(group.name.clone());
+                        }
+                    }
+                }
+            }
+            groups
+        }
+    };
+    if groups.first().map(String::as_str) != Some("base") {
+        return Err(request_error(
+            "a MeasurementSet is written with the base data group first",
+        ));
     }
+    if let Some(group) = groups
+        .iter()
+        .enumerate()
+        .find_map(|(index, group)| groups[..index].contains(group).then_some(group))
+    {
+        return Err(request_error(format!(
+            "data group {group} is selected twice"
+        )));
+    }
+    Ok(groups)
 }
 
 /// The MSv2 column of a data group, as XRADIO's converter names them.
@@ -280,11 +361,21 @@ fn column(group: &str) -> Result<OptionalMainColumn, ObservationError> {
     }
 }
 
+/// The `QuantumUnits` a column of `units` declares: none for undeclared
+/// units, as CASA's `DATA` declares none.
+fn unit(units: &VisibilityUnits) -> Option<String> {
+    match units {
+        VisibilityUnits::Undeclared => None,
+        VisibilityUnits::Jansky => Some("Jy".to_string()),
+        VisibilityUnits::Declared(unit) => Some(unit.clone()),
+    }
+}
+
 /// Refuse what the MSv2 written cannot say: another time scale than UTC
 /// (`TIME` is written with the MeasurementSet's default reference), a feed
-/// other than the one `FEED` row per antenna the conversion writes, a
-/// window without channels, a field in another frame than J2000, and what
-/// its subtables cannot say ([`msv2_tables::refuse_unwritable`]).
+/// other than the one `FEED` row per antenna the writer writes, a window
+/// without channels, a field in another frame than J2000, and what its
+/// subtables cannot say ([`msv2_tables::refuse_unwritable`]).
 fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     if catalogue
         .fields
@@ -315,123 +406,82 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
     msv2_tables::refuse_unwritable(catalogue)
 }
 
-/// The times the grids of `group` span: the whole observation's, and each
-/// session's edge to edge, as fillers write `TIME_RANGE`.
-fn spans(observation: &dyn Observation, group: &str) -> Result<Spans, ObservationError> {
-    let catalogue = observation.catalogue();
-    let mut spanned = Spanning::new(catalogue.observations.len());
-    for id in catalogue.partition_ids() {
-        spanned.add(
-            &observation.grid(id, group)?,
-            catalogue.partition(id).observation,
-        );
-    }
-    Ok(spanned.finish())
-}
-
-/// The times grids span, gathered grid by grid.
-struct Spanning {
-    range: [f64; 2],
-    sessions: Vec<[f64; 2]>,
-}
-
-impl Spanning {
-    const EMPTY: [f64; 2] = [f64::INFINITY, f64::NEG_INFINITY];
-
-    fn new(sessions: usize) -> Self {
-        Self {
-            range: Self::EMPTY,
-            sessions: vec![Self::EMPTY; sessions],
+/// What reopening the written MeasurementSet gives of `combined`, whose
+/// subtables `layout` places: the windows no partition uses, and their
+/// source records, left out and the others renumbered; each partition with
+/// the states its rows are written with; the partitions in the order the
+/// MSv2 reader keys them (data description, `OBS_MODE`, observation).
+fn written(combined: &Combined, layout: &msv2_tables::Layout) -> Catalogue {
+    let mut catalogue = combined.catalogue.clone();
+    let used: Vec<bool> = (0..catalogue.windows.len())
+        .map(|index| {
+            catalogue
+                .partitions
+                .iter()
+                .any(|entry| entry.window.0 as usize == index)
+        })
+        .collect();
+    let mut renumbered = vec![None; used.len()];
+    let mut next = 0;
+    for (index, used) in used.iter().enumerate() {
+        if *used {
+            renumbered[index] = Some(casa_observation::WindowId(next));
+            next += 1;
         }
     }
-
-    /// Widen the spans by `grid`, a partition of observing session
-    /// `session`.
-    fn add(&mut self, grid: &TimeBaselineGrid, session: ObservationId) {
-        let origin = (grid.time_origin.day() + grid.time_origin.frac()) * SECONDS_PER_DAY;
-        let (Some(first), Some(last)) = (grid.times_s.first(), grid.times_s.last()) else {
-            return;
-        };
-        let span = |known: [f64; 2], half: f64| {
-            [
-                known[0].min(origin + first - half),
-                known[1].max(origin + last + half),
-            ]
-        };
-        self.range = span(self.range, 0.0);
-        // A session's TIME_RANGE spans its integrations, edge to edge, as
-        // fillers write it.
-        let half = if grid.interval_s.is_finite() {
-            grid.interval_s / 2.0
-        } else {
-            0.0
-        };
-        if let Some(known) = self.sessions.get_mut(session.0 as usize) {
-            *known = span(*known, half);
-        }
-    }
-
-    fn finish(self) -> Spans {
-        let spanned = |range: [f64; 2]| {
-            if range[0] > range[1] {
-                [0.0, 0.0]
-            } else {
-                range
-            }
-        };
-        Spans {
-            time_range: spanned(self.range),
-            observation_ranges: self.sessions.into_iter().map(spanned).collect(),
-        }
-    }
-}
-
-/// Each partition's rows and interval from its grid, the first selected
-/// group's, and the times the grids span; with padding omitted, the
-/// acquisitions counted from the weights.
-fn occupancy(
-    observation: &dyn Observation,
-    group: &str,
-    options: &CreationOptions,
-) -> Result<Occupancy, ObservationError> {
-    let catalogue = observation.catalogue();
-    let groups = [group.to_string()];
-    let mut rows = Vec::with_capacity(catalogue.partitions.len());
-    let mut intervals = Vec::with_capacity(catalogue.partitions.len());
-    let mut spanned = Spanning::new(catalogue.observations.len());
-    for id in catalogue.partition_ids() {
-        let grid = observation.grid(id, group)?;
-        spanned.add(&grid, catalogue.partition(id).observation);
-        intervals.push(grid.interval_s);
-        if options.padding == PaddingRows::Flagged {
-            rows.push(grid.times_s.len() * grid.baselines.len());
-            continue;
-        }
-        let mut count = 0;
-        lockstep::read(
-            observation,
-            id,
-            &groups,
-            WEIGHTS,
-            (options.batch_bytes, None),
-            |batches| {
-                let weights = batches[0]
-                    .group
-                    .weights
-                    .ok_or_else(|| request_error("an occupancy batch carries its weights"))?;
-                for sample in weights.axis_iter(Axis(0)) {
-                    count += usize::from(acquired(sample)?);
+    let mut index = 0;
+    catalogue.windows.retain(|_| {
+        index += 1;
+        used[index - 1]
+    });
+    for source in &mut catalogue.sources {
+        source.records.retain_mut(|record| match record.window {
+            casa_observation::SourceWindow::All => true,
+            casa_observation::SourceWindow::Window(id) => match renumbered[id.0 as usize] {
+                Some(new) => {
+                    record.window = casa_observation::SourceWindow::Window(new);
+                    true
                 }
-                Ok(())
+                None => false,
             },
-        )?;
-        rows.push(count);
+        });
     }
-    Ok(Occupancy {
-        rows,
-        intervals,
-        spans: spanned.finish(),
-    })
+    for (output, entry) in catalogue.partitions.iter_mut().enumerate() {
+        entry.window = renumbered[entry.window.0 as usize].expect("a used window");
+        let mut states: Vec<casa_observation::StateId> = combined.contributors[output]
+            .iter()
+            .filter_map(|(input, id)| {
+                let placement = &combined.rows[*input].partitions[id.0 as usize];
+                placement
+                    .state
+                    .or(layout.intent_states[output])
+                    .and_then(|state| u32::try_from(state).ok())
+                    .map(casa_observation::StateId)
+            })
+            .collect();
+        states.sort_unstable();
+        states.dedup();
+        entry.states = states;
+    }
+    let mut order: Vec<usize> = (0..catalogue.partitions.len()).collect();
+    order.sort_by(|a, b| {
+        (
+            layout.data_description[*a],
+            &combined.modes[*a],
+            catalogue.partitions[*a].observation,
+        )
+            .cmp(&(
+                layout.data_description[*b],
+                &combined.modes[*b],
+                catalogue.partitions[*b].observation,
+            ))
+    });
+    let partitions = std::mem::take(&mut catalogue.partitions);
+    catalogue.partitions = order
+        .into_iter()
+        .map(|index| partitions[index].clone())
+        .collect();
+    catalogue
 }
 
 /// An in-memory MeasurementSet holding no rows and the subtables an MSv2
@@ -445,7 +495,7 @@ fn occupancy(
 /// As [`CreationPlan::new`] for what an MSv2's subtables cannot say.
 #[cfg(feature = "msv4")]
 pub(crate) fn catalogue_subtables(
-    observation: &dyn Observation,
+    observation: &dyn casa_observation::Observation,
 ) -> Result<(MeasurementSet, Vec<i32>), ObservationError> {
     let catalogue = observation.catalogue();
     refuse_unwritable(catalogue)?;
@@ -454,37 +504,15 @@ pub(crate) fn catalogue_subtables(
         .first()
         .and_then(|entry| entry.data_groups.first())
     {
-        Some(group) => spans(observation, &group.name)?,
-        None => Spans {
+        Some(group) => occupancy::spans(observation, &group.name)?,
+        None => super::msv2_rows::Spans {
             time_range: [0.0, 0.0],
             observation_ranges: vec![[0.0, 0.0]; catalogue.observations.len()],
         },
     };
     let mut ms =
         MeasurementSet::create_memory(msv2_tables::builder(catalogue, &[])).map_err(storage)?;
-    let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &spans)?;
+    let intents = super::msv2_identity::intent_partitions(catalogue);
+    let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &spans, &intents)?;
     Ok((ms, layout.spectral_window))
-}
-
-/// The `QuantumUnits` `group`'s column declares: its units, which every
-/// partition must share; none for undeclared units, as CASA's `DATA`
-/// declares none.
-fn group_unit(catalogue: &Catalogue, group: &str) -> Result<Option<String>, ObservationError> {
-    let mut units = catalogue
-        .partitions
-        .iter()
-        .filter_map(|entry| entry.data_group(group).map(|(_, entry)| &entry.units));
-    let Some(first) = units.next() else {
-        return Ok(None);
-    };
-    if units.any(|units| units != first) {
-        return Err(ObservationError::Unsupported {
-            what: "writing one MSv2 column of data groups with different units",
-        });
-    }
-    Ok(match first {
-        VisibilityUnits::Undeclared => None,
-        VisibilityUnits::Jansky => Some("Jy".to_string()),
-        VisibilityUnits::Declared(unit) => Some(unit.clone()),
-    })
 }

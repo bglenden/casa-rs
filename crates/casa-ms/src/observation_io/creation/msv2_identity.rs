@@ -303,21 +303,21 @@ pub(super) fn spectral_windows(
 }
 
 /// What the `STATE` rows written say of each partition, in catalogue
-/// order: its `STATE_ID`, -1 for rows without a state, and the `OBS_MODE`
-/// the MSv2 reader keys its rows by.
+/// order: the `OBS_MODE` the MSv2 reader keys its rows by, and the
+/// `STATE_ID` of its state of intents, if it needs one.
 pub(super) struct States {
-    pub(super) ids: Vec<i32>,
     pub(super) modes: Vec<String>,
+    pub(super) intent_states: Vec<Option<i32>>,
 }
 
 /// One `STATE` row per catalogue state, then one per `OBS_MODE` of the
-/// partitions that state intents but no state (an MSv4's), their other
-/// columns MSv2's defaults. A partition whose rows use several states is
-/// written with the first, a loss: a batch does not say which row used
-/// which.
+/// partitions some of whose rows state intents but no state (an MSv4's),
+/// as `intents` says of each, their other columns MSv2's defaults. The
+/// rows that do state a state are written with it ([`super::msv2_rows`]).
 pub(super) fn states(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
+    intents: &[bool],
     notes: &mut Notes,
 ) -> Result<States, ObservationError> {
     let table = subtable_mut(ms, SubtableId::State).map_err(storage)?;
@@ -344,62 +344,67 @@ pub(super) fn states(
     }
     let mut stated: Vec<String> = Vec::new();
     let mut states = States {
-        ids: Vec::with_capacity(catalogue.partitions.len()),
         modes: Vec::with_capacity(catalogue.partitions.len()),
+        intent_states: Vec::with_capacity(catalogue.partitions.len()),
     };
-    for entry in &catalogue.partitions {
-        let (id, mode) = match entry.states.as_slice() {
-            [] if entry.intents.is_empty() => (-1, String::new()),
-            [] => {
-                let mode = entry.intents.join(",");
-                let index = match stated.iter().position(|known| *known == mode) {
-                    Some(index) => index,
-                    None => {
-                        let row = row_from_defs(
-                            schema::state::REQUIRED_COLUMNS,
-                            &[
-                                ("OBS_MODE", s(&mode)),
-                                ("SIG", b(true)),
-                                ("REF", b(false)),
-                                ("FLAG_ROW", b(false)),
-                            ],
-                        );
-                        table.add_row(row).map_err(storage)?;
-                        notes.defaulted("STATE CAL, LOAD, SIG, REF, SUB_SCAN and FLAG_ROW");
-                        stated.push(mode.clone());
-                        stated.len() - 1
-                    }
-                };
-                ((catalogue.states.len() + index) as i32, mode)
-            }
-            [first, rest @ ..] => {
-                if !rest.is_empty() {
-                    notes.lost(Loss::Column(
-                        "STATE_ID of rows using several states in one partition (each is \
-                         written with the first)"
-                            .to_string(),
-                    ));
-                }
-                let state = catalogue.states.get(first.0 as usize).ok_or_else(|| {
-                    request_error("a partition names a state the catalogue lacks")
-                })?;
-                (first.0 as i32, state.obs_mode.clone())
-            }
+    for (entry, needs) in catalogue.partitions.iter().zip(intents) {
+        let mode = match entry.states.first() {
+            Some(first) => catalogue
+                .states
+                .get(first.0 as usize)
+                .ok_or_else(|| request_error("a partition names a state the catalogue lacks"))?
+                .obs_mode
+                .clone(),
+            None => entry.intents.join(","),
         };
-        states.ids.push(id);
+        let intent_state = if *needs {
+            let index = match stated.iter().position(|known| *known == mode) {
+                Some(index) => index,
+                None => {
+                    let row = row_from_defs(
+                        schema::state::REQUIRED_COLUMNS,
+                        &[
+                            ("OBS_MODE", s(&mode)),
+                            ("SIG", b(true)),
+                            ("REF", b(false)),
+                            ("FLAG_ROW", b(false)),
+                        ],
+                    );
+                    table.add_row(row).map_err(storage)?;
+                    notes.defaulted("STATE CAL, LOAD, SIG, REF, SUB_SCAN and FLAG_ROW");
+                    stated.push(mode.clone());
+                    stated.len() - 1
+                }
+            };
+            Some((catalogue.states.len() + index) as i32)
+        } else {
+            None
+        };
         states.modes.push(mode);
+        states.intent_states.push(intent_state);
     }
     Ok(states)
 }
 
+/// Which of `catalogue`'s partitions state intents but no state: of one
+/// input, the partitions that need a state of intents.
+#[cfg(feature = "msv4")]
+pub(super) fn intent_partitions(catalogue: &Catalogue) -> Vec<bool> {
+    catalogue
+        .partitions
+        .iter()
+        .map(|entry| entry.states.is_empty() && !entry.intents.is_empty())
+        .collect()
+}
+
 /// One `PROCESSOR` row per catalogue processor, `PASS_ID` among them when
-/// some processor states one, and the `PROCESSOR_ID` of each partition: -1
-/// for none, as for a store whose `PROCESSOR_ID` names no row.
+/// some processor states one. Rows name theirs, -1 for none
+/// ([`super::msv2_rows`]).
 pub(super) fn processors(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
     notes: &mut Notes,
-) -> Result<Vec<i32>, ObservationError> {
+) -> Result<(), ObservationError> {
     let table = subtable_mut(ms, SubtableId::Processor).map_err(storage)?;
     let passes = catalogue
         .processors
@@ -451,9 +456,5 @@ pub(super) fn processors(
         }
         table.add_row(record).map_err(storage)?;
     }
-    Ok(catalogue
-        .partitions
-        .iter()
-        .map(|entry| entry.processor.map_or(-1, |processor| processor.0 as i32))
-        .collect())
+    Ok(())
 }

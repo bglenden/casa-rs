@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! The inputs a plan reads, each opened by its adapter with the order in
+//! which its observing sessions first appear: by first MAIN row in an MSv2,
+//! as CASA's `concat` meets them, and by earliest time in an MSv4.
+
+use std::path::PathBuf;
+
+use casa_observation::{Observation, ObservationError, ObservationId};
+
+use super::CreationInput;
+use crate::observation_io::update::request_error;
+use crate::observation_io::{Msv2Observation, OpenOptions};
+
+/// Seconds per day, for times as MJD seconds.
+#[cfg(feature = "msv4")]
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
+/// One opened input.
+pub(super) struct Input {
+    /// Its store.
+    pub(super) path: PathBuf,
+    /// Its opening.
+    pub(super) observation: Box<dyn Observation>,
+    /// The factor its weights are multiplied by.
+    pub(super) weight_scale: f32,
+    /// Its observing sessions in the order they first appear; a session
+    /// no partition holds comes last.
+    pub(super) appearance: Vec<ObservationId>,
+}
+
+impl Input {
+    /// Open `input`, its weight scale checked.
+    pub(super) fn open(input: &CreationInput) -> Result<Self, ObservationError> {
+        let weight_scale = weight_scale(input)?;
+        let path = input.path.clone();
+        if path.join("zarr.json").is_file() {
+            return msv4(path, weight_scale);
+        }
+        let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
+        let catalogue = observation.catalogue();
+        let mut first = vec![None; catalogue.observations.len()];
+        for id in catalogue.partition_ids() {
+            let session = catalogue.partition(id).observation.0 as usize;
+            if let (Some(row), Some(known)) = (observation.first_row(id), first.get_mut(session)) {
+                *known = Some(known.map_or(row, |earlier: u32| earlier.min(row)));
+            }
+        }
+        Ok(Self {
+            path,
+            appearance: in_order(&first),
+            observation: Box::new(observation),
+            weight_scale,
+        })
+    }
+}
+
+/// An MSv4 input, its sessions by earliest time.
+#[cfg(feature = "msv4")]
+fn msv4(path: PathBuf, weight_scale: f32) -> Result<Input, ObservationError> {
+    let observation =
+        crate::observation_io::Msv4Observation::open_with(&path, &OpenOptions::default())?;
+    let catalogue = observation.catalogue().clone();
+    let mut first: Vec<Option<f64>> = vec![None; catalogue.observations.len()];
+    for id in catalogue.partition_ids() {
+        let entry = catalogue.partition(id);
+        let Some(group) = entry.data_groups.first() else {
+            continue;
+        };
+        let grid = observation.grid(id, &group.name)?;
+        let Some(time) = grid.times_s.first() else {
+            continue;
+        };
+        let origin = grid.time_origin;
+        let time = (origin.day() + origin.frac()) * SECONDS_PER_DAY + time;
+        if let Some(known) = first.get_mut(entry.observation.0 as usize) {
+            *known = Some(known.map_or(time, |earlier: f64| earlier.min(time)));
+        }
+    }
+    Ok(Input {
+        path,
+        appearance: in_order(&first),
+        observation: Box::new(observation),
+        weight_scale,
+    })
+}
+
+/// Without the `msv4` feature an MSv4 cannot be opened.
+#[cfg(not(feature = "msv4"))]
+fn msv4(_path: PathBuf, _weight_scale: f32) -> Result<Input, ObservationError> {
+    Err(ObservationError::Unsupported {
+        what: "an MSv4 store without casa-ms's msv4 feature",
+    })
+}
+
+/// Sessions in the order of `first` (each one's first appearance), those
+/// without one last, in ID order.
+fn in_order<T: PartialOrd + Copy>(first: &[Option<T>]) -> Vec<ObservationId> {
+    let mut sessions: Vec<usize> = (0..first.len()).collect();
+    sessions.sort_by(|a, b| match (first[*a], first[*b]) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.cmp(b),
+    });
+    sessions
+        .into_iter()
+        .map(|session| ObservationId(session as u32))
+        .collect()
+}
+
+/// `input`'s weight scale, which must be finite and positive.
+fn weight_scale(input: &CreationInput) -> Result<f32, ObservationError> {
+    let scale = input.weight_scale as f32;
+    if scale.is_finite() && scale > 0.0 {
+        Ok(scale)
+    } else {
+        Err(request_error(format!(
+            "the weight scale of {} is {}; it must be finite and positive",
+            input.path.display(),
+            input.weight_scale
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_observation::ObservationId;
+
+    use super::in_order;
+
+    #[test]
+    fn sessions_follow_their_first_appearance() {
+        let order = in_order(&[Some(30), None, Some(10), Some(20)]);
+        assert_eq!(order, [2, 3, 0, 1].map(ObservationId));
+    }
+}

@@ -24,6 +24,8 @@
 //! feature) share this machinery; converting into an MSv2 is a plan over
 //! one input.
 
+mod combine;
+mod inputs;
 pub(crate) mod lockstep;
 pub(crate) mod losses;
 mod msv2_identity;
@@ -31,9 +33,11 @@ mod msv2_pointing;
 mod msv2_rows;
 mod msv2_sources;
 mod msv2_tables;
+mod occupancy;
 mod plan;
 pub(crate) mod pointing_plan;
 mod pointing_scan;
+mod scans;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -184,8 +188,12 @@ pub struct CreationOptions {
     /// The most bytes one time range of every selected group's batches
     /// may hold together.
     pub batch_bytes: usize,
-    /// What a padded grid cell becomes.
+    /// What a padded grid cell becomes; partitions combined from several
+    /// inputs need it omitted.
     pub padding: PaddingRows,
+    /// How close the inputs' entities must be to be one, as CASA's `concat`
+    /// matches them.
+    pub tolerance: casa_observation::MergeTolerance,
 }
 
 /// Where a plan writes its MeasurementSet.

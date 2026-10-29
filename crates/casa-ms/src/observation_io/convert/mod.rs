@@ -108,6 +108,7 @@ pub fn to_msv2(
             accept: options.accept.clone(),
             batch_bytes: options.batch_bytes,
             padding: options.padding,
+            tolerance: casa_observation::MergeTolerance::default(),
         },
     )?;
     let report = plan.write(destination, Destination::New)?;

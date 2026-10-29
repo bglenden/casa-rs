@@ -272,7 +272,7 @@ fn partitions_and_data_groups_convert_together() {
 
 /// Every acquisition of `group` in partition `id`: the samples that are not
 /// padding (a NaN weight).
-fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
+pub(crate) fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
     read(path, id, group)
         .into_iter()
         .filter(|(_, sample)| !sample.weights.iter().all(|weight| weight.is_nan()))

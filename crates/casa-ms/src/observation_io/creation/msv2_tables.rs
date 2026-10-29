@@ -55,12 +55,9 @@ pub(super) struct Layout {
     pub(super) data_description: Vec<i32>,
     /// `SPECTRAL_WINDOW` row of each partition.
     pub(super) spectral_window: Vec<i32>,
-    /// `STATE_ID` of each partition, -1 for rows without a state.
-    pub(super) state: Vec<i32>,
-    /// `PROCESSOR_ID` of each partition, -1 for none.
-    pub(super) processor: Vec<i32>,
-    /// `SCAN_NUMBER` of each catalogue scan.
-    pub(super) scan_number: Vec<i32>,
+    /// The `STATE_ID` of each partition's state of intents, for its rows
+    /// that state intents but no state.
+    pub(super) intent_states: Vec<Option<i32>>,
 }
 
 /// What writing a catalogue's subtables writes as MSv2's default, or
@@ -156,24 +153,30 @@ fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> 
 }
 
 /// The subtables of `catalogue` written into a MeasurementSet in memory,
-/// for what writing them notes and refuses: a plan learns its losses, and
-/// that its subtables can be written, before anything is.
+/// for where they place each partition and what writing them notes and
+/// refuses: a plan learns its losses, and that its subtables can be
+/// written, before anything is. `intents` says which partitions need a
+/// state of intents.
 pub(super) fn rehearse(
     catalogue: &Catalogue,
     spans: &Spans,
-) -> Result<Vec<Loss>, ObservationError> {
+    intents: &[bool],
+) -> Result<(Layout, Vec<Loss>), ObservationError> {
     let mut ms = MeasurementSet::create_memory(builder(catalogue, &[])).map_err(storage)?;
-    populate(&mut ms, catalogue, spans).map(|(_, notes)| notes.into_losses())
+    populate(&mut ms, catalogue, spans, intents)
+        .map(|(layout, notes)| (layout, notes.into_losses()))
 }
 
 /// Fill `ms`'s subtables from `catalogue`, whose data span the times
-/// `spans` gives (MJD seconds); [`refuse_unwritable`] has accepted it.
-/// Antennas, fields, sessions, states, processors and sources keep their
-/// catalogue order, and windows theirs among those a partition uses.
+/// `spans` gives (MJD seconds), `intents` saying which partitions need a
+/// state of intents; [`refuse_unwritable`] has accepted it. Antennas,
+/// fields, sessions, states, processors and sources keep their catalogue
+/// order, and windows theirs among those a partition uses.
 pub(super) fn populate(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
     spans: &Spans,
+    intents: &[bool],
 ) -> Result<(Layout, Notes), ObservationError> {
     let time_range = spans.time_range;
     let mut notes = Notes::default();
@@ -182,8 +185,8 @@ pub(super) fn populate(
     msv2_identity::fields(ms, catalogue, (&named_sources, time_range[0]), &mut notes)?;
     msv2_identity::observations(ms, catalogue, &spans.observation_ranges, &mut notes)?;
     let window_rows = msv2_identity::spectral_windows(ms, catalogue, &mut notes)?;
-    let states = msv2_identity::states(ms, catalogue, &mut notes)?;
-    let processor = msv2_identity::processors(ms, catalogue, &mut notes)?;
+    let states = msv2_identity::states(ms, catalogue, intents, &mut notes)?;
+    msv2_identity::processors(ms, catalogue, &mut notes)?;
     msv2_sources::write(
         ms,
         catalogue,
@@ -197,9 +200,7 @@ pub(super) fn populate(
     let mut layout = Layout {
         data_description: Vec::new(),
         spectral_window: Vec::new(),
-        state: states.ids,
-        processor,
-        scan_number: scan_numbers(catalogue)?,
+        intent_states: states.intent_states,
     };
     for (index, entry) in catalogue.partitions.iter().enumerate() {
         let window = window_rows

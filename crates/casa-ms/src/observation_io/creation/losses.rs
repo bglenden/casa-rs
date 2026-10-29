@@ -34,8 +34,9 @@ use super::{Loss, LossKind};
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
 
-/// The data groups to convert: `requested`, each present in every
-/// partition, or every group of the source with `base` first.
+/// The data groups to convert into an MSv4: `requested`, each present in
+/// every partition, or every group of the source with `base` first.
+#[cfg(feature = "msv4")]
 pub(crate) fn selected_groups(
     catalogue: &Catalogue,
     requested: Option<&[String]>,

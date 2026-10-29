@@ -12,7 +12,7 @@ use casa_ms::observation_io::creation::{
 };
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_observation::{Catalogue, ObservationError, SourceWindow, WindowId};
+use casa_observation::{Catalogue, MergeTolerance, ObservationError, SourceWindow, WindowId};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table};
 use casa_types::measures::MEpoch;
@@ -32,6 +32,7 @@ fn options() -> CreationOptions {
         accept: ACCEPT.to_vec(),
         batch_bytes: 1 << 20,
         padding: PaddingRows::Flagged,
+        tolerance: MergeTolerance::default(),
     }
 }
 
@@ -469,4 +470,259 @@ fn an_msv2s_descriptive_metadata_survives_creation() {
         assert_eq!(written, stated);
     }
     assert_eq!(written.len(), stated.len());
+}
+
+/// A partition's content as reopening states it, for comparison with
+/// what a plan said it would be.
+fn partitions(catalogue: &Catalogue) -> Vec<String> {
+    catalogue
+        .partitions
+        .iter()
+        .map(|entry| {
+            format!(
+                "{:?} {} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                entry.window,
+                entry.spectral_window,
+                entry.correlations,
+                entry.intents,
+                entry.observation,
+                entry.fields,
+                entry.scans,
+                entry.baselines,
+                entry.states,
+                entry.processor,
+                entry.frequencies_hz,
+            )
+        })
+        .collect()
+}
+
+/// The trial MSv2, its times in three scans, split by time into two inputs
+/// (scan 2 in both) is created whole again: its partitions combine into
+/// one, every acquisition is the original's sample for sample, scans
+/// unchanged since the session keeps its ID, and reopening gives the
+/// entities and partitions the plan said it would.
+#[test]
+fn a_split_observation_is_created_whole_again() {
+    let root = tempfile::tempdir().expect("root");
+    let original = fixture(root.path(), "ms_trial.ms");
+    super::three_scans(&original);
+    let halves: Vec<PathBuf> = ["early", "late"]
+        .iter()
+        .zip([60..120, 0..60])
+        .map(|(name, removed)| {
+            let half = fixture(&root.path().join(name), "ms_trial.ms");
+            super::three_scans(&half);
+            let mut ms = MeasurementSet::open(&half).expect("half");
+            ms.main_table_mut()
+                .remove_rows(&removed.collect::<Vec<usize>>())
+                .expect("remove");
+            ms.save().expect("save");
+            half
+        })
+        .collect();
+    let whole = root.path().join("whole.ms");
+    let options = CreationOptions {
+        padding: PaddingRows::Omitted,
+        ..options()
+    };
+    let inputs: Vec<CreationInput> = halves.iter().map(CreationInput::new).collect();
+    let plan = CreationPlan::new(&inputs, &options).expect("plan");
+    let promised = plan.output().clone();
+    assert!(plan.notices().is_empty(), "{:?}", plan.notices());
+    let report = plan.write(&whole, Destination::New).expect("write");
+    assert_eq!(report.partitions, 2, "one partition of each input");
+    let id = casa_observation::PartitionId(0);
+    let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
+    assert_eq!(
+        reopened.catalogue().partitions.len(),
+        1,
+        "the halves combine"
+    );
+    assert_eq!(
+        super::convert::acquisitions(&whole, id, "base"),
+        super::convert::acquisitions(&original, id, "base"),
+        "every acquisition, with its scan"
+    );
+    assert_eq!(partitions(reopened.catalogue()), partitions(&promised));
+    let every = |id: WindowId| Some(id);
+    assert_eq!(
+        described(reopened.catalogue(), &every),
+        described(&promised, &every)
+    );
+}
+
+/// The trial MSv2 unpacked as `name`, its times in three scans, with the
+/// rows `removed` taken out and then `edit` applied.
+fn edited(
+    root: &Path,
+    name: &str,
+    removed: std::ops::Range<usize>,
+    edit: impl FnOnce(&mut MeasurementSet),
+) -> PathBuf {
+    let path = fixture(&root.join(name), "ms_trial.ms");
+    super::three_scans(&path);
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    ms.main_table_mut()
+        .remove_rows(&removed.collect::<Vec<usize>>())
+        .expect("remove");
+    edit(&mut ms);
+    ms.save().expect("save");
+    path
+}
+
+/// Plan `inputs` with padding omitted.
+fn plan_of(inputs: &[&Path]) -> Result<CreationPlan, ObservationError> {
+    let inputs: Vec<CreationInput> = inputs.iter().map(CreationInput::new).collect();
+    CreationPlan::new(
+        &inputs,
+        &CreationOptions {
+            padding: PaddingRows::Omitted,
+            ..options()
+        },
+    )
+}
+
+fn main_ints(path: &Path, column: &str) -> Vec<i32> {
+    let ms = MeasurementSet::open(path).expect("ms");
+    let main = ms.main_table();
+    (0..main.row_count())
+        .map(
+            |row| match main.row_accessor().row(row).expect("row").get(column) {
+                Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
+                other => panic!("{column}: {other:?}"),
+            },
+        )
+        .collect()
+}
+
+/// What a reopening could not hold is refused before anything is written:
+/// a time and baseline both inputs acquire; the halves' intervals
+/// differing; flagged padding where partitions combine.
+#[test]
+fn what_a_reopening_cannot_hold_is_refused() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 70..120, |_| {});
+    let late = edited(root.path(), "late", 0..60, |_| {});
+    let refused = plan_of(&[&early, &late]);
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("also acquire")),
+        "time 6 is in both: {}",
+        refused
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default()
+    );
+    let early = edited(root.path(), "early-clean", 60..120, |_| {});
+    let longer = edited(root.path(), "longer", 0..60, |ms| {
+        ms.main_table_mut()
+            .fill_column_range(
+                "INTERVAL",
+                casa_tables::RowRange::new(0, 60),
+                Value::Scalar(ScalarValue::Float64(20.0)),
+            )
+            .expect("interval");
+    });
+    assert!(matches!(
+        plan_of(&[&early, &longer]),
+        Err(ObservationError::Unsupported { what }) if what.contains("intervals")
+    ));
+    let late = edited(root.path(), "late-clean", 0..60, |_| {});
+    let flagged = CreationPlan::new(
+        &[CreationInput::new(&early), CreationInput::new(&late)],
+        &options(),
+    );
+    assert!(matches!(
+        flagged,
+        Err(ObservationError::InvalidRequest { .. })
+    ));
+}
+
+/// One `OBS_MODE` whose state differs by its `CAL` combines into one
+/// partition, each input's rows keeping its own state; a processor stated
+/// by one input but not the other, under one key, is refused.
+#[test]
+fn states_combine_and_processors_must_agree() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let hotter = edited(root.path(), "hotter", 0..60, |ms| {
+        set(subtable(ms, SubtableId::State), 0, &[("CAL", float(5.0))]);
+    });
+    let whole = root.path().join("whole.ms");
+    plan_of(&[&early, &hotter])
+        .and_then(|plan| plan.write(&whole, Destination::New))
+        .expect("write");
+    let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
+    let catalogue = reopened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 1);
+    assert_eq!(catalogue.states.len(), 2);
+    assert_eq!(catalogue.partitions[0].states.len(), 2);
+    let states = main_ints(&whole, "STATE_ID");
+    assert_eq!(&states[..60], &[0; 60]);
+    assert_eq!(&states[60..], &[1; 60]);
+    let processed = edited(root.path(), "processed", 0..60, |ms| {
+        let table = subtable(ms, SubtableId::Processor);
+        let row = casa_types::RecordValue::new(vec![
+            RecordField::new("TYPE", text("CORRELATOR")),
+            RecordField::new("SUB_TYPE", text("")),
+            RecordField::new("TYPE_ID", int(-1)),
+            RecordField::new("MODE_ID", int(-1)),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+        ]);
+        table.add_row(row).expect("processor");
+    });
+    assert!(matches!(
+        plan_of(&[&early, &processed]),
+        Err(ObservationError::Unsupported { what }) if what.contains("processors")
+    ));
+}
+
+/// A second observing session's scans follow the first's, CASA's default
+/// offset (its largest scan plus 1, less the incoming smallest), and its
+/// partition is its own; each input's weights take its own scale.
+#[test]
+fn a_new_session_is_offset_and_weights_take_their_inputs_scale() {
+    let root = tempfile::tempdir().expect("root");
+    let early = edited(root.path(), "early", 60..120, |_| {});
+    let other = edited(root.path(), "other", 0..60, |ms| {
+        set(
+            subtable(ms, SubtableId::Observation),
+            0,
+            &[("PROJECT", text("another"))],
+        );
+    });
+    let whole = root.path().join("whole.ms");
+    let inputs = [
+        CreationInput::new(&early),
+        CreationInput {
+            path: other.clone(),
+            weight_scale: 3.0,
+        },
+    ];
+    let plan = CreationPlan::new(
+        &inputs,
+        &CreationOptions {
+            padding: PaddingRows::Omitted,
+            ..options()
+        },
+    )
+    .expect("plan");
+    plan.write(&whole, Destination::New).expect("write");
+    let reopened = open(&whole, &OpenOptions::default()).expect("reopen");
+    assert_eq!(reopened.catalogue().observations.len(), 2);
+    assert_eq!(reopened.catalogue().partitions.len(), 2);
+    let scans = main_ints(&whole, "SCAN_NUMBER");
+    assert_eq!(
+        (scans[..60].iter().max(), scans[60..].iter().min()),
+        (Some(&2), Some(&3)),
+        "early holds scans 1 and 2; the other's 2 and 3 become 3 and 4"
+    );
+    assert_eq!(scans[60..].iter().max(), Some(&4));
+    assert_eq!(&main_ints(&whole, "OBSERVATION_ID")[60..], &[1; 60]);
+    let (_, written) = rows_and_sigmas(&whole);
+    let (_, own) = rows_and_sigmas(&other);
+    let correlations = written.len() / 120;
+    for ((weight, _), (stated, _)) in written[60 * correlations..].iter().zip(&own) {
+        assert_eq!(weight.to_bits(), (stated * 3.0).to_bits());
+    }
 }
