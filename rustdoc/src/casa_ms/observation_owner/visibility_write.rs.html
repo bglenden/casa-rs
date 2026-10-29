@@ -402,408 +402,375 @@
 <a href=#402 id=402 data-nosnippet>402</a>    }
 <a href=#403 id=403 data-nosnippet>403</a>}
 <a href=#404 id=404 data-nosnippet>404</a>
-<a href=#405 id=405 data-nosnippet>405</a><span class="doccomment">/// Storage managers whose selected-row save patches the written rows' tiles
-<a href=#406 id=406 data-nosnippet>406</a>/// in place: the managers CASA and casa-rs store visibilities in.
-<a href=#407 id=407 data-nosnippet>407</a></span><span class="attr">#[cfg(unix)]
-<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">const </span>BOUNDED_WRITE_MANAGERS: [<span class="kw-2">&amp;</span>str; <span class="number">2</span>] = [<span class="string">"TiledShapeStMan"</span>, <span class="string">"TiledColumnStMan"</span>];
-<a href=#409 id=409 data-nosnippet>409</a>
-<a href=#410 id=410 data-nosnippet>410</a><span class="doccomment">/// Refuse, before anything is changed, a write whose save would not be
-<a href=#411 id=411 data-nosnippet>411</a>/// bounded: an existing destination stored outside
-<a href=#412 id=412 data-nosnippet>412</a>/// [`BOUNDED_WRITE_MANAGERS`], or a missing `MODEL_DATA` whose clone of
-<a href=#413 id=413 data-nosnippet>413</a>/// DATA's manager would be or cannot be made. A missing `CORRECTED_DATA` is
-<a href=#414 id=414 data-nosnippet>414</a>/// refused too, since it holds the output of a continuum transform.
-<a href=#415 id=415 data-nosnippet>415</a></span><span class="attr">#[cfg(unix)]
-<a href=#416 id=416 data-nosnippet>416</a></span><span class="kw">fn </span>require_bounded_destinations(
-<a href=#417 id=417 data-nosnippet>417</a>    main: <span class="kw-2">&amp;</span>Table,
-<a href=#418 id=418 data-nosnippet>418</a>    targets: SelectedVisibilityWriteTargets,
-<a href=#419 id=419 data-nosnippet>419</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span>has = |column: <span class="kw-2">&amp;</span>str| {
-<a href=#421 id=421 data-nosnippet>421</a>        main.schema()
-<a href=#422 id=422 data-nosnippet>422</a>            .is_some_and(|schema| schema.contains_column(column))
-<a href=#423 id=423 data-nosnippet>423</a>    };
-<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">if </span>targets.corrected_data &amp;&amp; !has(<span class="string">"CORRECTED_DATA"</span>) {
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::MissingCorrectedDataDestination);
-<a href=#426 id=426 data-nosnippet>426</a>    }
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">let </span>destinations = [
-<a href=#428 id=428 data-nosnippet>428</a>        (<span class="string">"MODEL_DATA"</span>, targets.model_data),
-<a href=#429 id=429 data-nosnippet>429</a>        (<span class="string">"CORRECTED_DATA"</span>, targets.corrected_data),
-<a href=#430 id=430 data-nosnippet>430</a>    ];
-<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">for </span>(column, written) <span class="kw">in </span>destinations {
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">if </span>!written {
-<a href=#433 id=433 data-nosnippet>433</a>            <span class="kw">continue</span>;
-<a href=#434 id=434 data-nosnippet>434</a>        }
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>created = !has(column);
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>stored = <span class="kw">if </span>created { <span class="string">"DATA" </span>} <span class="kw">else </span>{ column };
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(manager) = main
-<a href=#438 id=438 data-nosnippet>438</a>            .data_manager_info()
-<a href=#439 id=439 data-nosnippet>439</a>            .iter()
-<a href=#440 id=440 data-nosnippet>440</a>            .find(|manager| manager.columns.iter().any(|name| name == stored))
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">else </span>{
-<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::UnboundedWriteDestination {
-<a href=#443 id=443 data-nosnippet>443</a>                column,
-<a href=#444 id=444 data-nosnippet>444</a>                reason: <span class="macro">format!</span>(<span class="string">"{stored} has no storage manager on disk"</span>),
-<a href=#445 id=445 data-nosnippet>445</a>            });
-<a href=#446 id=446 data-nosnippet>446</a>        };
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="kw">let </span>storage = <span class="kw">if </span>created {
-<a href=#448 id=448 data-nosnippet>448</a>            <span class="macro">format!</span>(
-<a href=#449 id=449 data-nosnippet>449</a>                <span class="string">"it would be created in a clone of DATA's {}"</span>,
-<a href=#450 id=450 data-nosnippet>450</a>                manager.dm_type
-<a href=#451 id=451 data-nosnippet>451</a>            )
-<a href=#452 id=452 data-nosnippet>452</a>        } <span class="kw">else </span>{
-<a href=#453 id=453 data-nosnippet>453</a>            <span class="macro">format!</span>(<span class="string">"it is stored in {}"</span>, manager.dm_type)
-<a href=#454 id=454 data-nosnippet>454</a>        };
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">if </span>!BOUNDED_WRITE_MANAGERS.contains(<span class="kw-2">&amp;</span>manager.dm_type.as_str()) {
-<a href=#456 id=456 data-nosnippet>456</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::UnboundedWriteDestination {
-<a href=#457 id=457 data-nosnippet>457</a>                column,
-<a href=#458 id=458 data-nosnippet>458</a>                reason: <span class="macro">format!</span>(
-<a href=#459 id=459 data-nosnippet>459</a>                    <span class="string">"{storage}; only TiledShapeStMan and TiledColumnStMan columns are written in place"
-<a href=#460 id=460 data-nosnippet>460</a>                </span>),
-<a href=#461 id=461 data-nosnippet>461</a>            });
-<a href=#462 id=462 data-nosnippet>462</a>        }
-<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw">if </span>created &amp;&amp; manager.columns.len() != <span class="number">1 </span>{
-<a href=#464 id=464 data-nosnippet>464</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::UnboundedWriteDestination {
-<a href=#465 id=465 data-nosnippet>465</a>                column,
-<a href=#466 id=466 data-nosnippet>466</a>                reason: <span class="macro">format!</span>(<span class="string">"{storage}, which DATA shares with other columns"</span>),
-<a href=#467 id=467 data-nosnippet>467</a>            });
-<a href=#468 id=468 data-nosnippet>468</a>        }
-<a href=#469 id=469 data-nosnippet>469</a>    }
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="prelude-val">Ok</span>(())
-<a href=#471 id=471 data-nosnippet>471</a>}
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a><span class="doccomment">/// Every data description's [`InitialModel`], once every MAIN row is
-<a href=#474 id=474 data-nosnippet>474</a>/// found to name a description `DATA_DESCRIPTION` holds.
-<a href=#475 id=475 data-nosnippet>475</a></span><span class="kw">fn </span>seedable_models(
-<a href=#476 id=476 data-nosnippet>476</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#477 id=477 data-nosnippet>477</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;InitialModel&gt;, ObservationOwnerError&gt; {
-<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">let </span>models = initial_models(measurement_set)<span class="question-mark">?</span>;
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>row_count = measurement_set.main_table().row_count();
-<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span>batch = VISIBILITY_WRITE_BATCH_ROWS <span class="kw">as </span>usize;
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">for </span>start <span class="kw">in </span>(<span class="number">0</span>..row_count).step_by(batch) {
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (start..row_count.min(start + batch)).collect();
-<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>descriptions = main_data_description_ids(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((row, id)) = rows
-<a href=#485 id=485 data-nosnippet>485</a>            .iter()
-<a href=#486 id=486 data-nosnippet>486</a>            .zip(descriptions)
-<a href=#487 id=487 data-nosnippet>487</a>            .find(|(<span class="kw">_</span>, id)| <span class="kw-2">*</span>id &gt;= models.len())
-<a href=#488 id=488 data-nosnippet>488</a>        {
-<a href=#489 id=489 data-nosnippet>489</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#490 id=490 data-nosnippet>490</a>                <span class="string">"MAIN row {row} names DATA_DESC_ID {id}, which DATA_DESCRIPTION does not hold"
-<a href=#491 id=491 data-nosnippet>491</a>            </span>))
-<a href=#492 id=492 data-nosnippet>492</a>            .into());
-<a href=#493 id=493 data-nosnippet>493</a>        }
+<a href=#405 id=405 data-nosnippet>405</a><span class="doccomment">/// Refuse, before anything is changed, a write whose save would not be
+<a href=#406 id=406 data-nosnippet>406</a>/// bounded ([`crate::scratch_columns::unbounded_destination`]): an existing
+<a href=#407 id=407 data-nosnippet>407</a>/// destination stored outside a tiled manager, or a missing `MODEL_DATA`
+<a href=#408 id=408 data-nosnippet>408</a>/// whose clone of DATA's manager would be or cannot be made. A missing
+<a href=#409 id=409 data-nosnippet>409</a>/// `CORRECTED_DATA` is refused too, since it holds the output of a
+<a href=#410 id=410 data-nosnippet>410</a>/// continuum transform.
+<a href=#411 id=411 data-nosnippet>411</a></span><span class="attr">#[cfg(unix)]
+<a href=#412 id=412 data-nosnippet>412</a></span><span class="kw">fn </span>require_bounded_destinations(
+<a href=#413 id=413 data-nosnippet>413</a>    main: <span class="kw-2">&amp;</span>Table,
+<a href=#414 id=414 data-nosnippet>414</a>    targets: SelectedVisibilityWriteTargets,
+<a href=#415 id=415 data-nosnippet>415</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
+<a href=#416 id=416 data-nosnippet>416</a>    <span class="kw">let </span>has = |column: <span class="kw-2">&amp;</span>str| {
+<a href=#417 id=417 data-nosnippet>417</a>        main.schema()
+<a href=#418 id=418 data-nosnippet>418</a>            .is_some_and(|schema| schema.contains_column(column))
+<a href=#419 id=419 data-nosnippet>419</a>    };
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">if </span>targets.corrected_data &amp;&amp; !has(<span class="string">"CORRECTED_DATA"</span>) {
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::MissingCorrectedDataDestination);
+<a href=#422 id=422 data-nosnippet>422</a>    }
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>destinations = [
+<a href=#424 id=424 data-nosnippet>424</a>        (<span class="string">"MODEL_DATA"</span>, targets.model_data),
+<a href=#425 id=425 data-nosnippet>425</a>        (<span class="string">"CORRECTED_DATA"</span>, targets.corrected_data),
+<a href=#426 id=426 data-nosnippet>426</a>    ];
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">for </span>(column, written) <span class="kw">in </span>destinations {
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">if </span>!written {
+<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">continue</span>;
+<a href=#430 id=430 data-nosnippet>430</a>        }
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) =
+<a href=#432 id=432 data-nosnippet>432</a>            <span class="kw">crate</span>::scratch_columns::unbounded_destination(main, column, !has(column))
+<a href=#433 id=433 data-nosnippet>433</a>        {
+<a href=#434 id=434 data-nosnippet>434</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationOwnerError::UnboundedWriteDestination { column, reason });
+<a href=#435 id=435 data-nosnippet>435</a>        }
+<a href=#436 id=436 data-nosnippet>436</a>    }
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="prelude-val">Ok</span>(())
+<a href=#438 id=438 data-nosnippet>438</a>}
+<a href=#439 id=439 data-nosnippet>439</a>
+<a href=#440 id=440 data-nosnippet>440</a><span class="doccomment">/// Every data description's [`InitialModel`], once every MAIN row is
+<a href=#441 id=441 data-nosnippet>441</a>/// found to name a description `DATA_DESCRIPTION` holds.
+<a href=#442 id=442 data-nosnippet>442</a></span><span class="kw">fn </span>seedable_models(
+<a href=#443 id=443 data-nosnippet>443</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#444 id=444 data-nosnippet>444</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;InitialModel&gt;, ObservationOwnerError&gt; {
+<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">let </span>models = initial_models(measurement_set)<span class="question-mark">?</span>;
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="kw">let </span>row_count = measurement_set.main_table().row_count();
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="kw">let </span>batch = VISIBILITY_WRITE_BATCH_ROWS <span class="kw">as </span>usize;
+<a href=#448 id=448 data-nosnippet>448</a>    <span class="kw">for </span>start <span class="kw">in </span>(<span class="number">0</span>..row_count).step_by(batch) {
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (start..row_count.min(start + batch)).collect();
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span>descriptions = main_data_description_ids(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((row, id)) = rows
+<a href=#452 id=452 data-nosnippet>452</a>            .iter()
+<a href=#453 id=453 data-nosnippet>453</a>            .zip(descriptions)
+<a href=#454 id=454 data-nosnippet>454</a>            .find(|(<span class="kw">_</span>, id)| <span class="kw-2">*</span>id &gt;= models.len())
+<a href=#455 id=455 data-nosnippet>455</a>        {
+<a href=#456 id=456 data-nosnippet>456</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#457 id=457 data-nosnippet>457</a>                <span class="string">"MAIN row {row} names DATA_DESC_ID {id}, which DATA_DESCRIPTION does not hold"
+<a href=#458 id=458 data-nosnippet>458</a>            </span>))
+<a href=#459 id=459 data-nosnippet>459</a>            .into());
+<a href=#460 id=460 data-nosnippet>460</a>        }
+<a href=#461 id=461 data-nosnippet>461</a>    }
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="prelude-val">Ok</span>(models)
+<a href=#463 id=463 data-nosnippet>463</a>}
+<a href=#464 id=464 data-nosnippet>464</a>
+<a href=#465 id=465 data-nosnippet>465</a><span class="doccomment">/// Add `MODEL_DATA` with `DATA`'s tiled storage and write each row's
+<a href=#466 id=466 data-nosnippet>466</a>/// initial model, `models` by data description, a batch at a time.
+<a href=#467 id=467 data-nosnippet>467</a></span><span class="attr">#[cfg(unix)]
+<a href=#468 id=468 data-nosnippet>468</a></span><span class="kw">fn </span>create_model_data(
+<a href=#469 id=469 data-nosnippet>469</a>    measurement_set: <span class="kw-2">&amp;mut </span>MeasurementSet,
+<a href=#470 id=470 data-nosnippet>470</a>    models: <span class="kw-2">&amp;</span>[InitialModel],
+<a href=#471 id=471 data-nosnippet>471</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
+<a href=#472 id=472 data-nosnippet>472</a>    measurement_set.main_table_mut().add_column(
+<a href=#473 id=473 data-nosnippet>473</a>        ColumnSchema::array_variable(<span class="string">"MODEL_DATA"</span>, PrimitiveType::Complex32, <span class="prelude-val">Some</span>(<span class="number">2</span>)),
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="prelude-val">None</span>,
+<a href=#475 id=475 data-nosnippet>475</a>    )<span class="question-mark">?</span>;
+<a href=#476 id=476 data-nosnippet>476</a>    measurement_set
+<a href=#477 id=477 data-nosnippet>477</a>        .main_table_mut()
+<a href=#478 id=478 data-nosnippet>478</a>        .prepare_write()
+<a href=#479 id=479 data-nosnippet>479</a>        .add_tiled_column_clone(<span class="string">"DATA"</span>, <span class="string">"MODEL_DATA"</span>, <span class="string">"TiledModelData"</span>)<span class="question-mark">?</span>;
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span>row_count = measurement_set.main_table().row_count();
+<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span>batch = VISIBILITY_WRITE_BATCH_ROWS <span class="kw">as </span>usize;
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">for </span>start <span class="kw">in </span>(<span class="number">0</span>..row_count).step_by(batch) {
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (start..row_count.min(start + batch)).collect();
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>descriptions = main_data_description_ids(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">for </span>(<span class="kw-2">&amp;</span>row, description) <span class="kw">in </span>rows.iter().zip(descriptions) {
+<a href=#486 id=486 data-nosnippet>486</a>            queue_visibility_cell(
+<a href=#487 id=487 data-nosnippet>487</a>                measurement_set.main_table_mut(),
+<a href=#488 id=488 data-nosnippet>488</a>                <span class="string">"MODEL_DATA"</span>,
+<a href=#489 id=489 data-nosnippet>489</a>                row,
+<a href=#490 id=490 data-nosnippet>490</a>                models[description].cell(),
+<a href=#491 id=491 data-nosnippet>491</a>            )<span class="question-mark">?</span>;
+<a href=#492 id=492 data-nosnippet>492</a>        }
+<a href=#493 id=493 data-nosnippet>493</a>        persist_visibility_rows(measurement_set.main_table_mut(), <span class="kw-2">&amp;</span>[<span class="string">"MODEL_DATA"</span>], <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
 <a href=#494 id=494 data-nosnippet>494</a>    }
-<a href=#495 id=495 data-nosnippet>495</a>    <span class="prelude-val">Ok</span>(models)
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="prelude-val">Ok</span>(())
 <a href=#496 id=496 data-nosnippet>496</a>}
 <a href=#497 id=497 data-nosnippet>497</a>
-<a href=#498 id=498 data-nosnippet>498</a><span class="doccomment">/// Add `MODEL_DATA` with `DATA`'s tiled storage and write each row's
-<a href=#499 id=499 data-nosnippet>499</a>/// initial model, `models` by data description, a batch at a time.
-<a href=#500 id=500 data-nosnippet>500</a></span><span class="attr">#[cfg(unix)]
-<a href=#501 id=501 data-nosnippet>501</a></span><span class="kw">fn </span>create_model_data(
-<a href=#502 id=502 data-nosnippet>502</a>    measurement_set: <span class="kw-2">&amp;mut </span>MeasurementSet,
-<a href=#503 id=503 data-nosnippet>503</a>    models: <span class="kw-2">&amp;</span>[InitialModel],
-<a href=#504 id=504 data-nosnippet>504</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
-<a href=#505 id=505 data-nosnippet>505</a>    measurement_set.main_table_mut().add_column(
-<a href=#506 id=506 data-nosnippet>506</a>        ColumnSchema::array_variable(<span class="string">"MODEL_DATA"</span>, PrimitiveType::Complex32, <span class="prelude-val">Some</span>(<span class="number">2</span>)),
-<a href=#507 id=507 data-nosnippet>507</a>        <span class="prelude-val">None</span>,
-<a href=#508 id=508 data-nosnippet>508</a>    )<span class="question-mark">?</span>;
-<a href=#509 id=509 data-nosnippet>509</a>    measurement_set
-<a href=#510 id=510 data-nosnippet>510</a>        .main_table_mut()
-<a href=#511 id=511 data-nosnippet>511</a>        .prepare_write()
-<a href=#512 id=512 data-nosnippet>512</a>        .add_tiled_column_clone(<span class="string">"DATA"</span>, <span class="string">"MODEL_DATA"</span>, <span class="string">"TiledModelData"</span>)<span class="question-mark">?</span>;
-<a href=#513 id=513 data-nosnippet>513</a>    <span class="kw">let </span>row_count = measurement_set.main_table().row_count();
-<a href=#514 id=514 data-nosnippet>514</a>    <span class="kw">let </span>batch = VISIBILITY_WRITE_BATCH_ROWS <span class="kw">as </span>usize;
-<a href=#515 id=515 data-nosnippet>515</a>    <span class="kw">for </span>start <span class="kw">in </span>(<span class="number">0</span>..row_count).step_by(batch) {
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (start..row_count.min(start + batch)).collect();
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">let </span>descriptions = main_data_description_ids(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">for </span>(<span class="kw-2">&amp;</span>row, description) <span class="kw">in </span>rows.iter().zip(descriptions) {
-<a href=#519 id=519 data-nosnippet>519</a>            queue_visibility_cell(
-<a href=#520 id=520 data-nosnippet>520</a>                measurement_set.main_table_mut(),
-<a href=#521 id=521 data-nosnippet>521</a>                <span class="string">"MODEL_DATA"</span>,
-<a href=#522 id=522 data-nosnippet>522</a>                row,
-<a href=#523 id=523 data-nosnippet>523</a>                models[description].cell(),
-<a href=#524 id=524 data-nosnippet>524</a>            )<span class="question-mark">?</span>;
-<a href=#525 id=525 data-nosnippet>525</a>        }
-<a href=#526 id=526 data-nosnippet>526</a>        persist_visibility_rows(measurement_set.main_table_mut(), <span class="kw-2">&amp;</span>[<span class="string">"MODEL_DATA"</span>], <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#527 id=527 data-nosnippet>527</a>    }
-<a href=#528 id=528 data-nosnippet>528</a>    <span class="prelude-val">Ok</span>(())
-<a href=#529 id=529 data-nosnippet>529</a>}
-<a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a><span class="doccomment">/// The `DATA_DESC_ID` of each of `rows`, read without filling the table's
-<a href=#532 id=532 data-nosnippet>532</a>/// row cache.
-<a href=#533 id=533 data-nosnippet>533</a></span><span class="kw">fn </span>main_data_description_ids(
-<a href=#534 id=534 data-nosnippet>534</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#535 id=535 data-nosnippet>535</a>    rows: <span class="kw-2">&amp;</span>[usize],
-<a href=#536 id=536 data-nosnippet>536</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, ObservationOwnerError&gt; {
-<a href=#537 id=537 data-nosnippet>537</a>    measurement_set
-<a href=#538 id=538 data-nosnippet>538</a>        .main_table()
-<a href=#539 id=539 data-nosnippet>539</a>        .column_accessor(<span class="string">"DATA_DESC_ID"</span>)<span class="question-mark">?
-<a href=#540 id=540 data-nosnippet>540</a>        </span>.scalar_cells_owned_for_rows(rows)<span class="question-mark">?
-<a href=#541 id=541 data-nosnippet>541</a>        </span>.into_iter()
-<a href=#542 id=542 data-nosnippet>542</a>        .map(|value| <span class="kw">match </span>value {
-<a href=#543 id=543 data-nosnippet>543</a>            <span class="prelude-val">Some</span>(ScalarValue::Int32(id)) =&gt; {
-<a href=#544 id=544 data-nosnippet>544</a>                usize::try_from(id).map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)
-<a href=#545 id=545 data-nosnippet>545</a>            }
-<a href=#546 id=546 data-nosnippet>546</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(ObservationOwnerError::PredictionAddress),
-<a href=#547 id=547 data-nosnippet>547</a>        })
-<a href=#548 id=548 data-nosnippet>548</a>        .collect()
-<a href=#549 id=549 data-nosnippet>549</a>}
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a><span class="doccomment">/// CASA's initial `MODEL_DATA` for one data description: each product's
-<a href=#552 id=552 data-nosnippet>552</a>/// [`initial_model_visibility`], in `CORR_TYPE` order, over its channels.
-<a href=#553 id=553 data-nosnippet>553</a></span><span class="kw">struct </span>InitialModel {
-<a href=#554 id=554 data-nosnippet>554</a>    products: Vec&lt;Complex32&gt;,
-<a href=#555 id=555 data-nosnippet>555</a>    channels: usize,
-<a href=#556 id=556 data-nosnippet>556</a>}
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a><span class="kw">impl </span>InitialModel {
-<a href=#559 id=559 data-nosnippet>559</a>    <span class="doccomment">/// The `[correlation, channel]` cell.
-<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="kw">fn </span>cell(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ArrayValue {
-<a href=#561 id=561 data-nosnippet>561</a>        ArrayValue::Complex32(ndarray::ArrayD::from_shape_fn(
-<a href=#562 id=562 data-nosnippet>562</a>            ndarray::IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.products.len(), <span class="self">self</span>.channels]),
-<a href=#563 id=563 data-nosnippet>563</a>            |at| <span class="self">self</span>.products[at[<span class="number">0</span>]],
-<a href=#564 id=564 data-nosnippet>564</a>        ))
-<a href=#565 id=565 data-nosnippet>565</a>    }
-<a href=#566 id=566 data-nosnippet>566</a>}
-<a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a><span class="doccomment">/// Every `DATA_DESCRIPTION` row's [`InitialModel`], by row.
-<a href=#569 id=569 data-nosnippet>569</a>///
-<a href=#570 id=570 data-nosnippet>570</a>/// # Errors
-<a href=#571 id=571 data-nosnippet>571</a>///
-<a href=#572 id=572 data-nosnippet>572</a>/// A description whose window or polarization cannot be read, or whose
-<a href=#573 id=573 data-nosnippet>573</a>/// polarization's `CORR_TYPE` does not list `NUM_CORR` products.
-<a href=#574 id=574 data-nosnippet>574</a></span><span class="kw">fn </span>initial_models(
-<a href=#575 id=575 data-nosnippet>575</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#576 id=576 data-nosnippet>576</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;InitialModel&gt;, ObservationOwnerError&gt; {
-<a href=#577 id=577 data-nosnippet>577</a>    <span class="kw">let </span>descriptions = measurement_set.data_description()<span class="question-mark">?</span>;
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">let </span>polarizations = measurement_set.polarization()<span class="question-mark">?</span>;
-<a href=#579 id=579 data-nosnippet>579</a>    (<span class="number">0</span>..descriptions.row_count())
-<a href=#580 id=580 data-nosnippet>580</a>        .map(|description| {
-<a href=#581 id=581 data-nosnippet>581</a>            <span class="kw">let </span>[correlations, channels] = model_cell_shape(measurement_set, description)<span class="question-mark">?</span>;
-<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>polarization = descriptions.polarization_id(description)<span class="question-mark">?</span>;
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">let </span>types = polarizations.corr_type(
-<a href=#584 id=584 data-nosnippet>584</a>                usize::try_from(polarization)
-<a href=#585 id=585 data-nosnippet>585</a>                    .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>,
-<a href=#586 id=586 data-nosnippet>586</a>            )<span class="question-mark">?</span>;
-<a href=#587 id=587 data-nosnippet>587</a>            <span class="kw">if </span>types.len() != correlations {
-<a href=#588 id=588 data-nosnippet>588</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#589 id=589 data-nosnippet>589</a>                    <span class="string">"POLARIZATION row {polarization} has NUM_CORR {correlations} but {} \
-<a href=#590 id=590 data-nosnippet>590</a>                     CORR_TYPE entries"</span>,
-<a href=#591 id=591 data-nosnippet>591</a>                    types.len()
-<a href=#592 id=592 data-nosnippet>592</a>                ))
-<a href=#593 id=593 data-nosnippet>593</a>                .into());
-<a href=#594 id=594 data-nosnippet>594</a>            }
-<a href=#595 id=595 data-nosnippet>595</a>            <span class="prelude-val">Ok</span>(InitialModel {
-<a href=#596 id=596 data-nosnippet>596</a>                products: types.into_iter().map(initial_model_visibility).collect(),
-<a href=#597 id=597 data-nosnippet>597</a>                channels,
-<a href=#598 id=598 data-nosnippet>598</a>            })
-<a href=#599 id=599 data-nosnippet>599</a>        })
-<a href=#600 id=600 data-nosnippet>600</a>        .collect()
-<a href=#601 id=601 data-nosnippet>601</a>}
-<a href=#602 id=602 data-nosnippet>602</a>
-<a href=#603 id=603 data-nosnippet>603</a><span class="kw">fn </span>model_cell_shape(
-<a href=#604 id=604 data-nosnippet>604</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#605 id=605 data-nosnippet>605</a>    data_description_id: usize,
-<a href=#606 id=606 data-nosnippet>606</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[usize; <span class="number">2</span>], ObservationOwnerError&gt; {
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">let </span>data_description = measurement_set.data_description()<span class="question-mark">?</span>;
-<a href=#608 id=608 data-nosnippet>608</a>    <span class="kw">let </span>spectral_window_id =
-<a href=#609 id=609 data-nosnippet>609</a>        usize::try_from(data_description.spectral_window_id(data_description_id)<span class="question-mark">?</span>)
-<a href=#610 id=610 data-nosnippet>610</a>            .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
-<a href=#611 id=611 data-nosnippet>611</a>    <span class="kw">let </span>polarization_id = usize::try_from(data_description.polarization_id(data_description_id)<span class="question-mark">?</span>)
-<a href=#612 id=612 data-nosnippet>612</a>        .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
-<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">let </span>channels = usize::try_from(
-<a href=#614 id=614 data-nosnippet>614</a>        measurement_set
-<a href=#615 id=615 data-nosnippet>615</a>            .spectral_window()<span class="question-mark">?
-<a href=#616 id=616 data-nosnippet>616</a>            </span>.num_chan(spectral_window_id)<span class="question-mark">?</span>,
-<a href=#617 id=617 data-nosnippet>617</a>    )
-<a href=#618 id=618 data-nosnippet>618</a>    .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
-<a href=#619 id=619 data-nosnippet>619</a>    <span class="kw">let </span>correlations = usize::try_from(measurement_set.polarization()<span class="question-mark">?</span>.num_corr(polarization_id)<span class="question-mark">?</span>)
-<a href=#620 id=620 data-nosnippet>620</a>        .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
-<a href=#621 id=621 data-nosnippet>621</a>    <span class="prelude-val">Ok</span>([correlations, channels])
-<a href=#622 id=622 data-nosnippet>622</a>}
-<a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a><span class="attr">#[cfg(unix)]
-<a href=#625 id=625 data-nosnippet>625</a></span><span class="kw">fn </span>queue_visibility_cell(
-<a href=#626 id=626 data-nosnippet>626</a>    table: <span class="kw-2">&amp;mut </span>Table,
-<a href=#627 id=627 data-nosnippet>627</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#628 id=628 data-nosnippet>628</a>    row: usize,
-<a href=#629 id=629 data-nosnippet>629</a>    value: ArrayValue,
-<a href=#630 id=630 data-nosnippet>630</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
-<a href=#631 id=631 data-nosnippet>631</a>    {
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span><span class="kw-2">mut </span>prepared = table.row_accessor_mut().prepare(<span class="kw-2">&amp;</span>[column])<span class="question-mark">?</span>;
-<a href=#633 id=633 data-nosnippet>633</a>        prepared.seek(row)<span class="question-mark">?</span>;
-<a href=#634 id=634 data-nosnippet>634</a>        prepared.set_value_at(<span class="number">0</span>, Value::Array(value))<span class="question-mark">?</span>;
-<a href=#635 id=635 data-nosnippet>635</a>    }
-<a href=#636 id=636 data-nosnippet>636</a>    <span class="prelude-val">Ok</span>(())
-<a href=#637 id=637 data-nosnippet>637</a>}
-<a href=#638 id=638 data-nosnippet>638</a>
-<a href=#639 id=639 data-nosnippet>639</a><span class="attr">#[cfg(unix)]
-<a href=#640 id=640 data-nosnippet>640</a></span><span class="kw">fn </span>persist_visibility_rows(
-<a href=#641 id=641 data-nosnippet>641</a>    table: <span class="kw-2">&amp;mut </span>Table,
-<a href=#642 id=642 data-nosnippet>642</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
-<a href=#643 id=643 data-nosnippet>643</a>    rows: <span class="kw-2">&amp;</span>[usize],
-<a href=#644 id=644 data-nosnippet>644</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
-<a href=#645 id=645 data-nosnippet>645</a>    table.prepare_write().save_selected_rows(columns, rows)<span class="question-mark">?</span>;
-<a href=#646 id=646 data-nosnippet>646</a>    table.discard_persisted_cell_updates(columns, rows);
-<a href=#647 id=647 data-nosnippet>647</a>    <span class="prelude-val">Ok</span>(())
-<a href=#648 id=648 data-nosnippet>648</a>}
-<a href=#649 id=649 data-nosnippet>649</a>
-<a href=#650 id=650 data-nosnippet>650</a><span class="attr">#[cfg(all(test, unix))]
-<a href=#651 id=651 data-nosnippet>651</a></span><span class="kw">mod </span>tests {
-<a href=#652 id=652 data-nosnippet>652</a>    <span class="kw">use </span>casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
-<a href=#653 id=653 data-nosnippet>653</a>    <span class="kw">use </span>ndarray::{ArrayD, IxDyn};
-<a href=#654 id=654 data-nosnippet>654</a>
-<a href=#655 id=655 data-nosnippet>655</a>    <span class="kw">use crate</span>::{
-<a href=#656 id=656 data-nosnippet>656</a>        MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
-<a href=#657 id=657 data-nosnippet>657</a>        SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-<a href=#658 id=658 data-nosnippet>658</a>        tutorial_vla_a_antennas,
-<a href=#659 id=659 data-nosnippet>659</a>    };
-<a href=#660 id=660 data-nosnippet>660</a>
-<a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">fn </span>i32_array(values: <span class="kw-2">&amp;</span>[i32], shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Value {
-<a href=#662 id=662 data-nosnippet>662</a>        Value::Array(ArrayValue::Int32(
-<a href=#663 id=663 data-nosnippet>663</a>            ArrayD::from_shape_vec(IxDyn(shape), values.to_vec()).expect(<span class="string">"shape"</span>),
-<a href=#664 id=664 data-nosnippet>664</a>        ))
-<a href=#665 id=665 data-nosnippet>665</a>    }
-<a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a>    <span class="doccomment">/// A new `MODEL_DATA` is seeded per data description from that
-<a href=#668 id=668 data-nosnippet>668</a>    /// description's own polarization row, in its `CORR_TYPE` order: two
-<a href=#669 id=669 data-nosnippet>669</a>    /// windows whose descriptions name `RR RL LR LL` and `XX YY XY YX` hold
-<a href=#670 id=670 data-nosnippet>670</a>    /// 1 0 0 1 and 1 1 0 0 in every channel of every row, though the write
-<a href=#671 id=671 data-nosnippet>671</a>    /// touches none.
-<a href=#672 id=672 data-nosnippet>672</a>    </span><span class="attr">#[test]
-<a href=#673 id=673 data-nosnippet>673</a>    </span><span class="kw">fn </span>a_new_model_data_is_seeded_from_each_descriptions_polarization() {
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>path = root.path().join(<span class="string">"two-polarizations.ms"</span>);
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span><span class="kw-2">mut </span>request = SyntheticObservationRequest::vla_ppdisk(
-<a href=#677 id=677 data-nosnippet>677</a>            root.path().join(<span class="string">"unused.fits"</span>),
-<a href=#678 id=678 data-nosnippet>678</a>            <span class="kw-2">&amp;</span>path,
-<a href=#679 id=679 data-nosnippet>679</a>            tutorial_vla_a_antennas(),
-<a href=#680 id=680 data-nosnippet>680</a>        );
-<a href=#681 id=681 data-nosnippet>681</a>        request.predict_model = <span class="bool-val">false</span>;
-<a href=#682 id=682 data-nosnippet>682</a>        request.polarization_setup.correlation_count = <span class="number">4</span>;
-<a href=#683 id=683 data-nosnippet>683</a>        request.duration_seconds = <span class="number">6.0</span>;
-<a href=#684 id=684 data-nosnippet>684</a>        request.integration_seconds = <span class="number">2.0</span>;
-<a href=#685 id=685 data-nosnippet>685</a>        request.spectral_windows = <span class="macro">vec!</span>[
-<a href=#686 id=686 data-nosnippet>686</a>            SyntheticSpectralSetup {
-<a href=#687 id=687 data-nosnippet>687</a>                name: <span class="string">"circular"</span>.to_string(),
-<a href=#688 id=688 data-nosnippet>688</a>                start_frequency_hz: <span class="number">43.0e9</span>,
-<a href=#689 id=689 data-nosnippet>689</a>                channel_width_hz: <span class="number">2.0e6</span>,
-<a href=#690 id=690 data-nosnippet>690</a>                channel_count: <span class="number">3</span>,
-<a href=#691 id=691 data-nosnippet>691</a>            },
-<a href=#692 id=692 data-nosnippet>692</a>            SyntheticSpectralSetup {
-<a href=#693 id=693 data-nosnippet>693</a>                name: <span class="string">"linear"</span>.to_string(),
-<a href=#694 id=694 data-nosnippet>694</a>                start_frequency_hz: <span class="number">44.0e9</span>,
-<a href=#695 id=695 data-nosnippet>695</a>                channel_width_hz: <span class="number">2.0e6</span>,
-<a href=#696 id=696 data-nosnippet>696</a>                channel_count: <span class="number">3</span>,
-<a href=#697 id=697 data-nosnippet>697</a>            },
-<a href=#698 id=698 data-nosnippet>698</a>        ];
-<a href=#699 id=699 data-nosnippet>699</a>        generate_synthetic_observation_ms(<span class="kw-2">&amp;</span>request).expect(<span class="string">"simulate"</span>);
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"open"</span>);
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="macro">assert_eq!</span>(
-<a href=#702 id=702 data-nosnippet>702</a>            ms.polarization()
-<a href=#703 id=703 data-nosnippet>703</a>                .expect(<span class="string">"POLARIZATION"</span>)
-<a href=#704 id=704 data-nosnippet>704</a>                .corr_type(<span class="number">0</span>)
-<a href=#705 id=705 data-nosnippet>705</a>                .expect(<span class="string">"row 0"</span>),
-<a href=#706 id=706 data-nosnippet>706</a>            [<span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>],
-<a href=#707 id=707 data-nosnippet>707</a>            <span class="string">"the simulator's circular products"
-<a href=#708 id=708 data-nosnippet>708</a>        </span>);
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">let </span>linear = RecordValue::new(<span class="macro">vec!</span>[
-<a href=#710 id=710 data-nosnippet>710</a>            RecordField::new(
-<a href=#711 id=711 data-nosnippet>711</a>                <span class="string">"CORR_PRODUCT"</span>,
-<a href=#712 id=712 data-nosnippet>712</a>                i32_array(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">4</span>]),
-<a href=#713 id=713 data-nosnippet>713</a>            ),
-<a href=#714 id=714 data-nosnippet>714</a>            RecordField::new(<span class="string">"CORR_TYPE"</span>, i32_array(<span class="kw-2">&amp;</span>[<span class="number">9</span>, <span class="number">12</span>, <span class="number">10</span>, <span class="number">11</span>], <span class="kw-2">&amp;</span>[<span class="number">4</span>])),
-<a href=#715 id=715 data-nosnippet>715</a>            RecordField::new(<span class="string">"FLAG_ROW"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">false</span>))),
-<a href=#716 id=716 data-nosnippet>716</a>            RecordField::new(<span class="string">"NUM_CORR"</span>, Value::Scalar(ScalarValue::Int32(<span class="number">4</span>))),
-<a href=#717 id=717 data-nosnippet>717</a>        ]);
-<a href=#718 id=718 data-nosnippet>718</a>        ms.subtable_mut(<span class="kw">crate</span>::SubtableId::Polarization)
-<a href=#719 id=719 data-nosnippet>719</a>            .expect(<span class="string">"POLARIZATION"</span>)
-<a href=#720 id=720 data-nosnippet>720</a>            .add_row(linear)
-<a href=#721 id=721 data-nosnippet>721</a>            .expect(<span class="string">"add the linear row"</span>);
-<a href=#722 id=722 data-nosnippet>722</a>        ms.data_description_mut()
-<a href=#723 id=723 data-nosnippet>723</a>            .expect(<span class="string">"DATA_DESCRIPTION"</span>)
-<a href=#724 id=724 data-nosnippet>724</a>            .set_i32(<span class="number">1</span>, <span class="string">"POLARIZATION_ID"</span>, <span class="number">1</span>)
-<a href=#725 id=725 data-nosnippet>725</a>            .expect(<span class="string">"point the second window at it"</span>);
-<a href=#726 id=726 data-nosnippet>726</a>        ms.save().expect(<span class="string">"save"</span>);
-<a href=#727 id=727 data-nosnippet>727</a>        drop(ms);
-<a href=#728 id=728 data-nosnippet>728</a>
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>write =
-<a href=#730 id=730 data-nosnippet>730</a>            SelectedVisibilityWrite::begin(<span class="kw-2">&amp;</span>path, SelectedVisibilityWriteTargets::new(<span class="bool-val">true</span>, <span class="bool-val">false</span>))
-<a href=#731 id=731 data-nosnippet>731</a>                .expect(<span class="string">"begin"</span>);
-<a href=#732 id=732 data-nosnippet>732</a>        write.complete().expect(<span class="string">"complete"</span>);
-<a href=#733 id=733 data-nosnippet>733</a>
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"reopen"</span>);
-<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>main = ms.main_table();
-<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (<span class="number">0</span>..main.row_count()).collect();
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>descriptions = <span class="kw">super</span>::main_data_description_ids(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>rows).expect(<span class="string">"DATA_DESC_ID"</span>);
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>cells = main
-<a href=#739 id=739 data-nosnippet>739</a>            .column_accessor(<span class="string">"MODEL_DATA"</span>)
-<a href=#740 id=740 data-nosnippet>740</a>            .and_then(|column| column.array_cells_owned_uncached(<span class="kw-2">&amp;</span>rows))
-<a href=#741 id=741 data-nosnippet>741</a>            .expect(<span class="string">"MODEL_DATA"</span>);
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>expected = |description: usize| <span class="kw">match </span>description {
-<a href=#743 id=743 data-nosnippet>743</a>            <span class="number">0 </span>=&gt; [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>],
-<a href=#744 id=744 data-nosnippet>744</a>            <span class="kw">_ </span>=&gt; [<span class="number">1.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#745 id=745 data-nosnippet>745</a>        };
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span><span class="kw-2">mut </span>seen = [<span class="number">0</span>, <span class="number">0</span>];
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">for </span>((row, description), cell) <span class="kw">in </span>rows.iter().zip(descriptions).zip(cells) {
-<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(ArrayValue::Complex32(cell)) = cell <span class="kw">else </span>{
-<a href=#749 id=749 data-nosnippet>749</a>                <span class="macro">panic!</span>(<span class="string">"row {row} has a MODEL_DATA cell"</span>);
-<a href=#750 id=750 data-nosnippet>750</a>            };
-<a href=#751 id=751 data-nosnippet>751</a>            <span class="macro">assert_eq!</span>(cell.shape(), [<span class="number">4</span>, <span class="number">3</span>], <span class="string">"row {row}"</span>);
-<a href=#752 id=752 data-nosnippet>752</a>            <span class="kw">for </span>((correlation, <span class="kw">_</span>), value) <span class="kw">in </span>cell.indexed_iter().map(|(at, v)| ((at[<span class="number">0</span>], at[<span class="number">1</span>]), v))
-<a href=#753 id=753 data-nosnippet>753</a>            {
-<a href=#754 id=754 data-nosnippet>754</a>                <span class="macro">assert_eq!</span>(
-<a href=#755 id=755 data-nosnippet>755</a>                    <span class="kw-2">*</span>value,
-<a href=#756 id=756 data-nosnippet>756</a>                    Complex32::new(expected(description)[correlation], <span class="number">0.0</span>),
-<a href=#757 id=757 data-nosnippet>757</a>                    <span class="string">"row {row}, description {description}, product {correlation}"
-<a href=#758 id=758 data-nosnippet>758</a>                </span>);
-<a href=#759 id=759 data-nosnippet>759</a>            }
-<a href=#760 id=760 data-nosnippet>760</a>            seen[description] += <span class="number">1</span>;
-<a href=#761 id=761 data-nosnippet>761</a>        }
-<a href=#762 id=762 data-nosnippet>762</a>        <span class="macro">assert!</span>(
-<a href=#763 id=763 data-nosnippet>763</a>            seen[<span class="number">0</span>] &gt; <span class="number">0 </span>&amp;&amp; seen[<span class="number">1</span>] &gt; <span class="number">0</span>,
-<a href=#764 id=764 data-nosnippet>764</a>            <span class="string">"rows of both descriptions: {seen:?}"
-<a href=#765 id=765 data-nosnippet>765</a>        </span>);
-<a href=#766 id=766 data-nosnippet>766</a>    }
-<a href=#767 id=767 data-nosnippet>767</a>
-<a href=#768 id=768 data-nosnippet>768</a>    <span class="doccomment">/// A description the initial model cannot be built for (here a
-<a href=#769 id=769 data-nosnippet>769</a>    /// polarization whose `NUM_CORR` is not its `CORR_TYPE`'s length) refuses
-<a href=#770 id=770 data-nosnippet>770</a>    /// the write before `MODEL_DATA` exists, so no half-seeded column holding
-<a href=#771 id=771 data-nosnippet>771</a>    /// `DATA` is left for a later write to take as seeded.
-<a href=#772 id=772 data-nosnippet>772</a>    </span><span class="attr">#[test]
-<a href=#773 id=773 data-nosnippet>773</a>    </span><span class="kw">fn </span>an_unseedable_model_is_refused_before_model_data_exists() {
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>path = root.path().join(<span class="string">"inconsistent.ms"</span>);
-<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span><span class="kw-2">mut </span>request = SyntheticObservationRequest::vla_ppdisk(
-<a href=#777 id=777 data-nosnippet>777</a>            root.path().join(<span class="string">"unused.fits"</span>),
-<a href=#778 id=778 data-nosnippet>778</a>            <span class="kw-2">&amp;</span>path,
-<a href=#779 id=779 data-nosnippet>779</a>            tutorial_vla_a_antennas(),
-<a href=#780 id=780 data-nosnippet>780</a>        );
-<a href=#781 id=781 data-nosnippet>781</a>        request.predict_model = <span class="bool-val">false</span>;
-<a href=#782 id=782 data-nosnippet>782</a>        request.duration_seconds = <span class="number">4.0</span>;
-<a href=#783 id=783 data-nosnippet>783</a>        request.integration_seconds = <span class="number">2.0</span>;
-<a href=#784 id=784 data-nosnippet>784</a>        generate_synthetic_observation_ms(<span class="kw-2">&amp;</span>request).expect(<span class="string">"simulate"</span>);
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"open"</span>);
-<a href=#786 id=786 data-nosnippet>786</a>        ms.polarization_mut()
-<a href=#787 id=787 data-nosnippet>787</a>            .expect(<span class="string">"POLARIZATION"</span>)
-<a href=#788 id=788 data-nosnippet>788</a>            .set_i32(<span class="number">0</span>, <span class="string">"NUM_CORR"</span>, <span class="number">3</span>)
-<a href=#789 id=789 data-nosnippet>789</a>            .expect(<span class="string">"an inconsistent NUM_CORR"</span>);
-<a href=#790 id=790 data-nosnippet>790</a>        ms.save().expect(<span class="string">"save"</span>);
-<a href=#791 id=791 data-nosnippet>791</a>        drop(ms);
-<a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">let </span>refused =
-<a href=#793 id=793 data-nosnippet>793</a>            SelectedVisibilityWrite::begin(<span class="kw-2">&amp;</span>path, SelectedVisibilityWriteTargets::new(<span class="bool-val">true</span>, <span class="bool-val">false</span>));
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="macro">assert!</span>(
-<a href=#795 id=795 data-nosnippet>795</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>refused, <span class="prelude-val">Err</span>(error) <span class="kw">if </span>error.to_string().contains(<span class="string">"CORR_TYPE"</span>)),
-<a href=#796 id=796 data-nosnippet>796</a>            <span class="string">"{:?}"</span>,
-<a href=#797 id=797 data-nosnippet>797</a>            refused.err()
-<a href=#798 id=798 data-nosnippet>798</a>        );
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"reopen"</span>);
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="macro">assert!</span>(
-<a href=#801 id=801 data-nosnippet>801</a>            !ms.main_table()
-<a href=#802 id=802 data-nosnippet>802</a>                .schema()
-<a href=#803 id=803 data-nosnippet>803</a>                .expect(<span class="string">"schema"</span>)
-<a href=#804 id=804 data-nosnippet>804</a>                .contains_column(<span class="string">"MODEL_DATA"</span>),
-<a href=#805 id=805 data-nosnippet>805</a>            <span class="string">"no MODEL_DATA was added"
-<a href=#806 id=806 data-nosnippet>806</a>        </span>);
-<a href=#807 id=807 data-nosnippet>807</a>    }
-<a href=#808 id=808 data-nosnippet>808</a>}
+<a href=#498 id=498 data-nosnippet>498</a><span class="doccomment">/// The `DATA_DESC_ID` of each of `rows`, read without filling the table's
+<a href=#499 id=499 data-nosnippet>499</a>/// row cache.
+<a href=#500 id=500 data-nosnippet>500</a></span><span class="kw">fn </span>main_data_description_ids(
+<a href=#501 id=501 data-nosnippet>501</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#502 id=502 data-nosnippet>502</a>    rows: <span class="kw-2">&amp;</span>[usize],
+<a href=#503 id=503 data-nosnippet>503</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, ObservationOwnerError&gt; {
+<a href=#504 id=504 data-nosnippet>504</a>    measurement_set
+<a href=#505 id=505 data-nosnippet>505</a>        .main_table()
+<a href=#506 id=506 data-nosnippet>506</a>        .column_accessor(<span class="string">"DATA_DESC_ID"</span>)<span class="question-mark">?
+<a href=#507 id=507 data-nosnippet>507</a>        </span>.scalar_cells_owned_for_rows(rows)<span class="question-mark">?
+<a href=#508 id=508 data-nosnippet>508</a>        </span>.into_iter()
+<a href=#509 id=509 data-nosnippet>509</a>        .map(|value| <span class="kw">match </span>value {
+<a href=#510 id=510 data-nosnippet>510</a>            <span class="prelude-val">Some</span>(ScalarValue::Int32(id)) =&gt; {
+<a href=#511 id=511 data-nosnippet>511</a>                usize::try_from(id).map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)
+<a href=#512 id=512 data-nosnippet>512</a>            }
+<a href=#513 id=513 data-nosnippet>513</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(ObservationOwnerError::PredictionAddress),
+<a href=#514 id=514 data-nosnippet>514</a>        })
+<a href=#515 id=515 data-nosnippet>515</a>        .collect()
+<a href=#516 id=516 data-nosnippet>516</a>}
+<a href=#517 id=517 data-nosnippet>517</a>
+<a href=#518 id=518 data-nosnippet>518</a><span class="doccomment">/// CASA's initial `MODEL_DATA` for one data description: each product's
+<a href=#519 id=519 data-nosnippet>519</a>/// [`initial_model_visibility`], in `CORR_TYPE` order, over its channels.
+<a href=#520 id=520 data-nosnippet>520</a></span><span class="kw">struct </span>InitialModel {
+<a href=#521 id=521 data-nosnippet>521</a>    products: Vec&lt;Complex32&gt;,
+<a href=#522 id=522 data-nosnippet>522</a>    channels: usize,
+<a href=#523 id=523 data-nosnippet>523</a>}
+<a href=#524 id=524 data-nosnippet>524</a>
+<a href=#525 id=525 data-nosnippet>525</a><span class="kw">impl </span>InitialModel {
+<a href=#526 id=526 data-nosnippet>526</a>    <span class="doccomment">/// The `[correlation, channel]` cell.
+<a href=#527 id=527 data-nosnippet>527</a>    </span><span class="kw">fn </span>cell(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ArrayValue {
+<a href=#528 id=528 data-nosnippet>528</a>        ArrayValue::Complex32(ndarray::ArrayD::from_shape_fn(
+<a href=#529 id=529 data-nosnippet>529</a>            ndarray::IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.products.len(), <span class="self">self</span>.channels]),
+<a href=#530 id=530 data-nosnippet>530</a>            |at| <span class="self">self</span>.products[at[<span class="number">0</span>]],
+<a href=#531 id=531 data-nosnippet>531</a>        ))
+<a href=#532 id=532 data-nosnippet>532</a>    }
+<a href=#533 id=533 data-nosnippet>533</a>}
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a><span class="doccomment">/// Every `DATA_DESCRIPTION` row's [`InitialModel`], by row.
+<a href=#536 id=536 data-nosnippet>536</a>///
+<a href=#537 id=537 data-nosnippet>537</a>/// # Errors
+<a href=#538 id=538 data-nosnippet>538</a>///
+<a href=#539 id=539 data-nosnippet>539</a>/// A description whose window or polarization cannot be read, or whose
+<a href=#540 id=540 data-nosnippet>540</a>/// polarization's `CORR_TYPE` does not list `NUM_CORR` products.
+<a href=#541 id=541 data-nosnippet>541</a></span><span class="kw">fn </span>initial_models(
+<a href=#542 id=542 data-nosnippet>542</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#543 id=543 data-nosnippet>543</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;InitialModel&gt;, ObservationOwnerError&gt; {
+<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">let </span>descriptions = measurement_set.data_description()<span class="question-mark">?</span>;
+<a href=#545 id=545 data-nosnippet>545</a>    <span class="kw">let </span>polarizations = measurement_set.polarization()<span class="question-mark">?</span>;
+<a href=#546 id=546 data-nosnippet>546</a>    (<span class="number">0</span>..descriptions.row_count())
+<a href=#547 id=547 data-nosnippet>547</a>        .map(|description| {
+<a href=#548 id=548 data-nosnippet>548</a>            <span class="kw">let </span>[correlations, channels] = model_cell_shape(measurement_set, description)<span class="question-mark">?</span>;
+<a href=#549 id=549 data-nosnippet>549</a>            <span class="kw">let </span>polarization = descriptions.polarization_id(description)<span class="question-mark">?</span>;
+<a href=#550 id=550 data-nosnippet>550</a>            <span class="kw">let </span>types = polarizations.corr_type(
+<a href=#551 id=551 data-nosnippet>551</a>                usize::try_from(polarization)
+<a href=#552 id=552 data-nosnippet>552</a>                    .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>,
+<a href=#553 id=553 data-nosnippet>553</a>            )<span class="question-mark">?</span>;
+<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">if </span>types.len() != correlations {
+<a href=#555 id=555 data-nosnippet>555</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#556 id=556 data-nosnippet>556</a>                    <span class="string">"POLARIZATION row {polarization} has NUM_CORR {correlations} but {} \
+<a href=#557 id=557 data-nosnippet>557</a>                     CORR_TYPE entries"</span>,
+<a href=#558 id=558 data-nosnippet>558</a>                    types.len()
+<a href=#559 id=559 data-nosnippet>559</a>                ))
+<a href=#560 id=560 data-nosnippet>560</a>                .into());
+<a href=#561 id=561 data-nosnippet>561</a>            }
+<a href=#562 id=562 data-nosnippet>562</a>            <span class="prelude-val">Ok</span>(InitialModel {
+<a href=#563 id=563 data-nosnippet>563</a>                products: types.into_iter().map(initial_model_visibility).collect(),
+<a href=#564 id=564 data-nosnippet>564</a>                channels,
+<a href=#565 id=565 data-nosnippet>565</a>            })
+<a href=#566 id=566 data-nosnippet>566</a>        })
+<a href=#567 id=567 data-nosnippet>567</a>        .collect()
+<a href=#568 id=568 data-nosnippet>568</a>}
+<a href=#569 id=569 data-nosnippet>569</a>
+<a href=#570 id=570 data-nosnippet>570</a><span class="kw">fn </span>model_cell_shape(
+<a href=#571 id=571 data-nosnippet>571</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#572 id=572 data-nosnippet>572</a>    data_description_id: usize,
+<a href=#573 id=573 data-nosnippet>573</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[usize; <span class="number">2</span>], ObservationOwnerError&gt; {
+<a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">let </span>data_description = measurement_set.data_description()<span class="question-mark">?</span>;
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="kw">let </span>spectral_window_id =
+<a href=#576 id=576 data-nosnippet>576</a>        usize::try_from(data_description.spectral_window_id(data_description_id)<span class="question-mark">?</span>)
+<a href=#577 id=577 data-nosnippet>577</a>            .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
+<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">let </span>polarization_id = usize::try_from(data_description.polarization_id(data_description_id)<span class="question-mark">?</span>)
+<a href=#579 id=579 data-nosnippet>579</a>        .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
+<a href=#580 id=580 data-nosnippet>580</a>    <span class="kw">let </span>channels = usize::try_from(
+<a href=#581 id=581 data-nosnippet>581</a>        measurement_set
+<a href=#582 id=582 data-nosnippet>582</a>            .spectral_window()<span class="question-mark">?
+<a href=#583 id=583 data-nosnippet>583</a>            </span>.num_chan(spectral_window_id)<span class="question-mark">?</span>,
+<a href=#584 id=584 data-nosnippet>584</a>    )
+<a href=#585 id=585 data-nosnippet>585</a>    .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
+<a href=#586 id=586 data-nosnippet>586</a>    <span class="kw">let </span>correlations = usize::try_from(measurement_set.polarization()<span class="question-mark">?</span>.num_corr(polarization_id)<span class="question-mark">?</span>)
+<a href=#587 id=587 data-nosnippet>587</a>        .map_err(|<span class="kw">_</span>| ObservationOwnerError::PredictionAddress)<span class="question-mark">?</span>;
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="prelude-val">Ok</span>([correlations, channels])
+<a href=#589 id=589 data-nosnippet>589</a>}
+<a href=#590 id=590 data-nosnippet>590</a>
+<a href=#591 id=591 data-nosnippet>591</a><span class="attr">#[cfg(unix)]
+<a href=#592 id=592 data-nosnippet>592</a></span><span class="kw">fn </span>queue_visibility_cell(
+<a href=#593 id=593 data-nosnippet>593</a>    table: <span class="kw-2">&amp;mut </span>Table,
+<a href=#594 id=594 data-nosnippet>594</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#595 id=595 data-nosnippet>595</a>    row: usize,
+<a href=#596 id=596 data-nosnippet>596</a>    value: ArrayValue,
+<a href=#597 id=597 data-nosnippet>597</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
+<a href=#598 id=598 data-nosnippet>598</a>    {
+<a href=#599 id=599 data-nosnippet>599</a>        <span class="kw">let </span><span class="kw-2">mut </span>prepared = table.row_accessor_mut().prepare(<span class="kw-2">&amp;</span>[column])<span class="question-mark">?</span>;
+<a href=#600 id=600 data-nosnippet>600</a>        prepared.seek(row)<span class="question-mark">?</span>;
+<a href=#601 id=601 data-nosnippet>601</a>        prepared.set_value_at(<span class="number">0</span>, Value::Array(value))<span class="question-mark">?</span>;
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>    <span class="prelude-val">Ok</span>(())
+<a href=#604 id=604 data-nosnippet>604</a>}
+<a href=#605 id=605 data-nosnippet>605</a>
+<a href=#606 id=606 data-nosnippet>606</a><span class="attr">#[cfg(unix)]
+<a href=#607 id=607 data-nosnippet>607</a></span><span class="kw">fn </span>persist_visibility_rows(
+<a href=#608 id=608 data-nosnippet>608</a>    table: <span class="kw-2">&amp;mut </span>Table,
+<a href=#609 id=609 data-nosnippet>609</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+<a href=#610 id=610 data-nosnippet>610</a>    rows: <span class="kw-2">&amp;</span>[usize],
+<a href=#611 id=611 data-nosnippet>611</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationOwnerError&gt; {
+<a href=#612 id=612 data-nosnippet>612</a>    table.prepare_write().save_selected_rows(columns, rows)<span class="question-mark">?</span>;
+<a href=#613 id=613 data-nosnippet>613</a>    table.discard_persisted_cell_updates(columns, rows);
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="prelude-val">Ok</span>(())
+<a href=#615 id=615 data-nosnippet>615</a>}
+<a href=#616 id=616 data-nosnippet>616</a>
+<a href=#617 id=617 data-nosnippet>617</a><span class="attr">#[cfg(all(test, unix))]
+<a href=#618 id=618 data-nosnippet>618</a></span><span class="kw">mod </span>tests {
+<a href=#619 id=619 data-nosnippet>619</a>    <span class="kw">use </span>casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="kw">use </span>ndarray::{ArrayD, IxDyn};
+<a href=#621 id=621 data-nosnippet>621</a>
+<a href=#622 id=622 data-nosnippet>622</a>    <span class="kw">use crate</span>::{
+<a href=#623 id=623 data-nosnippet>623</a>        MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
+<a href=#624 id=624 data-nosnippet>624</a>        SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+<a href=#625 id=625 data-nosnippet>625</a>        tutorial_vla_a_antennas,
+<a href=#626 id=626 data-nosnippet>626</a>    };
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a>    <span class="kw">fn </span>i32_array(values: <span class="kw-2">&amp;</span>[i32], shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Value {
+<a href=#629 id=629 data-nosnippet>629</a>        Value::Array(ArrayValue::Int32(
+<a href=#630 id=630 data-nosnippet>630</a>            ArrayD::from_shape_vec(IxDyn(shape), values.to_vec()).expect(<span class="string">"shape"</span>),
+<a href=#631 id=631 data-nosnippet>631</a>        ))
+<a href=#632 id=632 data-nosnippet>632</a>    }
+<a href=#633 id=633 data-nosnippet>633</a>
+<a href=#634 id=634 data-nosnippet>634</a>    <span class="doccomment">/// A new `MODEL_DATA` is seeded per data description from that
+<a href=#635 id=635 data-nosnippet>635</a>    /// description's own polarization row, in its `CORR_TYPE` order: two
+<a href=#636 id=636 data-nosnippet>636</a>    /// windows whose descriptions name `RR RL LR LL` and `XX YY XY YX` hold
+<a href=#637 id=637 data-nosnippet>637</a>    /// 1 0 0 1 and 1 1 0 0 in every channel of every row, though the write
+<a href=#638 id=638 data-nosnippet>638</a>    /// touches none.
+<a href=#639 id=639 data-nosnippet>639</a>    </span><span class="attr">#[test]
+<a href=#640 id=640 data-nosnippet>640</a>    </span><span class="kw">fn </span>a_new_model_data_is_seeded_from_each_descriptions_polarization() {
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">let </span>path = root.path().join(<span class="string">"two-polarizations.ms"</span>);
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">let </span><span class="kw-2">mut </span>request = SyntheticObservationRequest::vla_ppdisk(
+<a href=#644 id=644 data-nosnippet>644</a>            root.path().join(<span class="string">"unused.fits"</span>),
+<a href=#645 id=645 data-nosnippet>645</a>            <span class="kw-2">&amp;</span>path,
+<a href=#646 id=646 data-nosnippet>646</a>            tutorial_vla_a_antennas(),
+<a href=#647 id=647 data-nosnippet>647</a>        );
+<a href=#648 id=648 data-nosnippet>648</a>        request.predict_model = <span class="bool-val">false</span>;
+<a href=#649 id=649 data-nosnippet>649</a>        request.polarization_setup.correlation_count = <span class="number">4</span>;
+<a href=#650 id=650 data-nosnippet>650</a>        request.duration_seconds = <span class="number">6.0</span>;
+<a href=#651 id=651 data-nosnippet>651</a>        request.integration_seconds = <span class="number">2.0</span>;
+<a href=#652 id=652 data-nosnippet>652</a>        request.spectral_windows = <span class="macro">vec!</span>[
+<a href=#653 id=653 data-nosnippet>653</a>            SyntheticSpectralSetup {
+<a href=#654 id=654 data-nosnippet>654</a>                name: <span class="string">"circular"</span>.to_string(),
+<a href=#655 id=655 data-nosnippet>655</a>                start_frequency_hz: <span class="number">43.0e9</span>,
+<a href=#656 id=656 data-nosnippet>656</a>                channel_width_hz: <span class="number">2.0e6</span>,
+<a href=#657 id=657 data-nosnippet>657</a>                channel_count: <span class="number">3</span>,
+<a href=#658 id=658 data-nosnippet>658</a>            },
+<a href=#659 id=659 data-nosnippet>659</a>            SyntheticSpectralSetup {
+<a href=#660 id=660 data-nosnippet>660</a>                name: <span class="string">"linear"</span>.to_string(),
+<a href=#661 id=661 data-nosnippet>661</a>                start_frequency_hz: <span class="number">44.0e9</span>,
+<a href=#662 id=662 data-nosnippet>662</a>                channel_width_hz: <span class="number">2.0e6</span>,
+<a href=#663 id=663 data-nosnippet>663</a>                channel_count: <span class="number">3</span>,
+<a href=#664 id=664 data-nosnippet>664</a>            },
+<a href=#665 id=665 data-nosnippet>665</a>        ];
+<a href=#666 id=666 data-nosnippet>666</a>        generate_synthetic_observation_ms(<span class="kw-2">&amp;</span>request).expect(<span class="string">"simulate"</span>);
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"open"</span>);
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="macro">assert_eq!</span>(
+<a href=#669 id=669 data-nosnippet>669</a>            ms.polarization()
+<a href=#670 id=670 data-nosnippet>670</a>                .expect(<span class="string">"POLARIZATION"</span>)
+<a href=#671 id=671 data-nosnippet>671</a>                .corr_type(<span class="number">0</span>)
+<a href=#672 id=672 data-nosnippet>672</a>                .expect(<span class="string">"row 0"</span>),
+<a href=#673 id=673 data-nosnippet>673</a>            [<span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>],
+<a href=#674 id=674 data-nosnippet>674</a>            <span class="string">"the simulator's circular products"
+<a href=#675 id=675 data-nosnippet>675</a>        </span>);
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>linear = RecordValue::new(<span class="macro">vec!</span>[
+<a href=#677 id=677 data-nosnippet>677</a>            RecordField::new(
+<a href=#678 id=678 data-nosnippet>678</a>                <span class="string">"CORR_PRODUCT"</span>,
+<a href=#679 id=679 data-nosnippet>679</a>                i32_array(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">4</span>]),
+<a href=#680 id=680 data-nosnippet>680</a>            ),
+<a href=#681 id=681 data-nosnippet>681</a>            RecordField::new(<span class="string">"CORR_TYPE"</span>, i32_array(<span class="kw-2">&amp;</span>[<span class="number">9</span>, <span class="number">12</span>, <span class="number">10</span>, <span class="number">11</span>], <span class="kw-2">&amp;</span>[<span class="number">4</span>])),
+<a href=#682 id=682 data-nosnippet>682</a>            RecordField::new(<span class="string">"FLAG_ROW"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">false</span>))),
+<a href=#683 id=683 data-nosnippet>683</a>            RecordField::new(<span class="string">"NUM_CORR"</span>, Value::Scalar(ScalarValue::Int32(<span class="number">4</span>))),
+<a href=#684 id=684 data-nosnippet>684</a>        ]);
+<a href=#685 id=685 data-nosnippet>685</a>        ms.subtable_mut(<span class="kw">crate</span>::SubtableId::Polarization)
+<a href=#686 id=686 data-nosnippet>686</a>            .expect(<span class="string">"POLARIZATION"</span>)
+<a href=#687 id=687 data-nosnippet>687</a>            .add_row(linear)
+<a href=#688 id=688 data-nosnippet>688</a>            .expect(<span class="string">"add the linear row"</span>);
+<a href=#689 id=689 data-nosnippet>689</a>        ms.data_description_mut()
+<a href=#690 id=690 data-nosnippet>690</a>            .expect(<span class="string">"DATA_DESCRIPTION"</span>)
+<a href=#691 id=691 data-nosnippet>691</a>            .set_i32(<span class="number">1</span>, <span class="string">"POLARIZATION_ID"</span>, <span class="number">1</span>)
+<a href=#692 id=692 data-nosnippet>692</a>            .expect(<span class="string">"point the second window at it"</span>);
+<a href=#693 id=693 data-nosnippet>693</a>        ms.save().expect(<span class="string">"save"</span>);
+<a href=#694 id=694 data-nosnippet>694</a>        drop(ms);
+<a href=#695 id=695 data-nosnippet>695</a>
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>write =
+<a href=#697 id=697 data-nosnippet>697</a>            SelectedVisibilityWrite::begin(<span class="kw-2">&amp;</span>path, SelectedVisibilityWriteTargets::new(<span class="bool-val">true</span>, <span class="bool-val">false</span>))
+<a href=#698 id=698 data-nosnippet>698</a>                .expect(<span class="string">"begin"</span>);
+<a href=#699 id=699 data-nosnippet>699</a>        write.complete().expect(<span class="string">"complete"</span>);
+<a href=#700 id=700 data-nosnippet>700</a>
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"reopen"</span>);
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span>main = ms.main_table();
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>rows: Vec&lt;usize&gt; = (<span class="number">0</span>..main.row_count()).collect();
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>descriptions = <span class="kw">super</span>::main_data_description_ids(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>rows).expect(<span class="string">"DATA_DESC_ID"</span>);
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>cells = main
+<a href=#706 id=706 data-nosnippet>706</a>            .column_accessor(<span class="string">"MODEL_DATA"</span>)
+<a href=#707 id=707 data-nosnippet>707</a>            .and_then(|column| column.array_cells_owned_uncached(<span class="kw-2">&amp;</span>rows))
+<a href=#708 id=708 data-nosnippet>708</a>            .expect(<span class="string">"MODEL_DATA"</span>);
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">let </span>expected = |description: usize| <span class="kw">match </span>description {
+<a href=#710 id=710 data-nosnippet>710</a>            <span class="number">0 </span>=&gt; [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>],
+<a href=#711 id=711 data-nosnippet>711</a>            <span class="kw">_ </span>=&gt; [<span class="number">1.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#712 id=712 data-nosnippet>712</a>        };
+<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span><span class="kw-2">mut </span>seen = [<span class="number">0</span>, <span class="number">0</span>];
+<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">for </span>((row, description), cell) <span class="kw">in </span>rows.iter().zip(descriptions).zip(cells) {
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(ArrayValue::Complex32(cell)) = cell <span class="kw">else </span>{
+<a href=#716 id=716 data-nosnippet>716</a>                <span class="macro">panic!</span>(<span class="string">"row {row} has a MODEL_DATA cell"</span>);
+<a href=#717 id=717 data-nosnippet>717</a>            };
+<a href=#718 id=718 data-nosnippet>718</a>            <span class="macro">assert_eq!</span>(cell.shape(), [<span class="number">4</span>, <span class="number">3</span>], <span class="string">"row {row}"</span>);
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw">for </span>((correlation, <span class="kw">_</span>), value) <span class="kw">in </span>cell.indexed_iter().map(|(at, v)| ((at[<span class="number">0</span>], at[<span class="number">1</span>]), v))
+<a href=#720 id=720 data-nosnippet>720</a>            {
+<a href=#721 id=721 data-nosnippet>721</a>                <span class="macro">assert_eq!</span>(
+<a href=#722 id=722 data-nosnippet>722</a>                    <span class="kw-2">*</span>value,
+<a href=#723 id=723 data-nosnippet>723</a>                    Complex32::new(expected(description)[correlation], <span class="number">0.0</span>),
+<a href=#724 id=724 data-nosnippet>724</a>                    <span class="string">"row {row}, description {description}, product {correlation}"
+<a href=#725 id=725 data-nosnippet>725</a>                </span>);
+<a href=#726 id=726 data-nosnippet>726</a>            }
+<a href=#727 id=727 data-nosnippet>727</a>            seen[description] += <span class="number">1</span>;
+<a href=#728 id=728 data-nosnippet>728</a>        }
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="macro">assert!</span>(
+<a href=#730 id=730 data-nosnippet>730</a>            seen[<span class="number">0</span>] &gt; <span class="number">0 </span>&amp;&amp; seen[<span class="number">1</span>] &gt; <span class="number">0</span>,
+<a href=#731 id=731 data-nosnippet>731</a>            <span class="string">"rows of both descriptions: {seen:?}"
+<a href=#732 id=732 data-nosnippet>732</a>        </span>);
+<a href=#733 id=733 data-nosnippet>733</a>    }
+<a href=#734 id=734 data-nosnippet>734</a>
+<a href=#735 id=735 data-nosnippet>735</a>    <span class="doccomment">/// A description the initial model cannot be built for (here a
+<a href=#736 id=736 data-nosnippet>736</a>    /// polarization whose `NUM_CORR` is not its `CORR_TYPE`'s length) refuses
+<a href=#737 id=737 data-nosnippet>737</a>    /// the write before `MODEL_DATA` exists, so no half-seeded column holding
+<a href=#738 id=738 data-nosnippet>738</a>    /// `DATA` is left for a later write to take as seeded.
+<a href=#739 id=739 data-nosnippet>739</a>    </span><span class="attr">#[test]
+<a href=#740 id=740 data-nosnippet>740</a>    </span><span class="kw">fn </span>an_unseedable_model_is_refused_before_model_data_exists() {
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>path = root.path().join(<span class="string">"inconsistent.ms"</span>);
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span><span class="kw-2">mut </span>request = SyntheticObservationRequest::vla_ppdisk(
+<a href=#744 id=744 data-nosnippet>744</a>            root.path().join(<span class="string">"unused.fits"</span>),
+<a href=#745 id=745 data-nosnippet>745</a>            <span class="kw-2">&amp;</span>path,
+<a href=#746 id=746 data-nosnippet>746</a>            tutorial_vla_a_antennas(),
+<a href=#747 id=747 data-nosnippet>747</a>        );
+<a href=#748 id=748 data-nosnippet>748</a>        request.predict_model = <span class="bool-val">false</span>;
+<a href=#749 id=749 data-nosnippet>749</a>        request.duration_seconds = <span class="number">4.0</span>;
+<a href=#750 id=750 data-nosnippet>750</a>        request.integration_seconds = <span class="number">2.0</span>;
+<a href=#751 id=751 data-nosnippet>751</a>        generate_synthetic_observation_ms(<span class="kw-2">&amp;</span>request).expect(<span class="string">"simulate"</span>);
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"open"</span>);
+<a href=#753 id=753 data-nosnippet>753</a>        ms.polarization_mut()
+<a href=#754 id=754 data-nosnippet>754</a>            .expect(<span class="string">"POLARIZATION"</span>)
+<a href=#755 id=755 data-nosnippet>755</a>            .set_i32(<span class="number">0</span>, <span class="string">"NUM_CORR"</span>, <span class="number">3</span>)
+<a href=#756 id=756 data-nosnippet>756</a>            .expect(<span class="string">"an inconsistent NUM_CORR"</span>);
+<a href=#757 id=757 data-nosnippet>757</a>        ms.save().expect(<span class="string">"save"</span>);
+<a href=#758 id=758 data-nosnippet>758</a>        drop(ms);
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>refused =
+<a href=#760 id=760 data-nosnippet>760</a>            SelectedVisibilityWrite::begin(<span class="kw-2">&amp;</span>path, SelectedVisibilityWriteTargets::new(<span class="bool-val">true</span>, <span class="bool-val">false</span>));
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="macro">assert!</span>(
+<a href=#762 id=762 data-nosnippet>762</a>            <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>refused, <span class="prelude-val">Err</span>(error) <span class="kw">if </span>error.to_string().contains(<span class="string">"CORR_TYPE"</span>)),
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="string">"{:?}"</span>,
+<a href=#764 id=764 data-nosnippet>764</a>            refused.err()
+<a href=#765 id=765 data-nosnippet>765</a>        );
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>path).expect(<span class="string">"reopen"</span>);
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="macro">assert!</span>(
+<a href=#768 id=768 data-nosnippet>768</a>            !ms.main_table()
+<a href=#769 id=769 data-nosnippet>769</a>                .schema()
+<a href=#770 id=770 data-nosnippet>770</a>                .expect(<span class="string">"schema"</span>)
+<a href=#771 id=771 data-nosnippet>771</a>                .contains_column(<span class="string">"MODEL_DATA"</span>),
+<a href=#772 id=772 data-nosnippet>772</a>            <span class="string">"no MODEL_DATA was added"
+<a href=#773 id=773 data-nosnippet>773</a>        </span>);
+<a href=#774 id=774 data-nosnippet>774</a>    }
+<a href=#775 id=775 data-nosnippet>775</a>}
 </code></pre></div></section></main></body></html>

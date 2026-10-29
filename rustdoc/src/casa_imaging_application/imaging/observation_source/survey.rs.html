@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a>    route: <span class="kw-2">&amp;</span>BatchRoute,
 <a href=#36 id=36 data-nosnippet>36</a>    factors: bool,
 <a href=#37 id=37 data-nosnippet>37</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PartitionSurvey&gt;, SourceError&gt; {
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>catalogue = route.observation.catalogue();
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>catalogue = route.observation().catalogue();
 <a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span><span class="kw-2">mut </span>conversions = HashMap::new();
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="kw">let </span><span class="kw-2">mut </span>buffers = BatchBuffers::default();
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">let </span>origin = MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>);
@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>                partition,
 <a href=#52 id=52 data-nosnippet>52</a>                route.batching.survey_bytes(),
 <a href=#53 id=53 data-nosnippet>53</a>            );
-<a href=#54 id=54 data-nosnippet>54</a>            <span class="kw">let </span><span class="kw-2">mut </span>traversal = route.observation.bind_read(<span class="kw-2">&amp;</span>request)<span class="question-mark">?</span>;
+<a href=#54 id=54 data-nosnippet>54</a>            <span class="kw">let </span><span class="kw-2">mut </span>traversal = route.observation().bind_read(<span class="kw-2">&amp;</span>request)<span class="question-mark">?</span>;
 <a href=#55 id=55 data-nosnippet>55</a>            <span class="kw">let </span><span class="kw-2">mut </span>span: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt; = <span class="prelude-val">None</span>;
 <a href=#56 id=56 data-nosnippet>56</a>            <span class="kw">let </span><span class="kw-2">mut </span>range = FactorRange::EMPTY;
 <a href=#57 id=57 data-nosnippet>57</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(event) = traversal.next(<span class="kw-2">&amp;mut </span>buffers)<span class="question-mark">? </span>{

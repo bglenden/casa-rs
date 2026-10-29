@@ -17,10 +17,10 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>cycle::{ImagingInputs, SourceInput, plane_bounds, run};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>measurement::{metal_kernel_set, row_samples, standard_kernel_set};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>observation_source::{
-<a href=#20 id=20 data-nosnippet>20</a>    BatchRoute, ObservationSource, PartitionSelection, SelectedPartition, admit_batches,
-<a href=#21 id=21 data-nosnippet>21</a>    pointing_direction,
+<a href=#20 id=20 data-nosnippet>20</a>    BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, WriteBack,
+<a href=#21 id=21 data-nosnippet>21</a>    admit_batches, pointing_direction,
 <a href=#22 id=22 data-nosnippet>22</a>};
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>visibility_write::VisibilityWriteTarget;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>visibility_write::{RowWriteTarget, VisibilityWriteTarget, VisibilityWriter};
 <a href=#24 id=24 data-nosnippet>24</a>
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>casa_imaging_deconvolution::{
 <a href=#26 id=26 data-nosnippet>26</a>    MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,

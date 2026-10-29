@@ -2361,10 +2361,13 @@ flag change writes (Fable).</p>
   to a traversal and some targets; live updaters claim disjoint times of
   each variable (time selection, "Updaters of a split").</li>
 <li><code>Updater::write(batch, values)</code> takes one <code>PatchValues</code> per bound target
-  for a batch the session delivered: visibilities, a flag change (set and
+  for a batch the session delivered: visibilities (with a mask of the
+  elements written, since imaging port step 5), a flag change (set and
   clear masks; elements neither names keep their stored flag), or weights
   for the delivered channels or all of them. Values are checked against the
-  batch before anything is written.</li>
+  batch before anything is written. <code>Updater::write_at(address, values)</code>
+  writes against the batch's owned address once its buffers are gone, for
+  every change but those whose check reads the payload.</li>
 <li>The batch's sample addresses are found from its own times and the
   partition's baselines (the MSv2 grid's rows, the MSv4 dataset's time
   index): <strong>the frozen read contract needed no change to be written
@@ -2431,8 +2434,12 @@ flag change writes (Fable).</p>
 <td>A second update session on a store, or a second live updater of a session over the same times, is a <code>Conflict</code>; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock.</td>
 </tr>
 <tr>
-<td><code>an_msv2_updater_takes_its_batches_in_order</code></td>
-<td>The MSv2 updater takes its traversal's batches in delivery order: a batch after a skipped one is refused, and finishing with selected times unwritten fails.</td>
+<td><code>an_updater_writes_any_of_its_batches_by_address</code></td>
+<td>Imaging port step 5 (#932): an updater takes its traversal's batches in any order and any of them, written against their addresses once their buffers hold later batches, each under a mask; the elements a mask writes hold the patch, every other element (the batch left out included) keeps what it held, and MSv2 neither reads nor writes a sample its mask leaves wholly. Both stores.</td>
+</tr>
+<tr>
+<td><code>an_address_takes_no_change_its_payload_checks</code></td>
+<td>A flag cleared or a weight written against an address is refused on both stores (an MSv4 store knows its padding only from the batch's weights); flags set by address are written.</td>
 </tr>
 <tr>
 <td><code>an_msv2_session_holds_mains_lock_while_an_updater_is_live</code></td>
@@ -3060,8 +3067,8 @@ on its own.</p>
 <td>On both stores an updater bound to a slice refuses a batch from before it.</td>
 </tr>
 <tr>
-<td><code>an_updater_refuses_a_partition_before_the_last_is_written</code></td>
-<td>The MSv2 updater refuses a later partition's batch while an earlier partition's selected times are unwritten.</td>
+<td><code>an_updater_takes_its_partitions_in_any_order</code></td>
+<td>The MSv2 fixture split into three scans' partitions, written last partition first, holds every flag set.</td>
 </tr>
 <tr>
 <td><code>a_time_split_finalizes_each_group_once_after_all_its_parts</code></td>

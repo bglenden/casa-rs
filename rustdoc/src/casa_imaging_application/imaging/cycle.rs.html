@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a>    /// model from.
 <a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) start_model: <span class="prelude-ty">Option</span>&lt;StartModel&gt;,
 <a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) image_response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&lt;<span class="lifetime">'a</span>&gt;&gt;,
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) host: HostResources,
 <a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: ResourcePolicy,
 <a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Where the run's worker teams go once its setup forms them
@@ -144,7 +144,7 @@
 <a href=#144 id=144 data-nosnippet>144</a>    backend: BackendChoice,
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Whether each Metal backend logs its timing.
 <a href=#146 id=146 data-nosnippet>146</a>    </span>metal_stage_timing: bool,
-<a href=#147 id=147 data-nosnippet>147</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
+<a href=#147 id=147 data-nosnippet>147</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&lt;<span class="lifetime">'a</span>&gt;&gt;,
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// What the visibility write holds, admitted with the pass that writes;
 <a href=#149 id=149 data-nosnippet>149</a>    /// zero when nothing is written.
 <a href=#150 id=150 data-nosnippet>150</a>    </span>visibility_write_bytes: u64,
