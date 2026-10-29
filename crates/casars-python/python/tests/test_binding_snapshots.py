@@ -34,6 +34,11 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE = Path(__file__).parent / "data" / "binding_snapshots.json"
 SMALL_MS_ARCHIVE = REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
 
+# The relative tolerance of every float in the fixture.
+REL_TOL = 1e-9
+# The keys of `_array_summary`, in order.
+ARRAY_SUMMARY_KEYS = ["count", "finite", "min", "max", "sum"]
+
 # String fields whose values are a projected Rust enum vocabulary.
 VOCABULARY_KEYS = (
     "adapter",
@@ -456,16 +461,33 @@ def _current_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
-def _assert_matches(actual: Any, expected: Any, path: str = "$") -> None:
+def _abs_tol(summary: dict[str, Any], key: str) -> float:
+    """The absolute tolerance for the float `summary[key]`.
+
+    A sum's rounding error scales with its terms, not with the sum, so a
+    series sum is compared at `REL_TOL` of `finite * max(|min|, |max|)`, which
+    bounds the sum of the terms' magnitudes. Where the terms cancel, a
+    platform difference far below `REL_TOL` in each term is a large relative
+    error in the sum: the antenna-layout north offsets, of thousands of
+    metres, sum to 0.02 m, and macOS's libm `cos`, one ulp from glibc's,
+    moves each offset by 1e-13 of itself and the sum by 2e-7.
+    """
+
+    if key == "sum" and list(summary) == ARRAY_SUMMARY_KEYS and summary["finite"]:
+        return REL_TOL * summary["finite"] * max(abs(summary["min"]), abs(summary["max"]))
+    return 1e-12
+
+
+def _assert_matches(actual: Any, expected: Any, path: str = "$", abs_tol: float = 1e-12) -> None:
     if isinstance(expected, float) and isinstance(actual, (int, float)):
-        assert math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12), (
+        assert math.isclose(actual, expected, rel_tol=REL_TOL, abs_tol=abs_tol), (
             f"{path}: {actual!r} != {expected!r}"
         )
     elif isinstance(expected, dict):
         assert isinstance(actual, dict), f"{path}: {actual!r} is not a dictionary"
         assert list(actual) == list(expected), f"{path}: keys {list(actual)} != {list(expected)}"
         for key, item in expected.items():
-            _assert_matches(actual[key], item, f"{path}.{key}")
+            _assert_matches(actual[key], item, f"{path}.{key}", _abs_tol(expected, key))
     elif isinstance(expected, list):
         assert isinstance(actual, list), f"{path}: {actual!r} is not a list"
         assert len(actual) == len(expected), f"{path}: {len(actual)} != {len(expected)} items"
@@ -517,6 +539,19 @@ def test_measurement_set_plots_are_unchanged(
     snapshot: dict[str, Any], expected: dict[str, Any], case: str
 ) -> None:
     _assert_matches(snapshot["plots"][case], expected["plots"][case], case)
+
+
+def test_a_series_sum_is_compared_at_the_precision_of_its_terms() -> None:
+    expected = {"count": 3, "finite": 2, "min": -1000.0, "max": 1000.0, "sum": 0.02}
+    _assert_matches({**expected, "sum": 0.02 + 1e-7}, expected)
+    with pytest.raises(AssertionError, match=r"^\$\.sum"):
+        _assert_matches({**expected, "sum": 0.02 + 3e-6}, expected)
+    with pytest.raises(AssertionError, match=r"^\$\.min"):
+        _assert_matches({**expected, "min": -1000.0 * (1 + 1e-8)}, expected)
+    with pytest.raises(AssertionError, match=r"^\$\.sum"):
+        _assert_matches({"sum": 0.02 + 1e-7}, {"sum": 0.02})
+    empty = {"count": 1, "finite": 0, "min": None, "max": None, "sum": None}
+    _assert_matches(dict(empty), empty)
 
 
 def test_plot_arrays_outlive_the_rust_result() -> None:
