@@ -254,6 +254,36 @@ fn windows_match_within_freqtol() {
     assert_eq!(twice.windows.len(), 1);
 }
 
+/// Incoming windows are visited in the order the partitions use them
+/// (CASA's DATA_DESCRIPTION order), not in row order: Astra's CASA 6.7.6
+/// case. The first input's window cannot match; the second's three are 0,
+/// 0.75 and 1.5 Hz apart, used as windows 1, 0, 2. Visiting 0.75 Hz first,
+/// both neighbours match it, giving two windows in all, as CASA gives; in
+/// row order 1.5 Hz would not match 0 Hz, giving three.
+#[test]
+fn incoming_windows_are_visited_in_data_description_order() {
+    let base = 1.0e11;
+    let first = with_window(base + 10.0e6, 0, base + 10.0e6);
+    let offsets = [0.0, 0.75, 1.5];
+    let second = Catalogue {
+        windows: offsets
+            .iter()
+            .map(|offset| window(base + offset, 0))
+            .collect(),
+        partitions: [1_u32, 0, 2]
+            .iter()
+            .map(|window| partition(*window, base + offsets[*window as usize], 4))
+            .collect(),
+        ..Catalogue::default()
+    };
+    let merged = merge(&[&first, &second], &tolerance()).expect("merge");
+    assert_eq!(merged.windows.len(), 2, "{:?}", merged.inputs[1].windows);
+    assert_eq!(
+        merged.inputs[1].windows,
+        [WindowId(1), WindowId(1), WindowId(1)]
+    );
+}
+
 /// casacore's separation of two directions agrees with the haversine
 /// formula, across the longitude wrap and near the pole.
 #[test]

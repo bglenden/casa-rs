@@ -267,13 +267,35 @@ fn states(merged: &mut Merged, catalogue: &Catalogue) -> Vec<StateId> {
 /// tolerance, the first whose every channel is within it (the first
 /// outright for one channel). `channels` are the merged windows', and
 /// `own` the incoming catalogue's.
+///
+/// The incoming windows are visited as `MSConcat::copySpwAndPol` visits
+/// them, which matters because matching within the tolerance is not
+/// transitive: those its partitions use, in the order they are first used
+/// (an MSv2's partitions are ordered by data description first, so this is
+/// CASA's DATA_DESCRIPTION order), then the others in row order. A window
+/// of a DATA_DESCRIPTION row no MAIN row uses is among the others, which
+/// CASA would visit in that row's place.
 fn windows(
     merged: &mut Merged,
     (channels, catalogue, own): (&mut Vec<Channels>, &Catalogue, &[Channels]),
     tolerance: &MergeTolerance,
 ) -> Result<Vec<WindowId>, ObservationError> {
-    let mut map = Vec::with_capacity(catalogue.windows.len());
-    for (window, incoming) in catalogue.windows.iter().zip(own) {
+    let count = catalogue.windows.len();
+    let mut seen = vec![false; count];
+    let mut order = Vec::with_capacity(count);
+    let used = catalogue
+        .partitions
+        .iter()
+        .map(|entry| entry.window.0 as usize);
+    for window in used.chain(0..count) {
+        if window < count && !seen[window] {
+            seen[window] = true;
+            order.push(window);
+        }
+    }
+    let mut map = vec![WindowId(0); count];
+    for index in order {
+        let (window, incoming) = (&catalogue.windows[index], &own[index]);
         let evident = incoming.is_some()
             && stated!(
                 window.if_chain,
@@ -289,11 +311,11 @@ fn windows(
             ));
             None
         };
-        map.push(WindowId(found.unwrap_or_else(|| {
+        map[index] = WindowId(found.unwrap_or_else(|| {
             merged.windows.push(window.clone());
             channels.push(incoming.clone());
             merged.windows.len() - 1
-        }) as u32));
+        }) as u32);
     }
     Ok(map)
 }
