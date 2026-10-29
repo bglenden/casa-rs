@@ -162,9 +162,6 @@ impl Msv4Observation {
         if observation.datasets.is_empty() {
             return Err(invalid("the processing set has no visibility datasets"));
         }
-        // Share first, so that fields of one body in different datasets are
-        // extended together, to the latest of their last times.
-        share_ephemerides(&mut observation.catalogue_mut().fields);
         let last_times: Vec<(Vec<FieldId>, f64)> = observation
             .datasets
             .iter()
@@ -790,22 +787,6 @@ fn same_field(a: &FieldEntry, b: &FieldEntry) -> bool {
         && a.source_name == b.source_name
         && a.phase_centre.refer() == b.phase_centre.refer()
         && a.phase_centre.as_angles() == b.phase_centre.as_angles()
-}
-
-/// Make fields whose ephemerides hold the same samples share one, as the
-/// fields of one MSv2 `EPHEMERIS_ID` do, so that the catalogue counts it
-/// once ([`Catalogue::ephemeris_bytes`]).
-fn share_ephemerides(fields: &mut [FieldEntry]) {
-    let mut shared: Vec<Arc<casa_observation::FieldEphemeris>> = Vec::new();
-    for ephemeris in fields
-        .iter_mut()
-        .filter_map(|field| field.ephemeris.as_mut())
-    {
-        match shared.iter().find(|known| ***known == **ephemeris) {
-            Some(known) => *ephemeris = Arc::clone(known),
-            None => shared.push(Arc::clone(ephemeris)),
-        }
-    }
 }
 
 /// Whether the processing set at `root` has node `variable`.

@@ -24,10 +24,11 @@ use super::super::metadata::{UNIX_EPOCH_MJD, direction_name, storage, time_attri
 use super::{ArraySpec, Msv4Codec, codecs, coordinate, create_array, create_group, strings};
 
 /// How far past a dataset's last time its ephemeris samples reach,
-/// seconds. Imaging evaluates a moving field's direction at a time's TDB,
-/// which is 69.2 s after its UTC since 2017 (TT − TAI is 32.184 s, TAI −
-/// UTC 37 s) and has never been 70 s; XRADIO keeps the samples either side
-/// of the UTC times only.
+/// seconds, where the source states them (an extrapolated sample is not
+/// written: [`unix_seconds`]). Imaging evaluates a moving field's direction
+/// at a time's TDB, which is 69.2 s after its UTC since 2017 (TT − TAI is
+/// 32.184 s, TAI − UTC 37 s) and has never been 70 s; XRADIO keeps the
+/// samples either side of the UTC times only.
 const EVALUATION_REACH_S: f64 = 120.0;
 
 /// Write the field dataset at `path` of the fields `grid`'s times name, in

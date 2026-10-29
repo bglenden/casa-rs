@@ -1553,9 +1553,10 @@ converter carries it both ways.
   extrapolated (`FieldEphemeris::extrapolated`). Converting into an MSv2
   writes them as table rows, reported; the MSv4 writer writes only the
   samples the source states, and reading its store extrapolates again. For
-  the Moon the line departs from the true path by about 3 mas over a
-  minute, more on coarser tables (about 16 mas over ten minutes), but
-  never more than interpolating between samples that far apart. The
+  the Moon the line departs from the true path by about 3 mas on a
+  one-minute table, more on coarser ones (about 16 mas on a ten-minute
+  table). A grid too fine to extend within 10,000 points (a union of
+  datasets whose times nearly coincide) gains one point, at the bound. The
   extension is applied once the datasets' samples are united and shared,
   so fields of one body are extended together, and only a union's end.
 
@@ -1569,8 +1570,10 @@ converter carries it both ways.
   their times agree to 1 ms and their values to 1e-12, since converters
   round differently; a time within 1 ms of an end sample is at it.
 - **Writing** (`write/fields.rs`). The `time_ephemeris` layout, with the
-  samples from the last before a dataset's first time to the first two
-  minutes past its last, so the last time's TDB is covered. Also each
+  samples the source states from the last before a dataset's first time
+  to the first two minutes past its last, so the last time's TDB is
+  covered where the source holds them (from an XRADIO store, the samples
+  end where XRADIO's did, and reading extrapolates them again). Also each
   time's phase centre and distance as XRADIO computes them, the geocentre
   as `OBSERVER_POSITION`, and the axes typed as the schema types them.
   Refused:

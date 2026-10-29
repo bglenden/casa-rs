@@ -409,8 +409,9 @@ cutover, and the owner decided both (2026-10-29, on #995):
   The reader extends such an ephemeris by its grid's points up to the
   last time's TDB, on the line through its last two, counted as
   extrapolated and reported when converting into an MSv2, rather than
-  refusing those rows (`EphemerisCoverage`). The
-  writer here keeps samples two minutes past the last time.
+  refusing those rows (`EphemerisCoverage`). The writer here keeps the
+  source's samples to two minutes past the last time, where the source
+  holds them.
 - XRADIO's optional ephemeris variables (`NORTH_POLE_*`, `SUB_*`, and the
   rest) and the table's columns beyond the five `MeasComet` reads are
   reported as losses, not carried; carrying them is #998.

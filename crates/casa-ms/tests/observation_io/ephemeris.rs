@@ -152,9 +152,12 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
     assert!(samples[stored - 1] < last_time + 69.184 / DAY_S);
     let at = sample_at(reference, samples[stored]);
     assert_eq!(at, first + stored, "the next row of the table's grid");
+    let factor =
+        (samples[stored] - samples[stored - 2]) / (samples[stored - 1] - samples[stored - 2]);
     for axis in 0..2 {
-        let line = 2.0 * ephemeris.directions_rad()[stored - 1][axis]
-            - ephemeris.directions_rad()[stored - 2][axis];
+        let [before, after] =
+            [stored - 2, stored - 1].map(|at| ephemeris.directions_rad()[at][axis]);
+        let line = before + factor * (after - before);
         assert_close(
             "extrapolated",
             ephemeris.directions_rad()[stored][axis],

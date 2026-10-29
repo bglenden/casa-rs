@@ -339,15 +339,25 @@ type Sample = (f64, [f64; 2], f64, f64);
 /// bounds the TDB rather than computing it.
 const TDB_LEAD_S: f64 = 72.0;
 
-/// Extend each ephemeris `fields` follow whose samples cover the last time
-/// of every partition one of its fields is in but end less than
-/// [`TDB_LEAD_S`] after the latest of them, with the samples' grid up to
-/// that, each sample on the straight line through the last two
-/// ([`FieldEphemeris::extrapolated_to`]), and a warning. Imaging reads a
-/// body's direction at each time's TDB, and XRADIO keeps only the samples
-/// that bracket a dataset's UTC times; the owner chose extending them over
-/// refusing those times (#995). `last_times` holds each partition's fields
-/// and last time, MJD UTC.
+/// The most grid points an extension adds, so that opening stays quick. A
+/// finer grid, as a union of datasets whose times nearly coincide has,
+/// gains one point at the bound instead.
+const MOST_EXTRAPOLATED: f64 = 10_000.0;
+
+/// Make `fields` whose ephemerides hold the same samples share one, then
+/// extend each ephemeris they follow whose samples cover the last time of
+/// every partition one of its fields is in but end less than
+/// [`TDB_LEAD_S`] after the latest of them: with the samples' grid points
+/// up to that bound ([`trailing_step`]), each on the straight line through
+/// the last two ([`FieldEphemeris::extrapolated_to`]), and a warning.
+/// Imaging reads a body's direction at each time's TDB, and XRADIO keeps
+/// only the samples that bracket a dataset's UTC times; the owner chose
+/// extending them over refusing those times (#995). Sharing first extends
+/// one body's fields in different datasets together, to the latest of
+/// their last times, and the catalogue counts each ephemeris once
+/// ([`Catalogue::ephemeris_bytes`](casa_observation::Catalogue::ephemeris_bytes)),
+/// as the fields of one MSv2 `EPHEMERIS_ID` share one. `last_times` holds
+/// each partition's fields and last time, MJD UTC.
 ///
 /// # Errors
 ///
@@ -356,6 +366,16 @@ pub(super) fn reach_last_tdb(
     fields: &mut [FieldEntry],
     last_times: &[(Vec<FieldId>, f64)],
 ) -> Result<(), ObservationError> {
+    let mut shared: Vec<Arc<FieldEphemeris>> = Vec::new();
+    for ephemeris in fields
+        .iter_mut()
+        .filter_map(|field| field.ephemeris.as_mut())
+    {
+        match shared.iter().find(|known| ***known == **ephemeris) {
+            Some(known) => *ephemeris = Arc::clone(known),
+            None => shared.push(Arc::clone(ephemeris)),
+        }
+    }
     let mut needed: Vec<(Arc<FieldEphemeris>, f64)> = Vec::new();
     for (ids, last) in last_times {
         for field in ids {
@@ -373,36 +393,36 @@ pub(super) fn reach_last_tdb(
     }
     for (ephemeris, last) in needed {
         let times = ephemeris.times_mjd();
-        let (before, end) = (times[times.len() - 2], times[times.len() - 1]);
+        let end = times[times.len() - 1];
         let tdb = last + TDB_LEAD_S / SECONDS_PER_DAY;
         // `read` refuses a dataset whose own samples do not cover its times,
         // and uniting only adds samples, so the first test is a defence.
         if end < last - SAMPLE_TIME_RESOLUTION_DAYS || end >= tdb {
             continue;
         }
-        let step = end - before;
-        let mut extended = FieldEphemeris::clone(&ephemeris);
-        let (mut added, mut at) = (0_u32, end);
-        while at < tdb {
-            added += 1;
-            at = end + f64::from(added) * step;
-            extended = extended.extrapolated_to(at).map_err(|error| {
-                invalid(format!(
-                    "extending the ephemeris of {}: {error}",
-                    ephemeris.name()
-                ))
-            })?;
-        }
+        let step = trailing_step(times);
+        let points = ((tdb - end) / step).ceil();
+        let at: Vec<f64> = if points > MOST_EXTRAPOLATED {
+            vec![tdb]
+        } else {
+            (1..=points as usize)
+                .map(|point| end + point as f64 * step)
+                .collect()
+        };
+        let extended = Arc::new(ephemeris.extrapolated_to(&at).map_err(|error| {
+            invalid(format!(
+                "extending the ephemeris of {}: {error}",
+                ephemeris.name()
+            ))
+        })?);
         tracing::warn!(
             "the ephemeris of {}: its samples end {:.1} s after the last time, short of its TDB; \
-             {} samples extrapolated on its grid, to {:.1} s after it, along the line through \
-             the last two",
+             {} samples extrapolated, to {:.1} s after it, along the line through the last two",
             ephemeris.name(),
             (end - last) * SECONDS_PER_DAY,
-            added,
-            (at - last) * SECONDS_PER_DAY
+            at.len(),
+            (at[at.len() - 1] - last) * SECONDS_PER_DAY
         );
-        let extended = Arc::new(extended);
         for field in fields.iter_mut() {
             if field
                 .ephemeris
@@ -414,6 +434,22 @@ pub(super) fn reach_last_tdb(
         }
     }
     Ok(())
+}
+
+/// The spacing of the trailing run of `times` (MJD days) whose intervals
+/// agree to 1 ms, from the run's whole span: a grid continued from it
+/// keeps the run's rounding, not the last pair's, which a microsecond off
+/// would carry a thousand points out of an MSv2 table's 1 ms tolerance.
+fn trailing_step(times: &[f64]) -> f64 {
+    let last = times.len() - 1;
+    let pair = times[last] - times[last - 1];
+    let mut first = last - 1;
+    while first > 0
+        && ((times[first] - times[first - 1]) - pair).abs() <= SAMPLE_TIME_RESOLUTION_DAYS
+    {
+        first -= 1;
+    }
+    (times[last] - times[first]) / (last - first) as f64
 }
 
 /// The ephemeris of `known` and `other` together, when they are one
@@ -662,6 +698,28 @@ mod tests {
                 .windows(2)
                 .all(|pair| ((pair[1] - pair[0]) * SECONDS_PER_DAY - 10.0).abs() < 1.0e-6)
         );
+        // Equal ephemerides of two fields in different partitions are
+        // shared first, so both reach the later one's TDB together.
+        let samples: Vec<f64> = (0..=5)
+            .map(|minute| day(60.0 * f64::from(minute)))
+            .collect();
+        let (first, second) = (Arc::new(ephemeris(&samples)), Arc::new(ephemeris(&samples)));
+        let mut fields = vec![following("A", &first), following("B", &second)];
+        reach_last_tdb(&mut fields, &last_times).expect("extended");
+        let shared = fields[0].ephemeris.as_ref().expect("an ephemeris");
+        assert!(Arc::ptr_eq(
+            shared,
+            fields[1].ephemeris.as_ref().expect("an ephemeris")
+        ));
+        assert_eq!(shared.extrapolated(), 1);
+        // A grid too fine to extend point by point gains one point, at the
+        // bound.
+        let fine: Vec<f64> = (0..10).map(|step| day(1.0e-3 * f64::from(step))).collect();
+        let mut fields = vec![following("A", &Arc::new(ephemeris(&fine)))];
+        reach_last_tdb(&mut fields, &[(vec![FieldId(0)], fine[9])]).expect("extended");
+        let extended = fields[0].ephemeris.as_ref().expect("an ephemeris");
+        assert_eq!(extended.extrapolated(), 1);
+        assert!(((extended.times_mjd()[10] - fine[9]) * SECONDS_PER_DAY - 72.0).abs() < 1.0e-6);
         // Samples that end before a last time, or reach its TDB, are left.
         for last in [day(40.0), day(30.0 - 72.0)] {
             let mut fields = vec![following("A", &body)];
