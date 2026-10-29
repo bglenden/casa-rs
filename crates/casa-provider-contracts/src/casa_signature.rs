@@ -13,6 +13,17 @@
 //! [`UnimplementedParameter`]: it is accepted at its default, so CASA's
 //! signature is exact, and any other value is refused before the task
 //! starts, naming the issue that tracks it.
+//!
+//! Two checks hold this, and they guarantee different things. Contract
+//! validation here checks the rules' shape for the bindings a surface has:
+//! literal defaults, Python names, keyword-only extras last, markers only
+//! on CASA parameters. It does not know CASA's signature, so a deleted
+//! parameter or a changed but well-typed default passes it. Equality with
+//! CASA 6.7.6.14 itself, every parameter, its order, kind and default, is
+//! checked against the pinned inventory by the Python package's
+//! `test_task_signatures.py`, which also fails on a CASA-named task it
+//! neither checks nor lists as pending, and reported by
+//! `scripts/check-casa-inventory.py`.
 
 use std::collections::BTreeSet;
 
