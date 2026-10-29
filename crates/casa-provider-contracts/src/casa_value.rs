@@ -206,6 +206,25 @@ impl CasaValue {
         }
     }
 
+    /// The NumPy dtype CASA's tools give a [`StrArray`](Self::StrArray)
+    /// of `data`: `<U` and its longest string's length in characters, at
+    /// least 1, as NumPy sizes an array of strings, or `<U5` when it is
+    /// empty, as casatools converts an empty vector of strings
+    /// (`imhead()['masks']` of an unmasked image). The width follows from
+    /// the strings, so the reply need not carry it.
+    pub fn str_dtype(data: &[String]) -> String {
+        if data.is_empty() {
+            return "<U5".into();
+        }
+        let width = data
+            .iter()
+            .map(|text| text.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        format!("<U{width}")
+    }
+
     /// Plain JSON read as Python reads it: objects become string-keyed
     /// dictionaries and arrays lists. For tasks whose return value is not
     /// yet CASA's own (#931).
@@ -386,6 +405,24 @@ mod tests {
             data: vec!["I".into()],
         };
         assert!(!ragged.is_consistent());
+    }
+
+    /// casatools' widths, as `imhead` and `ia.summary` return them in CASA
+    /// 6.7.6.14: the longest string's, counted in characters, and `<U5`
+    /// for an empty array.
+    #[test]
+    fn a_string_arrays_dtype_is_casas_width() {
+        let dtype = |data: &[&str]| {
+            CasaValue::str_dtype(&data.iter().map(|text| text.to_string()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            dtype(&["Right Ascension", "Declination", "Stokes", "Frequency"]),
+            "<U15"
+        );
+        assert_eq!(dtype(&["'", "'", "", "Hz"]), "<U2");
+        assert_eq!(dtype(&["", ""]), "<U1");
+        assert_eq!(dtype(&["µJy"]), "<U3");
+        assert_eq!(dtype(&[]), "<U5");
     }
 
     #[test]

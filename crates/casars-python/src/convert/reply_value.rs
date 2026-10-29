@@ -79,7 +79,7 @@ pub(crate) fn reply_value(py: Python<'_>, value: &CasaValue) -> PyResult<Py<PyAn
         CasaValue::StrArray { shape, data } => {
             let numpy = py.import("numpy")?;
             let keywords = PyDict::new(py);
-            keywords.set_item("dtype", "str")?;
+            keywords.set_item("dtype", CasaValue::str_dtype(data))?;
             let flat = numpy.call_method("array", (PyList::new(py, data)?,), Some(&keywords))?;
             let order = PyDict::new(py);
             order.set_item("order", "F")?;
@@ -89,8 +89,15 @@ pub(crate) fn reply_value(py: Python<'_>, value: &CasaValue) -> PyResult<Py<PyAn
     })
 }
 
-/// Column-major `values` as a NumPy array of `shape`.
+/// Column-major `values` as a NumPy array of `shape`; values that do not
+/// fill the shape are a malformed reply, a `ValueError`.
 fn array<T: Element>(py: Python<'_>, shape: &[usize], values: Vec<T>) -> PyResult<Py<PyAny>> {
+    if values.len() != shape.iter().product::<usize>() {
+        return Err(PyValueError::new_err(format!(
+            "a reply array of shape {shape:?} holds {} values",
+            values.len()
+        )));
+    }
     Ok(fortran_array(shape.to_vec(), values)?
         .into_pyarray(py)
         .into_any()

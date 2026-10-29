@@ -219,27 +219,8 @@ fn describe(value: &CasaValue) -> Value {
             shape,
         ),
         CasaValue::ComplexArray { shape, .. } => array("complex", shape),
-        CasaValue::StrArray { shape, .. } => array("str", shape),
-    }
-}
-
-/// A recorded CASA structure with NumPy's sized string dtypes (`<U15`)
-/// read as `str`.
-fn plain_strings(value: &Value) -> Value {
-    match value {
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(key, item)| match item.as_str() {
-                    Some(dtype) if key == "dtype" && dtype.starts_with("<U") => {
-                        (key.clone(), json!("str"))
-                    }
-                    _ => (key.clone(), plain_strings(item)),
-                })
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(plain_strings).collect()),
-        other => other.clone(),
+        // The width Python decodes it with, casatools' (`<U15`).
+        CasaValue::StrArray { shape, data } => array(&CasaValue::str_dtype(data), shape),
     }
 }
 
@@ -249,7 +230,7 @@ fn casa(case: &str) -> Value {
         .join("../../resources/casa-compat/casa-6.7.6.14/returns.json");
     let document: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(document["casa_version"], "6.7.6.14");
-    plain_strings(&document["cases"][case]["returns"])
+    document["cases"][case]["returns"].clone()
 }
 
 /// `ours` holds CASA's dictionary less exactly the keys `not_yet` names:
@@ -440,8 +421,9 @@ fn imhead_presents_stored_units_and_the_active_mask_as_casa_does() {
 #[test]
 fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
     let workspace = tempfile::tempdir().unwrap();
-    let image = workspace.path().join("ramp.im");
-    write_ramp(&image, true);
+    // CASA's own coordinates, whose names and units set the string widths.
+    let image = workspace.path().join("fromshape.im");
+    write_fromshape(&image, "Jy/beam", false);
     let summary = returned(workspace.path(), "imhead", json!({"imagename": image}));
     assert_casa_dict(&summary, "imhead summary", &["messages", "tileshape"]);
     let list = returned(
