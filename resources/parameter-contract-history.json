@@ -3286,7 +3286,7 @@
     {
       "id": "flagdata",
       "contract_version": 5,
-      "fingerprint": "f299aa9dc031a428a794eb5a4d525a7015bf2790886528833f612dd34c158199"
+      "fingerprint": "419f6c9b43c9e99f55d2131ca3e544da1b2729e2fd05bb51e8110b370a8eb2a7"
     },
     {
       "id": "flagmanager",
@@ -3921,7 +3921,7 @@
     {
       "id": "mstransform",
       "contract_version": 5,
-      "fingerprint": "e2fa81683305602a4e8433e0cdf867ee69ec6c6a10d3fbf51d9999028e1c70e7"
+      "fingerprint": "fffc45c6f8962e3eb09889e99e7242ff6ee4c6a9d8759c5f0d7e9eae8203e976"
     },
     {
       "id": "plotcal",
@@ -4071,7 +4071,7 @@
     {
       "id": "split",
       "contract_version": 5,
-      "fingerprint": "d0d07ace885cc65cb5fa514a4510787d2ea973c39864038b1e619569b0471cec"
+      "fingerprint": "f5591eaddde40c542067640955c00ae380f567c8f9eee84c19a12fa38c4bddb2"
     },
     {
       "id": "statwt",

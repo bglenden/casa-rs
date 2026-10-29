@@ -16366,7 +16366,11 @@
             "python": {"name": "realmodelcol"},
             "presentation": {"label": "Real Model Column", "group": "Data", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "model"}},
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "all"}},
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "data,model,corrected"}}
+          ]}}
         },
         {
           "name": "keepflags",
@@ -16485,7 +16489,7 @@
             "presentation": {"label": "Mode", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's mode chooses how the regridded spectral axis is given, distinct from other tasks' operation modes."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "nchan",
@@ -16500,7 +16504,7 @@
             "python": {"name": "nchan"},
             "presentation": {"label": "Channels", "group": "Spectral", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "start",
@@ -16516,7 +16520,7 @@
             "presentation": {"label": "Start", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's start is the first channel of the regridded spectral axis, distinct from the imager's and impv's starts."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "width",
@@ -16532,7 +16536,7 @@
             "presentation": {"label": "Width", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's width is the channel width of the regridded spectral axis, distinct from channel averaging and image widths."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "nspw",
@@ -16547,7 +16551,7 @@
             "python": {"name": "nspw"},
             "presentation": {"label": "Output SPWs", "group": "Spectral", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "interpolation",
@@ -16563,7 +16567,7 @@
             "presentation": {"label": "Interpolation", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's interpolation regrids the spectral axis, distinct from image regridding interpolation."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "phasecenter",
@@ -16578,7 +16582,7 @@
             "python": {"name": "phasecenter"},
             "presentation": {"label": "Phase Center", "group": "Spectral", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "restfreq",
@@ -16593,7 +16597,7 @@
             "python": {"name": "restfreq"},
             "presentation": {"label": "Rest Frequency", "group": "Spectral", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "outframe",
@@ -16609,7 +16613,7 @@
             "presentation": {"label": "Output Frame", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's outframe is the regridded MeasurementSet's frame, distinct from the imager's choice of frame."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "veltype",
@@ -16625,7 +16629,7 @@
             "presentation": {"label": "Velocity Type", "group": "Spectral", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's veltype names the velocity definition in CASA's lower-case spelling, distinct from the imager's choice."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "preaverage",
@@ -16640,7 +16644,7 @@
             "python": {"name": "preaverage"},
             "presentation": {"label": "Pre-average", "group": "Spectral", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "timeaverage",
@@ -16670,7 +16674,7 @@
             "python": {"name": "timebin"},
             "presentation": {"label": "Time Bin", "group": "Time", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "timespan",
@@ -16685,7 +16689,7 @@
             "python": {"name": "timespan"},
             "presentation": {"label": "Time Span", "group": "Time", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "maxuvwdistance",
@@ -16700,7 +16704,7 @@
             "python": {"name": "maxuvwdistance"},
             "presentation": {"label": "Max UVW Distance", "group": "Time", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "docallib",
@@ -16730,7 +16734,7 @@
             "python": {"name": "callib"},
             "presentation": {"label": "Cal Library", "group": "Calibration", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "docallib", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "douvcontsub",
@@ -16760,7 +16764,7 @@
             "python": {"name": "fitspw"},
             "presentation": {"label": "Fit SPW", "group": "Continuum", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "fitorder",
@@ -16775,7 +16779,7 @@
             "python": {"name": "fitorder"},
             "presentation": {"label": "Fit Order", "group": "Continuum", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "want_cont",
@@ -16790,7 +16794,7 @@
             "python": {"name": "want_cont"},
             "presentation": {"label": "Keep Continuum", "group": "Continuum", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "denoising_lib",
@@ -16805,7 +16809,7 @@
             "python": {"name": "denoising_lib"},
             "presentation": {"label": "Denoising Library", "group": "Continuum", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "nthreads",
@@ -16820,7 +16824,7 @@
             "python": {"name": "nthreads"},
             "presentation": {"label": "Threads", "group": "Continuum", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "niter",
@@ -16836,7 +16840,7 @@
             "presentation": {"label": "Iterations", "group": "Continuum", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's niter is the continuum fit's iteration count, distinct from the imager's and imstat's iteration limits."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "disableparallel",
@@ -17255,7 +17259,7 @@
             "python": {"name": "combine"},
             "presentation": {"label": "Combine", "group": "Averaging", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "timebin", "value": {"kind": "string", "value": "0s"}}}}
         },
         {
           "name": "msselect",
@@ -26164,7 +26168,10 @@
             "python": {"name": "autocorr"},
             "presentation": {"label": "Autocorrelations", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manualflag"}}
+          ]}}
         },
         {
           "name": "inpfile",
@@ -26179,7 +26186,7 @@
             "python": {"name": "inpfile"},
             "presentation": {"label": "Input File", "group": "Input", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
         },
         {
           "name": "reason",
@@ -26194,7 +26201,7 @@
             "python": {"name": "reason"},
             "presentation": {"label": "Reason", "group": "Input", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
         },
         {
           "name": "tbuff",
@@ -26209,7 +26216,7 @@
             "python": {"name": "tbuff"},
             "presentation": {"label": "Time Buffer", "group": "Input", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
         },
         {
           "name": "uvrange",
@@ -26329,7 +26336,7 @@
             "python": {"name": "clipminmax"},
             "presentation": {"label": "Clip Range", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
         },
         {
           "name": "clipoutside",
@@ -26344,7 +26351,7 @@
             "python": {"name": "clipoutside"},
             "presentation": {"label": "Clip Outside", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
         },
         {
           "name": "channelavg",
@@ -26359,7 +26366,11 @@
             "python": {"name": "channelavg"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
         },
         {
           "name": "chanbin",
@@ -26374,7 +26385,11 @@
             "python": {"name": "chanbin"},
             "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
         },
         {
           "name": "timeavg",
@@ -26389,7 +26404,11 @@
             "python": {"name": "timeavg"},
             "presentation": {"label": "Time Average", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
         },
         {
           "name": "timebin",
@@ -26404,7 +26423,11 @@
             "python": {"name": "timebin"},
             "presentation": {"label": "Time Bin", "group": "Clip", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
         },
         {
           "name": "quackincrement",
@@ -26419,7 +26442,7 @@
             "python": {"name": "quackincrement"},
             "presentation": {"label": "Quack Increment", "group": "Quack", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "quack"}}}
         },
         {
           "name": "tolerance",
@@ -26434,7 +26457,7 @@
             "python": {"name": "tolerance"},
             "presentation": {"label": "Tolerance", "group": "Shadow", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
         },
         {
           "name": "addantenna",
@@ -26449,7 +26472,7 @@
             "python": {"name": "addantenna"},
             "presentation": {"label": "Add Antenna", "group": "Shadow", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
         },
         {
           "name": "lowerlimit",
@@ -26464,7 +26487,7 @@
             "python": {"name": "lowerlimit"},
             "presentation": {"label": "Lower Limit", "group": "Elevation", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
         },
         {
           "name": "upperlimit",
@@ -26479,7 +26502,7 @@
             "python": {"name": "upperlimit"},
             "presentation": {"label": "Upper Limit", "group": "Elevation", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
         },
         {
           "name": "ntime",
@@ -26494,7 +26517,11 @@
             "python": {"name": "ntime"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+          ]}}
         },
         {
           "name": "combinescans",
@@ -26509,7 +26536,11 @@
             "python": {"name": "combinescans"},
             "presentation": {"label": "Combine Scans", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+          ]}}
         },
         {
           "name": "timefit",
@@ -26524,7 +26555,7 @@
             "python": {"name": "timefit"},
             "presentation": {"label": "Time Fit", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "freqfit",
@@ -26539,7 +26570,7 @@
             "python": {"name": "freqfit"},
             "presentation": {"label": "Frequency Fit", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "maxnpieces",
@@ -26554,7 +26585,7 @@
             "python": {"name": "maxnpieces"},
             "presentation": {"label": "Max Pieces", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "flagdimension",
@@ -26569,7 +26600,7 @@
             "python": {"name": "flagdimension"},
             "presentation": {"label": "Flag Dimension", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "usewindowstats",
@@ -26584,7 +26615,7 @@
             "python": {"name": "usewindowstats"},
             "presentation": {"label": "Window Statistics", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "halfwin",
@@ -26599,7 +26630,7 @@
             "python": {"name": "halfwin"},
             "presentation": {"label": "Half Window", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
         },
         {
           "name": "winsize",
@@ -26614,7 +26645,7 @@
             "python": {"name": "winsize"},
             "presentation": {"label": "Window Size", "group": "Automatic", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
         },
         {
           "name": "timedevscale",
@@ -26685,7 +26716,7 @@
             "python": {"name": "antint_ref_antenna"},
             "presentation": {"label": "Reference Antenna", "group": "Antint", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
         },
         {
           "name": "minchanfrac",
@@ -26700,7 +26731,7 @@
             "python": {"name": "minchanfrac"},
             "presentation": {"label": "Min Channel Fraction", "group": "Antint", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
         },
         {
           "name": "verbose",
@@ -26715,7 +26746,7 @@
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Antint", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
         },
         {
           "name": "growtime",
@@ -26758,7 +26789,7 @@
             "python": {"name": "growaround"},
             "presentation": {"label": "Grow Around", "group": "Extend", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
         },
         {
           "name": "flagneartime",
@@ -26773,7 +26804,7 @@
             "python": {"name": "flagneartime"},
             "presentation": {"label": "Flag Near Time", "group": "Extend", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
         },
         {
           "name": "flagnearfreq",
@@ -26788,7 +26819,7 @@
             "python": {"name": "flagnearfreq"},
             "presentation": {"label": "Flag Near Frequency", "group": "Extend", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
         },
         {
           "name": "minrel",
@@ -26803,7 +26834,7 @@
             "python": {"name": "minrel"},
             "presentation": {"label": "Min Relative", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "maxrel",
@@ -26818,7 +26849,7 @@
             "python": {"name": "maxrel"},
             "presentation": {"label": "Max Relative", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "minabs",
@@ -26833,7 +26864,7 @@
             "python": {"name": "minabs"},
             "presentation": {"label": "Min Absolute", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "maxabs",
@@ -26848,7 +26879,7 @@
             "python": {"name": "maxabs"},
             "presentation": {"label": "Max Absolute", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "spwchan",
@@ -26863,7 +26894,7 @@
             "python": {"name": "spwchan"},
             "presentation": {"label": "SPW Channels", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "spwcorr",
@@ -26878,7 +26909,7 @@
             "python": {"name": "spwcorr"},
             "presentation": {"label": "SPW Correlations", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "basecnt",
@@ -26893,7 +26924,7 @@
             "python": {"name": "basecnt"},
             "presentation": {"label": "Baseline Counts", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "fieldcnt",
@@ -26908,7 +26939,7 @@
             "python": {"name": "fieldcnt"},
             "presentation": {"label": "Field Counts", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "name",
@@ -26923,7 +26954,7 @@
             "python": {"name": "name"},
             "presentation": {"label": "Name", "group": "Summary", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
         },
         {
           "name": "display",
@@ -26938,7 +26969,10 @@
             "python": {"name": "display"},
             "presentation": {"label": "Display", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "apply"}},
+            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "calculate"}}
+          ]}}
         },
         {
           "name": "savepars",
@@ -26968,7 +27002,7 @@
             "python": {"name": "cmdreason"},
             "presentation": {"label": "Command Reason", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "outfile",
@@ -26984,7 +27018,7 @@
             "presentation": {"label": "Command File", "group": "Output", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's outfile receives the saved flag commands, distinct from an output image path."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "overwrite",
@@ -27000,7 +27034,7 @@
             "presentation": {"label": "Overwrite", "group": "Output", "advanced": true}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's overwrite lets savepars replace its command file, distinct from replacing a task's output product."},
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
         },
         {
           "name": "writeflags",
