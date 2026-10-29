@@ -1353,6 +1353,7 @@ impl Selection {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
         if let Some(region) = region {
+            require_direction_on_first_axes(image, "a box or polygon region")?;
             let [x0, y0, x1, y1] = region.bounding_box();
             if image.ndim() < 2 || x1 >= shape[0] || y1 >= shape[1] {
                 return Err(ImageError::ShapeMismatch {
@@ -1416,6 +1417,27 @@ impl PixelRegion {
     }
 }
 
+/// Refuses `image` unless its direction coordinate, if it has one, owns
+/// pixel axes 0 and 1, where `task` takes the direction plane.
+///
+/// A CASA image can hold its direction on other axes (`imtrans`); casa-rs
+/// reads its coordinates so (#1001), but these tasks do not yet look for
+/// the direction there (#1002).
+fn require_direction_on_first_axes<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    task: &str,
+) -> Result<(), ImageError> {
+    match image.find_axis(CoordinateType::Direction) {
+        None | Some(0) => Ok(()),
+        Some(_) => Err(ImageError::InvalidMetadata(format!(
+            "{task} takes the direction plane from the image's first two axes, but its axes \
+             are {}; casa-rs does not yet take it from other axes (#1002). In CASA, transpose \
+             the image (imtrans) to put the direction first",
+            image.axis_names().join(", ")
+        ))),
+    }
+}
+
 fn region_pixels<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     region: Option<&str>,
@@ -1423,6 +1445,7 @@ fn region_pixels<T: ImagePixel>(
     let Some(region) = region.map(str::trim).filter(|text| !text.is_empty()) else {
         return Ok(None);
     };
+    require_direction_on_first_axes(image, "a region")?;
     if let Some(parsed) = crtf_box_pixels(image, region)? {
         return Ok(Some(PixelRegion::Box(parse_box(&parsed)?)));
     }
@@ -2233,26 +2256,39 @@ fn subimage_coordinates(
     start: &[usize],
 ) -> Result<CoordinateSystem, ImageError> {
     let mut record = coordinates.to_record();
-    let mut axis_offset = 0usize;
-    for coordinate_index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(coordinate_index);
-        let axis_count = coordinate.n_pixel_axes();
-        let key = format!("coordinate{coordinate_index}");
-        let Some(Value::Record(coordinate_record)) = record.get_mut(&key) else {
-            axis_offset += axis_count;
-            continue;
-        };
-        shift_coordinate_reference_pixel(
-            coordinate_record,
-            &start[axis_offset..axis_offset + axis_count],
-        );
-        axis_offset += axis_count;
-    }
+    shift_record_reference_pixels(&mut record, coordinates, start)?;
     CoordinateSystem::from_record(&record).map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "failed to build subimage coordinate system: {error}"
         ))
     })
+}
+
+/// Moves the reference pixel of each coordinate in `record`, which holds
+/// `coordinates`, back by `start` along the coordinate's pixel axes.
+///
+/// `record` may number its coordinates unlike `coordinates` (a transposed
+/// casacore image keeps its coordinates in creation order), so each is
+/// found by the field it was read from.
+fn shift_record_reference_pixels(
+    record: &mut casa_types::RecordValue,
+    coordinates: &CoordinateSystem,
+    start: &[usize],
+) -> Result<(), ImageError> {
+    let fields = CoordinateSystem::record_coordinate_fields(record).map_err(|error| {
+        ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
+    })?;
+    let mut axis_offset = 0usize;
+    for (coordinate_index, field) in fields.iter().enumerate() {
+        let axis_count = coordinates.coordinate(coordinate_index).n_pixel_axes();
+        let axes = &start[axis_offset..axis_offset + axis_count];
+        if let Some(Value::Record(coordinate_record)) = record.get_mut(field) {
+            shift_coordinate_reference_pixel(coordinate_record, axes);
+            shift_legacy_spectral_wcs_reference_pixel(coordinate_record, axes);
+        }
+        axis_offset += axis_count;
+    }
+    Ok(())
 }
 
 fn shift_coordinate_reference_pixel(record: &mut casa_types::RecordValue, start: &[usize]) {
@@ -2282,35 +2318,10 @@ fn legacy_subimage_coordinates<T: ImagePixel>(
     let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
         return None;
     };
-    let mut axis_offset = 0usize;
-    for coordinate_index in 0..image.coordinates().n_coordinates() {
-        let coordinate = image.coordinates().coordinate(coordinate_index);
-        let axis_count = coordinate.n_pixel_axes();
-        let key = legacy_coordinate_key(coordinate.coordinate_type(), coordinate_index);
-        if let Some(Value::Record(coordinate_record)) = coords.get_mut(&key) {
-            shift_coordinate_reference_pixel(
-                coordinate_record,
-                &start[axis_offset..axis_offset + axis_count],
-            );
-            shift_legacy_spectral_wcs_reference_pixel(
-                coordinate_record,
-                &start[axis_offset..axis_offset + axis_count],
-            );
-        }
-        axis_offset += axis_count;
-    }
+    // The image's coordinates were read from this record, so its fields
+    // resolve; if not, the output keeps the coordinates casa-rs writes.
+    shift_record_reference_pixels(&mut coords, image.coordinates(), start).ok()?;
     Some(coords)
-}
-
-fn legacy_coordinate_key(coordinate_type: CoordinateType, coordinate_index: usize) -> String {
-    let prefix = match coordinate_type {
-        CoordinateType::Direction => "direction",
-        CoordinateType::Spectral => "spectral",
-        CoordinateType::Stokes => "stokes",
-        CoordinateType::Linear => "linear",
-        CoordinateType::Tabular => "tabular",
-    };
-    format!("{prefix}{coordinate_index}")
 }
 
 fn shift_legacy_spectral_wcs_reference_pixel(
@@ -2804,6 +2815,7 @@ fn feather_typed(
     low: &PagedImage<f32>,
     request: &FeatherRequest,
 ) -> Result<FeatherSummary, ImageError> {
+    require_direction_on_first_axes(high, "feather")?;
     if request.imagename.exists() {
         if request.overwrite {
             fs::remove_dir_all(&request.imagename)
@@ -3079,6 +3091,15 @@ where
             "impv requires at least two image axes".to_string(),
         ));
     }
+    require_direction_on_first_axes(image, "impv")?;
+    let spectral_axis = image.find_axis(CoordinateType::Spectral);
+    if spectral_axis.is_some_and(|axis| axis < 2) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "impv draws its path on the image's first two axes, but its axes are {}; transpose \
+             the image (imtrans) to put the spectral axis after them",
+            image.axis_names().join(", ")
+        )));
+    }
     if request.outfile.exists() {
         if request.overwrite {
             fs::remove_dir_all(&request.outfile)
@@ -3100,7 +3121,6 @@ where
     }
     let mut start = vec![0; image.ndim()];
     let mut shape = image.shape().to_vec();
-    let spectral_axis = image.find_axis(CoordinateType::Spectral);
     let channel_indices = if let (Some(axis), Some(chans)) = (
         spectral_axis,
         request

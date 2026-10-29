@@ -35,6 +35,13 @@ pub enum CoordinateError {
     #[error("invalid coordinate record: {0}")]
     InvalidRecord(String),
 
+    /// A valid casacore coordinate-system record whose axis maps casa-rs
+    /// cannot represent: a coordinate's axes out of its own order or not
+    /// adjacent, world axes ordered unlike the pixel axes, or removed axes
+    /// (see [`CoordinateSystem::from_record`](crate::CoordinateSystem::from_record)).
+    #[error("unsupported axis layout: {0}")]
+    UnsupportedAxisLayout(String),
+
     /// The number of axes or values supplied does not match expectations.
     #[error("dimension mismatch: expected {expected}, got {got}")]
     DimensionMismatch {

@@ -6,7 +6,13 @@
 //! data cube. Each coordinate owns a contiguous range of pixel and world
 //! axes.
 //!
-//! This corresponds to C++ `CoordinateSystem`.
+//! This corresponds to C++ `CoordinateSystem`. casacore instead records
+//! which axes each coordinate owns, so a transposed casacore system keeps
+//! its coordinates in creation order over permuted axes;
+//! [`CoordinateSystem::from_record`] reads it with its coordinates in the
+//! order of their axes.
+
+mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
 
@@ -232,27 +238,86 @@ impl CoordinateSystem {
     ///
     /// Unknown or malformed coordinate sub-records are rejected; callers never
     /// receive a silently truncated coordinate system.
+    ///
+    /// casacore's `CoordinateSystem::restore` keeps the record's coordinates
+    /// in index order (`direction0`, `stokes1`, ...) and takes the axes each
+    /// owns from `pixelmap<i>` and `worldmap<i>`. A system transposed in
+    /// casacore (`imtrans`, `ia.transpose`, `coordsys.transpose`) keeps its
+    /// coordinates in creation order over permuted axes. This reads the
+    /// coordinates in the order of the axes they own, so that each owns
+    /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
+    /// the same, but its coordinate numbers can differ from casacore's
+    /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
+    /// them in this order.
+    /// [`record_coordinate_fields`](Self::record_coordinate_fields) names the
+    /// record field each coordinate came from.
+    ///
+    /// # Errors
+    ///
+    /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
+    /// that no coordinate order represents: a coordinate whose axes are out
+    /// of its own order (`imtrans order='1023'`) or not adjacent
+    /// (`order='0213'`), world axes ordered unlike the pixel axes, or removed
+    /// axes (`imsubimage(dropdeg=True)` of a single-pixel direction axis).
+    /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
+    /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let obs_info = match rec.get("obsinfo") {
             Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
             _ => ObsInfo::from_record(rec)?,
         };
-
-        let mut coordinates = Vec::new();
-        for (_, key) in coordinate_record_entries(rec) {
-            let Some(Value::Record(coord_rec)) = rec.get(&key) else {
-                return Err(CoordinateError::InvalidRecord(format!(
-                    "coordinate field '{key}' is not a record"
-                )));
-            };
-            coordinates.push(parse_coordinate_record(&key, coord_rec)?);
-        }
-
+        let coordinates = read_coordinates(rec)?
+            .into_iter()
+            .map(|(_, coordinate)| coordinate)
+            .collect();
         Ok(Self {
             coordinates,
             obs_info,
         })
     }
+
+    /// The fields of `rec` that hold the coordinates
+    /// [`from_record`](Self::from_record) reads, in the order of the system's
+    /// coordinates: `record_coordinate_fields(rec)?[i]` holds coordinate `i`.
+    ///
+    /// For a record whose coordinates own consecutive axes in index order,
+    /// as casa-rs writes them, these are the coordinate fields in index
+    /// order.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_record`](Self::from_record).
+    pub fn record_coordinate_fields(rec: &RecordValue) -> Result<Vec<String>, CoordinateError> {
+        Ok(read_coordinates(rec)?
+            .into_iter()
+            .map(|(field, _)| field)
+            .collect())
+    }
+}
+
+/// `rec`'s coordinates with their field names, in the order of their axes.
+fn read_coordinates(rec: &RecordValue) -> Result<Vec<(String, CoordinateModel)>, CoordinateError> {
+    let mut parsed = Vec::new();
+    for (index, key) in coordinate_record_entries(rec) {
+        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field '{key}' is not a record"
+            )));
+        };
+        let coordinate = parse_coordinate_record(&key, coord_rec)?;
+        parsed.push((index, key, coordinate));
+    }
+    let order = record_axes::coordinate_order(rec, &parsed)?;
+    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
+    Ok(order
+        .into_iter()
+        .map(|k| {
+            let (_, key, coordinate) = parsed[k]
+                .take()
+                .expect("an order names each coordinate once");
+            (key, coordinate)
+        })
+        .collect())
 }
 
 impl Default for CoordinateSystem {

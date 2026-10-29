@@ -1,0 +1,678 @@
+{
+ "casa_version": "6.7.6-14",
+ "images": {
+  "transposed.image": {
+   "made_by": "ia.fromarray after cs.transpose([2, 0, 1, 3])",
+   "shape": [
+    2,
+    4,
+    3,
+    5
+   ],
+   "axis_types": [
+    "Stokes",
+    "Direction",
+    "Direction",
+    "Spectral"
+   ],
+   "names": [
+    "Stokes",
+    "Right Ascension",
+    "Declination",
+    "Frequency"
+   ],
+   "units": [
+    "",
+    "rad",
+    "rad",
+    "Hz"
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      1,
+      2
+     ],
+     "pixelmap": [
+      1,
+      2
+     ],
+     "worldreplace": [
+      0.0,
+      0.0
+     ],
+     "pixelreplace": [
+      0.0,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      0
+     ],
+     "pixelmap": [
+      0
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      3
+     ],
+     "pixelmap": [
+      3
+     ],
+     "worldreplace": [
+      1415000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "world": [
+      1.0,
+      1.2000162856352816,
+      -0.4000099999524359,
+      1411000000.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      1,
+      3,
+      2,
+      4
+     ],
+     "world": [
+      2.0,
+      1.1999837145024268,
+      -0.39998999995243584,
+      1419000000.0
+     ],
+     "value": 4231.5
+    },
+    {
+     "pixel": [
+      1,
+      2,
+      1,
+      2
+     ],
+     "world": [
+      2.0,
+      1.199994571477858,
+      -0.39999999999471525,
+      1415000000.0
+     ],
+     "value": 2121.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "world": [
+      2.0,
+      1.200005428522142,
+      -0.39999999999471525,
+      1413000000.0
+     ],
+     "value": 1111.5
+    }
+   ]
+  },
+  "spectral_first.image": {
+   "made_by": "imtrans(order='3012')",
+   "shape": [
+    5,
+    4,
+    3,
+    2
+   ],
+   "axis_types": [
+    "Spectral",
+    "Direction",
+    "Direction",
+    "Stokes"
+   ],
+   "names": [
+    "Frequency",
+    "Right Ascension",
+    "Declination",
+    "Stokes"
+   ],
+   "units": [
+    "Hz",
+    "rad",
+    "rad",
+    ""
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      1,
+      2
+     ],
+     "pixelmap": [
+      1,
+      2
+     ],
+     "worldreplace": [
+      0.0,
+      0.0
+     ],
+     "pixelreplace": [
+      0.0,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      3
+     ],
+     "pixelmap": [
+      3
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      0
+     ],
+     "pixelmap": [
+      0
+     ],
+     "worldreplace": [
+      1415000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "world": [
+      1411000000.0,
+      1.2000162856352816,
+      -0.4000099999524359,
+      1.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      4,
+      3,
+      2,
+      1
+     ],
+     "world": [
+      1419000000.0,
+      1.1999837145024268,
+      -0.39998999995243584,
+      2.0
+     ],
+     "value": 4123.5
+    },
+    {
+     "pixel": [
+      2,
+      2,
+      1,
+      1
+     ],
+     "world": [
+      1415000000.0,
+      1.199994571477858,
+      -0.39999999999471525,
+      2.0
+     ],
+     "value": 2112.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "world": [
+      1413000000.0,
+      1.200005428522142,
+      -0.39999999999471525,
+      2.0
+     ],
+     "value": 1111.5
+    }
+   ]
+  },
+  "swapped.image": {
+   "made_by": "imtrans(order='1023')",
+   "shape": [
+    3,
+    4,
+    2,
+    5
+   ],
+   "axis_types": [
+    "Direction",
+    "Direction",
+    "Stokes",
+    "Spectral"
+   ],
+   "names": [
+    "Declination",
+    "Right Ascension",
+    "Stokes",
+    "Frequency"
+   ],
+   "units": [
+    "rad",
+    "rad",
+    "",
+    "Hz"
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      1,
+      0
+     ],
+     "pixelmap": [
+      1,
+      0
+     ],
+     "worldreplace": [
+      0.0,
+      0.0
+     ],
+     "pixelreplace": [
+      0.0,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      2
+     ],
+     "pixelmap": [
+      2
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      3
+     ],
+     "pixelmap": [
+      3
+     ],
+     "worldreplace": [
+      1415000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "world": [
+      -0.4000099999524359,
+      1.2000162856352816,
+      1.0,
+      1411000000.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      2,
+      3,
+      1,
+      4
+     ],
+     "world": [
+      -0.39998999995243584,
+      1.1999837145024268,
+      2.0,
+      1419000000.0
+     ],
+     "value": 4123.5
+    },
+    {
+     "pixel": [
+      1,
+      2,
+      1,
+      2
+     ],
+     "world": [
+      -0.39999999999471525,
+      1.199994571477858,
+      2.0,
+      1415000000.0
+     ],
+     "value": 2112.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "world": [
+      -0.39999999999471525,
+      1.200005428522142,
+      2.0,
+      1413000000.0
+     ],
+     "value": 1111.5
+    }
+   ]
+  },
+  "interleaved.image": {
+   "made_by": "imtrans(order='0213')",
+   "shape": [
+    4,
+    2,
+    3,
+    5
+   ],
+   "axis_types": [
+    "Direction",
+    "Stokes",
+    "Direction",
+    "Spectral"
+   ],
+   "names": [
+    "Right Ascension",
+    "Stokes",
+    "Declination",
+    "Frequency"
+   ],
+   "units": [
+    "rad",
+    "",
+    "rad",
+    "Hz"
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      0,
+      2
+     ],
+     "pixelmap": [
+      0,
+      2
+     ],
+     "worldreplace": [
+      0.0,
+      0.0
+     ],
+     "pixelreplace": [
+      0.0,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      1
+     ],
+     "pixelmap": [
+      1
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      3
+     ],
+     "pixelmap": [
+      3
+     ],
+     "worldreplace": [
+      1415000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "world": [
+      1.2000162856352816,
+      1.0,
+      -0.4000099999524359,
+      1411000000.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      3,
+      1,
+      2,
+      4
+     ],
+     "world": [
+      1.1999837145024268,
+      2.0,
+      -0.39998999995243584,
+      1419000000.0
+     ],
+     "value": 4123.5
+    },
+    {
+     "pixel": [
+      2,
+      1,
+      1,
+      2
+     ],
+     "world": [
+      1.199994571477858,
+      2.0,
+      -0.39999999999471525,
+      1415000000.0
+     ],
+     "value": 2112.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "world": [
+      1.200005428522142,
+      2.0,
+      -0.39999999999471525,
+      1413000000.0
+     ],
+     "value": 1111.5
+    }
+   ]
+  },
+  "dropdeg_ra.image": {
+   "made_by": "imsubimage(dropdeg=True) of an image one RA pixel wide",
+   "shape": [
+    3,
+    2,
+    5
+   ],
+   "axis_types": [
+    "Direction",
+    "Stokes",
+    "Spectral"
+   ],
+   "names": [
+    "Declination",
+    "Stokes",
+    "Frequency"
+   ],
+   "units": [
+    "rad",
+    "",
+    "Hz"
+   ],
+   "maps": {
+    "direction0": {
+     "worldmap": [
+      -1,
+      0
+     ],
+     "pixelmap": [
+      -1,
+      0
+     ],
+     "worldreplace": [
+      -0.4,
+      -0.4000099999524359
+     ],
+     "pixelreplace": [
+      92068.3256396454,
+      0.0
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      1
+     ],
+     "pixelmap": [
+      1
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      2
+     ],
+     "pixelmap": [
+      2
+     ],
+     "worldreplace": [
+      1411000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0
+     ],
+     "world": [
+      -0.15260875630800746,
+      1.0,
+      1411000000.0
+     ],
+     "value": 0.5
+    },
+    {
+     "pixel": [
+      2,
+      1,
+      4
+     ],
+     "world": [
+      -0.1525901185034699,
+      2.0,
+      1419000000.0
+     ],
+     "value": 4120.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      2
+     ],
+     "world": [
+      -0.15259943744952859,
+      2.0,
+      1415000000.0
+     ],
+     "value": 2110.5
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1
+     ],
+     "world": [
+      -0.15259943744952859,
+      2.0,
+      1413000000.0
+     ],
+     "value": 1110.5
+    }
+   ]
+  }
+ }
+}
