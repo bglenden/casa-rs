@@ -9,10 +9,11 @@
 
 use casa_observation::{ObservationError, Roles};
 
+use super::HistoryRow;
 use super::combine::Combined;
 use super::inputs::Input;
 use super::lockstep::Sizing;
-use super::memory::{Ledger, MemoryCharges, catalogue_bytes};
+use super::memory::{Ledger, MemoryCharges, history_table_bytes, subtables_bytes};
 use super::msv2_pointing::TABLE_ROW_BYTES;
 use super::msv2_rows::{self, Occupancy};
 use super::pointing_plan::PointingPlan;
@@ -74,8 +75,8 @@ fn batches(
 }
 
 /// Admit to `ledger` what writing `combined`'s `occupancy` from `inputs`
-/// (with their `pointing`) and `data_columns` holds, in batches of
-/// `batch_bytes`; MAIN's write plan, and the plan's charges.
+/// (with their `pointing`), `data_columns` and the `history` rows holds, in
+/// batches of `batch_bytes`; MAIN's write plan, and the plan's charges.
 ///
 /// # Errors
 ///
@@ -85,7 +86,7 @@ fn batches(
 pub(super) fn admit(
     ledger: &mut Ledger,
     (inputs, combined, pointing): (&[Input], &Combined, &[PointingPlan]),
-    (data_columns, occupancy): (&[&'static str], &Occupancy),
+    (data_columns, occupancy, history): (&[&'static str], &Occupancy, &[HistoryRow]),
     batch_bytes: usize,
 ) -> Result<Writing, ObservationError> {
     let (planning, kept) = (ledger.peak(), ledger.held());
@@ -113,7 +114,8 @@ pub(super) fn admit(
         .unwrap_or(0);
     let rows = msv2_rows::held_bytes(samples, cell);
     let held = CREATED_TABLES_BYTES
-        + catalogue_bytes(catalogue)
+        + subtables_bytes(catalogue)
+        + history_table_bytes(history)
         + pointing
             .iter()
             .map(|plan| plan.gathered().0 * TABLE_ROW_BYTES)

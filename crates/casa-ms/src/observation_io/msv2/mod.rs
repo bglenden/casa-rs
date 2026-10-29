@@ -5,6 +5,7 @@
 
 pub(super) mod catalogue;
 mod cursor;
+pub(super) mod held;
 mod index;
 mod metadata;
 mod pointing;
@@ -32,7 +33,7 @@ use casa_observation::{
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
 
-use super::OpenOptions;
+use super::{OpenOptions, heap};
 use crate::{MeasurementSet, MsError};
 use index::{Grid, Index, ROWS_PER_CHUNK};
 
@@ -85,7 +86,7 @@ struct Partition {
 /// Opening checks every unit and measure reference the batches rely on:
 /// `TIME` and `TIME_CENTROID` share one fixed reference (a variable
 /// reference is refused); the UVW convention is resolved to the phase
-/// centres' frame ([`UvwFrame`](casa_observation::UvwFrame)); positions,
+/// centres' frame ([`UvwFrame`]); positions,
 /// diameters, angles and frequencies are in the units their types claim.
 pub struct Msv2Observation {
     ms: MeasurementSet,
@@ -104,6 +105,10 @@ pub struct Msv2Observation {
     /// saves each batch.
     tile_shapes: Vec<(String, Option<Vec<usize>>)>,
     options: OpenOptions,
+    /// The most its open tables hold: their descriptions and keywords
+    /// ([`held::opening_bytes`]) and the subtables' rows the opening loaded
+    /// ([`held::read_bytes`]).
+    tables_bytes: usize,
 }
 
 impl Msv2Observation {
@@ -138,13 +143,17 @@ impl Msv2Observation {
         Self::open_granted(path, options, &mut |_| Ok(()))
     }
 
-    /// [`Self::open_with`], asking `grant` for the bytes the opening's index
-    /// will hold before it allocates them: its chunk of MAIN's key columns,
-    /// each partition's distinct times, baselines and processors as the
-    /// first pass finds them (at most one row's beyond what was granted),
-    /// then the scans and the grids. The totals asked for only grow, a few
-    /// at a time; a caller that admits memory admits each increase. An
-    /// error from `grant` refuses the opening with nothing more allocated.
+    /// [`Self::open_with`], asking `grant` for the bytes the opening will
+    /// hold before it allocates them: its tables' descriptions and keywords
+    /// (bounded by their files), the rows of the subtables its catalogue is
+    /// read from (a table loads every row on first touch and keeps them)
+    /// and what is read from them, then its index (its chunk of MAIN's key
+    /// columns, each partition's distinct times, baselines and processors as
+    /// the first pass finds them, at most one row's beyond what was granted,
+    /// then the scans and the grids) and its partitions' entries. The
+    /// totals asked for only grow, a few at a time; a caller that admits
+    /// memory admits each increase. An error from `grant` refuses the
+    /// opening with nothing more allocated.
     ///
     /// # Errors
     ///
@@ -155,8 +164,13 @@ impl Msv2Observation {
         options: &OpenOptions,
         grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<Self, ObservationError> {
+        let described = held::opening_bytes(path.as_ref());
+        grant(described)?;
         let ms = MeasurementSet::open_retained_read(path).map_err(storage)?;
-        Self::from_measurement_set(ms, options, grant)
+        let mut observation =
+            Self::from_measurement_set(ms, options, &mut |total| grant(described + total))?;
+        observation.tables_bytes += described;
+        Ok(observation)
     }
 
     /// The entities `ms`'s subtables state, read as opening reads them:
@@ -198,6 +212,11 @@ impl Msv2Observation {
         options: &OpenOptions,
         grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
     ) -> Result<Self, ObservationError> {
+        // The rows the catalogue's readers load stay loaded while the
+        // observation is open; the entities read from them copy at most as
+        // much again.
+        let tables = held::read_bytes(&ms);
+        grant(2 * tables)?;
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
         if let Some((antenna, feed, window)) = feeds.varying() {
@@ -219,20 +238,34 @@ impl Msv2Observation {
         let observations = catalogue::read_observations(&ms)?;
         let main = ms.main_table();
         let time_scale = catalogue::time_scale(main)?;
+        let read = 2 * tables + catalogue::setups_bytes(&ms)?;
+        grant(read)?;
         let setups = catalogue::spectral_setups(&ms)?;
         let modes = catalogue::read_state_modes(&ms)?;
         let (spectral_weights, spectral_sigmas) = (
             has_content(main, "WEIGHT_SPECTRUM")?,
             has_content(main, "SIGMA_SPECTRUM")?,
         );
+        let mut indexed = 0;
         let index = Index::build(
             main,
             options.partition_scheme,
             (&modes, &ephemerides),
             ROWS_PER_CHUNK,
-            grant,
+            &mut |total| {
+                grant(read + total)?;
+                indexed = total;
+                Ok(())
+            },
         )?;
         let groups = data_groups(main, spectral_weights, uvw_frame);
+        let described = (feeds.largest_receptors_bytes(), antennas.len());
+        let entries_bytes: usize = index
+            .partitions
+            .iter()
+            .map(|partition| entry_bytes(partition, &setups, &groups, described))
+            .sum();
+        grant(read + indexed + entries_bytes)?;
         // A shape is a hint for an estimate's natural blocks: a header that
         // cannot be read leaves its group the hint's fallback, as a column
         // without tiles has, and refuses nothing until the group is read.
@@ -336,6 +369,7 @@ impl Msv2Observation {
             spectral_sigmas,
             tile_shapes,
             options: options.clone(),
+            tables_bytes: tables,
             ms,
         })
     }
@@ -443,6 +477,13 @@ impl Msv2Observation {
                     + grid.baselines.capacity() * size_of::<OrderedBaseline>()
             })
             .sum()
+    }
+
+    /// The most its open tables hold while it is open: their descriptions
+    /// and keywords ([`held::opening_bytes`]) and the rows of the subtables
+    /// its catalogue was read from ([`held::read_bytes`]).
+    pub(crate) fn tables_bytes(&self) -> usize {
+        self.tables_bytes
     }
 
     /// The MAIN row partition `id` holds at `time_s` (MAIN `TIME`, seconds
@@ -821,6 +862,37 @@ impl Msv2Observation {
             })?,
         })
     }
+}
+
+/// The most partition `(key, grid)`'s catalogue entry holds before it is
+/// built: its setup's copy, its intents (the parts of its `OBS_MODE`), its
+/// fields and scans (at most one of each per time), baselines, states and
+/// data groups (`groups`), and the receptors of each antenna its baselines
+/// name, `antennas` at most, each at most `receptors` bytes.
+fn entry_bytes(
+    (key, grid): &(index::PartitionKey, index::Grid),
+    setups: &[catalogue::SpectralSetup],
+    groups: &[DataGroupEntry],
+    (receptors, antennas): (usize, usize),
+) -> usize {
+    let setup = usize::try_from(key.data_description)
+        .ok()
+        .and_then(|row| setups.get(row))
+        .map_or(0, catalogue::SpectralSetup::heap_bytes);
+    let intents =
+        2 * key.obs_mode.len() + (key.obs_mode.matches(',').count() + 1) * size_of::<String>();
+    let groups: usize = groups
+        .iter()
+        .map(|group| size_of::<DataGroupEntry>() + heap::group_bytes(group))
+        .sum();
+    size_of::<PartitionEntry>()
+        + setup
+        + intents
+        + (grid.field_per_time.len() + grid.scan_per_time.len()) * size_of::<u32>()
+        + size_of_val(grid.baselines.as_slice())
+        + grid.states.len() * size_of::<StateId>()
+        + groups
+        + (2 * grid.baselines.len()).min(antennas) * receptors
 }
 
 /// The receptors of each antenna `baselines` name, through the feed pair

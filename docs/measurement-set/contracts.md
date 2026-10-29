@@ -1072,10 +1072,24 @@ The plan decides everything before writing, and writes nothing until asked:
   through the MSv2 adapter, so defaults written, the `STATE` rows written
   for an MSv4 input's intents, feeds and MAIN's UVW label read as they will.
 - **Memory.** What making the plan holds, and what writing it will hold,
-  are admitted against the caller's budget before they are allocated (each
-  input's opening through `Msv2Observation::open_granted`), and the plan
-  states its charges. A batch that cannot hold one integration of every
-  selected group is refused, not rounded up.
+  are admitted against the caller's budget before they are allocated, and
+  the plan states its charges. Sizes are actual where they are known
+  before allocation: the `HISTORY` rows it copies (by their strings), the
+  catalogues (at their strings' and arrays' capacities), the grids and
+  batches. Where only building something gives its size, a bound is
+  admitted first and trimmed to what was built: an input's opening asks
+  for its tables' descriptions (bounded by their files), the rows of the
+  subtables its catalogue is read from (a table loads every row on first
+  touch; bounded by their rows, columns and files) and what is read from
+  them, then its index and partitions (`Msv2Observation::open_granted`;
+  an MSv4's metadata and coordinates from its arrays' shapes and fixed
+  element sizes, `Msv4Observation::open_granted`); the merge is bounded by
+  the inputs' catalogues together, and the written catalogue by the merged
+  one. Writing holds the subtables, `HISTORY` and `POINTING` until the
+  save, then the larger of the pointing reads and the MAIN writers with
+  one batch. A refused plan holds at most its budget. A batch that cannot
+  hold one integration of every selected group is refused, not rounded
+  up.
 - **Publication.** A new MeasurementSet is staged and renamed into place. An
   existing one is replaced, as `concat` appends to an existing `concatvis`
   (then the first input): its MAIN's write lock is held from the plan

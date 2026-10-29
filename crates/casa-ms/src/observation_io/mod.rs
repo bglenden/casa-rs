@@ -20,6 +20,7 @@ pub mod convert;
 #[cfg(unix)]
 pub mod creation;
 mod grouping;
+mod heap;
 mod msv2;
 #[cfg(feature = "msv4")]
 mod msv4;

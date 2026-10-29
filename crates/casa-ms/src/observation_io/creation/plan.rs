@@ -15,15 +15,19 @@ use casa_types::measures::direction::DirectionRef;
 
 use super::combine::{self, Combined};
 use super::inputs::Input;
-use super::memory::{Ledger, MemoryCharges, catalogue_bytes};
+use super::memory::{
+    Ledger, MemoryCharges, catalogue_bytes, combined_bytes, history_bytes, merge_bound,
+    subtables_bytes, written_bound,
+};
 use super::msv2_pointing::{self, Pointed};
 use super::msv2_rows::{MainRows, Occupancy, RowStates, StateIds};
 use super::pointing_plan::{self, PointingPlan};
 use super::replace::{Replacing, Stage};
 use super::{
-    CreationInput, CreationOptions, CreationReport, Destination, Loss, PaddingRows, lockstep,
-    losses, msv2_tables, occupancy, writing,
+    CreationInput, CreationOptions, CreationReport, Destination, HistoryRow, Loss, PaddingRows,
+    lockstep, losses, msv2_tables, occupancy, writing,
 };
+use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::MeasurementSetWritePlan;
 use crate::{MeasurementSet, OptionalMainColumn};
@@ -71,7 +75,11 @@ pub struct CreationPlan {
     /// MAIN's write plan, within the memory admitted.
     main: MeasurementSetWritePlan,
     charges: MemoryCharges,
-    options: CreationOptions,
+    /// What writing takes from the options: the `HISTORY` rows, the
+    /// padding policy and the batch budget.
+    history: Vec<HistoryRow>,
+    padding: PaddingRows,
+    batch_bytes: usize,
     publication: Publication,
 }
 
@@ -141,6 +149,8 @@ impl CreationPlan {
             Destination::Replace(path) => Publication::Replace(Replacing::hold(&path)?),
         };
         let mut ledger = Ledger::new(options.memory_bytes);
+        // The plan keeps a copy of the HISTORY rows to write.
+        ledger.admit("the HISTORY rows", history_bytes(&options.history))?;
         let inputs = inputs
             .iter()
             .map(|input| Input::open(input, &mut ledger))
@@ -155,7 +165,10 @@ impl CreationPlan {
         for input in &inputs {
             let (path, observation) = (&input.path, input.observation());
             let catalogue = observation.catalogue();
-            let scans = losses::scan_bytes(catalogue);
+            // An MSv2's scan opens it again and loads the subtables its
+            // catalogue was read from.
+            let scans = losses::scan_bytes(catalogue)
+                + input.msv2().map_or(0, Msv2Observation::tables_bytes);
             found.extend(ledger.during("an input's loss scans", scans, |_| {
                 losses::inventory(path, catalogue, &groups, losses::Store::Msv2)
             })?);
@@ -181,9 +194,15 @@ impl CreationPlan {
         for input in &inputs {
             refuse_unwritable(input.observation().catalogue())?;
         }
+        let merging = merge_bound(
+            inputs
+                .iter()
+                .map(|input| catalogue_bytes(input.observation().catalogue()))
+                .sum(),
+        );
+        ledger.admit("merging the catalogues", merging)?;
         let combined = combine::combine(&inputs, &groups, &options.tolerance)?;
-        let merged = catalogue_bytes(&combined.catalogue);
-        ledger.admit("the merged catalogue", merged)?;
+        ledger.trim("the merged catalogue", merging, combined_bytes(&combined))?;
         if options.padding == PaddingRows::Flagged
             && combined
                 .contributors
@@ -200,12 +219,16 @@ impl CreationPlan {
         found.extend(combined.losses.iter().cloned());
         let grids = occupancy::grids(&inputs, &combined, &mut ledger)?;
         // What writing the subtables defaults or leaves out, found by writing
-        // them in memory, and where they put each partition.
+        // them in memory, and where they put each partition; the catalogue
+        // read back from them stays.
+        let promised = written_bound(&combined);
+        ledger.admit("the written catalogue", promised)?;
+        let rehearsing = subtables_bytes(&combined.catalogue);
         let msv2_tables::Rehearsal {
             layout,
             losses: rehearsed,
             read_back,
-        } = ledger.during("the subtables rehearsed", merged, |_| {
+        } = ledger.during("the subtables rehearsed", rehearsing, |_| {
             msv2_tables::rehearse(&combined.catalogue, &grids.spans, &combined.intents)
         })?;
         found.extend(rehearsed);
@@ -218,7 +241,7 @@ impl CreationPlan {
             .map(|(name, units)| (name, unit(units)))
             .collect();
         let output = written(&combined, &layout, read_back);
-        ledger.admit("the written catalogue", catalogue_bytes(&output))?;
+        ledger.trim("the written catalogue", promised, catalogue_bytes(&output))?;
         let occupancy = grids.occupancy(
             &inputs,
             &combined,
@@ -235,7 +258,7 @@ impl CreationPlan {
         let writing = writing::admit(
             &mut ledger,
             (&inputs, &combined, &pointing),
-            (&data_columns, &occupancy),
+            (&data_columns, &occupancy, &options.history),
             options.batch_bytes,
         )?;
         Ok(Self {
@@ -248,7 +271,9 @@ impl CreationPlan {
             output,
             main: writing.plan,
             charges: writing.charges,
-            options: options.clone(),
+            history: options.history.clone(),
+            padding: options.padding,
+            batch_bytes: options.batch_bytes,
             publication,
         })
     }
@@ -373,7 +398,7 @@ impl CreationPlan {
             })
             .collect();
         msv2_pointing::write(&mut ms, &pointed)?;
-        super::msv2_identity::history(&mut ms, &self.options.history)?;
+        super::msv2_identity::history(&mut ms, &self.history)?;
         let names = optional.iter().map(|column| column.name()).collect();
         let mut main = MainRows::start(
             (staging, self.main.clone()),
@@ -381,7 +406,7 @@ impl CreationPlan {
             names,
             &self.occupancy,
             layout,
-            self.options.padding,
+            self.padding,
         )?;
         let mut report = CreationReport::default();
         let mut row_states = RowStates::default();
@@ -401,7 +426,7 @@ impl CreationPlan {
                     id,
                     &placement.groups,
                     Roles::ALL,
-                    (self.options.batch_bytes, None),
+                    (self.batch_bytes, None),
                     |batches| {
                         let states = per_row
                             .map(|msv2| row_states.of(msv2, id, &batches[0]))

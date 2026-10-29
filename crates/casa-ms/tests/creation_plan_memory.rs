@@ -2,9 +2,12 @@
 //! A creation plan holds what it admits ([`CreationPlan::charges`]):
 //! making it holds at most its planning charge, and writing it at most its
 //! writing charge beyond what the plan keeps, for eight inputs of three
-//! data groups with their pointing. A batch that cannot hold one
-//! integration is refused, and so is a budget one byte below the least the
-//! plan is made with, leaving nothing behind.
+//! data groups with their pointing; for `HISTORY` rows of megabytes, an
+//! input whose names and schedule are long strings, a long track's
+//! `POINTING`, and an MSv4 input. A batch that cannot hold one integration
+//! is refused, and so is a budget one byte below the least the plan is
+//! made with, or `HISTORY` rows beyond the budget, each holding at most
+//! its budget and leaving nothing behind.
 //!
 //! This binary's global allocator counts the live heap; each law compares
 //! a peak beyond the heap live before it with the charge. The tiles and
@@ -17,13 +20,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_ms::observation_io::creation::{
-    CreationInput, CreationOptions, CreationPlan, Destination, LossKind, MemoryCharges, PaddingRows,
+    CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, LossKind, MemoryCharges,
+    PaddingRows,
 };
 use casa_ms::{
-    SyntheticField, SyntheticObservationRequest, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    MeasurementSet, SubtableId, SyntheticField, SyntheticObservationRequest,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 use casa_observation::{MergeTolerance, ObservationError};
+use casa_types::{ArrayValue, ScalarValue, Value};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -100,6 +105,10 @@ const INPUTS: usize = 8;
 /// Ten-second integrations of each input.
 const INTEGRATIONS: usize = 6;
 
+/// Ten-second integrations of the long track: twenty times an input's
+/// `POINTING`.
+const LONG_TRACK: usize = 120;
+
 /// What the charges leave out: paths and messages.
 const ALLOWANCE: u64 = 64 << 10;
 
@@ -123,33 +132,34 @@ fn options(batch_bytes: usize, memory_bytes: usize) -> CreationOptions {
     }
 }
 
-/// Input `index`: a VLA-A track of [`INTEGRATIONS`] ten-second
-/// integrations of 32 channels (16 for an odd `index`) towards one field,
-/// `index` minutes after
-/// the first input, so `POINTING` holds a row per antenna and integration;
-/// created again with `CORRECTED_DATA` (from `DATA`) and `MODEL_DATA` (the
-/// initial model) for three data groups.
-fn input(root: &Path, index: usize) -> PathBuf {
-    let synthetic = root.join(format!("synthetic{index}.ms"));
+/// A VLA-A track `name` of `integrations` ten-second integrations of
+/// `channels` channels towards one field, `offset_s` after the first
+/// input, so `POINTING` holds a row per antenna and integration; created
+/// again with `CORRECTED_DATA` (from `DATA`) and `MODEL_DATA` (the initial
+/// model) for three data groups.
+fn track(
+    root: &Path,
+    name: &str,
+    (offset_s, integrations, channels): (f64, usize, usize),
+) -> PathBuf {
+    let synthetic = root.join(format!("synthetic-{name}.ms"));
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &synthetic,
         tutorial_vla_a_antennas(),
     );
-    request.start_time_mjd_seconds += 60.0 * index as f64;
-    request.duration_seconds = 10.0 * INTEGRATIONS as f64;
+    request.start_time_mjd_seconds += offset_s;
+    request.duration_seconds = 10.0 * integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    // Alternate inputs have another cell shape, so the MAIN writers' rows
-    // change cube at every input.
-    request.spectral_windows[0].channel_count = if index.is_multiple_of(2) { 32 } else { 16 };
+    request.spectral_windows[0].channel_count = channels;
     request.spectral_windows[0].channel_width_hz = 1.0e6;
     request.fields = vec![SyntheticField {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
     generate_synthetic_observation_ms(&request).expect("synthesise the MS");
-    let three = root.join(format!("input{index}.ms"));
+    let three = root.join(format!("{name}.ms"));
     let groups = ["base", "corrected", "model"].map(String::from).to_vec();
     CreationPlan::new(
         &[CreationInput::new(&synthetic)],
@@ -165,17 +175,62 @@ fn input(root: &Path, index: usize) -> PathBuf {
     three
 }
 
+/// Input `index`: a track of [`INTEGRATIONS`] integrations of 32 channels
+/// (16 for an odd `index`), `index` minutes after the first; alternate
+/// inputs have another cell shape, so the MAIN writers' rows change cube at
+/// every input.
+fn input(root: &Path, index: usize) -> PathBuf {
+    let channels = if index.is_multiple_of(2) { 32 } else { 16 };
+    track(
+        root,
+        &format!("input{index}"),
+        (60.0 * index as f64, INTEGRATIONS, channels),
+    )
+}
+
+/// An input whose observing session states long strings: a project, an
+/// observer and a `SCHEDULE` line of 16 KiB each (casa-tables writes a
+/// string within one 32 KiB bucket).
+fn stated(root: &Path) -> PathBuf {
+    let path = track(root, "stated", (0.0, INTEGRATIONS, 32));
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    let observation = ms
+        .subtable_mut(SubtableId::Observation)
+        .expect("OBSERVATION");
+    let text = |length: usize| "s".repeat(length);
+    let lines = |lines: Vec<String>| {
+        let count = lines.len();
+        Value::Array(ArrayValue::String(
+            ndarray::ArrayD::from_shape_vec(vec![count], lines).expect("lines"),
+        ))
+    };
+    for (column, value) in [
+        (
+            "PROJECT",
+            Value::Scalar(ScalarValue::String(text(16 << 10))),
+        ),
+        (
+            "OBSERVER",
+            Value::Scalar(ScalarValue::String(text(16 << 10))),
+        ),
+        ("SCHEDULE", lines(vec![text(16 << 10)])),
+    ] {
+        observation
+            .row_accessor_mut()
+            .set_cell(0, column, value)
+            .unwrap_or_else(|error| panic!("{column}: {error}"));
+    }
+    ms.save().expect("save");
+    path
+}
+
 /// The plan over `inputs` at `destination`.
 fn plan(
     inputs: &[CreationInput],
     destination: &Path,
-    (batch_bytes, memory_bytes): (usize, usize),
+    options: &CreationOptions,
 ) -> Result<CreationPlan, ObservationError> {
-    CreationPlan::new(
-        inputs,
-        &options(batch_bytes, memory_bytes),
-        Destination::New(destination.to_path_buf()),
-    )
+    CreationPlan::new(inputs, options, Destination::New(destination.to_path_buf()))
 }
 
 /// Make and write the plan over `inputs` at `destination`, asserting that
@@ -183,10 +238,10 @@ fn plan(
 fn holds_its_charges(
     inputs: &[CreationInput],
     destination: &Path,
-    budgets: (usize, usize),
+    options: &CreationOptions,
 ) -> MemoryCharges {
     let before = LIVE.load(Ordering::Relaxed);
-    let (made, planning) = peak_of(|| plan(inputs, destination, budgets));
+    let (made, planning) = peak_of(|| plan(inputs, destination, options));
     let kept = LIVE.load(Ordering::Relaxed).saturating_sub(before);
     let made = made.expect("the plan within its budget");
     let charges = made.charges();
@@ -200,8 +255,8 @@ fn holds_its_charges(
     eprintln!(
         "{rows} rows, batch {} and budget {}: kept {kept} of {}, planning peak {planning} of \
          {}, writing peak {writing} of {} (writer {}, batch {}), least {}",
-        budgets.0,
-        budgets.1,
+        options.batch_bytes,
+        options.memory_bytes,
         charges.kept,
         charges.planning,
         charges.writing,
@@ -219,9 +274,34 @@ fn holds_its_charges(
         "writing held {writing} bytes, beyond its {} charged",
         charges.writing
     );
-    assert!(charges.kept + charges.writing <= budgets.1 && charges.planning <= budgets.1);
+    assert!(
+        charges.kept + charges.writing <= options.memory_bytes
+            && charges.planning <= options.memory_bytes
+    );
     std::fs::remove_dir_all(destination).expect("remove the output");
     charges
+}
+
+/// A plan over `inputs` at `destination` under `options` is refused, having
+/// held at most its budget; the refusal.
+fn refused_within_budget(
+    inputs: &[CreationInput],
+    destination: &Path,
+    options: &CreationOptions,
+) -> ObservationError {
+    let (refused, held) = peak_of(|| plan(inputs, destination, options).err());
+    let refused = refused.expect("refused");
+    eprintln!(
+        "refused under budget {}: held {held}: {refused}",
+        options.memory_bytes
+    );
+    assert!(
+        held <= options.memory_bytes as u64 + ALLOWANCE,
+        "a refused plan held {held} bytes, beyond its budget of {}",
+        options.memory_bytes
+    );
+    nothing_left(destination);
+    refused
 }
 
 /// Nothing a refused plan made is left beside its destination.
@@ -238,6 +318,21 @@ fn nothing_left(destination: &Path) {
     assert!(left.is_empty(), "left beside the destination: {left:?}");
 }
 
+/// `rows` `HISTORY` rows, each message `bytes` long.
+fn history(rows: usize, bytes: usize) -> Vec<HistoryRow> {
+    let row = HistoryRow {
+        time_s: 5.0e9,
+        observation: 0,
+        message: "h".repeat(bytes),
+        priority: "NORMAL".to_string(),
+        origin: "concat".to_string(),
+        application: "casa-rs".to_string(),
+        parameters: vec!["vis=['a.ms']".to_string()],
+        command: Vec::new(),
+    };
+    vec![row; rows]
+}
+
 /// The laws, one after another: the allocator counts every thread's heap,
 /// so this binary holds one test.
 #[test]
@@ -250,35 +345,100 @@ fn a_creation_plan_holds_what_it_admits() {
     let destination = root.path().join("created.ms");
     let generous = 1 << 30;
     // The first plan and write load what the table layer caches.
-    plan(&inputs, &destination, (1 << 24, generous))
-        .and_then(CreationPlan::write)
-        .expect("warm");
-    std::fs::remove_dir_all(&destination).expect("remove the output");
+    let warm = |inputs: &[CreationInput]| {
+        plan(inputs, &destination, &options(1 << 24, generous))
+            .and_then(CreationPlan::write)
+            .expect("warm");
+        std::fs::remove_dir_all(&destination).expect("remove the output");
+    };
+    warm(&inputs);
 
-    let integration = holds_its_charges(&inputs, &destination, (1 << 24, generous)).integration;
+    let integration =
+        holds_its_charges(&inputs, &destination, &options(1 << 24, generous)).integration;
 
     // One integration of every group is the least batch: one byte less is
     // refused, not rounded up.
-    let refused = plan(&inputs, &destination, (integration - 1, generous));
+    let refused = refused_within_budget(&inputs, &destination, &options(integration - 1, generous));
     assert!(
-        matches!(refused, Err(ObservationError::OverBudget { required, .. }) if required == integration),
-        "{:?}",
-        refused.err()
+        matches!(refused, ObservationError::OverBudget { required, .. } if required == integration),
+        "{refused:?}"
     );
-    nothing_left(&destination);
-    let at_one = holds_its_charges(&inputs, &destination, (integration, generous));
+    let at_one = holds_its_charges(&inputs, &destination, &options(integration, generous));
     assert_eq!(at_one.batch, integration, "a batch of one integration");
 
     // The least budget plans and writes within its charges; one byte less
     // is refused before anything is written.
     let least = at_one.least;
-    let charges = holds_its_charges(&inputs, &destination, (integration, least));
+    let charges = holds_its_charges(&inputs, &destination, &options(integration, least));
     assert_eq!(charges.least, least);
-    let refused = plan(&inputs, &destination, (integration, least - 1));
+    let refused = refused_within_budget(&inputs, &destination, &options(integration, least - 1));
     assert!(
-        matches!(refused, Err(ObservationError::OverBudget { .. })),
-        "{:?}",
-        refused.err()
+        matches!(refused, ObservationError::OverBudget { .. }),
+        "{refused:?}"
     );
-    nothing_left(&destination);
+
+    // HISTORY rows are charged as the plan keeps them and as writing holds
+    // them (4 MiB of messages, each within a string bucket); rows beyond
+    // the budget are refused before they are copied.
+    let with_history = |(rows, bytes): (usize, usize), memory_bytes: usize| CreationOptions {
+        history: history(rows, bytes),
+        ..options(integration, memory_bytes)
+    };
+    holds_its_charges(
+        &inputs,
+        &destination,
+        &with_history((256, 16 << 10), generous),
+    );
+    let message = 8 << 20;
+    let heavy = with_history((1, message), least + (1 << 20));
+    let refused = refused_within_budget(&inputs, &destination, &heavy);
+    assert!(
+        matches!(refused, ObservationError::OverBudget { .. }),
+        "{refused:?}"
+    );
+    let (_, held) = peak_of(|| plan(&inputs, &destination, &heavy).err());
+    assert!(
+        held < message as u64,
+        "a refused HISTORY was copied: {held} bytes"
+    );
+
+    // Long strings are charged at their lengths.
+    let stated = [CreationInput::new(stated(root.path())), inputs[1].clone()];
+    warm(&stated);
+    holds_its_charges(&stated, &destination, &options(1 << 24, generous));
+
+    // A long track's POINTING is read, not kept.
+    let long = [CreationInput::new(track(
+        root.path(),
+        "long",
+        (0.0, LONG_TRACK, 16),
+    ))];
+    warm(&long);
+    holds_its_charges(&long, &destination, &options(1 << 24, generous));
+
+    #[cfg(feature = "msv4")]
+    {
+        use casa_ms::observation_io::Msv4Codec;
+        use casa_ms::observation_io::convert::{ConversionOptions, to_msv4};
+        let msv4 = root.path().join("input0.ps.zarr");
+        to_msv4(
+            &inputs[0].path,
+            &msv4,
+            &ConversionOptions {
+                data_groups: None,
+                accept: ACCEPT.to_vec(),
+                batch_bytes: 1 << 24,
+                workers: 1,
+                chunks: [5, 0, 0, 0],
+                codec: Msv4Codec::BloscLz4,
+                padding: PaddingRows::Flagged,
+                creator: "casa-rs".to_string(),
+                creation_date: "2026-10-29T00:00:00+00:00".to_string(),
+            },
+        )
+        .expect("an MSv4 input");
+        let msv4 = [CreationInput::new(msv4)];
+        warm(&msv4);
+        holds_its_charges(&msv4, &destination, &options(1 << 24, generous));
+    }
 }

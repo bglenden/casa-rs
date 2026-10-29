@@ -24,13 +24,14 @@ use zarrs::filesystem::FilesystemStore;
 use zarrs::group::Group;
 
 use super::cursor::Msv4Cursor;
+use super::held;
 use super::metadata::{
     DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
     invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
     time_reference, visibility_units,
 };
-use crate::observation_io::OpenOptions;
 use crate::observation_io::msv2::{metres, radians};
+use crate::observation_io::{OpenOptions, heap};
 
 /// The cube's dimensions and the UVW's.
 pub(super) const CUBE: [&str; 4] = ["time", "baseline_id", "frequency", "polarization"];
@@ -96,6 +97,9 @@ pub struct Msv4Observation {
     pub(super) datasets: Vec<Dataset>,
     pub(super) options: CodecOptions,
     pub(super) open: OpenOptions,
+    /// The most the store's metadata holds once opened
+    /// ([`held::metadata_bytes`]).
+    pub(super) metadata_bytes: usize,
 }
 
 impl Msv4Observation {
@@ -121,6 +125,27 @@ impl Msv4Observation {
         path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
+        Self::open_granted(path, options, &mut |_| Ok(()))
+    }
+
+    /// [`Self::open_with`], asking `grant` for the bytes the opening will
+    /// hold before it reads them, from the store's metadata: its arrays'
+    /// and groups' metadata first, then every dataset's coordinates and
+    /// descriptions, which it reads whole (their elements at their fixed
+    /// sizes). Its visibilities and their companions over time and
+    /// baseline stay on disk. The totals asked for only grow; an error
+    /// from `grant` refuses the opening with nothing more read.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], and whatever `grant` returns.
+    pub fn open_granted(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Self, ObservationError> {
+        let metadata = held::metadata_bytes(path.as_ref());
+        grant(metadata)?;
         let store = Arc::new(FilesystemStore::new(path.as_ref()).map_err(storage)?);
         let root = Group::open(store.clone(), "/").map_err(storage)?;
         if text(root.attributes(), "type", "the processing set")? != "processing_set" {
@@ -133,12 +158,18 @@ impl Msv4Observation {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         names.sort();
+        let read = names
+            .iter()
+            .map(|name| held::dataset_bytes(&store, path.as_ref(), &format!("/{name}")))
+            .sum::<Result<usize, _>>()?;
+        grant(metadata + read)?;
         let mut observation = Self {
             store: store.clone(),
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
             options: super::codec_options(),
             open: options.clone(),
+            metadata_bytes: metadata,
         };
         let (antennas, per_dataset, receptors) = dataset_antennas(&store, &names)?;
         observation.catalogue_mut().antennas = antennas;
@@ -161,6 +192,20 @@ impl Msv4Observation {
     #[must_use]
     pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The most the opening holds beside its catalogue while it is open:
+    /// the store's metadata ([`held::metadata_bytes`]) and each dataset's
+    /// times, scans and antennas' names.
+    pub(crate) fn held_bytes(&self) -> usize {
+        self.metadata_bytes
+            + heap::entries(&self.datasets, |dataset| {
+                dataset.path.capacity()
+                    + heap::plain(&dataset.times)
+                    + dataset.scans.as_ref().map_or(0, heap::plain)
+                    + heap::entries(&dataset.antennas, |(name, _)| name.capacity())
+                    + heap::plain(&dataset.groups)
+            })
     }
 
     /// The name of partition `id`'s dataset in the processing set.

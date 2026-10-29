@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 #[cfg(feature = "msv4")]
 use std::slice;
+#[cfg(feature = "msv4")]
+use std::sync::Arc;
 
 use casa_observation::{Observation, ObservationError, ObservationId};
 
@@ -14,7 +16,9 @@ use super::CreationInput;
 use super::lockstep::{Sizing, WEIGHTS};
 #[cfg(feature = "msv4")]
 use super::memory::grid_bytes;
-use super::memory::{Ledger, OPEN_TABLES_BYTES, catalogue_bytes};
+use super::memory::{Ledger, catalogue_bytes};
+#[cfg(feature = "msv4")]
+use crate::observation_io::Msv4Observation;
 use crate::observation_io::update::request_error;
 use crate::observation_io::{Msv2Observation, OpenOptions};
 
@@ -26,7 +30,7 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 enum Opening {
     Msv2(Box<Msv2Observation>),
     #[cfg(feature = "msv4")]
-    Msv4(Box<crate::observation_io::Msv4Observation>),
+    Msv4(Box<Msv4Observation>),
 }
 
 /// One opened input.
@@ -61,12 +65,13 @@ impl Input {
         }
     }
 
-    /// Open `input`, its weight scale checked, admitting what the opening
-    /// keeps to `ledger`: an MSv2's tables held open, its index, each
-    /// increase asked for before it is allocated
-    /// ([`Msv2Observation::open_granted`]) and the charge then trimmed to
-    /// the index kept, and its catalogue once read; an MSv4's catalogue and
-    /// coordinates once read.
+    /// Open `input`, its weight scale checked, admitting to `ledger` each
+    /// increase its opening asks for before it is allocated (an MSv2's
+    /// tables, the subtables' rows its readers load and what they read from
+    /// them, its index and its partitions: [`Msv2Observation::open_granted`];
+    /// an MSv4's metadata and coordinates, as the MSv4 adapter's
+    /// `open_granted` asks), the charge then trimmed to what the opening
+    /// keeps.
     pub(super) fn open(
         input: &CreationInput,
         ledger: &mut Ledger,
@@ -76,7 +81,6 @@ impl Input {
         if path.join("zarr.json").is_file() {
             return msv4(path, weight_scale, ledger);
         }
-        ledger.admit("an input's tables", OPEN_TABLES_BYTES)?;
         let mut granted = 0;
         let observation =
             Msv2Observation::open_granted(&path, &OpenOptions::default(), &mut |total| {
@@ -86,16 +90,12 @@ impl Input {
                 }
                 Ok(())
             })?;
-        let index = observation.index_bytes();
-        if index <= granted {
-            ledger.release(granted - index);
-        } else {
-            ledger.admit("an input's opening", index - granted)?;
-        }
-        ledger.admit(
-            "an input's catalogue",
-            catalogue_bytes(observation.catalogue()),
-        )?;
+        // The opening keeps its tables (their descriptions and the
+        // subtables' loaded rows), its index and its catalogue.
+        let kept = observation.tables_bytes()
+            + observation.index_bytes()
+            + catalogue_bytes(observation.catalogue());
+        ledger.trim("an input's opening", granted, kept)?;
         let catalogue = observation.catalogue();
         let mut first = vec![None; catalogue.observations.len()];
         for id in catalogue.partition_ids() {
@@ -113,25 +113,24 @@ impl Input {
     }
 }
 
-/// An MSv4 input, its sessions by earliest time, its catalogue and its
-/// datasets' coordinates (their grids, held whole) admitted to `ledger`.
+/// An MSv4 input, its sessions by earliest time, what its opening holds
+/// admitted to `ledger` as it asks ([`Msv4Observation::open_granted`]) and
+/// then trimmed to what it keeps.
 #[cfg(feature = "msv4")]
 fn msv4(path: PathBuf, weight_scale: f32, ledger: &mut Ledger) -> Result<Input, ObservationError> {
+    let mut granted = 0;
     let observation =
-        crate::observation_io::Msv4Observation::open_with(&path, &OpenOptions::default())?;
-    let catalogue = observation.catalogue().clone();
-    let mut coordinates = 0;
-    for id in catalogue.partition_ids() {
-        let entry = catalogue.partition(id);
-        if let Some(group) = entry.data_groups.first() {
-            let sizing = Sizing::of(&observation, id, slice::from_ref(&group.name), WEIGHTS)?;
-            coordinates += entry.data_groups.len() * grid_bytes(sizing.times, 0);
-        }
-    }
-    ledger.admit(
-        "an input's catalogue",
-        catalogue_bytes(&catalogue) + coordinates,
-    )?;
+        Msv4Observation::open_granted(&path, &OpenOptions::default(), &mut |total| {
+            if total > granted {
+                ledger.admit("an input's opening", total - granted)?;
+                granted = total;
+            }
+            Ok(())
+        })?;
+    // The catalogue is shared with the opening, not copied.
+    let catalogue = Arc::clone(observation.catalogue());
+    let kept = observation.held_bytes() + catalogue_bytes(&catalogue);
+    ledger.trim("an input's opening", granted, kept)?;
     let mut first: Vec<Option<f64>> = vec![None; catalogue.observations.len()];
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);

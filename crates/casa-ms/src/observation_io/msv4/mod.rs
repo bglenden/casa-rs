@@ -9,6 +9,7 @@
 //! schema requires. Anything else is refused with a typed error.
 
 mod cursor;
+mod held;
 mod metadata;
 mod pointing;
 mod read;

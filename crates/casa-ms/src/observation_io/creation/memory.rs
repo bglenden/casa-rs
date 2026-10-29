@@ -3,51 +3,59 @@
 //! [`CreationOptions::memory_bytes`](super::CreationOptions::memory_bytes)
 //! before it is allocated.
 //!
-//! Making a plan holds each input's opening (its row index, asked for as
-//! the index is built and then trimmed to what it keeps, and its catalogue),
+//! Making a plan holds the `HISTORY` rows it copies, each input's opening
+//! (its tables, the rows its readers load, its row index and catalogue),
 //! the merged and written catalogues, the scans that find losses and
 //! pointing, each output partition's grids while they are combined, their
 //! combined times until the rows are counted and, with padding omitted, a
 //! weights batch and the cells acquired. Writing then holds, beside what
-//! the plan keeps, the subtables and the `POINTING` table until the save
+//! the plan keeps, the subtables, `HISTORY` and `POINTING` until the save
 //! (#950), the pointing reads, the MAIN writers and one batch of every
 //! selected group. Each is admitted before it is allocated, so a plan that
 //! would exceed the budget is refused
 //! ([`ObservationError::OverBudget`]) with nothing more held, and the plan
 //! states what it admitted ([`MemoryCharges`]).
 //!
-//! The catalogues' charges are estimates from their entities and arrays
-//! ([`catalogue_bytes`]); the counting laws (`creation_memory.rs`) hold
-//! the plan to its charges.
+//! What only building something gives its size is admitted as a bound
+//! first and trimmed to what was built: an opening's tables and catalogue
+//! (bounded by their files and by the rows the readers load), the merge
+//! (by the inputs' catalogues together) and the written catalogue (by the
+//! merged one). Catalogues are measured at their strings' and arrays'
+//! capacities (`heap::catalogue_bytes`); the counting law
+//! (`creation_plan_memory.rs`) holds the plan to its charges.
 
-use casa_observation::{Catalogue, FieldId, ObservationError, OrderedBaseline, ScanId};
+use casa_observation::{Catalogue, FieldId, ObservationError, OrderedBaseline, ScanId, StateEntry};
 
+use super::combine::Combined;
+use super::msv2_rows::{Placement, RowMap, StateIds};
+use super::{HistoryRow, Loss};
 use crate::MsSelectionIoBudget;
+use crate::observation_io::heap::{entries, plain, strings, units_bytes};
 use crate::observation_io::msv2::GRID_READ_ROWS;
 use crate::observation_io::update::request_error;
 
-/// Bytes allowed each name, intent and other string a catalogue holds.
-const STRING_BYTES: usize = 64;
+pub(super) use crate::observation_io::heap::catalogue_bytes;
 
-/// Bytes allowed each antenna's receptors in a partition.
-const RECEPTOR_BYTES: usize = 256;
+/// Bytes a `HISTORY` row's record holds in its table beside its strings:
+/// its nine fields' names and values, and the arrays' headers.
+const HISTORY_ROW_BYTES: usize = 1 << 10;
 
-/// Bytes allowed an MSv2 input's tables held open with read locks beside
-/// its catalogue: their descriptions, keywords and storage managers'
-/// headers (about 220 kB for the standard subtables).
-pub(super) const OPEN_TABLES_BYTES: usize = 384 << 10;
+/// Bytes a subtable row's record holds in memory beside the strings and
+/// arrays of its entity: its fields' names, values and array headers.
+const SUBTABLE_ROW_BYTES: usize = 2 << 10;
 
 /// The memory a plan admitted ([`super::CreationPlan::charges`]), in bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MemoryCharges {
-    /// What the plan keeps while it lives: each input's opening (its
-    /// index and catalogue) and the merged and written catalogues.
+    /// What the plan keeps while it lives: the `HISTORY` rows to write,
+    /// each input's opening (its tables, index and catalogue) and the
+    /// merged and written catalogues.
     pub kept: usize,
     /// The most making the plan held, `kept` included.
     pub planning: usize,
-    /// What writing holds beyond `kept`: the subtables and the `POINTING`
-    /// table until the save, then the larger of the pointing reads and the
-    /// MAIN writers with one batch.
+    /// What writing holds beyond `kept`: the subtables, `HISTORY` and
+    /// `POINTING` until the save, then the larger of the pointing reads and
+    /// the MAIN writers with one batch.
     pub writing: usize,
     /// Of `writing`, the MAIN writers': their tile bands and I/O buffers,
     /// and the keys of one batch's rows.
@@ -104,6 +112,22 @@ impl Ledger {
         self.held = self.held.saturating_sub(bytes);
     }
 
+    /// Trim `bound` bytes, admitted for `what` before what they bound was
+    /// allocated, to the `held` bytes it holds.
+    pub(super) fn trim(
+        &mut self,
+        what: &'static str,
+        bound: usize,
+        held: usize,
+    ) -> Result<(), ObservationError> {
+        if held <= bound {
+            self.release(bound - held);
+            Ok(())
+        } else {
+            self.admit(what, held - bound)
+        }
+    }
+
     /// Admit `bytes` for `what` while `run` runs.
     pub(super) fn during<T>(
         &mut self,
@@ -154,55 +178,151 @@ pub(super) fn grid_bytes(times: usize, baselines: usize) -> usize {
     times * per_time + baselines * size_of::<OrderedBaseline>() + read
 }
 
-/// About the heap `catalogue` holds, twice what its entities and their
-/// arrays hold at their lengths (for spare capacity and map nodes), each
-/// string allowed [`STRING_BYTES`].
-pub(super) fn catalogue_bytes(catalogue: &Catalogue) -> usize {
-    let strings = |count: usize| count * (size_of::<String>() + STRING_BYTES);
-    let optional = |values: Option<usize>| values.unwrap_or(0);
-    let mut bytes = size_of_val(catalogue.antennas.as_slice())
-        + strings(3 * catalogue.antennas.len())
-        + size_of_val(catalogue.fields.as_slice())
-        + strings(3 * catalogue.fields.len())
-        + size_of_val(catalogue.states.as_slice())
-        + strings(catalogue.states.len())
-        + size_of_val(catalogue.processors.as_slice())
-        + strings(2 * catalogue.processors.len());
-    for scan in &catalogue.scans {
-        bytes += size_of_val(scan) + strings(1 + scan.intents.len());
-    }
-    for observation in &catalogue.observations {
-        bytes += size_of_val(observation) + strings(5 + observation.observers.len());
-    }
-    for window in &catalogue.windows {
-        bytes += size_of_val(window)
-            + strings(2)
-            + optional(window.effective_bandwidths_hz.as_deref().map(size_of_val))
-            + optional(window.resolutions_hz.as_deref().map(size_of_val));
-    }
-    for source in &catalogue.sources {
-        bytes += size_of_val(source) + strings(1);
-        for record in &source.records {
-            bytes += size_of_val(record)
-                + strings(1 + record.transitions.as_ref().map_or(0, Vec::len))
-                + optional(record.rest_frequencies.as_deref().map(size_of_val))
-                + optional(record.systemic_velocities.as_deref().map(size_of_val));
-        }
-    }
-    for partition in &catalogue.partitions {
-        bytes += size_of_val(partition)
-            + strings(1 + partition.intents.len() + 4 * partition.data_groups.len())
-            + size_of_val(partition.frequencies_hz.as_slice())
-            + size_of_val(partition.channel_widths_hz.as_slice())
-            + size_of_val(partition.correlations.as_slice())
-            + size_of_val(partition.fields.as_slice())
-            + size_of_val(partition.scans.as_slice())
-            + size_of_val(partition.baselines.as_slice())
-            + size_of_val(partition.data_groups.as_slice())
-            + size_of_val(partition.states.as_slice())
-            + partition.receptors.len() * RECEPTOR_BYTES;
-    }
-    2 * bytes
+/// What the merge and the combination of catalogues holding
+/// `catalogues` bytes together may hold: the merged catalogue, the
+/// combination's partitions beside it until it finishes, and the maps and
+/// notices. Each holds no more than the inputs' catalogues, whose entities
+/// it matches, appends or combines as clones.
+pub(super) fn merge_bound(catalogues: usize) -> usize {
+    3 * catalogues
+}
+
+/// What the subtables written from `catalogue` hold in memory, until
+/// they are saved: a record per row ([`SUBTABLE_ROW_BYTES`]; `FEED`'s an
+/// antenna's in each window, and a data description, a polarization and a
+/// state of intents for each partition) and the entities' strings and
+/// arrays again.
+pub(super) fn subtables_bytes(catalogue: &Catalogue) -> usize {
+    let windows = catalogue.windows.len();
+    let records: usize = catalogue
+        .sources
+        .iter()
+        .map(|source| source.records.len())
+        .sum();
+    let rows = catalogue.antennas.len() * (2 + windows)
+        + catalogue.fields.len()
+        + windows
+        + 3 * catalogue.partitions.len()
+        + records
+        + catalogue.states.len()
+        + catalogue.processors.len()
+        + catalogue.observations.len();
+    rows * SUBTABLE_ROW_BYTES + catalogue_bytes(catalogue)
+}
+
+/// What the catalogue a plan states it writes may hold
+/// ([`super::CreationPlan::output`]): the merged catalogue's entities with
+/// a state for each partition's intents, twice for the capacities reading
+/// them back leaves.
+pub(super) fn written_bound(combined: &Combined) -> usize {
+    let states: usize = combined
+        .intents
+        .iter()
+        .zip(&combined.modes)
+        .filter(|(intents, _)| **intents)
+        .map(|(_, mode)| size_of::<StateEntry>() + mode.len())
+        .sum();
+    2 * (catalogue_bytes(&combined.catalogue) + states)
+}
+
+/// The heap `combined` holds: its catalogue ([`catalogue_bytes`]), each
+/// input's row map, and the output partitions' keys, contributors, units,
+/// losses and the merge's notices.
+pub(super) fn combined_bytes(combined: &Combined) -> usize {
+    let Combined {
+        catalogue,
+        rows,
+        intents,
+        modes,
+        contributors,
+        units,
+        losses,
+        notices,
+    } = combined;
+    catalogue_bytes(catalogue)
+        + entries(rows, |map| {
+            let RowMap {
+                antennas,
+                fields,
+                scans,
+                states,
+                partitions,
+                weight_scale: _,
+            } = map;
+            plain(antennas)
+                + plain(fields)
+                + plain(scans)
+                + plain(states)
+                + entries(partitions, placement_bytes)
+        })
+        + plain(intents)
+        + strings(modes)
+        + entries(contributors, plain)
+        + entries(units, units_bytes)
+        + entries(losses, |loss| match loss {
+            Loss::DataGroup(what)
+            | Loss::Table(what)
+            | Loss::Column(what)
+            | Loss::Defaulted(what) => what.capacity(),
+            Loss::Sigma
+            | Loss::SigmaDerived
+            | Loss::RowFlags
+            | Loss::FlagCategories
+            | Loss::UnusedAntennas(_) => 0,
+        })
+        + strings(notices)
+}
+
+fn placement_bytes(placement: &Placement) -> usize {
+    let Placement {
+        output: _,
+        state,
+        processor: _,
+        scan_offset: _,
+        groups,
+        columns,
+    } = placement;
+    let states = match state {
+        StateIds::PerRow(states) => plain(states),
+        StateIds::One(_) | StateIds::Intents => 0,
+    };
+    states + strings(groups) + plain(columns)
+}
+
+/// The heap a copy of `history` holds: its rows and their strings.
+pub(super) fn history_bytes(history: &[HistoryRow]) -> usize {
+    history
+        .iter()
+        .map(|row| {
+            let HistoryRow {
+                time_s: _,
+                observation: _,
+                message,
+                priority,
+                origin,
+                application,
+                parameters,
+                command,
+            } = row;
+            size_of::<HistoryRow>()
+                + message.len()
+                + priority.len()
+                + origin.len()
+                + application.len()
+                + parameters
+                    .iter()
+                    .chain(command)
+                    .map(|line| size_of::<String>() + line.len())
+                    .sum::<usize>()
+        })
+        .sum()
+}
+
+/// What the created `HISTORY` table holds of `history` until it is saved:
+/// each row's record ([`HISTORY_ROW_BYTES`]) and its strings, and the
+/// strings again as the save encodes them.
+pub(super) fn history_table_bytes(history: &[HistoryRow]) -> usize {
+    history.len() * HISTORY_ROW_BYTES + 2 * history_bytes(history)
 }
 
 #[cfg(test)]
@@ -232,7 +352,12 @@ mod tests {
             })
             .expect("within");
         assert_eq!((ledger.held(), ledger.peak()), (60, 100));
-        ledger.release(60);
+        ledger.admit("bounded", 30).expect("within");
+        ledger
+            .trim("bounded", 30, 10)
+            .expect("a bound trimmed down");
+        assert_eq!(ledger.held(), 70);
+        ledger.release(70);
         assert_eq!(ledger.held(), 0);
     }
 }

@@ -1030,13 +1030,17 @@ Partitions are converted `workers` at a time.
   no `WEIGHT_SPECTRUM`, loses nothing, and no loss is reported.
 - **Memory is admitted before it is allocated**
   (`CreationOptions::memory_bytes`, `to_msv2` takes the host's usual
-  eighth of physical memory): the opening's index as it grows, the scans,
-  grids and weights batches of planning, and writing's subtables,
-  `POINTING` table, pointing reads, MAIN writers and one batch, which must
-  hold one integration of every selected group (`CreationPlan::charges`;
-  the counting law `creation_plan_memory.rs`). The MAIN writers assemble
-  their tile bands in memory when the budget holds them and otherwise
-  write each tile row in place.
+  eighth of physical memory): the `HISTORY` rows copied, each opening's
+  tables, loaded subtable rows, index and catalogue as it asks for them,
+  the merged and written catalogues (bounds first, trimmed once built),
+  the scans, grids and weights batches of planning, and writing's
+  subtables, `HISTORY`, `POINTING` table, pointing reads, MAIN writers and
+  one batch, which must hold one integration of every selected group
+  (`CreationPlan::charges`; the counting law `creation_plan_memory.rs`,
+  which also holds refused plans, megabytes of `HISTORY`, long strings, a
+  long `POINTING` and an MSv4 input to their charges). The MAIN writers
+  assemble their tile bands in memory when the budget holds them and
+  otherwise write each tile row in place.
 - Refused before anything is written: times in a scale other than UTC,
   feeds other than 0, units that differ between partitions of one column,
   fields in a frame other than J2000, a scan without a casacore number,

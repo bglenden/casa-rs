@@ -143,8 +143,9 @@ fn budget_grant<'a>(
 }
 
 /// Opening a track holds at most [`Msv2Observation::opening_bytes`], and
-/// opens with that granted; a pointing query under
-/// [`Msv2Observation::pointing_bytes`] is answered and holds at most it.
+/// granted ([`Msv2Observation::open_granted`]) at most what it asked for;
+/// a pointing query under [`Msv2Observation::pointing_bytes`] is answered
+/// and holds at most it.
 fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
     std::fs::create_dir(root).expect("a fixture directory");
     let path = pointed_track(root, 120);
@@ -158,14 +159,21 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
         opening <= bound as u64,
         "opening held {opening} bytes, beyond {bound}"
     );
-    let (mut granted, mut refused) = (0, None);
-    Msv2Observation::open_granted(
-        &path,
-        &OpenOptions::default(),
-        &mut budget_grant(bound, &mut granted, &mut refused),
-    )
-    .expect("opening within its bound");
-    eprintln!("opening asked for {granted} bytes");
+    let ((granted, asked), held) = peak_of(|| {
+        let (mut asked, mut refused) = (0, None);
+        let granted = Msv2Observation::open_granted(
+            &path,
+            &OpenOptions::default(),
+            &mut budget_grant(usize::MAX, &mut asked, &mut refused),
+        );
+        (granted, asked)
+    });
+    eprintln!("opening granted asked for {asked} bytes and held {held}");
+    granted.expect("an opening granted");
+    assert!(
+        held <= asked as u64,
+        "the opening held {held} bytes, beyond the {asked} it asked for"
+    );
 
     let budget = opened.pointing_bytes().expect("pointing bytes");
     let id = opened.catalogue().partition_ids()[0];
@@ -245,11 +253,9 @@ fn an_opening_beyond_its_budget_is_refused_before_its_grids(root: &Path) {
     // The first pass was granted; the total refused holds the grids.
     let refused = refused.expect("a refused total");
     assert!(granted <= budget && refused > budget && refused >= grids);
-    // The catalogue's subtables, read before the index, are not in the
-    // budget.
-    let catalogue = 64 << 10;
+    // The tables and catalogue, asked for first, are in the budget.
     assert!(
-        held <= (budget + catalogue) as u64,
+        held <= budget as u64,
         "the refused opening held {held} bytes, beyond its budget of {budget}"
     );
 }
