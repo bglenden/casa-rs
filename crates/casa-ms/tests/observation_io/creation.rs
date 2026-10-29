@@ -4,6 +4,7 @@
 //! plan over one input, so the converter's laws (`convert.rs`) are the
 //! one-input laws; these add what a plan says of itself.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::convert::{ConversionOptions, to_msv2};
@@ -679,6 +680,123 @@ fn a_split_observation_is_created_whole_again() {
         history.row(0).expect("row").get("ORIGIN"),
         Some(&text("concat"))
     );
+}
+
+/// Every ID in `catalogue` names an entry of its list.
+fn references_hold(catalogue: &Catalogue) {
+    for entry in &catalogue.partitions {
+        assert!(
+            (entry.window.0 as usize) < catalogue.windows.len(),
+            "window"
+        );
+        assert!(
+            (entry.observation.0 as usize) < catalogue.observations.len(),
+            "observation"
+        );
+        for state in &entry.states {
+            assert!(
+                (state.0 as usize) < catalogue.states.len(),
+                "state {state:?}"
+            );
+        }
+        for field in &entry.fields {
+            assert!((field.0 as usize) < catalogue.fields.len(), "field");
+        }
+        for scan in &entry.scans {
+            assert!((scan.0 as usize) < catalogue.scans.len(), "scan");
+        }
+        if let Some(processor) = entry.processor {
+            assert!(
+                (processor.0 as usize) < catalogue.processors.len(),
+                "processor"
+            );
+        }
+    }
+    for field in &catalogue.fields {
+        if let Some(source) = field.source {
+            assert!((source.0 as usize) < catalogue.sources.len(), "source");
+        }
+    }
+}
+
+/// What a plan says reopening its MeasurementSet gives (`output()`) is what
+/// reopening it gives, whole: from an MSv2, and from an MSv4 whose
+/// partitions state intents and no states, whose STATE rows and MSv2
+/// defaults are written. Every reference holds, and intent selection agrees.
+#[test]
+fn the_planned_catalogue_is_the_reopened_one() {
+    let root = tempfile::tempdir().expect("root");
+    let every_loss = [
+        LossKind::Sigma,
+        LossKind::RowFlags,
+        LossKind::FlagCategories,
+        LossKind::DataGroups,
+        LossKind::Tables,
+        LossKind::Columns,
+        LossKind::Defaulted,
+    ];
+    for store in ["ms_trial.ms", "ms_trial.ps.zarr"] {
+        let input = fixture(&root.path().join(store), store);
+        let destination = root.path().join(format!("{store}.created.ms"));
+        let plan = CreationPlan::new(
+            &[CreationInput::new(&input)],
+            &CreationOptions {
+                accept: every_loss.to_vec(),
+                ..options()
+            },
+            Destination::New(destination.clone()),
+        )
+        .expect("plan");
+        let promised = plan.output().clone();
+        plan.write().expect("write");
+        let reopened = open(&destination, &OpenOptions::default()).expect("reopen");
+        let reopened = reopened.catalogue();
+        references_hold(&promised);
+        let lists = |catalogue: &Catalogue| {
+            [
+                ("antennas", format!("{:#?}", catalogue.antennas)),
+                ("fields", format!("{:#?}", catalogue.fields)),
+                ("scans", format!("{:#?}", catalogue.scans)),
+                ("observations", format!("{:#?}", catalogue.observations)),
+                ("partitions", format!("{:#?}", catalogue.partitions)),
+                ("windows", format!("{:#?}", catalogue.windows)),
+                ("sources", format!("{:#?}", catalogue.sources)),
+                ("states", format!("{:#?}", catalogue.states)),
+                ("processors", format!("{:#?}", catalogue.processors)),
+            ]
+        };
+        for ((list, planned), (_, read)) in lists(&promised).into_iter().zip(lists(reopened)) {
+            let differs = planned
+                .lines()
+                .zip(read.lines())
+                .enumerate()
+                .find(|(_, (a, b))| a != b);
+            assert!(
+                differs.is_none() && planned.lines().count() == read.lines().count(),
+                "{store}: {list} differ at line {differs:?}"
+            );
+        }
+        let intents: BTreeSet<&String> = reopened
+            .partitions
+            .iter()
+            .flat_map(|entry| &entry.intents)
+            .collect();
+        assert!(!intents.is_empty(), "{store} states intents");
+        for intent in intents {
+            assert_eq!(
+                promised.partitions_with_intent(intent),
+                reopened.partitions_with_intent(intent),
+                "{store}: {intent}"
+            );
+            assert!(
+                !reopened
+                    .partitions_with_intent(intent)
+                    .expect("selected")
+                    .is_empty(),
+                "{store}: {intent} selects its partition"
+            );
+        }
+    }
 }
 
 /// The trial MSv2 unpacked as `name`, its times in three scans, with the

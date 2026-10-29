@@ -12,12 +12,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_observation::{AntennaId, Catalogue, Correlation, ObservationError, Receptors};
+use casa_observation::{AntennaId, Catalogue, Correlation, ObservationError, Receptors, UvwFrame};
 use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
 use super::msv2_rows::Spans;
 use super::{Loss, msv2_identity, msv2_sources};
+use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
@@ -152,19 +153,36 @@ fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> 
     Ok(first)
 }
 
+/// What writing a catalogue's subtables in memory gives ([`rehearse`]).
+pub(super) struct Rehearsal {
+    /// Where the subtables place each partition.
+    pub(super) layout: Layout,
+    /// What writing them notes.
+    pub(super) losses: Vec<Loss>,
+    /// What the MSv2 adapter reads back from them
+    /// ([`Msv2Observation::subtable_catalogue`]): what reopening the
+    /// MeasurementSet gives of its entities, defaults and the states written
+    /// for intents included, and the UVW frame MAIN's keywords give.
+    pub(super) read_back: (Catalogue, UvwFrame),
+}
+
 /// The subtables of `catalogue` written into a MeasurementSet in memory,
-/// for where they place each partition and what writing them notes and
-/// refuses: a plan learns its losses, and that its subtables can be
-/// written, before anything is. `intents` says which partitions need a
-/// state of intents.
+/// for where they place each partition, what writing them notes and
+/// refuses, and what reopening them gives: a plan learns its losses, and
+/// that its subtables can be written, before anything is. `intents` says
+/// which partitions need a state of intents.
 pub(super) fn rehearse(
     catalogue: &Catalogue,
     spans: &Spans,
     intents: &[bool],
-) -> Result<(Layout, Vec<Loss>), ObservationError> {
+) -> Result<Rehearsal, ObservationError> {
     let mut ms = MeasurementSet::create_memory(builder(catalogue, &[])).map_err(storage)?;
-    populate(&mut ms, catalogue, spans, intents)
-        .map(|(layout, notes)| (layout, notes.into_losses()))
+    let (layout, notes) = populate(&mut ms, catalogue, spans, intents)?;
+    Ok(Rehearsal {
+        layout,
+        losses: notes.into_losses(),
+        read_back: Msv2Observation::subtable_catalogue(&ms)?,
+    })
 }
 
 /// Fill `ms`'s subtables from `catalogue`, whose data span the times

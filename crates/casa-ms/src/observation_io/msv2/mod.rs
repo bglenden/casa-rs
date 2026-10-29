@@ -25,8 +25,8 @@ use casa_observation::{
     FieldSelection, GroupKey, Grouping, NaturalBlocks, Observation, ObservationError,
     ObservationId, OrderedBaseline, PartitionEntry, PartitionEstimate, PartitionId,
     PointingRequest, PointingSeries, ProcessorId, Receptors, ResolvedRequest, Roles, ScanId,
-    StateId, TimeBaselineGrid, Traversal, WeightRequest, WeightRule, WeightSource, WindowId,
-    times_per_batch,
+    StateId, TimeBaselineGrid, Traversal, UvwFrame, WeightRequest, WeightRule, WeightSource,
+    WindowId, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::measures::{EpochRef, MjdHighPrec};
@@ -156,6 +156,40 @@ impl Msv2Observation {
     ) -> Result<Self, ObservationError> {
         let ms = MeasurementSet::open_retained_read(path).map_err(storage)?;
         Self::from_measurement_set(ms, options, grant)
+    }
+
+    /// The entities `ms`'s subtables state, read as opening reads them:
+    /// antennas, fields, windows, sources, states, processors and observing
+    /// sessions, and the frame of every data group's UVW that MAIN's `UVW`
+    /// keywords give. Scans and partitions, which MAIN's rows give, are
+    /// empty. How a creation plan states what reopening its MeasurementSet
+    /// gives.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], for the subtables.
+    pub(crate) fn subtable_catalogue(
+        ms: &MeasurementSet,
+    ) -> Result<(Catalogue, UvwFrame), ObservationError> {
+        let windows = metadata::read_windows(ms)?;
+        let sources = metadata::read_sources(ms, windows.len())?;
+        let catalogue::Fields {
+            entries: fields,
+            uvw_frame,
+            ..
+        } = catalogue::fields_and_uvw(ms, &sources.ids)?;
+        let subtables = Catalogue {
+            antennas: catalogue::read_antennas(ms)?,
+            fields,
+            scans: Vec::new(),
+            observations: catalogue::read_observations(ms)?,
+            partitions: Vec::new(),
+            windows,
+            sources: sources.entries,
+            states: metadata::read_states(ms)?,
+            processors: metadata::read_processors(ms)?,
+        };
+        Ok((subtables, uvw_frame))
     }
 
     fn from_measurement_set(
@@ -864,7 +898,7 @@ fn has_content(main: &casa_tables::Table, column: &str) -> Result<bool, Observat
 pub(super) fn data_groups(
     main: &casa_tables::Table,
     spectral_weights: bool,
-    uvw_frame: casa_observation::UvwFrame,
+    uvw_frame: UvwFrame,
 ) -> Vec<DataGroupEntry> {
     let weights = if spectral_weights {
         "WEIGHT_SPECTRUM"

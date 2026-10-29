@@ -1064,6 +1064,10 @@ The plan decides everything before writing, and writes nothing until asked:
   unit in the last place.
 - **Pointing.** Each input's `POINTING` is appended, its antennas renumbered;
   the inputs' frames must agree.
+- **Output.** The plan states the catalogue reopening the MeasurementSet
+  gives (`output()`): its subtables are written in memory and read back
+  through the MSv2 adapter, so defaults written, the `STATE` rows written
+  for an MSv4 input's intents, feeds and MAIN's UVW label read as they will.
 - **Memory.** What making the plan holds, and what writing it will hold,
   are admitted against the caller's budget before they are allocated (each
   input's opening through `Msv2Observation::open_granted`), and the plan

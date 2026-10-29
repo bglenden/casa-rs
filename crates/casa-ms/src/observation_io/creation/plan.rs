@@ -201,7 +201,11 @@ impl CreationPlan {
         let grids = occupancy::grids(&inputs, &combined, &mut ledger)?;
         // What writing the subtables defaults or leaves out, found by writing
         // them in memory, and where they put each partition.
-        let (layout, rehearsed) = ledger.during("the subtables rehearsed", merged, |_| {
+        let msv2_tables::Rehearsal {
+            layout,
+            losses: rehearsed,
+            read_back,
+        } = ledger.during("the subtables rehearsed", merged, |_| {
             msv2_tables::rehearse(&combined.catalogue, &grids.spans, &combined.intents)
         })?;
         found.extend(rehearsed);
@@ -213,7 +217,7 @@ impl CreationPlan {
             .zip(&combined.units)
             .map(|(name, units)| (name, unit(units)))
             .collect();
-        let output = written(&combined, &layout);
+        let output = written(&combined, &layout, read_back);
         ledger.admit("the written catalogue", catalogue_bytes(&output))?;
         let occupancy = grids.occupancy(
             &inputs,
@@ -267,9 +271,12 @@ impl CreationPlan {
     /// What reopening the MeasurementSet written gives, entity by entity:
     /// the merged antennas, fields, sources, states, processors and
     /// observing sessions, the windows a partition uses, the output's scans,
-    /// and its partitions in the MSv2 reader's order with the states their
-    /// rows are written with. A member written as MSv2's default
-    /// ([`Loss::Defaulted`]) stays unstated here.
+    /// and its partitions in the MSv2 reader's order with the states and
+    /// feeds their rows are written with and their UVW frame as MAIN labels
+    /// it. Each entity is read back from the subtables the plan wrote in
+    /// memory, so a member written as MSv2's default ([`Loss::Defaulted`])
+    /// reads as that default, and an MSv4 input's intents as the `STATE`
+    /// rows written for them.
     #[must_use]
     pub fn output(&self) -> &Catalogue {
         &self.output
@@ -509,47 +516,33 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
 }
 
 /// What reopening the written MeasurementSet gives of `combined`, whose
-/// subtables `layout` places: the windows no partition uses, and their
-/// source records, left out and the others renumbered; each partition with
-/// the states its rows are written with; the partitions in the order the
-/// MSv2 reader keys them (data description, `OBS_MODE`, observation).
-fn written(combined: &Combined, layout: &msv2_tables::Layout) -> Catalogue {
-    let mut catalogue = combined.catalogue.clone();
-    let used: Vec<bool> = (0..catalogue.windows.len())
-        .map(|index| {
-            catalogue
-                .partitions
-                .iter()
-                .any(|entry| entry.window.0 as usize == index)
-        })
-        .collect();
-    let mut renumbered = vec![None; used.len()];
-    let mut next = 0;
-    for (index, used) in used.iter().enumerate() {
-        if *used {
-            renumbered[index] = Some(casa_observation::WindowId(next));
-            next += 1;
-        }
-    }
-    let mut index = 0;
-    catalogue.windows.retain(|_| {
-        index += 1;
-        used[index - 1]
-    });
-    for source in &mut catalogue.sources {
-        source.records.retain_mut(|record| match record.window {
-            casa_observation::SourceWindow::All => true,
-            casa_observation::SourceWindow::Window(id) => match renumbered[id.0 as usize] {
-                Some(new) => {
-                    record.window = casa_observation::SourceWindow::Window(new);
-                    true
-                }
-                None => false,
-            },
-        });
-    }
+/// subtables `layout` places and read back as `subtables` with MAIN's
+/// `uvw_frame`: every entity as the adapter reads it from the subtables
+/// written (the members written as MSv2's defaults, and the states written
+/// for intents, included); each partition naming the `SPECTRAL_WINDOW` row
+/// and the states and feeds its rows are written with, its data groups' UVW
+/// in the frame MAIN's keywords give, in the order the MSv2 reader keys
+/// them (data description, `OBS_MODE`, observation).
+fn written(
+    combined: &Combined,
+    layout: &msv2_tables::Layout,
+    (subtables, uvw_frame): (Catalogue, casa_observation::UvwFrame),
+) -> Catalogue {
+    let mut catalogue = Catalogue {
+        scans: combined.catalogue.scans.clone(),
+        partitions: combined.catalogue.partitions.clone(),
+        ..subtables
+    };
     for (output, entry) in catalogue.partitions.iter_mut().enumerate() {
-        entry.window = renumbered[entry.window.0 as usize].expect("a used window");
+        entry.window = casa_observation::WindowId(
+            u32::try_from(layout.spectral_window[output]).expect("a written window row"),
+        );
+        // Every row is written with feeds 0, which `refuse_unwritable` has
+        // checked an MSv2 input states.
+        entry.feeds = Some([0, 0]);
+        for group in &mut entry.data_groups {
+            group.uvw_frame = uvw_frame;
+        }
         let mut states: Vec<casa_observation::StateId> = combined.contributors[output]
             .iter()
             .filter_map(|(input, id)| {
