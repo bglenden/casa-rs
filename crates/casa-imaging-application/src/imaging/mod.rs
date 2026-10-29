@@ -17,10 +17,10 @@ mod visibility_write;
 pub(crate) use cycle::{ImagingInputs, SourceInput, plane_bounds, run};
 pub(crate) use measurement::{metal_kernel_set, row_samples, standard_kernel_set};
 pub(crate) use observation_source::{
-    BatchRoute, ObservationSource, PartitionSelection, SelectedPartition, admit_batches,
-    pointing_direction,
+    BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, WriteBack,
+    admit_batches, pointing_direction,
 };
-pub(crate) use visibility_write::VisibilityWriteTarget;
+pub(crate) use visibility_write::{RowWriteTarget, VisibilityWriteTarget, VisibilityWriter};
 
 use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
@@ -74,4 +74,11 @@ pub(crate) enum ImagingError {
     /// The paged cube state could not be created.
     #[error("cube state: {0}")]
     CubeState(#[from] std::io::Error),
+    /// The start model could not be read or regridded.
+    #[error("startmodel: {0}")]
+    StartModel(#[source] casa_images::ImageError),
+    /// A start model in flat-noise units could not be made physical with
+    /// the initial pass's weights.
+    #[error("startmodel units: {0}")]
+    StartModelUnits(#[source] casa_imaging_products::ProductsError),
 }

@@ -39,6 +39,7 @@ pub(crate) struct NativeInput {
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    pub(crate) start_model: Option<crate::compile::StartModel>,
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -122,11 +123,14 @@ pub(crate) struct NativeRun {
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
-    visibility_write: Option<imaging::VisibilityWriteTarget>,
+    /// Today's route's visibility write; the batch route's is its update
+    /// session's ([`imaging::BatchRoute::write_back`]).
+    visibility_write: Option<imaging::RowWriteTarget>,
     access: NativeSource,
     /// The source's charge, held while it is open.
     source: Reservation,
     masks: ImageDomainReconstructionMaskPlans,
+    start_model: Option<crate::compile::StartModel>,
     image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -141,39 +145,35 @@ pub(crate) enum NativeSource {
 /// The batch route of `problem` on the MeasurementSet `observation` names:
 /// the observation opened, the selection resolved to its partitions, the
 /// geometry compiled and its batches admitted
-/// ([`imaging::admit_batches`]). A run that writes visibilities back is
-/// refused: the batch route writes through update sessions in step 5 of
-/// #932.
+/// ([`imaging::admit_batches`]). A run that writes the model
+/// (`model_data`) or the corrected data (`corrected_data`) reads the
+/// observation through the update session that writes them
+/// ([`imaging::WriteBack`]).
 pub(crate) fn batch_route(
     problem: &CompiledProblem,
     observation: &SelectedObservationResolutionRequest,
-    writes: bool,
+    (model_data, corrected_data): (bool, bool),
     runtime: &ApplicationRuntime,
 ) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
-    if writes {
-        return Err(NativeError::Other(
-            "the observation-batch route writes no model or corrected column yet (#932 step 5)"
-                .into(),
-        ));
-    }
-    // Batch geometry follows a moving centre Measures names; a table named
-    // like a body (`Mars`) would be followed as the body.
-    if observation
-        .ephemeris()
-        .is_some_and(casa_ms::SelectedObservationEphemeris::is_table)
-    {
-        return Err(NativeError::Other(
-            "the observation-batch route does not follow an ephemeris table yet (#932)".into(),
-        ));
-    }
     let Admitted {
         value: opened,
         reservation: mut opening,
     } = open_observation(observation, runtime)?;
     let selection = resolve_partitions(problem, &opened)
         .map_err(|error| NativeError::Other(Box::new(error)))?;
-    let plan = GeometryPlan::compile(problem, opened.catalogue(), observation.measures_provider())
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    // A moving phase centre names a body and a table alike; the table, when
+    // it is one, was read when the request compiled.
+    let phase_table = observation
+        .ephemeris()
+        .and_then(casa_ms::SelectedObservationEphemeris::external_series)
+        .cloned();
+    let plan = GeometryPlan::compile(
+        problem,
+        opened.catalogue(),
+        observation.measures_provider(),
+        phase_table,
+    )
+    .map_err(|error| NativeError::Other(Box::new(error)))?;
     let pointing_budget = if plan.reads_pointing() {
         opened
             .pointing_bytes()
@@ -191,9 +191,17 @@ pub(crate) fn batch_route(
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
+    let store = if model_data || corrected_data {
+        imaging::RouteStore::Write(Box::new(
+            imaging::WriteBack::open(opened, model_data, corrected_data)
+                .map_err(|error| NativeError::Other(Box::new(error)))?,
+        ))
+    } else {
+        imaging::RouteStore::Read(Box::new(opened))
+    };
     Ok(Admitted {
         value: imaging::BatchRoute {
-            observation: Box::new(opened),
+            store,
             selection,
             plan,
             batching,
@@ -255,7 +263,9 @@ fn open_observation(
         Some(admission) => NativeError::Admission(admission),
         None => NativeError::Other(Box::new(error)),
     })?;
-    let index = opened.index_bytes() as u64;
+    // The catalogue's ephemerides are read with the subtables, before
+    // the index; they are charged with it.
+    let index = (opened.index_bytes() + opened.catalogue().ephemeris_bytes()) as u64;
     if index <= reservation.memory() {
         reservation.retain(index);
     } else {
@@ -291,9 +301,10 @@ pub(crate) fn prepare(
         aw_catalog,
     } = native;
     publication.controls.validate_for_problem(problem)?;
-    let visibility_write = (input.write_model_column || input.write_corrected_data)
+    let visibility_write = (input.source_route == SourceRoute::SelectedRows
+        && (input.write_model_column || input.write_corrected_data))
         .then(|| {
-            Ok::<_, ApplicationError>(imaging::VisibilityWriteTarget {
+            Ok::<_, ApplicationError>(imaging::RowWriteTarget {
                 path: PathBuf::from(input.observation.locator()),
                 selection: visibility_write_selection(problem, input.observation.selection())?,
                 model_data: input.write_model_column,
@@ -317,7 +328,7 @@ pub(crate) fn prepare(
             let Admitted { value, reservation } = batch_route(
                 problem,
                 &input.observation,
-                visibility_write.is_some(),
+                (input.write_model_column, input.write_corrected_data),
                 &runtime,
             )?;
             (
@@ -334,6 +345,7 @@ pub(crate) fn prepare(
         access,
         source,
         masks: input.masks,
+        start_model: input.start_model,
         image_response: input.minor_cycle_image_response,
     })
 }
@@ -355,16 +367,26 @@ pub(crate) fn run(
         access,
         source,
         masks,
+        start_model,
         image_response,
     } = run;
     let teams = OnceCell::new();
     // The run's source borrows the batch route, which is released with the
     // source's charge once the run has finished with it.
     let mut route = None;
-    let source_input = match access {
-        NativeSource::SelectedRows(access) => imaging::SourceInput::SelectedRows(access),
+    let (source_input, visibility_write) = match access {
+        NativeSource::SelectedRows(access) => (
+            imaging::SourceInput::SelectedRows(access),
+            visibility_write.map(imaging::VisibilityWriteTarget::SelectedRows),
+        ),
         NativeSource::ObservationBatches(owned) => {
-            imaging::SourceInput::ObservationBatches(route.insert(owned))
+            let route: &imaging::BatchRoute = route.insert(owned);
+            (
+                imaging::SourceInput::ObservationBatches(route),
+                route
+                    .write_back()
+                    .map(|_| imaging::VisibilityWriteTarget::Batches(route)),
+            )
         }
     };
     let outcome = imaging::run(
@@ -372,6 +394,7 @@ pub(crate) fn run(
             problem,
             source: source_input,
             masks,
+            start_model,
             image_response,
             visibility_write,
             host: runtime.host,

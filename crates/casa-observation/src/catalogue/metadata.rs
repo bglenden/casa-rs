@@ -373,6 +373,7 @@ mod tests {
             delay_centre: None,
             reference_centre: None,
             flagged: None,
+            ephemeris: None,
         }
     }
 

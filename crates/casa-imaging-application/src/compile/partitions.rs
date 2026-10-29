@@ -45,10 +45,8 @@ pub(crate) enum PartitionSelectionError {
 /// # Errors
 ///
 /// [`PartitionSelectionError::Unsupported`] for what the batch route does
-/// not read yet: several MeasurementSets, `FLOAT_DATA`, weights the
-/// observation's data group does not hold, and a selected field that
-/// follows an ephemeris (until #942 lands, batch geometry would read its
-/// `PHASE_DIR` offset as a direction).
+/// not read yet: several MeasurementSets, `FLOAT_DATA` and weights the
+/// observation's data group does not hold.
 pub(crate) fn resolve_partitions(
     problem: &CompiledProblem,
     observation: &Msv2Observation,
@@ -83,7 +81,6 @@ pub(crate) fn resolve_partitions(
         IntentSelection::Only(intents) => Some(selected_modes(observation, intents)?),
     };
     let windows = measurement_set.spectral_window()?;
-    let field_table = measurement_set.field()?;
     let mut data_group = None;
     let mut partitions = Vec::new();
     for id in catalogue.partition_ids() {
@@ -102,23 +99,8 @@ pub(crate) fn resolve_partitions(
         {
             continue;
         }
-        let read = entry
-            .fields
-            .iter()
-            .filter(|field| fields.holds(**field))
-            .collect::<Vec<_>>();
-        if read.is_empty() {
+        if !entry.fields.iter().any(|field| fields.holds(*field)) {
             continue;
-        }
-        for field in read {
-            if field_table
-                .ephemeris_id(field.0 as usize)?
-                .is_some_and(|ephemeris| ephemeris >= 0)
-            {
-                return Err(PartitionSelectionError::Unsupported(
-                    "a field that follows an ephemeris (#942)",
-                ));
-            }
         }
         let group = entry
             .data_groups

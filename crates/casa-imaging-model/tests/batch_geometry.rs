@@ -29,7 +29,8 @@ use batch_observation::{
 /// The geometry of every sample of one time of `catalogue`'s first
 /// partition under `problem`.
 fn apply(problem: &CompiledProblem, catalogue: &Arc<Catalogue>) -> (GeometryPlan, BatchGeometry) {
-    let plan = GeometryPlan::compile(problem, catalogue, measures()).expect("a geometry plan");
+    let plan =
+        GeometryPlan::compile(problem, catalogue, measures(), None).expect("a geometry plan");
     let mut buffers = BatchBuffers::default();
     fill(&mut buffers, catalogue, 0, 1);
     let batch = buffers.batch().expect("a batch");
@@ -154,7 +155,8 @@ fn a_distinct_psf_phase_centre_is_refused() {
         FacetLayout::Single,
         PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.01, -0.5)),
     );
-    let refused = GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures());
+    let refused =
+        GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures(), None);
     assert!(
         matches!(refused, Err(BatchGeometryError::DistinctPsfCentre)),
         "{refused:?}"
@@ -170,7 +172,8 @@ fn a_batch_of_another_catalogue_is_refused() {
         PsfPhaseCentreLaw::ImageDomainReference,
     );
     let compiled = catalogue(j2000(0.9, -0.45), 1);
-    let plan = GeometryPlan::compile(&problem, &compiled, measures()).expect("a geometry plan");
+    let plan =
+        GeometryPlan::compile(&problem, &compiled, measures(), None).expect("a geometry plan");
     let other = catalogue(j2000(0.9, -0.45), 1);
     let mut buffers = BatchBuffers::default();
     fill(&mut buffers, &other, 0, 1);
@@ -188,30 +191,34 @@ fn a_batch_of_another_catalogue_is_refused() {
     );
 }
 
-/// A moving phase centre batch geometry cannot follow yet (the fields' own
-/// ephemerides, an ephemeris table) is refused when the plan compiles, not
-/// at the first batch.
+/// A moving phase centre that is neither `TRACKFIELD`, nor a body Measures
+/// names, nor given with its ephemeris table is refused when the plan
+/// compiles, not at the first batch.
 #[test]
 fn a_moving_centre_measures_does_not_name_is_refused_at_compile() {
-    for name in ["TRACKFIELD", "/data/mars.eph"] {
-        let problem = problem(
-            PhaseCentreLaw::Ephemeris(name.to_string()),
-            FacetLayout::Single,
-            PsfPhaseCentreLaw::ImageDomainReference,
-        );
-        let refused = GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures());
-        assert!(
-            matches!(&refused, Err(BatchGeometryError::UnsupportedEphemeris(refused)) if refused == name),
-            "{name}: {refused:?}"
-        );
-    }
+    let table = "/data/mars.eph";
+    let without_table = problem(
+        PhaseCentreLaw::Ephemeris(table.to_string()),
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let refused = GeometryPlan::compile(
+        &without_table,
+        &catalogue(j2000(0.9, -0.45), 1),
+        measures(),
+        None,
+    );
+    assert!(
+        matches!(&refused, Err(BatchGeometryError::UnsupportedEphemeris(refused)) if refused == table),
+        "{refused:?}"
+    );
     // A body Measures names but has no model of fails as Measures does.
     let pluto = problem(
         PhaseCentreLaw::Ephemeris("PLUTO".to_string()),
         FacetLayout::Single,
         PsfPhaseCentreLaw::ImageDomainReference,
     );
-    let refused = GeometryPlan::compile(&pluto, &catalogue(j2000(0.9, -0.45), 1), measures());
+    let refused = GeometryPlan::compile(&pluto, &catalogue(j2000(0.9, -0.45), 1), measures(), None);
     assert!(
         matches!(
             refused,
@@ -224,15 +231,16 @@ fn a_moving_centre_measures_does_not_name_is_refused_at_compile() {
 }
 
 /// Rest-frame frequencies stay as they are; converting into or out of the
-/// rest frame needs a source velocity, so such a batch is refused.
+/// rest frame needs a source velocity, which a phase centre that follows
+/// no ephemeris does not give, so such a batch is refused.
 #[test]
 fn only_rest_frequencies_stay_in_the_rest_frame() {
     let field = j2000(0.9, -0.45);
     let geometry_of = |window: FrequencyRef, source: FrequencyFrame, output: FrequencyFrame| {
         let catalogue = catalogue_in(field.clone(), 1, window);
-        let problem = problem_framed(source, output);
+        let problem = problem_framed(PhaseCentreLaw::Observation, source, output);
         let plan =
-            GeometryPlan::compile(&problem, &catalogue, measures()).expect("a geometry plan");
+            GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
         let mut buffers = BatchBuffers::default();
         fill(&mut buffers, &catalogue, 0, 1);
         let batch = buffers.batch().expect("a batch");
@@ -285,7 +293,8 @@ fn a_time_without_rows_holds_no_geometry() {
         PsfPhaseCentreLaw::ImageDomainReference,
     );
     let catalogue = catalogue(j2000(0.9, -0.45), 1);
-    let plan = GeometryPlan::compile(&problem, &catalogue, measures()).expect("a geometry plan");
+    let plan =
+        GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
     let mut buffers = BatchBuffers::default();
     fill(&mut buffers, &catalogue, 0, 2);
     let batch = buffers.batch().expect("a batch");

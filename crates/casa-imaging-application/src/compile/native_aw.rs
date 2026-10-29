@@ -35,14 +35,16 @@ pub(super) fn resolve(
     };
     let surface = evla_dish(surveyed.ms, first_row, evla_surface)?;
     let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
-    let sky_cell = request.cell.to_radians() / 3600.0;
+    // AW projection images square grids of square cells (the availability
+    // gate refuses others), so x stands for both axes.
+    let sky_cell = request.cell[0].to_radians() / 3600.0;
     let (w_values, w_increment) = w_grid(
         aw.wprojplanes
             .expect("a validated AW request names its W planes")
             .get(),
         sky_cell,
     );
-    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize as f64
+    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize[0] as f64
         / *native_cf_working_size as f64;
     let pa = surveyed.engine.parallactic_angle(
         first_row.time_mjd_seconds(),

@@ -16,6 +16,7 @@ use casa_imaging_deconvolution::{
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
     ImageDomainSpec, ImageShape, PolarizationCoordinate, Projection, SkyDirection,
+    optimum_image_size,
 };
 use casa_types::measures::direction::DirectionRef;
 
@@ -48,7 +49,8 @@ pub(super) enum DomainMask {
 pub(super) struct PreparedImageDomain {
     pub(super) role: ImageDomainRole,
     pub(super) output: PathBuf,
-    pub(super) image_size: usize,
+    /// Pixels along x and y.
+    pub(super) image_size: [usize; 2],
     pub(super) direction: DirectionCoordinateSpec,
     pub(super) coordinates: CoordinateSystem,
     pub(super) mask: DomainMask,
@@ -63,7 +65,7 @@ impl PreparedImageDomain {
     pub(super) fn spec(&self) -> ImageDomainSpec {
         ImageDomainSpec::new(
             self.role.clone(),
-            ImageShape::new(self.image_size, self.image_size),
+            ImageShape::new(self.image_size[0], self.image_size[1]),
             self.direction,
             self.facets,
             AxisOrder::new([
@@ -154,7 +156,28 @@ pub(super) fn prepare_domains(
         }
     }
     domains.sort_by(|left, right| left.role.cmp(&right.role));
+    for domain in &domains {
+        warn_inefficient_size(domain.image_size);
+    }
     Ok(domains)
+}
+
+/// `tclean`'s warning for a side that is not CASA's efficient size
+/// (`SynthesisParamsImage::verify`): the image is still made at the size
+/// asked for. Like CASA, it names y only when it differs from x.
+fn warn_inefficient_size(image_size: [usize; 2]) {
+    let [x, y] = image_size;
+    let [best_x, best_y] = image_size.map(optimum_image_size);
+    if best_x != x {
+        tracing::warn!(
+            "imsize with {x} pixels is not an efficient imagesize. Try {best_x} instead."
+        );
+    }
+    if x != y && best_y != y {
+        tracing::warn!(
+            "imsize with {y} pixels is not an efficient imagesize. Try {best_y} instead."
+        );
+    }
 }
 
 /// The main domain's mask: CASA auto-multithresh, the user mask image or
@@ -195,7 +218,7 @@ pub(super) fn mask_plans(
 fn mask_plan(
     mask: DomainMask,
     coordinate: DirectionCoordinateSpec,
-    image_size: usize,
+    image_size: [usize; 2],
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
     Ok(match mask {
         DomainMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
@@ -209,7 +232,7 @@ fn mask_plan(
         DomainMask::Image(path) => reproject_image_mask(&path, coordinate, image_size)?,
         DomainMask::PixelSupport(support) => {
             assert_eq!(
-                image_size.checked_mul(image_size),
+                image_size[0].checked_mul(image_size[1]),
                 Some(support.len()),
                 "an outlier circle mask covers exactly its image domain"
             );
@@ -234,7 +257,7 @@ fn mask_plan(
 fn reproject_image_mask(
     path: &Path,
     target_spec: DirectionCoordinateSpec,
-    target_size: usize,
+    target_size: [usize; 2],
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
     let (source_shape, source_coordinates, source_support) = match AnyPagedImage::open(path)? {
         AnyPagedImage::Float32(image) => {
@@ -286,7 +309,7 @@ fn reproject_image_mask(
         [source_shape[0], source_shape[1]],
         &source_support,
         target_spec,
-        [target_size, target_size],
+        target_size,
     )?;
     Ok(ReconstructionMaskPlan::Reprojected {
         coordinate: target_spec,
@@ -338,9 +361,8 @@ pub(super) fn model_samples(
     domains
         .iter()
         .try_fold(0_usize, |total, domain| {
-            domain
-                .image_size
-                .saturating_mul(domain.image_size)
+            domain.image_size[0]
+                .saturating_mul(domain.image_size[1])
                 .checked_add(total)
         })
         .and_then(|samples| samples.checked_mul(planes))

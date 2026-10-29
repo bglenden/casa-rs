@@ -7,7 +7,15 @@ use std::sync::mpsc;
 use super::{BlockShape, BoundedSource, Cancel, NativeBlock, PassError, SourceError};
 
 /// Blocks resident at once: one being consumed and one being filled.
-const SLOTS: usize = 2;
+pub const SLOTS: usize = 2;
+
+/// Blocks a source divides one run of times into, at least, where it has
+/// that many times. Filling overlaps consuming only between blocks, so a
+/// pass that is one block reads and then grids, and one of a few blocks
+/// waits on its first and last. On a cold `MeasurementSet` (#932), a
+/// standard MFS pass of one block took 601 ms, of four 405 ms and of eight
+/// 367 ms, against 497 ms on the selected-observation route.
+pub const OVERLAPPED_BLOCKS: usize = 8;
 
 /// Bytes the stream's blocks hold for a source whose largest block is
 /// `block`.
@@ -21,7 +29,9 @@ pub(super) const fn bytes(block: BlockShape) -> u64 {
 /// consumed.
 ///
 /// The producer stops at the next block boundary after `cancel` is set or
-/// `consume` fails; both threads are joined before this returns.
+/// `consume` fails; both threads are joined before this returns. A source
+/// that fails fails the stream, though its producer stops, and closes the
+/// queue of free blocks, before the consumer reads the failure.
 ///
 /// With `timing` it logs one event under
 /// [`casa_imaging_metal::METAL_STAGE_TIMING`] when the stream ends: the
@@ -108,9 +118,10 @@ pub(super) fn stream_blocks(
             }
             consuming += consumed.elapsed();
             blocks += 1;
-            if free_sender.send(block).is_err() {
-                break;
-            }
+            // A producer that has stopped, at the source's end or after
+            // sending its failure, takes no more free blocks; what it sent
+            // before it stopped is still read.
+            let _ = free_sender.send(block);
         }
         drop(free_sender);
         let filling = producer.join().map_err(|_| PassError::ProducerPanicked)?;

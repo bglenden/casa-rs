@@ -621,6 +621,7 @@ impl Msv4Observation {
                 delay_centre: None,
                 reference_centre: None,
                 flagged: None,
+                ephemeris: None,
             };
             let fields = &mut self.catalogue_mut().fields;
             let index = fields

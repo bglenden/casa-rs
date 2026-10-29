@@ -238,7 +238,11 @@ fn evaluate_phase_centre_projection(
         );
         let (uvw_m, casa_dphase_m) = source
             .geometry_engine
-            .reproject_raw_uvw_for_mosaic_to_direction(stored.uvw_m(), request.field_id, &target)?;
+            .reproject_raw_uvw_for_mosaic_to_direction(
+                stored.uvw_m(),
+                (stored.time_mjd_seconds(), request.field_id),
+                &target,
+            )?;
         (uvw_m, -casa_dphase_m)
     } else if target_j2000 == observation_direction && !request.project_to_observation_plane {
         (stored.uvw_m(), 0.0)

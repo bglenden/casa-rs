@@ -745,10 +745,13 @@ flag change writes (Fable).
   to a traversal and some targets; live updaters claim disjoint times of
   each variable (time selection, "Updaters of a split").
 - `Updater::write(batch, values)` takes one `PatchValues` per bound target
-  for a batch the session delivered: visibilities, a flag change (set and
+  for a batch the session delivered: visibilities (with a mask of the
+  elements written, since imaging port step 5), a flag change (set and
   clear masks; elements neither names keep their stored flag), or weights
   for the delivered channels or all of them. Values are checked against the
-  batch before anything is written.
+  batch before anything is written. `Updater::write_at(address, values)`
+  writes against the batch's owned address once its buffers are gone, for
+  every change but those whose check reads the payload.
 - The batch's sample addresses are found from its own times and the
   partition's baselines (the MSv2 grid's rows, the MSv4 dataset's time
   index): **the frozen read contract needed no change to be written
@@ -769,7 +772,8 @@ flag change writes (Fable).
 | `an_msv4_batch_of_other_channels_is_refused_whole` | A batch whose channels are not the updater's traversal's is refused before any target takes it, so nothing of it is written. |
 | `a_session_reads_what_its_updaters_wrote` | A second traversal of the session's observation delivers what its first updater wrote, in both stores. |
 | `one_update_session_per_store_and_one_updater_per_time` | A second update session on a store, or a second live updater of a session over the same times, is a `Conflict`; one variable bound twice to an updater is refused (whichever wrote last would win); read-only observations open beside them. MSv2 states casacore's cross-process lock; MSv4 states atomic units and no cross-process lock. |
-| `an_msv2_updater_takes_its_batches_in_order` | The MSv2 updater takes its traversal's batches in delivery order: a batch after a skipped one is refused, and finishing with selected times unwritten fails. |
+| `an_updater_writes_any_of_its_batches_by_address` | Imaging port step 5 (#932): an updater takes its traversal's batches in any order and any of them, written against their addresses once their buffers hold later batches, each under a mask; the elements a mask writes hold the patch, every other element (the batch left out included) keeps what it held, and MSv2 neither reads nor writes a sample its mask leaves wholly. Both stores. |
+| `an_address_takes_no_change_its_payload_checks` | A flag cleared or a weight written against an address is refused on both stores (an MSv4 store knows its padding only from the batch's weights); flags set by address are written. |
 | `an_msv2_session_holds_mains_lock_while_an_updater_is_live` | casacore's write lock on MAIN is held from the first live updater to the last, between batches too, and free when none is live. |
 | `a_failed_replacement_leaves_each_chunk_old_or_new` | Pro R3: a replacement failing after its temporary file is written (as a killed process leaves it) publishes nothing of that chunk: times 0..5 read new, 5..12 old, the temporary file stays unread beside the old chunk. |
 | `a_failed_first_write_leaves_an_absent_chunk_absent` | `FLAG`'s chunk `c/2/0/0/0` is absent (equal to the fill value); its failed first write leaves it absent, reading as the fill value, and the four chunks before it replaced. |
@@ -1240,7 +1244,7 @@ on its own.
 | `a_sliced_traversal_writes_back_its_times` | On both stores an updater writes a slice's flags; the slice's samples change and no other's. |
 | `a_sliced_write_back_passes_partitions_the_range_leaves_empty` | The fixture relabelled as three scans and partitioned by them: a range over the first two leaves the third empty, listed between them or first; the MSv2 updater passes it and the two partitions write back (independent review B1). |
 | `an_updater_of_a_slice_refuses_times_outside_it` | On both stores an updater bound to a slice refuses a batch from before it. |
-| `an_updater_refuses_a_partition_before_the_last_is_written` | The MSv2 updater refuses a later partition's batch while an earlier partition's selected times are unwritten. |
+| `an_updater_takes_its_partitions_in_any_order` | The MSv2 fixture split into three scans' partitions, written last partition first, holds every flag set. |
 | `a_time_split_finalizes_each_group_once_after_all_its_parts` | On both stores, grouped by time bins and by scan, cut several ways, the slices run on a thread each and in reverse order: each of the whole traversal's groups becomes ready exactly once, with all its samples, and the split names as divided the groups more than one slice holds. |
 | `a_time_split_must_tile_the_request` | Cuts with a gap or an overlap, starting after the request's first time, ending before its last, or missing are refused before anything is read. |
 | `a_split_writes_back_its_slices_at_once` | On both stores the slices of a split write back at once, an updater each on its own thread, and leave the store as one updater over the whole traversal does. |
@@ -1452,12 +1456,15 @@ whatever the budget (#950); the reads themselves fit the budget.
 
 A converted store therefore has no covering sample, and imaging's law
 chooses between the samples either side; step 3b measures what that
-changes. Field ephemerides are not carried yet; the converter still refuses
-fields that follow one (#942).
+changes. The MSv2 adapter carries field ephemerides (#942): each field's
+entry holds the table its `EPHEMERIS_ID` names, its phase centre the
+offset from the body. The MSv4 store does not carry them yet, so the
+converter still refuses fields that follow one.
 
 | Law | What it shows |
 | --- | --- |
 | `field_directions_resolve_variable_frames_and_carry_reference_epochs` | A mosaic whose `PHASE_DIR` has a variable reference resolves each field's frame and keeps its angles; `FIELD.TIME` is each field's reference epoch; fields in two frames are refused; the MSv4 conversion's fields have no epoch. |
+| `fields_carry_the_ephemerides_they_follow` | Two fields of one `EPHEMERIS_ID` share the attached table's samples, equal to today's imaging reading of the table; a field with none has none; every phase centre keeps `PHASE_DIR`'s angles; the catalogue counts the shared ephemeris once; an `EPHEMERIS_ID` whose table is missing refuses opening. |
 | `brackets_are_the_selected_observation_reading` (casa-ms unit) | The MSv2 adapter's brackets equal today's imaging reader's (`direction_brackets`) bit for bit, for rows with a rate term, rows of no interval and overlapping rows. Of two rows equally near a time, the boundary takes the earlier and today's reader the lower row: the same wherever an antenna's rows are in time order. |
 | `pointing_brackets_hold_each_stores_samples_and_survive_conversion` | On the MSv2, every (antenna, time) bracket holds the rows today's reader names (the nearest row whose positive `INTERVAL` covers the time, the last before and the first after); the MSv4 conversion holds the same samples at the same instants with nothing covering; converting back writes the same rows with `INTERVAL` 0. |
 | `msv4_pointing_finds_each_antennas_own_nearest_samples` | With one antenna sampled a second after the others (NaN between on MSv4's grid) and one with no pointing, a request between samples gives each antenna its own nearest sample either side, as the MSv2 does, and the antenna without pointing none. |
