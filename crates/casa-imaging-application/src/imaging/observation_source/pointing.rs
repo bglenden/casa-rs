@@ -252,6 +252,9 @@ mod tests {
             time_origin: MjdHighPrec::new(origin, 0.0),
             data_groups: Vec::new(),
             receptors: BTreeMap::new(),
+            window: casa_observation::WindowId(0),
+            states: Vec::new(),
+            processor: None,
         }
     }
 

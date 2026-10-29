@@ -159,7 +159,10 @@ impl Msv4Observation {
         let wanted: Vec<usize> = columns.iter().map(|(_, column)| *column).collect();
         let before = self.nearest(&beam, &wanted, first, Outward::Before)?;
         let after = self.nearest(&beam, &wanted, last, Outward::After)?;
-        let mut series = PointingSeries::empty(frame);
+        let mut series = PointingSeries {
+            store_has_pointing: shape[0] > 0,
+            ..PointingSeries::empty(frame)
+        };
         for (index, (antenna, column)) in columns.into_iter().enumerate() {
             let within = (first..last).filter_map(|time| {
                 let at = ((time - first) * names.len() + column) * 2;

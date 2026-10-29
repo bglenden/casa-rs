@@ -15,6 +15,9 @@ mod geometry_inputs;
 #[path = "common/layouts.rs"]
 mod layouts;
 #[cfg(unix)]
+#[path = "observation_io/metadata.rs"]
+mod metadata;
+#[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
 #[path = "observation_io/refusals.rs"]

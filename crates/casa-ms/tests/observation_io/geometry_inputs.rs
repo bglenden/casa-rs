@@ -830,6 +830,42 @@ fn receptors_are_each_partitions_own() {
         .expect("no FEED loss to accept");
 }
 
+/// #937: a store says whether it holds any pointing at all, whatever the
+/// request's times, so that a single-dish gridder can tell a store without
+/// pointing, which CASA images at the FIELD phase centre (`havePointings`),
+/// from an acquisition no sample covers, which it does not grid. Shown for
+/// usable samples, times outside the coverage, an emptied `POINTING`, an
+/// MSv4 with `pointing_xds` and one without.
+#[test]
+fn a_store_says_whether_it_holds_pointing_whatever_the_times() {
+    let root = tempfile::tempdir().expect("root");
+    let (v2, v4) = mosaic(root.path(), 4);
+    {
+        let msv2 = open(&v2, &OpenOptions::default()).expect("msv2");
+        let usable = series(msv2.as_ref());
+        assert!(usable.store_has_pointing && !usable.antennas.is_empty());
+        assert!(series_over(msv2.as_ref(), 1.0e12..=1.0e12 + 1.0).store_has_pointing);
+        let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
+        assert!(series(msv4.as_ref()).store_has_pointing);
+    }
+    {
+        let mut ms = MeasurementSet::open(&v2).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<usize> = (0..pointing.row_count()).collect();
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    let emptied = open(&v2, &OpenOptions::default()).expect("msv2");
+    let empty = series(emptied.as_ref());
+    assert!(!empty.store_has_pointing && empty.antennas.is_empty());
+    let trial = super::fixture(root.path(), "ms_trial.ps.zarr");
+    let without = open(&trial, &OpenOptions::default()).expect("msv4");
+    assert!(
+        !series(without.as_ref()).store_has_pointing,
+        "no pointing_xds"
+    );
+}
+
 /// casacore's `phaseDirMeas(field)` at no time, which CASA's `tclean`
 /// centres an image on when its phase centre is left empty (#987): for a
 /// field that follows an ephemeris, the body's geocentric direction at the

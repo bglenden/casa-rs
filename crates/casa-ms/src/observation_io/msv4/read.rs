@@ -11,10 +11,14 @@ use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
     Estimate, FieldEntry, FieldId, FieldSelection, GroupKey, Grouping, Observation,
     ObservationEntry, ObservationError, ObservationId, OrderedBaseline, PartitionEntry,
-    PartitionId, Receptors, ScanEntry, ScanId, TimeBaselineGrid, Traversal, UvwFrame,
+    PartitionId, ProcessorEntry, ProcessorId, Receptors, ScanEntry, ScanId, TimeBaselineGrid,
+    Traversal, UvwFrame, WindowEntry, WindowId,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::MFrequency;
 use casa_types::measures::position::MPosition;
+use casa_types::measures::{EpochRef, MEpoch};
+use casa_types::quanta::time::MvTime;
 use zarrs::array::{Array, CodecOptions};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::Group;
@@ -242,7 +246,9 @@ impl Msv4Observation {
             exists(root, &format!("{path}/TIME_CENTROID_EXTRA_PRECISION"));
         let exposure = auxiliary("EFFECTIVE_INTEGRATION_TIME", false)?;
         let (scans, intents) = self.scans(store, root, path)?;
-        let partition = self.partition(store, path)?;
+        let (partition, window) = self.partition(store, path)?;
+        let window = self.window(window);
+        let processor = self.processor(attributes);
         let field_names = strings(store, &format!("{path}/field_name"))?;
         if field_names.len() != times.len()
             || scans
@@ -306,6 +312,10 @@ impl Msv4Observation {
             time_origin,
             data_groups: entries,
             receptors,
+            window,
+            // MSv4 states intents only.
+            states: Vec::new(),
+            processor,
             ..partition
         });
         self.datasets.push(Dataset {
@@ -361,6 +371,11 @@ impl Msv4Observation {
                         .collect()
                 })
                 .unwrap_or_default(),
+            // `observation_info` states no extent; one is never derived
+            // from the samples.
+            time_range: None,
+            release_date: uid("release_date").as_deref().and_then(iso_utc),
+            flagged: None,
         };
         let observations = &mut self.catalogue_mut().observations;
         let index = observations
@@ -391,14 +406,72 @@ impl Msv4Observation {
         }
     }
 
-    /// The partition's spectral window and correlations; its data groups
-    /// are added by the caller.
+    /// The catalogue's window `entry` describes, added if new: one per
+    /// spectral window name, as XRADIO names one per window.
+    fn window(&mut self, entry: WindowEntry) -> WindowId {
+        let windows = &mut self.catalogue_mut().windows;
+        let index = windows
+            .iter()
+            .position(|known| known.name == entry.name)
+            .unwrap_or_else(|| {
+                windows.push(entry);
+                windows.len() - 1
+            });
+        WindowId(u32::try_from(index).expect("few windows"))
+    }
+
+    /// The catalogue's processor for this dataset's `processor_info`,
+    /// which states a type and a subtype, added if new; `None` without
+    /// one.
+    fn processor(
+        &mut self,
+        attributes: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<ProcessorId> {
+        let info = attributes.get("processor_info")?;
+        let text = |key: &str| {
+            info.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        };
+        let entry = ProcessorEntry {
+            kind: text("type"),
+            sub_type: text("sub_type"),
+            ..ProcessorEntry::default()
+        };
+        let processors = &mut self.catalogue_mut().processors;
+        let index = processors
+            .iter()
+            .position(|known| known.kind == entry.kind && known.sub_type == entry.sub_type)
+            .unwrap_or_else(|| {
+                processors.push(entry);
+                processors.len() - 1
+            });
+        Some(ProcessorId(u32::try_from(index).expect("few processors")))
+    }
+
+    /// The partition's spectral window and correlations, and the window's
+    /// entry; its data groups are added by the caller.
     fn partition(
         &self,
         store: &Arc<FilesystemStore>,
         path: &str,
-    ) -> Result<PartitionEntry, ObservationError> {
+    ) -> Result<(PartitionEntry, WindowEntry), ObservationError> {
         let (frequencies_hz, attributes) = numbers::<f64>(store, &format!("{path}/frequency"))?;
+        let reference_frequency = attributes
+            .get("reference_frequency")
+            .map(|quantity| {
+                let of = "frequency.reference_frequency";
+                let frame = match quantity.get("attrs").and_then(serde_json::Value::as_object) {
+                    Some(attrs) => frequency_frame(attrs, of)?,
+                    None => return Err(invalid(format!("{of} has no attributes"))),
+                };
+                quantity
+                    .get("data")
+                    .and_then(serde_json::Value::as_f64)
+                    .map(|hz| MFrequency::new(hz, frame))
+                    .ok_or_else(|| invalid(format!("{of} has no value")))
+            })
+            .transpose()?;
         let frequency_frame = frequency_frame(&attributes, "frequency")?;
         let width = attributes
             .get("channel_width")
@@ -422,8 +495,16 @@ impl Msv4Observation {
                     .ok_or_else(|| invalid(format!("unknown polarization {label}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(PartitionEntry {
-            spectral_window: text(&attributes, "spectral_window_name", "frequency")?.to_string(),
+        let name = text(&attributes, "spectral_window_name", "frequency")?.to_string();
+        // XRADIO's frequency coordinate states the reference frequency; the
+        // other members of an MSv2 window it does not carry.
+        let window = WindowEntry {
+            name: name.clone(),
+            reference_frequency,
+            ..WindowEntry::default()
+        };
+        let entry = PartitionEntry {
+            spectral_window: name,
             channel_widths_hz: vec![channel_width; frequencies_hz.len()],
             frequencies_hz,
             frequency_frame,
@@ -439,7 +520,11 @@ impl Msv4Observation {
             time_origin: casa_types::measures::MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
             receptors: BTreeMap::new(),
-        })
+            window: WindowId(0),
+            states: Vec::new(),
+            processor: None,
+        };
+        Ok((entry, window))
     }
 
     /// The catalogue scan of each time, when the dataset has `scan_name`,
@@ -528,6 +613,14 @@ impl Msv4Observation {
                     .get(row)
                     .filter(|name| !super::is_unknown_source(name))
                     .cloned(),
+                // The adapter does not yet read `field_and_source`'s
+                // SOURCE_DIRECTION and line variables (#976), nor XRADIO's
+                // other field centres.
+                source: None,
+                code: None,
+                delay_centre: None,
+                reference_centre: None,
+                flagged: None,
                 ephemeris: None,
             };
             let fields = &mut self.catalogue_mut().fields;
@@ -878,6 +971,7 @@ fn read_antennas(
                     ),
                     mount: mounts[index].clone(),
                     dish_diameter: metres(diameters[index]),
+                    flagged: None,
                 },
                 Receptors {
                     types: types[receptors * index..receptors * (index + 1)].to_vec(),
@@ -1029,9 +1123,46 @@ impl Msv4Observation {
     }
 }
 
+/// A UTC instant as XRADIO writes one (`2026-10-24T16:32:07.399771`, with
+/// an optional `Z` or `+00:00`); `None` for any other form.
+fn iso_utc(text: &str) -> Option<MEpoch> {
+    let text = text
+        .strip_suffix('Z')
+        .or_else(|| text.strip_suffix("+00:00"))
+        .unwrap_or(text);
+    let (date, time) = text.split_once('T')?;
+    let mut date = date.splitn(3, '-').map(str::parse::<u32>);
+    let (year, month, day) = (date.next()?.ok()?, date.next()?.ok()?, date.next()?.ok()?);
+    let mut time = time.splitn(3, ':');
+    let (hour, minute) = (time.next()?.parse().ok()?, time.next()?.parse().ok()?);
+    let second: f64 = time.next()?.parse().ok()?;
+    let instant =
+        MvTime::from_ymd_hms_utc(i32::try_from(year).ok()?, month, day, hour, minute, second)?;
+    Some(MEpoch::from_mjd_seconds(
+        instant.as_mjd_seconds(),
+        EpochRef::UTC,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::merge_orders;
+    use super::{iso_utc, merge_orders};
+
+    #[test]
+    fn xradio_instants_read_as_utc_and_others_as_none() {
+        let mjd = |text: &str| iso_utc(text).map(|epoch| epoch.value().as_mjd());
+        assert_eq!(mjd("1858-11-17T00:00:00.000000"), Some(0.0));
+        let afternoon = mjd("2026-10-24T16:32:07.399771").expect("an instant");
+        let expected = 61_337.0 + (16.0 * 3600.0 + 32.0 * 60.0 + 7.399_771) / 86_400.0;
+        assert!(
+            (afternoon - expected).abs() < 1e-9,
+            "{afternoon} against {expected}"
+        );
+        assert_eq!(mjd("2026-10-24T16:32:07Z"), mjd("2026-10-24T16:32:07"));
+        assert_eq!(mjd("2026-10-24T16:32:07+00:00"), mjd("2026-10-24T16:32:07"));
+        assert_eq!(mjd("2026-10-24T16:32:07+02:00"), None);
+        assert_eq!(mjd("24 Oct 2026"), None);
+    }
 
     fn merged(lists: &[&[&str]]) -> Vec<String> {
         let lists = lists

@@ -381,30 +381,60 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
     let ours = open(&out, &OpenOptions::default()).expect("open");
     let theirs = open(&xradio, &OpenOptions::default()).expect("open");
     let (ours, theirs) = (ours.catalogue(), theirs.catalogue());
-    // Measures compare through their exact debug form.
+    // Measures compare through their exact debug form. An MSv2 states what
+    // an MSv4 does not (#937): the flags, a field's reference epoch
+    // (`FIELD.TIME`; MSv4 phase centres are celestial), code, source and
+    // other centres, an observation's TIME_RANGE. Each is compared where
+    // both state it.
+    let antennas = |antennas: &[casa_observation::AntennaEntry]| {
+        antennas
+            .iter()
+            .map(|antenna| casa_observation::AntennaEntry {
+                flagged: None,
+                ..antenna.clone()
+            })
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        format!("{:?}", ours.antennas),
+        format!("{:?}", antennas(&ours.antennas)),
         format!("{:?}", theirs.antennas),
         "antennas"
     );
-    // An MSv2 states each field's reference epoch (`FIELD.TIME`); an MSv4,
-    // whose phase centres are celestial, states none.
-    let without_epochs = |fields: &[casa_observation::FieldEntry]| {
+    let fields = |fields: &[casa_observation::FieldEntry]| {
         fields
             .iter()
             .map(|field| casa_observation::FieldEntry {
                 reference_epoch: None,
+                source: None,
+                code: None,
+                delay_centre: None,
+                reference_centre: None,
+                flagged: None,
                 ..field.clone()
             })
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        format!("{:?}", without_epochs(&ours.fields)),
+        format!("{:?}", fields(&ours.fields)),
         format!("{:?}", theirs.fields),
         "fields"
     );
     assert_eq!(ours.scans, theirs.scans, "scans");
-    assert_eq!(ours.observations, theirs.observations, "observations");
+    let observations = |observations: &[casa_observation::ObservationEntry]| {
+        observations
+            .iter()
+            .map(|observation| casa_observation::ObservationEntry {
+                time_range: None,
+                flagged: None,
+                ..observation.clone()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        observations(&ours.observations),
+        theirs.observations,
+        "observations"
+    );
     let (a, b) = (&ours.partitions[0], &theirs.partitions[0]);
     assert_eq!(
         (
@@ -844,9 +874,24 @@ fn moving_fields_are_refused() {
     let polynomial_root = tempfile::tempdir().expect("root");
     let polynomial = fixture(polynomial_root.path(), "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&polynomial).expect("ms");
-    ms.field_mut()
-        .and_then(|mut fields| fields.set_i32(0, "NUM_POLY", 1))
-        .expect("a polynomial");
+    let mut fields = ms.field_mut().expect("FIELD");
+    fields.set_i32(0, "NUM_POLY", 1).expect("a polynomial");
+    // Each direction a polynomial of NUM_POLY + 1 terms: its constant
+    // term, and no motion.
+    for column in ["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] {
+        let casa_types::ArrayValue::Float64(constant) =
+            fields.as_ref().phase_dir(0).expect("PHASE_DIR").clone()
+        else {
+            panic!("a Float64 direction");
+        };
+        let terms = ndarray::ArrayD::from_shape_fn(vec![2, 2], |index| match index[1] {
+            0 => constant[[index[0], 0]],
+            _ => 0.0,
+        });
+        fields
+            .set_array(0, column, casa_types::ArrayValue::Float64(terms))
+            .expect("two terms");
+    }
     ms.save().expect("save");
     drop(ms);
     for (root, source, moving) in [
