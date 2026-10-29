@@ -132,3 +132,16 @@ def test_casas_spellings_of_a_default_run_as_casa_runs_them(
     assert Image.open(image).units == "Jy/beam"
     assert tasks.imhead(image.name, mode="put", hdkey="bunit", hdvalue="") is None
     assert Image.open(image).units == ""
+
+
+def test_a_missing_input_image_is_a_parameter_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("imstat")
+    monkeypatch.chdir(tmp_path)
+    # CASA's imstat('does-not-exist.im') is a parameter error (#931).
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.imstat("does-not-exist.im")
+    completion = failure.value.completion
+    assert completion.parameter == "imagename"
+    assert completion.returncode == 2
