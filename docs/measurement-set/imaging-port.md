@@ -557,6 +557,54 @@ catalogue (`SPECTRAL_WINDOW`, `FIELD`, `OBSERVATION`, `STATE`,
 `DATA_DESCRIPTION`) and its frames through `MsCalEngine`; 6c moves them to the
 catalogue, so an MSv4 compiles.
 
+**As landed (step 6c).** Compile opens the request's store, an MSv4
+processing set when its root holds `zarr.json`, else a MeasurementSet
+(`compile/opening.rs`, `OpenedStore`), and reads the catalogue alone. Two
+things only a MeasurementSet states stay MSv2-only: a `ddid` selection (an
+MSv4 refuses it, `PrepareError::NoDataDescriptions`) and the `PHASE_DIR`
+polynomial check of an analytic primary beam. The run reads the same
+`&dyn Observation`, and writes the model or the corrected data through the
+update session of either store. The catalogue's frames come from
+`MsCalEngine::from_catalogue`, which equals the MeasurementSet's engine bit
+for bit on the trial's fixed, ICRS-variable and moving fields (the law
+`the_catalogue_engine_is_the_measurement_set_engine`).
+- **Windows.** `spw` numbers the catalogue's windows: a MeasurementSet's
+  `SPECTRAL_WINDOW` rows, an MSv4's windows in the order its datasets name
+  them. A window's axis and frame are its first partition's.
+- **Intents.** An intent selection resolves to observing modes
+  (`compile/intents.rs`): a pattern matches a whole mode, an MSv2 `STATE`
+  row's `OBS_MODE` or an MSv4 partition's intents joined by commas in the
+  catalogue's (sorted) order; a state number names an MSv2 `STATE` row and
+  matches nothing on an MSv4. `IntentSelection::Only` holds the modes. A
+  selection by number that takes some of the states sharing an `OBS_MODE`
+  is still refused, since the MSv2 adapter partitions their rows together.
+- **Visibility column.** A MeasurementSet holds `CORRECTED_DATA` or `DATA`
+  when MAIN has the column (its adapter declares the `base` group whether
+  or not MAIN has `DATA`); an MSv4 when a partition has the `corrected` or
+  `base` data group. The partitions read the group of that name. An MSv4's
+  weights are per channel (`WEIGHT_SPECTRUM` in the manifest).
+- **Fields and sources.** A fixed field's direction is the catalogue's
+  phase centre, in its stored frame. A moving field with no reference epoch
+  (an MSv4's) is evaluated, when asked at no time, at its first selected
+  time, as the MSv4 → MSv2 converter writes its `FIELD.TIME`. The cube's
+  default rest frequency is the first line of each of the field's source
+  records for a selected window (`Catalogue::source_records`), which must
+  agree: MSv2 `SOURCE::REST_FREQUENCY`, MSv4 `LINE_REST_FREQUENCY` (#976).
+- **Instrument.** Telescope names, observers and dish diameters come from
+  the catalogue's observations and antennas.
+- **Native AW's feed angle** is antenna 0's first receptor angle as the
+  selected partitions of its window state it, which must agree. An MSv2
+  partition's receptors are its window's `FEED` rows, the last of rows that
+  vary in time, as casacore's `MSIter::setFeedInfo` (which CASA's AW
+  projection reads) takes them; today's compile took the row valid at the
+  first cross-correlation sample's time. The two differ only for a `FEED`
+  stating receptors per time, which the MSv2 adapter warns of.
+- **Write-back.** An MSv4 cannot add a data group: a run that saves the
+  model into an MSv4 without a `model` group is refused when its update
+  session opens, before it images.
+- **Admission.** An MSv4's opening is charged once it is open, on what it
+  holds (`Msv4Observation::held_bytes`); a MeasurementSet's as before.
+
 ### 2.5 Weights, `WeightCache`, errors
 
 - **Weight slots.** `WeightCache` keeps one slot per delivered sample, in
