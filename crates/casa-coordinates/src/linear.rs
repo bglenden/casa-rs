@@ -131,6 +131,33 @@ impl LinearCoordinate {
         &self.pc
     }
 
+    /// This coordinate over only its axes `kept`, in that order.
+    ///
+    /// `None` if `kept` is empty, or if the PC matrix couples a kept axis
+    /// with a dropped one, so that the dropped axis's value would move the
+    /// kept axes' world values or theirs move it. Without coupling, the kept
+    /// axes convert exactly as before, whatever the dropped axes hold.
+    pub(crate) fn kept_axes(&self, kept: &[usize]) -> Option<Self> {
+        let dropped = (0..self.n_axes()).filter(|axis| !kept.contains(axis));
+        let coupled = dropped
+            .flat_map(|axis| kept.iter().map(move |&k| (axis, k)))
+            .any(|(axis, k)| self.pc[[k, axis]] != 0.0 || self.pc[[axis, k]] != 0.0);
+        if kept.is_empty() || coupled {
+            return None;
+        }
+        let pick = |values: &[f64]| kept.iter().map(|&k| values[k]).collect();
+        Some(Self {
+            crval: pick(&self.crval),
+            cdelt: pick(&self.cdelt),
+            crpix: pick(&self.crpix),
+            pc: Array2::from_shape_fn((kept.len(), kept.len()), |(i, j)| {
+                self.pc[[kept[i], kept[j]]]
+            }),
+            names: kept.iter().map(|&k| self.names[k].clone()).collect(),
+            units: kept.iter().map(|&k| self.units[k].clone()).collect(),
+        })
+    }
+
     /// Reconstructs a linear coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let crval = get_required_vec_f64(rec, "crval")?;

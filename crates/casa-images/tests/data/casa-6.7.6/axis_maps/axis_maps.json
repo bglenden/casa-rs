@@ -673,6 +673,131 @@
      "value": 1110.5
     }
    ]
+  },
+  "pv.image": {
+   "made_by": "impv(start=[2, 2], end=[9, 7]) of a 12 by 12 pixel image",
+   "shape": [
+    10,
+    2,
+    3
+   ],
+   "axis_types": [
+    "Linear",
+    "Stokes",
+    "Spectral"
+   ],
+   "names": [
+    "Offset",
+    "Stokes",
+    "Frequency"
+   ],
+   "units": [
+    "arcsec",
+    "",
+    "Hz"
+   ],
+   "maps": {
+    "linear0": {
+     "worldmap": [
+      0,
+      -2
+     ],
+     "pixelmap": [
+      0,
+      -2
+     ],
+     "worldreplace": [
+      -8.250592253424509,
+      1.0
+     ],
+     "pixelreplace": [
+      0.0,
+      4.484813680901484
+     ]
+    },
+    "stokes1": {
+     "worldmap": [
+      1
+     ],
+     "pixelmap": [
+      1
+     ],
+     "worldreplace": [
+      1.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    },
+    "spectral2": {
+     "worldmap": [
+      2
+     ],
+     "pixelmap": [
+      2
+     ],
+     "worldreplace": [
+      1411000000.0
+     ],
+     "pixelreplace": [
+      0.0
+     ]
+    }
+   },
+   "samples": [
+    {
+     "pixel": [
+      0,
+      0,
+      0
+     ],
+     "world": [
+      -8.250592253424509,
+      1.0,
+      1411000000.0
+     ],
+     "value": 17.40443229675293
+    },
+    {
+     "pixel": [
+      9,
+      1,
+      2
+     ],
+     "world": [
+      10.313240316780636,
+      2.0,
+      1415000000.0
+     ],
+     "value": 2177.03955078125
+    },
+    {
+     "pixel": [
+      5,
+      1,
+      1
+     ],
+     "world": [
+      2.0626480633561273,
+      2.0,
+      1413000000.0
+     ],
+     "value": 1150.5350341796875
+    },
+    {
+     "pixel": [
+      1,
+      1,
+      1
+     ],
+     "world": [
+      -6.187944190068382,
+      2.0,
+      1413000000.0
+     ],
+     "value": 1124.030517578125
+    }
+   ]
   }
  }
 }

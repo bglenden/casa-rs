@@ -12,8 +12,9 @@
 //! recorded what CASA reads in `axis_maps.json`: each image's shape, axis
 //! types, names and units, its axis maps, and at a few pixels the world
 //! coordinates and the pixel value. casa-rs reads the two whose coordinates
-//! each own adjacent axes in order, and refuses the three it cannot
-//! represent (#1002).
+//! each own adjacent axes in order, and `impv`'s position-velocity image,
+//! whose linear offset coordinate has an independent removed axis. It
+//! refuses the three it cannot represent (#1002).
 
 use std::path::{Path, PathBuf};
 
@@ -133,11 +134,16 @@ fn assert_reads_as_casa(image: &PagedImage<f32>, casa: &Json, label: &str) {
 #[test]
 fn transposed_casa_images_read_as_casa_reads_them() {
     let scratch = tempfile::tempdir().expect("scratch");
-    for name in ["transposed.image", "spectral_first.image"] {
+    for name in ["transposed.image", "spectral_first.image", "pv.image"] {
         let casa = casa(name);
         let image = PagedImage::<f32>::open(copy_image(name, scratch.path())).expect(name);
         assert_reads_as_casa(&image, &casa, name);
     }
+    let pv = casa("pv.image");
+    assert_eq!(
+        pv["maps"]["linear0"]["pixelmap"],
+        serde_json::json!([0, -2])
+    );
 
     // The case of #1001: `PagedImage::find_axis` names the axes CASA does.
     let image = PagedImage::<f32>::open(copy_image("transposed.image", scratch.path())).unwrap();

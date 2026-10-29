@@ -38,7 +38,8 @@ pub enum CoordinateError {
     /// A valid casacore coordinate-system record whose axis maps casa-rs
     /// cannot represent: a coordinate's axes out of its own order or not
     /// adjacent, world axes ordered unlike the pixel axes, or removed axes
-    /// (see [`CoordinateSystem::from_record`](crate::CoordinateSystem::from_record)).
+    /// other than a linear coordinate's independent ones (see
+    /// [`CoordinateSystem::from_record`](crate::CoordinateSystem::from_record)).
     #[error("unsupported axis layout: {0}")]
     UnsupportedAxisLayout(String),
 

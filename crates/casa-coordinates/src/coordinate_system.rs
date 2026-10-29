@@ -252,13 +252,20 @@ impl CoordinateSystem {
     /// [`record_coordinate_fields`](Self::record_coordinate_fields) names the
     /// record field each coordinate came from.
     ///
+    /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
+    /// the maps with a replacement value. A linear coordinate whose other axes
+    /// do not depend on its removed ones (the offset axis of an `impv`
+    /// position-velocity image) is read over its other axes only, which
+    /// converts as casacore does.
+    ///
     /// # Errors
     ///
     /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
     /// that no coordinate order represents: a coordinate whose axes are out
     /// of its own order (`imtrans order='1023'`) or not adjacent
-    /// (`order='0213'`), world axes ordered unlike the pixel axes, or removed
-    /// axes (`imsubimage(dropdeg=True)` of a single-pixel direction axis).
+    /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
+    /// other removed axis (`imsubimage(dropdeg=True)` of a single-pixel
+    /// direction axis).
     /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
     /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
@@ -307,7 +314,7 @@ fn read_coordinates(rec: &RecordValue) -> Result<Vec<(String, CoordinateModel)>,
         let coordinate = parse_coordinate_record(&key, coord_rec)?;
         parsed.push((index, key, coordinate));
     }
-    let order = record_axes::coordinate_order(rec, &parsed)?;
+    let order = record_axes::coordinate_order(rec, &mut parsed)?;
     let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
     Ok(order
         .into_iter()

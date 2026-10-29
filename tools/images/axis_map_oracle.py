@@ -20,7 +20,10 @@ direction, Stokes I and Q, and a spectral axis (`direction0`, `stokes1`,
 - `swapped.image`: `imtrans(order='1023')`, Dec before RA;
 - `interleaved.image`: `imtrans(order='0213')`, Stokes between RA and Dec;
 - `dropdeg_ra.image`: `imsubimage(dropdeg=True)` of an image one RA pixel
-  wide, which removes the RA axis from the direction coordinate.
+  wide, which removes the RA axis from the direction coordinate;
+- `pv.image`: `impv` of a 12 by 12 pixel image, whose position-velocity
+  output keeps a two-axis linear offset coordinate with its second axis
+  removed.
 
 Each pixel holds `sum(index[k] * 10**k) + 0.5` over its own image's axes
 before any transpose, so a value names where CASA put it. `axis_maps.json`
@@ -46,7 +49,7 @@ import shutil
 import sys
 
 import numpy as np
-from casatasks import imsubimage, imtrans
+from casatasks import impv, imsubimage, imtrans
 from casatools import coordsys, ctsys, image, table
 
 MAP_KEYS = ("worldmap", "pixelmap", "worldreplace", "pixelreplace")
@@ -154,6 +157,12 @@ def fixture(out):
     shutil.rmtree(path, ignore_errors=True)
     imsubimage(imagename=narrow, outfile=path, dropdeg=True, overwrite=True)
     images["dropdeg_ra.image"] = "imsubimage(dropdeg=True) of an image one RA pixel wide"
+    wide = os.path.join(scratch, "wide.image")
+    write_image(wide, [12, 12, 2, 3], coordinate_system())
+    path = os.path.join(out, "pv.image")
+    shutil.rmtree(path, ignore_errors=True)
+    impv(imagename=wide, outfile=path, start=[2, 2], end=[9, 7])
+    images["pv.image"] = "impv(start=[2, 2], end=[9, 7]) of a 12 by 12 pixel image"
     shutil.rmtree(scratch)
 
     document = {

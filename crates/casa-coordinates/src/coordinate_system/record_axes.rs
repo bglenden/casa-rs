@@ -15,8 +15,14 @@
 //! over consecutive axes in coordinate order. [`coordinate_order`] finds the
 //! order of a record's coordinates that gives that layout. It refuses a
 //! record that no order can give: one where a coordinate's axes are out of
-//! the coordinate's own order or not adjacent, where the world axes are
-//! ordered unlike the pixel axes, or where a coordinate has removed axes.
+//! the coordinate's own order or not adjacent, or where the world axes are
+//! ordered unlike the pixel axes.
+//!
+//! A removed axis is dropped from a linear coordinate whose other axes do
+//! not depend on it, which leaves the system's conversions as casacore's.
+//! `impv` writes its position-velocity images so: a two-axis linear
+//! coordinate with the second axis removed. Any other removed axis is
+//! refused.
 
 use casa_types::RecordValue;
 
@@ -36,16 +42,17 @@ struct AxisMaps {
 
 /// The order of `coordinates`, read from `rec` as `(record index, field
 /// name, coordinate)` in record index order, in which they own consecutive
-/// pixel and world axes.
+/// pixel and world axes. A linear coordinate with removed axes is replaced
+/// by the coordinate over its other axes.
 ///
 /// A record without axis maps keeps its coordinate order. casa-rs's own
 /// records always have them, and so do casacore's.
 pub(super) fn coordinate_order(
     rec: &RecordValue,
-    coordinates: &[(usize, String, CoordinateModel)],
+    coordinates: &mut [(usize, String, CoordinateModel)],
 ) -> Result<Vec<usize>, CoordinateError> {
     let maps = coordinates
-        .iter()
+        .iter_mut()
         .map(|(index, name, coordinate)| axis_maps(rec, *index, name, coordinate))
         .collect::<Result<Vec<_>, _>>()?;
     if maps.iter().all(Option::is_none) {
@@ -53,7 +60,7 @@ pub(super) fn coordinate_order(
     }
     let maps = maps
         .into_iter()
-        .zip(coordinates)
+        .zip(coordinates.iter())
         .map(|(map, (index, name, _))| {
             map.ok_or_else(|| {
                 CoordinateError::InvalidRecord(format!(
@@ -65,7 +72,7 @@ pub(super) fn coordinate_order(
         .collect::<Result<Vec<_>, _>>()?;
     check_numbering(maps.iter().map(|map| map.pixel.as_slice()), "pixel")?;
     check_numbering(maps.iter().map(|map| map.world.as_slice()), "world")?;
-    for (map, (_, name, coordinate)) in maps.iter().zip(coordinates) {
+    for (map, (_, name, coordinate)) in maps.iter().zip(coordinates.iter()) {
         check_run(name, coordinate, &map.pixel, "pixel")?;
         check_run(name, coordinate, &map.world, "world")?;
     }
@@ -95,12 +102,13 @@ pub(super) fn coordinate_order(
     Ok(order)
 }
 
-/// Coordinate `name`'s axis maps, `None` if the record has neither.
+/// Coordinate `name`'s axis maps, `None` if the record has neither, with a
+/// linear coordinate's removed axes dropped from it and from its maps.
 fn axis_maps(
     rec: &RecordValue,
     index: usize,
     name: &str,
-    coordinate: &CoordinateModel,
+    coordinate: &mut CoordinateModel,
 ) -> Result<Option<AxisMaps>, CoordinateError> {
     let pixel_field = format!("pixelmap{index}");
     let world_field = format!("worldmap{index}");
@@ -126,15 +134,33 @@ fn axis_maps(
             )));
         }
     }
-    if pixel.iter().chain(&world).any(|&axis| axis < 0) {
+    if pixel.iter().chain(&world).all(|&axis| axis >= 0) {
+        return Ok(Some(AxisMaps { pixel, world }));
+    }
+    let kept = (0..pixel.len())
+        .filter(|&j| pixel[j] >= 0)
+        .collect::<Vec<_>>();
+    let removed_alike =
+        pixel.len() == world.len() && pixel.iter().zip(&world).all(|(&p, &w)| (p < 0) == (w < 0));
+    let reduced = match coordinate {
+        CoordinateModel::Linear(linear) if removed_alike => linear.kept_axes(&kept),
+        _ => None,
+    };
+    let Some(reduced) = reduced else {
         return Err(CoordinateError::UnsupportedAxisLayout(format!(
             "{name} has removed axes (pixel axes {pixel:?}, world axes {world:?}; casacore \
-             keeps a removed axis as -(axis + 1)); {SUPPORTED}, with none removed. In CASA, \
+             keeps a removed axis as -(axis + 1)); {SUPPORTED}, and drops a removed axis \
+             only from a linear coordinate whose other axes do not depend on it. In CASA, \
              make the image without dropping an axis of a coordinate it keeps (imsubimage \
              with dropdeg=False)"
         )));
-    }
-    Ok(Some(AxisMaps { pixel, world }))
+    };
+    *coordinate = CoordinateModel::Linear(reduced);
+    let keep = |map: &[i32]| kept.iter().map(|&j| map[j]).collect();
+    Ok(Some(AxisMaps {
+        pixel: keep(&pixel),
+        world: keep(&world),
+    }))
 }
 
 /// The maps number the system's `kind` axes `0..n` once each.
@@ -193,6 +219,7 @@ mod tests {
     use crate::CoordinateSystem;
     use crate::coordinate::CoordinateType;
     use crate::direction::DirectionCoordinate;
+    use crate::linear::LinearCoordinate;
     use crate::projection::{Projection, ProjectionType};
     use crate::spectral::SpectralCoordinate;
     use crate::stokes::{StokesCoordinate, StokesType};
@@ -368,6 +395,85 @@ mod tests {
         let message = refusal(&rec);
         assert!(
             message.contains("direction0 has removed axes") && message.contains("dropdeg"),
+            "{message}"
+        );
+    }
+
+    /// impv's position-velocity system: a two-axis linear offset coordinate
+    /// with its second axis removed (pixel and world maps `[0, -2]`), then
+    /// Stokes I and the spectral axis.
+    fn position_velocity_record(pc: ndarray::Array2<f64>) -> RecordValue {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(
+            LinearCoordinate::new(
+                2,
+                vec!["Offset".into(), "Offset".into()],
+                vec!["arcsec".into(), "arcsec".into()],
+            )
+            .with_increment(vec![60.0, 60.0])
+            .with_reference_pixel(vec![14.0, 14.0])
+            .with_pc_matrix(pc),
+        );
+        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        cs.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.415e9,
+            1e3,
+            4.0,
+            1.420_405_752e9,
+        ));
+        let mut rec = cs.to_record();
+        for (index, map) in [[0, -2].as_slice(), &[1], &[2]].into_iter().enumerate() {
+            for field in ["worldmap", "pixelmap"] {
+                rec.upsert(
+                    format!("{field}{index}"),
+                    Value::Array(ArrayValue::from_i32_vec(map.to_vec())),
+                );
+            }
+        }
+        rec.upsert(
+            "pixelreplace0",
+            Value::Array(ArrayValue::from_f64_vec(vec![0.0, 14.016_666_62])),
+        );
+        rec
+    }
+
+    #[test]
+    fn a_linear_coordinates_independent_removed_axis_is_dropped() {
+        let cs = CoordinateSystem::from_record(&position_velocity_record(ndarray::Array2::eye(2)))
+            .unwrap();
+        assert_eq!(
+            types(&cs),
+            [
+                CoordinateType::Linear,
+                CoordinateType::Stokes,
+                CoordinateType::Spectral
+            ]
+        );
+        assert_eq!(cs.n_pixel_axes(), 3);
+        assert_eq!(cs.coordinate(0).axis_names(), ["Offset"]);
+        assert_eq!(cs.coordinate(0).axis_units(), ["arcsec"]);
+        // CASA's `cs.toworld([3, 0, 2])` for impv's image: 11 offset pixels
+        // before the reference, Stokes I, two channels below it.
+        let world = cs.to_world(&[3.0, 0.0, 2.0]).unwrap();
+        assert_eq!(world[..2], [-660.0, 1.0]);
+        assert!((world[2] - 1.414_998e9).abs() < 1e-3);
+        assert_eq!(
+            CoordinateSystem::record_coordinate_fields(&position_velocity_record(
+                ndarray::Array2::eye(2)
+            ))
+            .unwrap(),
+            ["linear0", "stokes1", "spectral2"]
+        );
+    }
+
+    #[test]
+    fn a_removed_axis_the_others_depend_on_is_refused() {
+        let coupled = ndarray::array![[1.0, 0.5], [0.0, 1.0]];
+        let message = refusal(&position_velocity_record(coupled));
+        assert!(
+            message.contains("linear0 has removed axes")
+                && message.contains("whose other axes do not depend on it"),
             "{message}"
         );
     }
