@@ -200,7 +200,7 @@ pub(crate) fn batch_route(
 
 /// The end of a run's preparation: check the products against `problem`
 /// and admit the source, its pass storage sized for the policy's streaming
-/// workers ([`ResourcePolicy::cores`]), the most the run's setup then
+/// workers ([`casa_imaging_runtime::ResourcePolicy::cores`]), the most the run's setup then
 /// chooses.
 pub(crate) fn prepare(
     problem: &CompiledProblem,

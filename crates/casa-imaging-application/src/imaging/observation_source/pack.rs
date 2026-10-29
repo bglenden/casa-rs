@@ -435,7 +435,7 @@ fn fill_samples(
 
 /// The mosaic dish index of each antenna of a row: its aperture class's
 /// position in the selection's `classes`, the order
-/// [`super::measurement::domain_operator`] lists the dishes in; a row
+/// [`crate::imaging::measurement::domain_operator`] lists the dishes in; a row
 /// without response classes (every problem without an instrument model)
 /// is on the first dish.
 fn antenna_types(
