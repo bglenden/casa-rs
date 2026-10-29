@@ -157,7 +157,10 @@ pub fn compare_stores(
     let reference = batch_rows(
         &problem,
         observation,
-        &observation.catalogue().partition_ids(),
+        (
+            &observation.catalogue().partition_ids(),
+            &FieldSelection::All,
+        ),
         |batch, sample| {
             let per_time = batch.samples_per_time();
             let baseline = batch.baselines[sample % per_time];
@@ -185,7 +188,7 @@ pub fn compare_stores(
     let rows = batch_rows(
         &problem,
         other.as_ref(),
-        &bridge.partitions(),
+        (&bridge.partitions(), &FieldSelection::All),
         |batch, sample| bridge.row(batch, sample, &keys),
         inputs,
         Some(&reference.rows),
@@ -196,7 +199,8 @@ pub fn compare_stores(
 }
 
 /// The time (MJD days) and first antenna's pointing direction of each MAIN
-/// row of `request`'s MeasurementSet, from its batch geometry: under a
+/// row `request` selects (its partitions and fields; a UV-distance interval
+/// is not applied), from its batch geometry: under a
 /// pointing law that follows the phase-tracking centre, the phase centre
 /// at the row's time. What CASA oracles of a moving phase centre compare
 /// (T41's `TRACKFIELD`).
@@ -216,10 +220,16 @@ pub fn row_pointing(
         phase_table,
     } = input.observation;
     let observation = &store.value;
+    let selection = crate::compile::resolve_partitions(&problem, observation)?;
+    let partitions: Vec<PartitionId> = selection
+        .partitions
+        .iter()
+        .map(|partition| partition.id)
+        .collect();
     let found = batch_rows(
         &problem,
         observation,
-        &observation.catalogue().partition_ids(),
+        (&partitions, &selection.fields),
         |batch, sample| main_row(observation, batch, sample),
         PlanInputs {
             measures,
@@ -279,13 +289,13 @@ fn compare(expected: &Rows, actual: &Found) -> GeometryComparison {
     comparison
 }
 
-/// The batch geometry of the rows of `partitions` of `observation`;
-/// `row_of` gives a sample's row, `None` for padding or a sample no row
-/// matches. With `expected`, only its rows, on its channels.
+/// The batch geometry of the rows of `partitions` of `observation` of
+/// `fields`; `row_of` gives a sample's row, `None` for padding or a sample
+/// no row matches. With `expected`, only its rows, on its channels.
 fn batch_rows(
     problem: &CompiledProblem,
     observation: &dyn Observation,
-    partitions: &[PartitionId],
+    (partitions, fields): (&[PartitionId], &FieldSelection),
     mut row_of: impl FnMut(&VisibilityBatch<'_>, usize) -> Option<u64>,
     inputs: PlanInputs,
     expected: Option<&Rows>,
@@ -320,7 +330,7 @@ fn batch_rows(
             },
             channels: 0..entry.frequencies_hz.len(),
             times: TimeSelection::All,
-            fields: FieldSelection::All,
+            fields: fields.clone(),
             weights: WeightRequest::Stored,
             correlations: CorrelationRequest::ALL,
             grouping: Grouping::None,
