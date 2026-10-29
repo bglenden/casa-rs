@@ -227,12 +227,13 @@ impl Columns {
             positions: records.iter().any(|record| record.position.is_some()),
             pulsars: records.iter().any(|record| record.pulsar_id.is_some()),
         };
+        // In casacore's order (MSSourceEnums), as CASA's writers add them.
         for (name, wanted) in [
-            ("TRANSITION", columns.transitions),
-            ("REST_FREQUENCY", columns.rest.is_some()),
-            ("SYSVEL", columns.velocities.is_some()),
             ("POSITION", columns.positions),
             ("PULSAR_ID", columns.pulsars),
+            ("REST_FREQUENCY", columns.rest.is_some()),
+            ("SYSVEL", columns.velocities.is_some()),
+            ("TRANSITION", columns.transitions),
         ] {
             if !wanted {
                 continue;
