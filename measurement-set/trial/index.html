@@ -3356,8 +3356,10 @@ MSv2 creation holds in memory until it is saved, about 2.3 KB a row
 whatever the budget (#950); the reads themselves fit the budget.</p>
 <p>A converted store therefore has no covering sample, and imaging's law
 chooses between the samples either side; step 3b measures what that
-changes. Field ephemerides are not carried yet; the converter still refuses
-fields that follow one (#942).</p>
+changes. The MSv2 adapter carries field ephemerides (#942): each field's
+entry holds the table its <code>EPHEMERIS_ID</code> names, its phase centre the
+offset from the body. The MSv4 store does not carry them yet, so the
+converter still refuses fields that follow one.</p>
 <table>
 <thead>
 <tr>
@@ -3369,6 +3371,10 @@ fields that follow one (#942).</p>
 <tr>
 <td><code>field_directions_resolve_variable_frames_and_carry_reference_epochs</code></td>
 <td>A mosaic whose <code>PHASE_DIR</code> has a variable reference resolves each field's frame and keeps its angles; <code>FIELD.TIME</code> is each field's reference epoch; fields in two frames are refused; the MSv4 conversion's fields have no epoch.</td>
+</tr>
+<tr>
+<td><code>fields_carry_the_ephemerides_they_follow</code></td>
+<td>Two fields of one <code>EPHEMERIS_ID</code> share the attached table's samples, equal to today's imaging reading of the table; a field with none has none; every phase centre keeps <code>PHASE_DIR</code>'s angles; the catalogue counts the shared ephemeris once; an <code>EPHEMERIS_ID</code> whose table is missing refuses opening.</td>
 </tr>
 <tr>
 <td><code>brackets_are_the_selected_observation_reading</code> (casa-ms unit)</td>

@@ -1390,10 +1390,10 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td>imager</td>
 <td>tclean</td>
 <td style="text-align: right;">92</td>
-<td style="text-align: right;">54</td>
-<td style="text-align: right;">38</td>
+<td style="text-align: right;">56</td>
+<td style="text-align: right;">36</td>
 <td style="text-align: right;">27</td>
-<td style="text-align: right;">23</td>
+<td style="text-align: right;">24</td>
 </tr>
 <tr>
 <td>imhead</td>
@@ -1713,9 +1713,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>returns at line 434: <code>None</code></li>
 <li>returns at line 706: <code>retrec</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)</li>
-<li>CASA parameters casa-rs lacks: <code>selectdata</code>, <code>timerange</code>, <code>antenna</code>, <code>scan</code>, <code>observation</code>, <code>projection</code>, <code>startmodel</code>, <code>reffreq</code>, <code>nchan</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>mosweight</code>, <code>aterm</code>, <code>psterm</code>, <code>wbawp</code>, <code>conjbeams</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>fusedthreshold</code>, <code>largestscale</code>, <code>restoration</code>, <code>noise</code>, <code>npixels</code>, <code>uvtaper</code>, <code>cycleniter</code>, <code>interactive</code>, <code>fullsummary</code>, <code>mask</code>, <code>pbmask</code>, <code>smoothfactor</code>, <code>cutthreshold</code>, <code>dogrowprune</code>, <code>minpercentchange</code>, <code>verbose</code>, <code>fastnoise</code>, <code>restart</code>, <code>calcres</code>, <code>calcpsf</code></li>
+<li>CASA parameters casa-rs lacks: <code>selectdata</code>, <code>timerange</code>, <code>antenna</code>, <code>scan</code>, <code>observation</code>, <code>projection</code>, <code>reffreq</code>, <code>nchan</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>mosweight</code>, <code>aterm</code>, <code>psterm</code>, <code>wbawp</code>, <code>conjbeams</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>fusedthreshold</code>, <code>largestscale</code>, <code>restoration</code>, <code>noise</code>, <code>npixels</code>, <code>cycleniter</code>, <code>interactive</code>, <code>fullsummary</code>, <code>mask</code>, <code>pbmask</code>, <code>smoothfactor</code>, <code>cutthreshold</code>, <code>dogrowprune</code>, <code>minpercentchange</code>, <code>verbose</code>, <code>fastnoise</code>, <code>restart</code>, <code>calcres</code>, <code>calcpsf</code></li>
 <li>casa-rs parameters CASA lacks: <code>phasecenter_field</code>, <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>dirty_only</code>, <code>minor_cycle_length</code>, <code>hogbom_iteration_mode</code>, <code>mask_box</code>, <code>mask_image</code>, <code>write_pb</code>, <code>cf_resident_mb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>aw_cf_source</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>backend</code>, <code>gridprecision</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
-<li>Shared parameters: 54, in CASA's order: no</li>
+<li>Shared parameters: 56, in CASA's order: no</li>
 <li>Defaults that differ (CASA, casa-rs):</li>
 <li><code>vis</code>: <code>''</code>, <code>required</code></li>
 <li><code>field</code>: <code>''</code>, <code>none</code></li>
@@ -1727,6 +1727,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><code>imsize</code>: <code>[100]</code>, <code>512</code></li>
 <li><code>cell</code>: <code>[]</code>, <code>1.0arcsec</code></li>
 <li><code>phasecenter</code>: <code>''</code>, <code>none</code></li>
+<li><code>startmodel</code>: <code>''</code>, <code>none</code></li>
 <li><code>start</code>: <code>''</code>, <code>none</code></li>
 <li><code>width</code>: <code>''</code>, <code>none</code></li>
 <li><code>veltype</code>: <code>'radio'</code>, <code>RADIO</code></li>
