@@ -25,8 +25,8 @@ use casa_ms::SelectedObservationNumericGeometry;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BatchBuffers, Catalogue, CorrelationRequest,
-    FieldSelection, Grouping, Observation, PartitionId, PointingRequest, ReadEvent, Roles,
-    TimeSelection, VisibilityBatch, WeightRequest,
+    FieldEphemeris, FieldSelection, Grouping, Observation, PartitionId, PointingRequest, ReadEvent,
+    Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
@@ -135,11 +135,11 @@ pub fn compare_geometry(
     let Prepared {
         problem,
         path,
-        measures,
+        inputs,
         today,
     } = prepare(request, context)?;
     let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
-    let batches = msv2_rows(&problem, &observation, measures, &today.rows)?;
+    let batches = msv2_rows(&problem, &observation, inputs, &today.rows)?;
     let mut comparison = compare(&today.rows, &batches);
     comparison.duplicates += today.repeated;
     Ok(comparison)
@@ -164,11 +164,11 @@ pub fn compare_stores(
     let Prepared {
         problem,
         path,
-        measures,
+        inputs,
         today,
     } = prepare(request, context)?;
     let observation = Msv2Observation::open_with(&path, &OpenOptions::default())?;
-    let reference = msv2_rows(&problem, &observation, Arc::clone(&measures), &today.rows)?;
+    let reference = msv2_rows(&problem, &observation, inputs.clone(), &today.rows)?;
     let other = casa_ms::observation_io::open(converted, &OpenOptions::default())?;
     let bridge = Bridge::new(&observation, other.catalogue());
     let rows = batch_rows(
@@ -176,7 +176,7 @@ pub fn compare_stores(
         other.as_ref(),
         &bridge.partitions(),
         |batch, sample| bridge.row(batch, sample, &today.keys),
-        measures,
+        inputs,
         &reference.rows,
     )?;
     let mut comparison = compare(&reference.rows, &rows);
@@ -187,13 +187,21 @@ pub fn compare_stores(
 }
 
 /// What both comparisons start from: the compiled problem of a request,
-/// its MeasurementSet, the run's Measures provider and today's route's
-/// rows.
+/// its MeasurementSet, what compiles a store's geometry and today's
+/// route's rows.
 struct Prepared {
     problem: CompiledProblem,
     path: std::path::PathBuf,
-    measures: Arc<dyn MeasuresProvider>,
+    inputs: PlanInputs,
     today: Today,
+}
+
+/// What compiles a store's geometry beside its catalogue: the run's
+/// Measures provider and the ephemeris table a moving phase centre names.
+#[derive(Clone)]
+struct PlanInputs {
+    measures: Arc<dyn MeasuresProvider>,
+    phase_table: Option<Arc<FieldEphemeris>>,
 }
 
 /// Today's route's rows.
@@ -217,7 +225,14 @@ struct Found {
 fn prepare(request: &ImagingRequest, context: &RunContext) -> Result<Prepared, ApplicationError> {
     let resolved = std::cell::Cell::new(None);
     let (problem, input, _native, _resident) = compile_run(request, context, &resolved)?;
-    let measures = input.observation.measures_provider();
+    let inputs = PlanInputs {
+        measures: input.observation.measures_provider(),
+        phase_table: input
+            .observation
+            .ephemeris()
+            .and_then(casa_ms::SelectedObservationEphemeris::external_series)
+            .cloned(),
+    };
     let path = std::path::PathBuf::from(input.observation.locator());
     let Admitted { value: access, .. } = finalize_source_access(
         &problem,
@@ -230,7 +245,7 @@ fn prepare(request: &ImagingRequest, context: &RunContext) -> Result<Prepared, A
     Ok(Prepared {
         problem,
         path,
-        measures,
+        inputs,
         today,
     })
 }
@@ -326,7 +341,7 @@ fn today_rows(
 fn msv2_rows(
     problem: &CompiledProblem,
     observation: &Msv2Observation,
-    measures: Arc<dyn MeasuresProvider>,
+    inputs: PlanInputs,
     expected: &Rows,
 ) -> Result<Found, ApplicationError> {
     batch_rows(
@@ -343,7 +358,7 @@ fn msv2_rows(
                 )
                 .map(u64::from)
         },
-        measures,
+        inputs,
         expected,
     )
 }
@@ -356,11 +371,11 @@ fn batch_rows(
     observation: &dyn Observation,
     partitions: &[PartitionId],
     row_of: impl Fn(&VisibilityBatch<'_>, usize) -> Option<u64>,
-    measures: Arc<dyn MeasuresProvider>,
+    inputs: PlanInputs,
     expected: &Rows,
 ) -> Result<Found, ApplicationError> {
     let catalogue = Arc::clone(observation.catalogue());
-    let plan = GeometryPlan::compile(problem, &catalogue, measures)?;
+    let plan = GeometryPlan::compile(problem, &catalogue, inputs.measures, inputs.phase_table)?;
     let mut traversal = GeometryTraversal::default();
     let mut geometry = BatchGeometry::default();
     let mut found = Found {

@@ -141,6 +141,7 @@ pub fn catalogue_in(field: MDirection, partitions: usize, frame: FrequencyRef) -
             phase_centre: field,
             reference_epoch: None,
             source_name: None,
+            ephemeris: None,
         }],
         scans: vec![ScanEntry {
             name: "1".to_string(),
@@ -213,13 +214,17 @@ pub fn problem_in(
     .expect("a compiled problem")
 }
 
-/// The Stokes I problem of the field's phase centre, its frequencies taken
-/// from `source` to `output`.
-pub fn problem_framed(source: FrequencyFrame, output: FrequencyFrame) -> CompiledProblem {
+/// The Stokes I problem of `phase`, its frequencies taken from `source` to
+/// `output`.
+pub fn problem_framed(
+    phase: PhaseCentreLaw,
+    source: FrequencyFrame,
+    output: FrequencyFrame,
+) -> CompiledProblem {
     compile(ProblemInput::new(
         specification(vec![PolarizationCoordinate::StokesI]),
         geometry(
-            PhaseCentreLaw::Observation,
+            phase,
             FacetLayout::Single,
             PsfPhaseCentreLaw::ImageDomainReference,
             [source, output],

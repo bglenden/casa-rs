@@ -26,14 +26,19 @@
 //! AW projection images MFS only (cube AW is refused, #719), so a
 //! traversal visits every epoch.
 //!
-//! A field that follows an ephemeris (`FIELD::EPHEMERIS_ID`) is not yet
-//! visible in the catalogue (#942): its `PHASE_DIR` is then an offset, not
-//! a direction, and the caller must not image it through batch geometry
-//! until #942 lands. A moving phase centre follows a body or source
-//! Measures names; one that follows the fields' ephemerides (`TRACKFIELD`)
-//! or an ephemeris table is refused at compile. A conversion into or out
-//! of the rest frame needs the source velocity only an ephemeris gives,
-//! so a batch that needs one is refused.
+//! A field that follows an ephemeris ([`FieldEntry::ephemeris`]) is
+//! observed towards the body's direction from the observatory at each time,
+//! shifted by its phase centre, as CASA's imager evaluates it (casacore
+//! shifts by the true angle; the imager adds the observatory and reads the
+//! samples at the time's TDB); its reprojections, parallactic angles and
+//! frequency conversions are computed per time. A moving phase centre
+//! follows a body or source Measures names, each field's own ephemeris
+//! (`TRACKFIELD`), or an ephemeris table the caller reads. A conversion
+//! into or out of the rest frame needs the source's radial velocity, which
+//! the last two give; under any other phase centre a batch that needs one
+//! is refused.
+//!
+//! [`FieldEntry::ephemeris`]: casa_observation::FieldEntry::ephemeris
 
 mod frames;
 mod pointing;
@@ -43,9 +48,12 @@ use std::fmt;
 use std::mem::size_of;
 use std::sync::Arc;
 
-use casa_observation::{AntennaId, Catalogue, FieldId, PointingSeries, VisibilityBatch};
+use casa_observation::{
+    AntennaId, Catalogue, FieldEphemeris, FieldId, PointingSeries, VisibilityBatch,
+};
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::radial_velocity::MRadialVelocity;
 use casa_types::measures::{
     EpochRef, MeasureError, MeasuresProvider, MjdHighPrec, PreparedFrequencyConversion,
 };
@@ -80,11 +88,30 @@ pub enum BatchGeometryError {
     /// A problem without an image domain.
     #[error("the problem has no image domain to project to")]
     NoImageDomain,
-    /// A moving phase centre that is not a body or source Measures names:
-    /// a field's own ephemeris (`TRACKFIELD`, #942) or an ephemeris table,
-    /// which batch geometry does not yet take.
-    #[error("the moving phase centre {0:?} is not a body or source Measures names")]
+    /// A moving phase centre that is neither `TRACKFIELD`, nor a body or
+    /// source Measures names, nor an ephemeris table the caller gave.
+    #[error(
+        "the moving phase centre {0:?} is not TRACKFIELD, a body or source Measures names, \
+         or an ephemeris table"
+    )]
     UnsupportedEphemeris(String),
+    /// An ephemeris table given for a phase centre that does not move with
+    /// one.
+    #[error("an ephemeris table for a phase centre that is not a table's")]
+    UnusedEphemerisTable,
+    /// A field without an ephemeris under a phase centre that follows each
+    /// field's own (`TRACKFIELD`).
+    #[error("{0:?} follows no ephemeris for TRACKFIELD to track")]
+    FieldWithoutEphemeris(FieldId),
+    /// A time outside the samples of the ephemeris a direction or velocity
+    /// is read from.
+    #[error("the ephemeris of {body} does not cover MJD {mjd}")]
+    EphemerisCoverage {
+        /// The body.
+        body: String,
+        /// The time asked for, MJD days on the scale it is read at.
+        mjd: f64,
+    },
     /// A domain whose PSF is centred elsewhere than its model, which no
     /// consumer reads.
     #[error("an image domain with a PSF phase centre of its own")]
@@ -94,9 +121,9 @@ pub enum BatchGeometryError {
     /// pointing law.
     #[error("the batch carries no {0}")]
     MissingInput(&'static str),
-    /// A conversion into or out of the rest frame: it needs a source
-    /// velocity, which only an ephemeris gives and batch geometry does not
-    /// yet take.
+    /// A conversion into or out of the rest frame under a phase centre
+    /// that gives no source velocity: only `TRACKFIELD` and an ephemeris
+    /// table do.
     #[error("rest-frame frequencies need a source velocity")]
     RestFrameWithoutVelocity,
     /// An antenna the instrument model gives no aperture class.
@@ -143,7 +170,7 @@ impl ChartProjection {
 pub struct GeometryPlan {
     catalogue: Arc<Catalogue>,
     frames: Frames,
-    phase: PhaseCentreLaw,
+    phase: PhaseCentre,
     /// The main domain's model phase centre, which every chart's target
     /// follows under a moving phase centre.
     anchor: SkyDirection,
@@ -170,6 +197,73 @@ impl fmt::Debug for GeometryPlan {
             .finish_non_exhaustive()
     }
 }
+
+/// The phase-tracking centre the problem's law resolves to.
+enum PhaseCentre {
+    /// Each row's own field direction.
+    Observation,
+    /// A fixed J2000 direction.
+    Fixed(SkyDirection),
+    /// A body or source Measures names.
+    Named(String),
+    /// Each field's own ephemeris, without the field's offset from it
+    /// (`TRACKFIELD`).
+    FieldEphemerides,
+    /// The body of an ephemeris table.
+    Table(Arc<FieldEphemeris>),
+}
+
+impl fmt::Debug for PhaseCentre {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Observation => formatter.write_str("Observation"),
+            Self::Fixed(direction) => formatter.debug_tuple("Fixed").field(direction).finish(),
+            Self::Named(name) => formatter.debug_tuple("Named").field(name).finish(),
+            Self::FieldEphemerides => formatter.write_str("FieldEphemerides"),
+            Self::Table(table) => formatter.debug_tuple("Table").field(&table.name()).finish(),
+        }
+    }
+}
+
+impl PhaseCentre {
+    /// `law`'s centre: `table`, an ephemeris table the caller read, is the
+    /// body a moving law other than `TRACKFIELD` names; without one, that
+    /// law names a body or source Measures has a model of.
+    fn resolve(
+        law: &PhaseCentreLaw,
+        table: Option<Arc<FieldEphemeris>>,
+        frames: &Frames,
+    ) -> Result<Self, BatchGeometryError> {
+        Ok(match (law, table) {
+            (PhaseCentreLaw::Ephemeris(name), Some(table)) if name != TRACKFIELD => {
+                Self::Table(table)
+            }
+            (_, Some(_)) => return Err(BatchGeometryError::UnusedEphemerisTable),
+            (PhaseCentreLaw::Observation, None) => Self::Observation,
+            (PhaseCentreLaw::Fixed(direction), None) => Self::Fixed(*direction),
+            (PhaseCentreLaw::Ephemeris(name), None) if name == TRACKFIELD => Self::FieldEphemerides,
+            (PhaseCentreLaw::Ephemeris(name), None) => {
+                frames.check_named(name).map_err(|error| match error {
+                    MeasureError::UnknownSourceName { .. } => {
+                        BatchGeometryError::UnsupportedEphemeris(name.clone())
+                    }
+                    error => BatchGeometryError::Measures(error),
+                })?;
+                Self::Named(name.clone())
+            }
+        })
+    }
+
+    const fn moves(&self) -> bool {
+        matches!(
+            self,
+            Self::Named(_) | Self::FieldEphemerides | Self::Table(_)
+        )
+    }
+}
+
+/// The moving phase-centre law that follows each field's own ephemeris.
+const TRACKFIELD: &str = "TRACKFIELD";
 
 /// The aperture classes the instrument model assigns.
 enum Responses {
@@ -269,17 +363,23 @@ fn refill<T: Clone>(buffer: &mut Vec<T>, len: usize, value: T) {
 
 impl GeometryPlan {
     /// The geometry of `problem` on the observation `catalogue` describes,
-    /// converting with `measures`.
+    /// converting with `measures`. `phase_table` is the ephemeris table a
+    /// moving phase centre names, when it names one rather than a body
+    /// (CASA's `phasecenter` takes both): the caller reads it, since a law
+    /// names a table and a body alike.
     ///
     /// # Errors
     ///
     /// [`BatchGeometryError`] for a catalogue without what geometry needs,
     /// a centre law or domain it does not take (among them a moving centre
-    /// Measures does not name or has no model of), or a failed conversion.
+    /// that is not `TRACKFIELD` and that Measures does not name or has no
+    /// model of, without a table), a table for a centre that does not
+    /// move, or a failed conversion.
     pub fn compile(
         problem: &CompiledProblem,
         catalogue: &Arc<Catalogue>,
         measures: Arc<dyn MeasuresProvider>,
+        phase_table: Option<Arc<FieldEphemeris>>,
     ) -> Result<Self, BatchGeometryError> {
         let frames = Frames::new(catalogue, measures)?;
         let centres = problem.geometry().centres();
@@ -311,14 +411,7 @@ impl GeometryPlan {
             .first()
             .ok_or(BatchGeometryError::NoImageDomain)?
             .model_phase_centre();
-        if let PhaseCentreLaw::Ephemeris(name) = centres.phase_tracking() {
-            frames.check_named(name).map_err(|error| match error {
-                MeasureError::UnknownSourceName { .. } => {
-                    BatchGeometryError::UnsupportedEphemeris(name.clone())
-                }
-                error => BatchGeometryError::Measures(error),
-            })?;
-        }
+        let phase = PhaseCentre::resolve(centres.phase_tracking(), phase_table, &frames)?;
         let (charts, mosaic) = projection::charts(problem)?;
         let responses = match problem.science().instrument_model() {
             None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
@@ -332,7 +425,7 @@ impl GeometryPlan {
         Ok(Self {
             catalogue: Arc::clone(catalogue),
             frames,
-            phase: centres.phase_tracking().clone(),
+            phase,
             anchor,
             pointing: centres.pointing().clone(),
             charts,
@@ -442,7 +535,8 @@ impl GeometryPlan {
     /// # Errors
     ///
     /// As [`Self::apply`]'s frequency conversion: a conversion into or out
-    /// of the rest frame, or a failed one.
+    /// of the rest frame without a source velocity, a field's ephemeris
+    /// that does not cover the time, or a failed conversion.
     pub fn frequency_factor(
         &self,
         frame: FrequencyRef,
@@ -450,8 +544,9 @@ impl GeometryPlan {
         time_mjd_s: f64,
         scale: EpochRef,
     ) -> Result<f64, BatchGeometryError> {
+        let direction = self.frames.field_at(field, time_mjd_s, scale)?;
         Ok(self
-            .frequency_conversion(time_mjd_s, scale, self.frames.field(field), frame)?
+            .frequency_conversion((time_mjd_s, scale), field, &direction, frame)?
             .convert_hz(1.0))
     }
 
@@ -500,27 +595,25 @@ impl GeometryPlan {
             }
             let time_mjd_s = batch.time.seconds_since(time, mjd_origin);
             let field = batch.field[time];
-            let field_direction = self.frames.field(field);
+            let field_direction = self.frames.field_at(field, time_mjd_s, scale)?;
             let (longitude, latitude) = field_direction.as_angles();
+            let observation = SkyDirection::new(DirectionFrame::J2000, longitude, latitude);
             let context = TimeContext {
                 batch,
                 time,
                 time_mjd_s,
                 field,
-                phase: self.phase_direction(
-                    time_mjd_s,
-                    scale,
-                    SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
-                )?,
-                observation: SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
+                phase: self.phase_direction(time_mjd_s, scale, field, observation)?,
+                observation,
                 rows,
             };
             if self.time_varying()
+                || self.frames.moves(field)
                 || reprojections
                     .as_ref()
                     .is_none_or(|(known, _)| *known != field)
             {
-                reprojections = Some((field, self.reprojections(&context, field_direction)?));
+                reprojections = Some((field, self.reprojections(&context, &field_direction)?));
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
             for sample in context.row_samples() {
@@ -534,7 +627,7 @@ impl GeometryPlan {
                     };
                 }
             }
-            self.antenna_quantities(&context, out)?;
+            self.antenna_quantities(&context, &field_direction, out)?;
             directions.clear();
             self.pointing_directions(&context, pointing, &mut directions, out)?;
             if let Some(grouping) = &self.aw {
@@ -550,9 +643,9 @@ impl GeometryPlan {
                 )?;
             }
             let conversion = self.frequency_conversion(
-                time_mjd_s,
-                scale,
-                field_direction,
+                (time_mjd_s, scale),
+                field,
+                &field_direction,
                 batch.frequency.reference(),
             )?;
             let channels = out.channels;
@@ -611,7 +704,7 @@ impl GeometryPlan {
     /// Whether the charts' targets move with time: a moving phase centre,
     /// or a chart centre outside J2000.
     fn time_varying(&self) -> bool {
-        matches!(self.phase, PhaseCentreLaw::Ephemeris(_))
+        self.phase.moves()
             || self
                 .charts
                 .iter()
@@ -619,7 +712,7 @@ impl GeometryPlan {
     }
 
     /// Each chart's reprojection of the time's rows, observed towards the
-    /// field's J2000 phase centre `field`.
+    /// field's J2000 phase centre `field` at the time.
     fn reprojections(
         &self,
         context: &TimeContext<'_, '_>,
@@ -651,18 +744,20 @@ impl GeometryPlan {
             .collect()
     }
 
-    /// The parallactic angles and aperture classes of the time's rows.
+    /// The parallactic angles and aperture classes of the time's rows,
+    /// observed towards `field`, the field's J2000 phase centre at the time.
     fn antenna_quantities(
         &self,
         context: &TimeContext<'_, '_>,
+        field: &MDirection,
         out: &mut BatchGeometry,
     ) -> Result<(), BatchGeometryError> {
         let per_time = context.batch.samples_per_time();
         let angles = if self.parallactic {
             Some(self.frames.parallactic_angles(
-                context.time_mjd_s,
-                context.batch.time.reference(),
+                (context.time_mjd_s, context.batch.time.reference()),
                 context.field,
+                field,
                 &context.row_antennas(),
             )?)
         } else {
@@ -683,22 +778,60 @@ impl GeometryPlan {
         Ok(())
     }
 
-    /// The phase-tracking direction at `time_mjd_s` of rows observed in
-    /// `observation`.
+    /// The phase-tracking direction at `time_mjd_s` of rows of `field`
+    /// observed in `observation`.
     fn phase_direction(
         &self,
         time_mjd_s: f64,
         scale: EpochRef,
+        field: FieldId,
         observation: SkyDirection,
     ) -> Result<SkyDirection, BatchGeometryError> {
-        Ok(match &self.phase {
-            PhaseCentreLaw::Observation => observation,
-            PhaseCentreLaw::Fixed(direction) => *direction,
-            PhaseCentreLaw::Ephemeris(name) => {
-                let (longitude, latitude) = self.frames.named(time_mjd_s, scale, name)?.as_angles();
-                SkyDirection::new(DirectionFrame::J2000, longitude, latitude)
+        let moving = match &self.phase {
+            PhaseCentre::Observation => return Ok(observation),
+            PhaseCentre::Fixed(direction) => return Ok(*direction),
+            PhaseCentre::Named(name) => self.frames.named(time_mjd_s, scale, name)?,
+            PhaseCentre::FieldEphemerides => self.frames.ephemeris_direction(
+                self.frames
+                    .field_ephemeris(field)
+                    .ok_or(BatchGeometryError::FieldWithoutEphemeris(field))?,
+                time_mjd_s,
+                scale,
+            )?,
+            PhaseCentre::Table(table) => {
+                self.frames.ephemeris_direction(table, time_mjd_s, scale)?
             }
-        })
+        };
+        let (longitude, latitude) = moving.as_angles();
+        Ok(SkyDirection::new(
+            DirectionFrame::J2000,
+            longitude,
+            latitude,
+        ))
+    }
+
+    /// The source's radial velocity at `time_mjd_s` for rows of `field`,
+    /// under a phase centre that follows an ephemeris: `TRACKFIELD`'s
+    /// field ephemeris or the table's. `None` under any other.
+    fn source_velocity(
+        &self,
+        (time_mjd_s, scale): (f64, EpochRef),
+        field: FieldId,
+    ) -> Result<Option<MRadialVelocity>, BatchGeometryError> {
+        let ephemeris = match &self.phase {
+            PhaseCentre::FieldEphemerides => self
+                .frames
+                .field_ephemeris(field)
+                .ok_or(BatchGeometryError::FieldWithoutEphemeris(field))?,
+            PhaseCentre::Table(table) => table,
+            PhaseCentre::Observation | PhaseCentre::Fixed(_) | PhaseCentre::Named(_) => {
+                return Ok(None);
+            }
+        };
+        Ok(Some(
+            self.frames
+                .ephemeris_velocity(ephemeris, time_mjd_s, scale)?,
+        ))
     }
 
     /// Under a moving phase centre, its offset at `time_mjd_s` from the
@@ -710,7 +843,7 @@ impl GeometryPlan {
         scale: EpochRef,
         phase: SkyDirection,
     ) -> Result<Option<[f64; 2]>, BatchGeometryError> {
-        if !matches!(self.phase, PhaseCentreLaw::Ephemeris(_)) {
+        if !self.phase.moves() {
             return Ok(None);
         }
         let anchor = self.frames.j2000(
@@ -757,14 +890,16 @@ impl GeometryPlan {
     }
 
     /// The conversion of frequencies in `source` at `time_mjd_s` to the
-    /// output frame, in the observatory's frame towards the field (CASA's
-    /// visibility iterator converts towards the field's own direction,
-    /// whatever the imaging phase centre).
+    /// output frame, in the observatory's frame towards `direction`, field
+    /// `field`'s direction at the time (CASA's visibility iterator converts
+    /// towards the field's own direction, whatever the imaging phase
+    /// centre), with the source's radial velocity when the conversion is
+    /// into or out of the rest frame ([`Self::source_velocity`]).
     fn frequency_conversion(
         &self,
-        time_mjd_s: f64,
-        scale: EpochRef,
-        field: &MDirection,
+        (time_mjd_s, scale): (f64, EpochRef),
+        field: FieldId,
+        direction: &MDirection,
         source: FrequencyRef,
     ) -> Result<PreparedFrequencyConversion, BatchGeometryError> {
         if source == self.output_frame {
@@ -772,13 +907,16 @@ impl GeometryPlan {
                 source, source, None, None,
             )?);
         }
-        if source == FrequencyRef::REST || self.output_frame == FrequencyRef::REST {
-            return Err(BatchGeometryError::RestFrameWithoutVelocity);
-        }
-        let frame = self
+        let mut frame = self
             .frames
             .observatory_at(time_mjd_s, scale)
-            .with_direction(field.clone());
+            .with_direction(direction.clone());
+        if source == FrequencyRef::REST || self.output_frame == FrequencyRef::REST {
+            let velocity = self
+                .source_velocity((time_mjd_s, scale), field)?
+                .ok_or(BatchGeometryError::RestFrameWithoutVelocity)?;
+            frame = frame.with_radial_velocity(velocity);
+        }
         Ok(PreparedFrequencyConversion::new(
             source,
             self.output_frame,

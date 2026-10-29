@@ -528,6 +528,7 @@ impl Msv4Observation {
                     .get(row)
                     .filter(|name| !super::is_unknown_source(name))
                     .cloned(),
+                ephemeris: None,
             };
             let fields = &mut self.catalogue_mut().fields;
             let index = fields

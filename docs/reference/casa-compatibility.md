@@ -23,7 +23,7 @@ The CASA parameters casa-rs lacks are tracked by family: images in #977, Measure
 | fluxscale | fluxscale | 15 | 3 | 12 | 7 | 2 |
 | gaincal | gaincal | 38 | 18 | 20 | 11 | 14 |
 | gencal | gencal | 14 | 5 | 9 | 5 | 5 |
-| imager | tclean | 92 | 54 | 38 | 27 | 23 |
+| imager | tclean | 92 | 56 | 36 | 27 | 24 |
 | imhead | imhead | 5 | 4 | 1 | 0 | 3 |
 | immath | immath | 15 | 3 | 12 | 1 | 3 |
 | immoments | immoments | 12 | 6 | 6 | 1 | 6 |
@@ -230,9 +230,9 @@ The CASA parameters casa-rs lacks are tracked by family: images in #977, Measure
   - returns at line 434: `None`
   - returns at line 706: `retrec`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
-- CASA parameters casa-rs lacks: `selectdata`, `timerange`, `antenna`, `scan`, `observation`, `projection`, `startmodel`, `reffreq`, `nchan`, `psfphasecenter`, `vptable`, `mosweight`, `aterm`, `psterm`, `wbawp`, `conjbeams`, `computepastep`, `rotatepastep`, `fusedthreshold`, `largestscale`, `restoration`, `noise`, `npixels`, `uvtaper`, `cycleniter`, `interactive`, `fullsummary`, `mask`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `restart`, `calcres`, `calcpsf`
+- CASA parameters casa-rs lacks: `selectdata`, `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `nchan`, `psfphasecenter`, `vptable`, `mosweight`, `aterm`, `psterm`, `wbawp`, `conjbeams`, `computepastep`, `rotatepastep`, `fusedthreshold`, `largestscale`, `restoration`, `noise`, `npixels`, `cycleniter`, `interactive`, `fullsummary`, `mask`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `restart`, `calcres`, `calcpsf`
 - casa-rs parameters CASA lacks: `phasecenter_field`, `ddid`, `channel_start`, `channel_count`, `dirty_only`, `minor_cycle_length`, `hogbom_iteration_mode`, `mask_box`, `mask_image`, `write_pb`, `cf_resident_mb`, `fitspw`, `fitorder`, `save_continuum_residual`, `aw_cf_source`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `backend`, `gridprecision`, `stage_timing`, `metal_stage_timing`, `science_trace`
-- Shared parameters: 54, in CASA's order: no
+- Shared parameters: 56, in CASA's order: no
 - Defaults that differ (CASA, casa-rs):
   - `vis`: `''`, `required`
   - `field`: `''`, `none`
@@ -244,6 +244,7 @@ The CASA parameters casa-rs lacks are tracked by family: images in #977, Measure
   - `imsize`: `[100]`, `512`
   - `cell`: `[]`, `1.0arcsec`
   - `phasecenter`: `''`, `none`
+  - `startmodel`: `''`, `none`
   - `start`: `''`, `none`
   - `width`: `''`, `none`
   - `veltype`: `'radio'`, `RADIO`

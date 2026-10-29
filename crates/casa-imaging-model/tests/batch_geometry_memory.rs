@@ -99,11 +99,12 @@ fn the_parallactic_cache_holds_at_most_what_it_charges() {
     let mut geometry = BatchGeometry::default();
     // A plan of its own computes the same angles first, so that state
     // Measures keeps after its first conversions is not counted.
-    GeometryPlan::compile(&problem, &catalogue, measures())
+    GeometryPlan::compile(&problem, &catalogue, measures(), None)
         .expect("a geometry plan")
         .apply(&batches[0], &rows, None, &mut traversal, &mut geometry)
         .expect("batch geometry");
-    let plan = GeometryPlan::compile(&problem, &catalogue, measures()).expect("a geometry plan");
+    let plan =
+        GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
     plan.apply(&batches[0], &none, None, &mut traversal, &mut geometry)
         .expect("batch geometry");
     assert_eq!(
