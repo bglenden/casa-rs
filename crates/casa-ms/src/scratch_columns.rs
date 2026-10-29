@@ -955,11 +955,13 @@ mod tests {
         assert_eq!(main_keywords(&path), keywords_before);
     }
 
-    /// A write whose completion cannot write MAIN's metadata fails and
-    /// leaves MAIN as the write left it on disk, `MODEL_DATA` created and
-    /// seeded: released, not rewritten in full.
+    /// A write's completion writes none of MAIN's metadata: the update
+    /// session creates and seeds `MODEL_DATA` when its first updater begins
+    /// (where the deleted selected-visibility write did it on completion),
+    /// so a completion with `table.dat` read-only succeeds and leaves MAIN
+    /// as the write left it on disk, `MODEL_DATA` created and seeded.
     #[test]
-    fn a_failed_completion_leaves_main_as_it_was() {
+    fn a_completion_leaves_main_as_its_beginning_left_it() {
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
         let session = imaging_session(&path).expect("session");
@@ -970,7 +972,7 @@ mod tests {
         };
         let completed = write.finish();
         drop(read_only);
-        assert!(completed.is_err(), "the metadata write fails");
+        completed.expect("the completion writes no metadata");
         assert_eq!(table_files(&path), files_begun);
         let ms = MeasurementSet::open(&path).expect("reopen");
         assert!(
