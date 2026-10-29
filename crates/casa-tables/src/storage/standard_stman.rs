@@ -565,44 +565,8 @@ fn read_ssm_string(
     offset: i32,
     length: i32,
 ) -> Result<String, StorageError> {
-    if length == 0 {
-        return Ok(String::new());
-    }
-    if bucket_nr < 0 || offset < 0 || length < 0 {
-        return Err(StorageError::FormatMismatch(format!(
-            "invalid SSM string locator bucket={} offset={} length={}",
-            bucket_nr, offset, length
-        )));
-    }
-
-    let mut result = Vec::with_capacity(length as usize);
-    let mut remaining = length as usize;
-    let mut cur_bucket = bucket_nr;
-    let mut cur_offset = offset as usize;
-
-    while remaining > 0 {
-        let bucket = read_bucket(file, header, cur_bucket as u32)?;
-        let data_start = STRING_BUCKET_HEADER + cur_offset;
-        let available = bucket.len() - data_start;
-        let chunk = remaining.min(available);
-        result.extend_from_slice(&bucket[data_start..data_start + chunk]);
-        remaining -= chunk;
-
-        if remaining > 0 {
-            // String bucket metadata (nextBucket) is always canonical (BE)
-            // per C++ CanonicalConversion in SSMStringHandler.
-            let next_bucket = read_i32_be(&bucket[12..16]);
-            if next_bucket < 0 {
-                return Err(StorageError::FormatMismatch(
-                    "SSM string chain ended prematurely".to_string(),
-                ));
-            }
-            cur_bucket = next_bucket;
-            cur_offset = 0;
-        }
-    }
-
-    String::from_utf8(result)
+    let bytes = read_ssm_string_bytes(file, header, bucket_nr, offset, length)?;
+    String::from_utf8(bytes)
         .map_err(|e| StorageError::FormatMismatch(format!("SSM string is not valid UTF-8: {e}")))
 }
 
@@ -616,7 +580,11 @@ fn read_fixed_ssm_string(bytes: &[u8]) -> Result<String, StorageError> {
     })
 }
 
-/// Read raw bytes from the SSM string bucket chain (for string array deserialization).
+/// Read `length` bytes from the SSM string bucket chain starting at
+/// `offset` in the data area of bucket `bucket_nr`: a string, or a string
+/// array's elements. Data longer than a bucket's rest continues at the
+/// start of the next bucket its header links (casacore's
+/// `SSMStringHandler::getData`).
 fn read_ssm_string_bytes(
     file: &mut File,
     header: &SsmHeader,
@@ -642,12 +610,18 @@ fn read_ssm_string_bytes(
     while remaining > 0 {
         let bucket = read_bucket(file, header, cur_bucket as u32)?;
         let data_start = STRING_BUCKET_HEADER + cur_offset;
-        let available = bucket.len() - data_start;
+        let Some(available) = bucket.len().checked_sub(data_start) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "SSM string offset {cur_offset} is beyond bucket {cur_bucket}"
+            )));
+        };
         let chunk = remaining.min(available);
         result.extend_from_slice(&bucket[data_start..data_start + chunk]);
         remaining -= chunk;
 
         if remaining > 0 {
+            // String bucket metadata (nextBucket) is always canonical (BE)
+            // per C++ CanonicalConversion in SSMStringHandler.
             let next_bucket = read_i32_be(&bucket[12..16]);
             if next_bucket < 0 {
                 return Err(StorageError::FormatMismatch(
@@ -2188,7 +2162,7 @@ fn write_ssm_file_in_memory(
         .collect();
 
     // String handling: collect long strings into string buckets
-    let mut string_buckets = StringBuckets::default();
+    let mut string_buckets = StringBuckets::after(nr_data_buckets);
 
     for (col_idx, col_desc) in col_descs.iter().enumerate() {
         let is_indirect = is_ssm_indirect(col_desc);
@@ -2371,12 +2345,6 @@ fn write_ssm_file_in_memory(
 
     // String bucket count (each goes after data buckets, before index buckets)
     let nr_string_buckets = string_buckets.len();
-    let first_string_bucket = if nr_string_buckets > 0 {
-        nr_data_buckets as i32
-    } else {
-        -1i32
-    };
-
     let first_idx_bucket = (nr_data_buckets + nr_string_buckets) as i32;
     let nr_buckets = nr_data_buckets + nr_string_buckets + nr_idx_buckets;
 
@@ -2389,7 +2357,7 @@ fn write_ssm_file_in_memory(
         nr_idx_buckets as u32,
         first_idx_bucket,
         0, // idx_bucket_offset
-        first_string_bucket,
+        last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_data.len() as u32,
         1, // nr_indices (single index for all columns)
         big_endian,
@@ -2838,6 +2806,16 @@ fn write_cell_to_bucket(
                 big_endian,
             );
         }
+    }
+}
+
+/// The header's last string bucket in use, where casacore appends the next
+/// string (`SSMBase::itsLastStringBucket`): the last of the
+/// `nr_string_buckets` after the `nr_data_buckets`, or -1 for none.
+fn last_string_bucket(nr_data_buckets: usize, nr_string_buckets: usize) -> i32 {
+    match nr_string_buckets {
+        0 => -1,
+        count => (nr_data_buckets + count - 1) as i32,
     }
 }
 

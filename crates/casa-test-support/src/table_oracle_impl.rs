@@ -206,6 +206,10 @@ pub enum CppTableFixture {
     AipsioStringArray,
     /// SSM string array: same as `AipsioStringArray` but stored with `StandardStMan`.
     SsmStringArray,
+    /// SSM strings longer than a string bucket: 3 rows of a scalar
+    /// `String`, a `String[3]` and a variable-shape `String` vector, of
+    /// elements up to 100 kB, continued in linked string buckets.
+    SsmLongStrings,
     /// AipsIO Complex64 2D array: 3 rows × 1 col (DComplex\[2,2\]) stored with
     /// `StManAipsIO`.
     AipsioComplex64Array2D,
@@ -464,6 +468,9 @@ pub(crate) fn cpp_table_write_unlocked(
             CppTableFixture::SsmStringArray => {
                 cpp_table_write_ssm_string_array(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::SsmLongStrings => {
+                cpp_table_write_ssm_long_strings(c_path.as_ptr(), &mut error)
+            }
             CppTableFixture::AipsioComplex64Array2D => {
                 cpp_table_write_aipsio_complex64_2d_array(c_path.as_ptr(), &mut error)
             }
@@ -675,6 +682,9 @@ pub(crate) fn cpp_table_verify_unlocked(
             }
             CppTableFixture::SsmStringArray => {
                 cpp_table_verify_ssm_string_array(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::SsmLongStrings => {
+                cpp_table_verify_ssm_long_strings(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::AipsioComplex64Array2D => {
                 cpp_table_verify_aipsio_complex64_2d_array(c_path.as_ptr(), &mut error)

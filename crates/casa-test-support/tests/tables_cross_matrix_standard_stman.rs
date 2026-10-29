@@ -682,6 +682,94 @@ fn ssm_string_array_cross_matrix() {
     assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
 }
 
+// --- Strings longer than a string bucket ---
+
+/// About `bytes` bytes of text, a run of one- and two-byte characters
+/// starting at character `seed`; the C++ fixture's `text`.
+fn text(bytes: usize, seed: usize) -> String {
+    let characters = ['a', 'é', 'b', 'ç', 'c', '-', 'ü', 'd'];
+    let mut text = String::with_capacity(bytes + 2);
+    let mut index = seed;
+    while text.len() < bytes {
+        text.push(characters[index % characters.len()]);
+        index += 1;
+    }
+    text
+}
+
+/// A scalar string, a fixed `String[3]` and a variable string vector whose
+/// strings reach 100 kB: casa-rs's 32 KiB buckets and casacore's smaller
+/// default ones both continue them in linked buckets, splitting
+/// two-byte characters.
+fn ssm_long_strings_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("NAME", PrimitiveType::String),
+        ColumnSchema::array_fixed("FIXED", PrimitiveType::String, vec![3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_variable("VARIABLE", PrimitiveType::String, Some(1)),
+    ])
+    .expect("schema");
+    let strings = |values: Vec<String>| {
+        let count = values.len();
+        Value::Array(ArrayValue::String(
+            ndarray::Array::from_shape_vec(ndarray::IxDyn(&[count]), values).unwrap(),
+        ))
+    };
+    let row = |name: String, fixed: Vec<String>, variable: Vec<String>| {
+        RecordValue::new(vec![
+            RecordField::new("NAME", Value::Scalar(ScalarValue::String(name))),
+            RecordField::new("FIXED", strings(fixed)),
+            RecordField::new("VARIABLE", strings(variable)),
+        ])
+    };
+    let rows = vec![
+        row(
+            text(100_000, 0),
+            vec![text(70_000, 1), "x".to_string(), text(40_000, 2)],
+            vec![text(33_000, 3), text(5, 4)],
+        ),
+        row(
+            "short".to_string(),
+            vec![String::new(), String::new(), String::new()],
+            vec!["a".to_string()],
+        ),
+        row(
+            text(32_800, 5),
+            vec!["fixed".to_string(), text(32_769, 6), String::new()],
+            vec![text(65_536, 7), String::new(), text(1_000, 8)],
+        ),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmLongStrings),
+        tile_shape: None,
+        column_bindings: Vec::new(),
+    }
+}
+
+#[test]
+fn ssm_long_strings_cross_matrix() {
+    let fixture = ssm_long_strings_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+#[test]
+fn ssm_long_strings_endian_cross_matrix() {
+    let fixture = ssm_long_strings_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
 // --- Complex64 2D arrays (Task 1.3) ---
 
 fn ssm_complex64_2d_array_fixture() -> TableFixture {

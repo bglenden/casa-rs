@@ -32,6 +32,7 @@ fn main() {
     build.file("src/cpp/casacore_cpp_aipsio_shim.cpp");
     build.file("src/cpp/casacore_cpp_table_aipsio.cpp");
     build.file("src/cpp/casacore_cpp_table_ssm.cpp");
+    build.file("src/cpp/casacore_cpp_table_ssm_long_strings.cpp");
     build.file("src/cpp/casacore_cpp_table_misc.cpp");
     build.file("src/cpp/casacore_cpp_table_ism.cpp");
     build.file("src/cpp/casacore_cpp_table_element_arrays.cpp");
