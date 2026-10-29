@@ -978,6 +978,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean images DATA when CORRECTED_DATA is missing, and says nothing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1985,7 +1996,8 @@ CASA behaviours casa-rs follows for parity:
 <a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio">the Airy beam's blockage term</a>,
 <a href="#the-evlas-beam-table-has-no-11052-mhz-fit">the EVLA's 11052 MHz fit</a>,
 <a href="#the-simulators-mosaic-machine-is-not-tcleans">the simulator's and tclean's two mosaic machines</a>,
-<a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field">a moved pointing phased on its field</a>.
+<a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field">a moved pointing phased on its field</a>,
+<a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>.
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
@@ -2402,6 +2414,35 @@ confirms the same mechanism there and in the odd-moment weight images.</p>
 division) from <code>facet · (n / N)</code>, so when <code>N</code> does not divide <code>n</code> the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (<code>NonDivisibleFacetLayout</code>).</p>
+<h2 id="tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>tclean</code> images DATA when CORRECTED_DATA is missing, and says nothing<a class="headerlink" href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA behaviour casa-rs follows, with a warning (simulation plan
+  §3, decision 6)</li>
+<li>Affected code: <code>synthesis/ImagerObjects/SIMapperCollection.cc</code> (<code>grid</code>),
+  <code>synthesis/TransformMachines2/FTMachine.cc</code> (<code>makeImage</code>),
+  <code>synthesis/ImagerObjects/SynthesisImagerVi2.cc</code> (<code>selectData</code>)</li>
+</ul>
+<p><code>datacolumn='corrected'</code> sets <code>FTMachine::CORRECTED</code> in <code>selectData</code>
+without looking at the MeasurementSet. When a VisBuffer has no corrected
+visibilities, <code>SIMapperCollection::grid</code> and <code>FTMachine::makeImage</code> switch
+to <code>OBSERVED</code>, so <code>tclean</code> images <code>DATA</code> (less the model in a major cycle).
+<code>SynthesisImager::selectData</code> once logged "CORRECTED_DATA column does not
+exist. Using DATA column instead"; that block is commented out, and CASA
+6.7.6's <code>libcasacpp_synthesis</code> does not contain the message, so CASA logs
+no message for the fallback.</p>
+<p>casa-rs's simulator writes <code>DATA</code> only, so its imager follows the fallback
+and logs CASA's old message as a warning, since the column imaged is not
+the one asked for.</p>
+<p>VisibilityIterator2's <code>existsColumn</code> also counts <code>CORRECTED_DATA</code> as
+missing in an iteration chunk whose first row's cell is undefined
+(<code>isDefined(0)</code> on the chunk's attached table), so CASA can image <code>DATA</code>
+chunk by chunk from a partly written column. casa-rs decides by the
+column's presence alone and images an existing <code>CORRECTED_DATA</code> as before.
+That is a deliberate scope limit, not full parity: casa-tables'
+metadata-only probe (<code>array_cell_is_defined_uncached</code>) answers only for
+lazy, disk-backed <code>TiledShapeStMan</code> columns, and one probe would not
+reproduce the per-chunk rule.</p>
 <h2 id="the-airy-beams-blockage-term-uses-the-inverse-length-ratio">The Airy beam's blockage term uses the inverse length ratio<a class="headerlink" href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-21</li>
