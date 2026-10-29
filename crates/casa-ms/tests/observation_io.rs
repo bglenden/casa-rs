@@ -9,6 +9,7 @@ mod convert;
 #[cfg(unix)]
 #[path = "observation_io/ephemeris.rs"]
 mod ephemeris;
+#[cfg(unix)]
 #[path = "observation_io/fields.rs"]
 mod fields;
 #[cfg(unix)]

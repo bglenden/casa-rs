@@ -35,7 +35,7 @@ mod payload;
 mod pointing;
 mod set;
 
-pub(in crate::observation_io) use fields::kept_samples;
+pub(in crate::observation_io) use fields::{check_fields, kept_samples};
 pub use set::Msv4ProcessingSetWriter;
 
 use std::collections::{BTreeMap, HashMap};

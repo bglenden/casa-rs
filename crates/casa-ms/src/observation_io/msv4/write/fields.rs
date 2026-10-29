@@ -34,12 +34,7 @@ const EVALUATION_REACH_S: f64 = 120.0;
 ///
 /// # Errors
 ///
-/// [`ObservationError::Unsupported`] for a phase centre in another frame
-/// than `frame`, fields of which only some follow an ephemeris or that
-/// follow different ones (XRADIO's dataset holds one), or an ephemeris
-/// whose radial velocities are not geocentric;
-/// [`ObservationError::InvalidRequest`] for an ephemeris that does not
-/// cover the times; any error writing the store.
+/// As [`check_fields`]; any error writing the store.
 pub(super) fn write_fields(
     store: &Arc<FilesystemStore>,
     path: &str,
@@ -48,6 +43,55 @@ pub(super) fn write_fields(
     times_s: &[f64],
     frame: DirectionRef,
 ) -> Result<(), ObservationError> {
+    match plan(catalogue, grid, times_s, frame)? {
+        Plan::Fixed(fields) => fixed_fields(store, path, &fields),
+        Plan::Moving(ephemeris) => {
+            let per_time: Vec<&FieldEntry> = grid
+                .field_per_time
+                .iter()
+                .map(|field| &catalogue.fields[field.0 as usize])
+                .collect();
+            moving_fields(store, path, ephemeris, &per_time, times_s)
+        }
+    }
+}
+
+/// Refuse what [`write_fields`] cannot write of the fields `grid`'s times
+/// name (at `times_s`, Unix seconds) for data whose UVW is in `frame`, so
+/// that a conversion refuses it before anything is written.
+///
+/// # Errors
+///
+/// [`ObservationError::Unsupported`] for a phase centre in another frame
+/// than `frame`, fields of which only some follow an ephemeris or that
+/// follow different ones (XRADIO's dataset holds one), or an ephemeris
+/// whose radial velocities are not geocentric;
+/// [`ObservationError::InvalidRequest`] for an ephemeris that does not
+/// cover the times.
+pub(in crate::observation_io) fn check_fields(
+    catalogue: &Catalogue,
+    grid: &TimeBaselineGrid,
+    times_s: &[f64],
+    frame: DirectionRef,
+) -> Result<(), ObservationError> {
+    plan(catalogue, grid, times_s, frame).map(|_| ())
+}
+
+/// What a dataset's field dataset holds.
+enum Plan<'a> {
+    /// The fields' fixed phase centres, in catalogue order.
+    Fixed(Vec<&'a FieldEntry>),
+    /// The ephemeris every field follows.
+    Moving(&'a FieldEphemeris),
+}
+
+/// [`check_fields`], and what the field dataset then holds.
+fn plan<'a>(
+    catalogue: &'a Catalogue,
+    grid: &TimeBaselineGrid,
+    times_s: &[f64],
+    frame: DirectionRef,
+) -> Result<Plan<'a>, ObservationError> {
     // The fields the grid uses, in catalogue order.
     let mut used: Vec<FieldId> = grid.field_per_time.clone();
     used.sort();
@@ -64,27 +108,66 @@ pub(super) fn write_fields(
             what: "writing phase centres in another frame than the data group's UVW",
         });
     }
-    let followed = fields.first().and_then(|field| field.ephemeris.as_ref());
+    let followed = fields.first().and_then(|field| field.ephemeris.as_deref());
     if fields
         .iter()
-        .any(|field| field.ephemeris.as_deref() != followed.map(Arc::as_ref))
+        .any(|field| field.ephemeris.as_deref() != followed)
     {
         return Err(ObservationError::Unsupported {
             what: "writing an MSv4 dataset whose fields follow different ephemerides, or only \
                    some one (a field_and_source_ephemeris dataset holds one)",
         });
     }
-    match followed {
-        None => fixed_fields(store, path, &fields),
-        Some(ephemeris) => {
-            let per_time: Vec<&FieldEntry> = grid
-                .field_per_time
-                .iter()
-                .map(|field| &catalogue.fields[field.0 as usize])
-                .collect();
-            moving_fields(store, path, ephemeris, &per_time, times_s)
-        }
+    let Some(ephemeris) = followed else {
+        return Ok(Plan::Fixed(fields));
+    };
+    if ephemeris.velocity_frame() != RadialVelocityRef::GEO {
+        return Err(ObservationError::Unsupported {
+            what: "writing an MSv4 ephemeris whose radial velocities are not geocentric",
+        });
     }
+    if bodies(ephemeris, times_s).is_none() {
+        return Err(ObservationError::InvalidRequest {
+            reason: format!(
+                "the ephemeris of {} does not cover the dataset's times, at each of which MSv4 \
+                 states the phase centre",
+                ephemeris.name()
+            ),
+        });
+    }
+    Ok(Plan::Moving(ephemeris))
+}
+
+/// The samples of an ephemeris a dataset keeps ([`kept`]), and the body's
+/// direction and distance at each of the dataset's times, interpolated as
+/// XRADIO interpolates them.
+struct Bodies {
+    kept: Range<usize>,
+    sample_times: Vec<f64>,
+    directions: Vec<[f64; 2]>,
+    distances: Vec<[f64; 1]>,
+}
+
+/// [`Bodies`] of `ephemeris` at `times_s` (Unix seconds), or `None` when
+/// its samples do not cover the times.
+fn bodies(ephemeris: &FieldEphemeris, times_s: &[f64]) -> Option<Bodies> {
+    let sample_times = unix_seconds(ephemeris);
+    let kept = kept(&sample_times, times_s);
+    let sample_times = sample_times[kept.clone()].to_vec();
+    let distances: Vec<[f64; 1]> = ephemeris.distances_m()[kept.clone()]
+        .iter()
+        .map(|distance| [*distance])
+        .collect();
+    Some(Bodies {
+        directions: at_times(
+            &sample_times,
+            &ephemeris.directions_rad()[kept.clone()],
+            times_s,
+        )?,
+        distances: at_times(&sample_times, &distances, times_s)?,
+        kept,
+        sample_times,
+    })
 }
 
 /// `fields`' phase centres, one per field (`field_and_source`).
@@ -118,7 +201,7 @@ fn fixed_fields(
 
 /// `ephemeris`, which the field of each time (`per_time`, at `times_s`)
 /// follows (`field_and_source_ephemeris`): the samples on `time_ephemeris`
-/// from the last at or before the first time to the first at or after
+/// from the last before the first time to the first at or after
 /// [`EVALUATION_REACH_S`] past the last ([`kept`]), and each time's phase
 /// centre as XRADIO states it, the field's offset added to the body's
 /// direction interpolated linearly in angle, wrapped.
@@ -129,31 +212,22 @@ fn moving_fields(
     per_time: &[&FieldEntry],
     times_s: &[f64],
 ) -> Result<(), ObservationError> {
-    if ephemeris.velocity_frame() != RadialVelocityRef::GEO {
-        return Err(ObservationError::Unsupported {
-            what: "writing an MSv4 ephemeris whose radial velocities are not geocentric",
-        });
-    }
-    let sample_times = unix_seconds(ephemeris);
-    let kept = kept(&sample_times, times_s);
-    let sample_times = &sample_times[kept.clone()];
+    let Bodies {
+        kept,
+        sample_times,
+        directions: bodies,
+        distances: body_distances,
+    } = bodies(ephemeris, times_s).ok_or_else(|| ObservationError::InvalidRequest {
+        reason: format!(
+            "the ephemeris of {} does not cover the dataset's times",
+            ephemeris.name()
+        ),
+    })?;
     let directions = &ephemeris.directions_rad()[kept.clone()];
     let distances: Vec<[f64; 1]> = ephemeris.distances_m()[kept.clone()]
         .iter()
         .map(|distance| [*distance])
         .collect();
-    let (Some(bodies), Some(body_distances)) = (
-        at_times(sample_times, directions, times_s),
-        at_times(sample_times, &distances, times_s),
-    ) else {
-        return Err(ObservationError::InvalidRequest {
-            reason: format!(
-                "the ephemeris of {} does not cover the dataset's times, at each of which MSv4 \
-                 states the phase centre",
-                ephemeris.name()
-            ),
-        });
-    };
     create_group(store, path, json!({"type": EPHEMERIS_DATASET}))?;
     names(store, path, per_time, "time")?;
     let frame = direction_name(ephemeris.frame())?;
@@ -168,7 +242,7 @@ fn moving_fields(
         json!("float64"),
         json!("NaN"),
         "time_ephemeris",
-        sample_times,
+        &sample_times,
         Value::Object(time),
     )?;
     for (name, labels) in [
@@ -268,16 +342,17 @@ fn unix_seconds(ephemeris: &FieldEphemeris) -> Vec<f64> {
 }
 
 /// The samples (at `sample_times`) a dataset of `times` keeps: from the
-/// last at or before its first time to the first at or after
+/// last before its first time to the first at or after
 /// [`EVALUATION_REACH_S`] past its last, and at least two. XRADIO keeps
-/// those either side of the times themselves.
+/// those either side of the times themselves (`project_min_max_sorted`):
+/// the last before the first time, and the first after the last.
 fn kept(sample_times: &[f64], times: &[f64]) -> Range<usize> {
     let last = sample_times.len() - 1;
     let (Some(first), Some(end)) = (times.first(), times.last()) else {
         return 0..sample_times.len();
     };
     let start = sample_times
-        .partition_point(|time| time <= first)
+        .partition_point(|time| time < first)
         .saturating_sub(1)
         .min(last - 1);
     let end = sample_times
@@ -363,8 +438,10 @@ mod tests {
         // Times from 130 s to 250 s: kept from the sample at 120 s to the
         // first at or after 370 s, 420 s.
         assert_eq!(kept(&samples, &[130.0, 190.0, 250.0]), 2..8);
-        // A time on a sample keeps that sample as the first.
-        assert_eq!(kept(&samples, &[120.0, 130.0]), 2..6);
+        // A time on a sample keeps the sample before it too: casacore's
+        // MeasComet indexes a time on a table's first row as row -1 for
+        // some roundings.
+        assert_eq!(kept(&samples, &[120.0, 130.0]), 1..6);
         // Times beyond the samples keep the last two.
         assert_eq!(kept(&samples, &[1_000.0]), 8..10);
         // Times before them keep the first two, or as far as they reach.

@@ -107,6 +107,7 @@ pub fn to_msv2(
         options.batch_bytes,
     )?;
     found.extend(lost);
+    found.extend(msv2_ephemeris::filled_rows(catalogue));
     found.push(Loss::SigmaDerived);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;

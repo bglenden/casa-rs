@@ -581,11 +581,15 @@ impl Msv4Observation {
     /// [`Self::fields`] for a `field_and_source_ephemeris` dataset. A field
     /// is one with a catalogue field of its name, source and offset (to the
     /// store's resolution) whose ephemeris holds the same samples at the
-    /// times both hold; the catalogue field then follows the samples of
-    /// both ([`ephemeris::union`]), since each dataset holds only those its
-    /// own times need. The offset is labelled with the data group's UVW
-    /// frame: casacore applies a moving field's offset in its ephemeris's
-    /// frame whatever `PHASE_DIR`'s own (`MSFieldColumns::extractDirMeas`).
+    /// times both hold. Each dataset holds only the samples its own times
+    /// need, so the body is the dataset's samples united with those of
+    /// every ephemeris its matched fields follow ([`ephemeris::union`]):
+    /// every catalogue field that follows any of them, the dataset's fields
+    /// among them, then follows the union, as the fields of one MSv2
+    /// `EPHEMERIS_ID` follow one table. The offset is labelled with the data
+    /// group's UVW frame: casacore applies a moving field's offset in its
+    /// ephemeris's frame whatever `PHASE_DIR`'s own
+    /// (`MSFieldColumns::extractDirMeas`).
     fn moving_fields(
         &mut self,
         store: &Arc<FilesystemStore>,
@@ -594,38 +598,60 @@ impl Msv4Observation {
         uvw_frame: DirectionRef,
     ) -> Result<Vec<FieldId>, ObservationError> {
         let moving = ephemeris::read(store, path, times, per_time)?;
-        let mut indices = Vec::with_capacity(moving.fields.len());
+        let fields = &mut self.catalogue_mut().fields;
+        let mut united = Arc::new(moving.ephemeris);
+        let mut followed: Vec<Arc<casa_observation::FieldEphemeris>> = Vec::new();
+        let mut matched = Vec::with_capacity(moving.fields.len());
         for field in &moving.fields {
-            let offset = (field.offset_rad[0], field.offset_rad[1]);
             let source_name =
                 (!super::is_unknown_source(&field.source_name)).then(|| field.source_name.clone());
-            let fields = &mut self.catalogue_mut().fields;
-            let found = fields.iter().enumerate().find_map(|(index, known)| {
-                let followed = known.ephemeris.as_ref()?;
-                let one = known.name == field.name
+            let found = fields.iter().position(|known| {
+                known.name == field.name
                     && known.source_name == source_name
                     && known.phase_centre.refer() == uvw_frame
-                    && ephemeris::same_offset(known.phase_centre.as_angles(), offset);
-                one.then(|| ephemeris::union(followed, &moving.ephemeris))
-                    .flatten()
-                    .map(|united| (index, united))
+                    && ephemeris::same_angles(
+                        known.phase_centre.as_angles().into(),
+                        field.offset_rad,
+                    )
+                    && known.ephemeris.as_ref().is_some_and(|known| {
+                        followed.iter().any(|seen| Arc::ptr_eq(seen, known))
+                            || ephemeris::union(known, &united).is_some()
+                    })
             });
-            let index = match found {
-                Some((index, united)) => {
-                    fields[index].ephemeris = Some(united);
-                    index
+            if let Some(index) = found {
+                let known = fields[index].ephemeris.clone().expect("a moving field");
+                if !followed.iter().any(|seen| Arc::ptr_eq(seen, &known)) {
+                    united = ephemeris::union(&known, &united).expect("checked to unite");
+                    followed.push(known);
                 }
-                None => {
-                    fields.push(FieldEntry {
-                        name: field.name.clone(),
-                        phase_centre: MDirection::from_angles(offset.0, offset.1, uvw_frame),
-                        reference_epoch: None,
-                        source_name,
-                        ephemeris: Some(Arc::new(moving.ephemeris.clone())),
-                    });
-                    fields.len() - 1
-                }
-            };
+            }
+            matched.push((found, source_name));
+        }
+        for field in fields.iter_mut() {
+            if field
+                .ephemeris
+                .as_ref()
+                .is_some_and(|known| followed.iter().any(|seen| Arc::ptr_eq(seen, known)))
+            {
+                field.ephemeris = Some(Arc::clone(&united));
+            }
+        }
+        let mut indices = Vec::with_capacity(moving.fields.len());
+        for (field, (found, source_name)) in moving.fields.iter().zip(matched) {
+            let index = found.unwrap_or_else(|| {
+                fields.push(FieldEntry {
+                    name: field.name.clone(),
+                    phase_centre: MDirection::from_angles(
+                        field.offset_rad[0],
+                        field.offset_rad[1],
+                        uvw_frame,
+                    ),
+                    reference_epoch: None,
+                    source_name,
+                    ephemeris: Some(Arc::clone(&united)),
+                });
+                fields.len() - 1
+            });
             indices.push(FieldId(u32::try_from(index).expect("few fields")));
         }
         Ok(moving

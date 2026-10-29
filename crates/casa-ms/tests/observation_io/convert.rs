@@ -639,7 +639,14 @@ fn main_ints(ms: &casa_ms::MeasurementSet, column: &str) -> Vec<i32> {
 /// spectral window, data description and state.
 fn two_sessions(root: &Path, early: bool) -> PathBuf {
     let path = fixture(root, "ms_trial.ms");
-    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    split_sessions(&path, early);
+    path
+}
+
+/// Put half the times of the MSv2 at `path` in a second observation, as
+/// [`two_sessions`] does.
+pub(super) fn split_sessions(path: &Path, early: bool) {
+    let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
     let rows = ms.main_table().row_count();
     let times: Vec<f64> = (0..rows)
         .map(|row| {
@@ -712,7 +719,6 @@ fn two_sessions(root: &Path, early: bool) -> PathBuf {
         .add_row(session)
         .expect("a second session");
     ms.save().expect("save");
-    path
 }
 
 /// Two partitions of one spectral window keep one window name in the MSv4
@@ -1156,7 +1162,9 @@ fn an_unused_moving_field_is_written_only_where_every_field_is() {
             .iter()
             .all(|field| field.ephemeris.is_none())
     );
+    // The comet's table's own `VS_*` keywords are not carried.
     let out = root.path().join("comet.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
     to_msv2(&v2, &out, &options(&accept)).expect("to MSv2");
     let catalogue = open(&out, &OpenOptions::default())
         .expect("MSv2")

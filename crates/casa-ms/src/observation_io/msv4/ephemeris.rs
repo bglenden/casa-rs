@@ -6,11 +6,12 @@
 //!
 //! The body's geocentric samples are `SOURCE_DIRECTION`, `SOURCE_DISTANCE`
 //! and `SOURCE_RADIAL_VELOCITY`, in SI units, on their own times
-//! (`time_ephemeris`) or, XRADIO's default, interpolated onto the
-//! visibility times (`time`). Either way their times are the ephemeris
-//! table's `MJD` as Unix seconds labelled UTC, which the boundary reads
-//! back as the table's `MJD` ([`FieldEphemeris::times_mjd`]), so that a
-//! store converted from an MSv2 is evaluated as the MSv2 is.
+//! (`time_ephemeris`, what XRADIO's `convert_msv2_to_processing_set`
+//! writes by default) or interpolated onto the visibility times (`time`).
+//! Either way their times are the ephemeris table's `MJD` as Unix seconds
+//! labelled UTC, which the boundary reads back as the table's `MJD`
+//! ([`FieldEphemeris::times_mjd`]), so that a store converted from an MSv2
+//! is evaluated as the MSv2 is.
 //!
 //! `FIELD_PHASE_CENTER_DIRECTION` is per visibility time: the field's
 //! offset from the body (MSv2 `PHASE_DIR`) added to the body's direction,
@@ -37,7 +38,7 @@ use super::metadata::{
 pub(super) const EPHEMERIS_DATASET: &str = "field_and_source_ephemeris";
 
 /// Seconds per day.
-pub(super) const SECONDS_PER_DAY: f64 = 86_400.0;
+pub(in crate::observation_io) const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// How far two recovered offsets of one field may differ, radians. The
 /// store holds the offset only within its sum with the body's direction,
@@ -92,9 +93,9 @@ pub(super) fn read(
         (times, "time_ephemeris")
     } else {
         tracing::warn!(
-            "{path}: the ephemeris is interpolated onto the visibility times (XRADIO's default \
-             layout): its table's own samples are not in the store, and the body's direction \
-             is evaluated from these"
+            "{path}: the ephemeris is interpolated onto the visibility times \
+             (ephemeris_interpolate=True): its table's own samples are not in the store, and the \
+             body's direction is evaluated from these, which end at the last time"
         );
         (times_s.to_vec(), "time")
     };
@@ -160,6 +161,12 @@ pub(super) fn read(
             }
         })
         .unwrap_or_default();
+    if samples < 2 {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 ephemeris of fewer than two samples (as XRADIO interpolates one onto \
+                   a dataset of one time)",
+        });
+    }
     let ephemeris = FieldEphemeris::new(
         name,
         sample_times_s
@@ -207,7 +214,9 @@ fn series(
 /// converts only geocentric tables (`obsloc` `GEOCENTRIC`), and records
 /// that as `OBSERVER_POSITION`'s `coordinate_system`. (Its position is not
 /// the geocentre: XRADIO places the table's `GeoLong`, `GeoLat` and
-/// `GeoDist` on the WGS84 ellipsoid, the distance as a height.)
+/// `GeoDist` on the WGS84 ellipsoid, the distance as a height.) The schema
+/// makes `OBSERVER_POSITION` optional; a dataset without one is read as
+/// geocentric, the only kind XRADIO writes.
 fn require_geocentric(store: &Arc<FilesystemStore>, path: &str) -> Result<(), ObservationError> {
     let observer = format!("{path}/OBSERVER_POSITION");
     if !has_node(store, &observer)? {
@@ -244,9 +253,7 @@ fn moving_fields(
                 if field.source_name != sources[time] {
                     return Err(invalid(format!("{path}: field {name} names two sources")));
                 }
-                if (0..2).any(|axis| {
-                    (offset_rad[axis] - field.offset_rad[axis]).abs() > OFFSET_RESOLUTION_RAD
-                }) {
+                if !same_angles(offset_rad, field.offset_rad) {
                     return Err(invalid(format!(
                         "{path}: field {name}'s phase centre is not one offset from \
                          SOURCE_DIRECTION"
@@ -394,15 +401,16 @@ pub(super) fn union(
 /// ([`SAMPLE_RESOLUTION`]; angles to [`OFFSET_RESOLUTION_RAD`]).
 fn same_sample(a: &Sample, b: &Sample) -> bool {
     let close = |x: f64, y: f64| (x - y).abs() <= SAMPLE_RESOLUTION * x.abs().max(y.abs());
-    (0..2).all(|axis| (a.1[axis] - b.1[axis]).abs() <= OFFSET_RESOLUTION_RAD)
-        && close(a.2, b.2)
-        && (close(a.3, b.3) || (a.3 - b.3).abs() <= 1.0e-9)
+    same_angles(a.1, b.1) && close(a.2, b.2) && (close(a.3, b.3) || (a.3 - b.3).abs() <= 1.0e-9)
 }
 
-/// Whether the field offsets `a` and `b` are one, within the store's
-/// resolution ([`OFFSET_RESOLUTION_RAD`]).
-pub(super) fn same_offset(a: (f64, f64), b: (f64, f64)) -> bool {
-    (a.0 - b.0).abs() <= OFFSET_RESOLUTION_RAD && (a.1 - b.1).abs() <= OFFSET_RESOLUTION_RAD
+/// Whether the angles `a` and `b` (longitude, latitude) are one, to the
+/// store's resolution ([`OFFSET_RESOLUTION_RAD`]), whatever turn each is
+/// stated in: a recovered offset is wrapped to [-π, π), and
+/// [`MDirection::as_angles`](casa_types::measures::direction::MDirection::as_angles)
+/// states a longitude in [0, 2π).
+pub(super) fn same_angles(a: [f64; 2], b: [f64; 2]) -> bool {
+    (0..2).all(|axis| wrap_to_pi(a[axis] - b[axis]).abs() <= OFFSET_RESOLUTION_RAD)
 }
 
 #[cfg(test)]
@@ -417,6 +425,15 @@ mod tests {
         assert!((wrap_to_pi(1.5 * PI) + 0.5 * PI).abs() < 1e-15);
         assert_eq!(wrap_to_pi(-PI), -PI);
         assert!((wrap_to_pi(PI) + PI).abs() < 1e-15);
+    }
+
+    #[test]
+    fn angles_are_one_whatever_turn_they_are_stated_in() {
+        let offset = [-1.0e-5, 2.0e-6];
+        assert!(same_angles(offset, [TAU - 1.0e-5, 2.0e-6]));
+        assert!(same_angles([-1.0e-17, 0.0], [TAU - 1.0e-17, 0.0]));
+        assert!(same_angles([PI - 1.0e-13, 0.0], [-PI + 1.0e-13, 0.0]));
+        assert!(!same_angles(offset, [1.0e-5, 2.0e-6]));
     }
 
     #[test]

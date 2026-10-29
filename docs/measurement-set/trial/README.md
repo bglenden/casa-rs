@@ -259,7 +259,8 @@ observation with its field moving:
 - **MSv4 `ms_trial_ephemeris.ps.zarr`.** XRADIO's conversion with
   `ephemeris_interpolate=False`: the samples on `time_ephemeris`.
 - **MSv4 `ms_trial_ephemeris_interpolated.ps.zarr`.** XRADIO's conversion
-  with its default, `ephemeris_interpolate=True`: the samples interpolated
+  with `ephemeris_interpolate=True` (its `convert_msv2_to_processing_set`
+  defaults to `False`): the samples interpolated
   onto the visibility times.
 
 Regenerate them with `tools/ms-trial/make_ephemeris_fixtures.sh`, which
@@ -276,7 +277,7 @@ alone.
   `time_ephemeris` as `time` too, and fails its own schema check. The
   trial writer types both axes by their names, as the schema requires.
 - XRADIO's ephemeris dataset brackets the dataset's UTC times: the samples
-  from the last at or before the first time to the first after the last.
+  from the last before the first time to the first after the last.
   Imaging reads a body's direction at each time's TDB (CASA's convention),
   69.2 s later. In the fixture, XRADIO's samples reach 59.3 s past the last
   time, so the last 10 s are not covered; in its interpolated layout no
@@ -1519,8 +1520,11 @@ converter carries it both ways.
 
 - **Reading** (`msv4/ephemeris.rs`). Either of XRADIO's layouts:
   - the samples on `time_ephemeris`;
-  - or, XRADIO's default, interpolated onto the visibility times. The
-    reader warns that the table's own samples are not in the store.
+  - or interpolated onto the visibility times (`ephemeris_interpolate=True`;
+    XRADIO's converter defaults to `False`). The reader warns that the
+    table's own samples are not in the store, and the converter reports it
+    as a loss: the store's last sample is at the last time, so the body
+    cannot be found at the TDB of the last 69 s of times.
 
   The samples are `SOURCE_DIRECTION`, `SOURCE_DISTANCE` and
   `SOURCE_RADIAL_VELOCITY`. Their Unix-second times, labelled UTC, are read
@@ -1528,15 +1532,21 @@ converter carries it both ways.
   is. XRADIO's `FIELD_PHASE_CENTER_DIRECTION(time)` is the offset plus the
   body's direction interpolated linearly in angle, wrapped; the reader
   recovers the offset by subtracting again. A field's offsets must agree to
-  1e-12 rad; they agree to 9e-16 in the fixtures. The radial velocities are
-  geocentric, as `OBSERVER_POSITION`'s `coordinate_system` states.
+  1e-12 rad, whatever turn each is stated in; they agree to 9e-16 in the
+  fixtures. The radial velocities are geocentric, as `OBSERVER_POSITION`'s
+  `coordinate_system` states; a dataset without one (the schema makes it
+  optional) is read as geocentric, the only kind XRADIO writes. A dataset
+  of fewer than two samples is refused (`Unsupported`): XRADIO writes one
+  when it interpolates onto a dataset of one time.
 
   Datasets of one field (same name, source, offset) whose samples agree
-  where both hold them are one catalogue field following the union. A
-  sample counts as both datasets' when their times agree to 1 ms and their
-  values to 1e-12, since converters round differently.
+  where both hold them are one catalogue field. The union is a body's, not
+  a field's: every field that follows the body follows the one union,
+  including fields only some datasets hold. A sample counts as both
+  datasets' when their times agree to 1 ms and their values to 1e-12,
+  since converters round differently.
 - **Writing** (`write/fields.rs`). The `time_ephemeris` layout, with the
-  samples from the last at or before a dataset's first time to the first two
+  samples from the last before a dataset's first time to the first two
   minutes past its last, so the last time's TDB is covered. Also each
   time's phase centre and distance as XRADIO computes them, the geocentre
   as `OBSERVER_POSITION`, and the axes typed as the schema types them.
@@ -1549,35 +1559,70 @@ converter carries it both ways.
   (`MJD0`, `dMJD`, `VS_*`, type `IERS`, degrees, AU and AU a day, with
   XRADIO's `GeoLong`, `GeoLat`, `GeoDist`, `obsloc`, `posrefsys` and
   `UNIT`s), and the field gets its `EPHEMERIS_ID`. A moving field's `TIME`
-  is the epoch its catalogue entry states, or else its first time. Samples
-  that are not evenly spaced are refused, since `MeasComet` indexes rows by
-  `dMJD`.
-- **Losses.** Each is found before anything is written:
-  - into an MSv4, the samples no dataset holds, the FIELD row's `TIME`
+  is the epoch its catalogue entry states, or else its first time; its
+  source's `DIRECTION` is the body at that time. `MeasComet` indexes rows
+  by `dMJD`, so the samples must lie on one evenly spaced grid. A union
+  with gaps on that grid (two sessions, or the interpolated layout across
+  scans) fills each gap's rows with the ephemeris's own interpolation, as
+  casacore and casa-rs would evaluate it there, and reports how many.
+  Samples on no one grid are refused.
+- **Losses and refusals.** Each is found before anything is written; the
+  writer's refusals are checked for every partition first:
+  - into an MSv4, the samples no dataset keeps, the FIELD row's `TIME`
     (where an image without a phase centre is centred) and the table's
     `NAME`;
-  - either way, a table's columns other than the five and its keywords
-    other than those written, and XRADIO's optional variables
-    (`NORTH_POLE_*`, `SUB_*`, `HELIOCENTRIC_RADIAL_VELOCITY`,
-    `OBSERVER_PHASE_ANGLE`).
+  - from XRADIO's interpolated layout, the table's own samples;
+  - into an MSv2, the rows filled across gaps;
+  - either way, a table's columns other than the five, its keywords other
+    than those carried (the `VS_*` set is written anew, so a source
+    table's own is lost), and XRADIO's optional variables (`NORTH_POLE_*`,
+    `SUB_*`, `HELIOCENTRIC_RADIAL_VELOCITY`, `OBSERVER_PHASE_ANGLE`).
 
 | Law | What it shows |
 | --- | --- |
-| `xradios_ephemeris_samples_read_as_the_msv2_holds_them` | XRADIO's `time_ephemeris` layout reads as the MSv2's ephemeris: its samples from the last at or before the first time to the first after the last, equal to the table's (1e-15 rad, relative distance 1e-15); the offset to 1e-15 rad; J2000, geocentric velocities. |
-| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's default layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there. |
+| `xradios_ephemeris_samples_read_as_the_msv2_holds_them` | XRADIO's `time_ephemeris` layout reads as the MSv2's ephemeris: its samples from the last before the first time to the first after the last, equal to the table's (1e-15 rad, relative distance 1e-15); the offset to 1e-15 rad; J2000, geocentric velocities. |
+| `xradios_interpolated_ephemeris_reads_as_its_values_at_the_times` | XRADIO's interpolated layout reads as one sample per visibility time, equal to the table interpolated linearly in angle there; the offset equals the MSv2's to 1e-15 rad. |
 | `a_moving_field_converts_both_ways` | Into an MSv4 the samples reach from the first time to two minutes past the last, the rest reported (with the FIELD `TIME`). Back into an MSv2 the same samples, the offset as `PHASE_DIR`, the field's first time as `TIME` and `EPHEM0_trial_0.tab`. An MSv2 into an MSv2 keeps every sample and the original `TIME`. |
 | `two_converters_datasets_of_one_field_are_one_field` | The converter's dataset and XRADIO's, in one processing set, are one field following one ephemeris. |
+| `one_bodys_fields_in_two_datasets_follow_their_united_samples` | Two sessions ten minutes apart, one field in both and another, west of the body, in the first only: into an MSv4 two datasets whose samples have a gap; read back, two catalogue fields (the west one's offset wrapping) following one shared union of the samples. Into an MSv2 one evenly spaced table, the gap's rows the ephemeris's interpolation (1e-14 rad), their number reported. |
 | `uncovered_and_polynomial_moving_fields_are_refused` | An ephemeris that does not cover the times is refused before writing (`InvalidRequest`), as is a `NUM_POLY` 1 field (`Unsupported`). |
 | `an_unused_moving_field_is_written_only_where_every_field_is` | (Converter laws above.) |
 | `a_moving_field_keeps_its_geometry_in_msv4` (casars-imager T1) | The T1 track's moving field, converted to MSv4: on all 52,650 rows every geometry quantity equals the MeasurementSet's to 1.1e-15 (UVW; the phase shift 8.4e-16), tracking the body, following its table, and on a fixed centre. |
 
 Unit laws: (casa-ms) `angles_wrap_as_xradio_wraps_them`,
+`angles_are_one_whatever_turn_they_are_stated_in`,
 `directions_interpolate_linearly_in_angle_and_not_beyond_the_samples`,
 `two_datasets_samples_of_one_body_unite_and_conflicting_ones_do_not`,
 `a_dataset_keeps_the_samples_either_side_and_its_last_times_tdb`,
-`only_evenly_spaced_samples_have_a_step`,
+`samples_on_one_grid_fill_their_gaps_and_others_have_none`,
+`a_moving_fields_source_is_its_body_at_the_fields_time`,
 `creation_dates_become_measures_dates` and
 `table_names_keep_only_safe_characters`.
+
+**T1.5** (the Mac mini, `alma_ephemobj_icrs.ms`, the T41 oracle's MS,
+converted to MSv4; receipts on the NAS under
+`casa-rs/issue-942/msv4-t41-20261029/`). On field 1, which moves, imaged
+three ways (`TRACKFIELD` MFS and `cubesource`, and with no phase centre),
+the batch geometry of the conversion agrees with the MeasurementSet's:
+the same-store law matches all 1,620 rows, and the store law agrees
+bit for bit on the 1,350 rows it matches. It leaves one scan of 270 rows
+unmatched, a scan of three `STATE` rows with `FLAG_ROW` set; fixed field
+0's such scan is unmatched in the same way, so it is not an ephemeris
+matter (#996).
+
+**XRADIO findings.**
+- XRADIO keeps the last sample strictly before a dataset's first time and
+  the first after its last (`project_min_max_sorted`), in UTC.
+- Its `FIELD_PHASE_CENTER_DIRECTION` interpolates the body linearly in
+  angle, so within the one sample interval where the body crosses 0h of
+  right ascension it is up to π off; in the interpolated layout the
+  `SOURCE_DIRECTION` samples there are too, and are read as the body. The
+  writer here states the phase centre as XRADIO does, so that XRADIO's
+  readers and ours agree on it.
+- The writer labels `FIELD_PHASE_CENTER_DIRECTION` with the ephemeris's
+  frame, in which casacore applies the offset, and UVW with the offset's.
+  For an ICRS table with a J2000 `PHASE_DIR` they differ, where XRADIO's
+  stores label both alike.
 
 **Oracles.**
 - **XRADIO** (`tools/ms-trial/check_ephemeris.sh`, [report](interop/ephemeris_rust_writes_xradio_reads.json)): 13 of 13 checks pass. XRADIO opens the converter's store and its schema check finds no issue. The store's `FIELD_PHASE_CENTER_DIRECTION` equals XRADIO's own conversion's at every time to 8.9e-16 rad, and its distance to 1.6e-16 relative. Every XRADIO sample is one of the store's, equal to 4.4e-16 rad. The store's samples reach 179 s past the last time; XRADIO's reach 59 s.

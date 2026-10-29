@@ -13,7 +13,9 @@ use casa_observation::{
 
 use super::pointing_plan::{self, PointingPlan};
 use super::{ConversionOptions, ConversionReport, Loss, lockstep, losses};
-use crate::observation_io::msv4::{STATION_NAMED, kept_samples};
+use crate::observation_io::msv4::{
+    SECONDS_PER_DAY, STATION_NAMED, UNIX_EPOCH_MJD, check_fields, kept_samples,
+};
 use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -48,7 +50,7 @@ struct Converted {
 /// `STATE` row's; the datasets numbered after such a difference can hold
 /// other data than XRADIO's of the same name. A dataset whose fields
 /// follow an ephemeris holds it as XRADIO's `field_and_source_ephemeris`,
-/// the samples on `time_ephemeris` from the last at or before its first
+/// the samples on `time_ephemeris` from the last before its first
 /// time to the first two minutes past its last (the samples no dataset
 /// holds are a reported loss), with the phase centre at each time as XRADIO
 /// states it. Partitions are
@@ -85,7 +87,7 @@ pub fn to_msv4(
     )?;
     found.extend(lost);
     found.extend(losses::unused_antennas(catalogue));
-    found.extend(unwritten_samples(observation.as_ref(), &groups[0])?);
+    found.extend(preflight_fields(observation.as_ref(), &groups[0])?);
     found.sort();
     losses::refuse_unaccepted(&found, &options.accept)?;
     let set = Msv4ProcessingSetWriter::create(destination)?;
@@ -145,12 +147,13 @@ pub fn to_msv4(
     Ok(report)
 }
 
-/// The samples of each ephemeris the partitions' fields follow that no
-/// dataset holds, one loss an ephemeris: a dataset holds those from the
-/// last at or before its first time to the first that reaches past its last
-/// time's TDB ([`kept_samples`]), much as XRADIO's converter keeps those
-/// either side of a dataset's times.
-fn unwritten_samples(
+/// Refuse, before anything is written, what a dataset's field dataset
+/// cannot hold ([`check_fields`]), and report the samples of each ephemeris
+/// the partitions' fields follow that no dataset holds, one loss an
+/// ephemeris: a dataset holds those from the last before its first time to
+/// the first that reaches past its last time's TDB ([`kept_samples`]),
+/// much as XRADIO's converter keeps those either side of a dataset's times.
+fn preflight_fields(
     observation: &dyn Observation,
     group: &str,
 ) -> Result<Vec<Loss>, ObservationError> {
@@ -161,7 +164,11 @@ fn unwritten_samples(
         let origin =
             ((grid.time_origin.day() - UNIX_EPOCH_MJD) + grid.time_origin.frac()) * SECONDS_PER_DAY;
         let times: Vec<f64> = grid.times_s.iter().map(|time| origin + time).collect();
-        for field in &catalogue.partition(id).fields {
+        let entry = catalogue.partition(id);
+        if let Some((_, data_group)) = entry.data_group(group) {
+            check_fields(catalogue, &grid, &times, data_group.uvw_frame.effective)?;
+        }
+        for field in &entry.fields {
             let Some(ephemeris) = catalogue.fields[field.0 as usize].ephemeris.as_ref() else {
                 continue;
             };
@@ -183,20 +190,15 @@ fn unwritten_samples(
             let lost = held.iter().filter(|held| !**held).count();
             (lost > 0).then(|| {
                 Loss::Table(format!(
-                    "the ephemeris of {}: samples beyond every partition's times and those \
-                     either side ({lost})",
+                    "the ephemeris of {}: samples no dataset keeps ({lost}; a dataset keeps \
+                     those from the last before its first time to the first 120 s or more past \
+                     its last)",
                     ephemeris.name()
                 ))
             })
         })
         .collect())
 }
-
-/// MJD of the Unix epoch.
-const UNIX_EPOCH_MJD: f64 = 40_587.0;
-
-/// Seconds per day.
-const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// A source opened for conversion, with what its datasets are named.
 struct Named {

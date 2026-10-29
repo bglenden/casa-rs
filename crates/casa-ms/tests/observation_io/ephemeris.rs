@@ -7,14 +7,16 @@
 //! J2000 body sampled every minute (`ms_trial_ephemeris.ms`) and XRADIO's
 //! conversions of it (`tools/ms-trial/make_ephemeris_fixtures.sh`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_ms::observation_io::convert::{LossKind, to_msv2, to_msv4};
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{Catalogue, FieldEntry, FieldEphemeris, FieldId, ObservationError};
+use casa_test_support::ephemeris_table::{EphemerisFrame, EphemerisRow, write_field_ephemeris_in};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
+use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::fixture;
 
@@ -65,32 +67,42 @@ fn assert_close(what: &str, a: f64, b: f64, tolerance: f64) {
 /// `ephemeris`'s samples equal `reference`'s from sample `first` on, to
 /// the rounding of converting units and times twice.
 fn assert_samples(ephemeris: &FieldEphemeris, reference: &FieldEphemeris, first: usize) {
-    for (index, time) in ephemeris.times_mjd().iter().enumerate() {
-        let at = first + index;
-        assert_close("time", *time, reference.times_mjd()[at], 1.0e-6 / DAY_S);
-        for axis in 0..2 {
-            assert_close(
-                "direction",
-                ephemeris.directions_rad()[index][axis],
-                reference.directions_rad()[at][axis],
-                1.0e-15,
-            );
-        }
-        let distance = reference.distances_m()[at];
+    for index in 0..ephemeris.times_mjd().len() {
+        assert_sample(ephemeris, index, reference, first + index);
+    }
+}
+
+/// `ephemeris`'s sample `index` equals `reference`'s sample `at`, as
+/// [`assert_samples`] compares them.
+fn assert_sample(ephemeris: &FieldEphemeris, index: usize, reference: &FieldEphemeris, at: usize) {
+    assert_close(
+        "time",
+        ephemeris.times_mjd()[index],
+        reference.times_mjd()[at],
+        1.0e-6 / DAY_S,
+    );
+    for axis in 0..2 {
         assert_close(
-            "distance",
-            ephemeris.distances_m()[index],
-            distance,
-            1.0e-15 * distance,
-        );
-        let velocity = reference.radial_velocities_m_s()[at];
-        assert_close(
-            "velocity",
-            ephemeris.radial_velocities_m_s()[index],
-            velocity,
-            1.0e-13 * velocity.abs(),
+            "direction",
+            ephemeris.directions_rad()[index][axis],
+            reference.directions_rad()[at][axis],
+            1.0e-15,
         );
     }
+    let distance = reference.distances_m()[at];
+    assert_close(
+        "distance",
+        ephemeris.distances_m()[index],
+        distance,
+        1.0e-15 * distance,
+    );
+    let velocity = reference.radial_velocities_m_s()[at];
+    assert_close(
+        "velocity",
+        ephemeris.radial_velocities_m_s()[index],
+        velocity,
+        1.0e-13 * velocity.abs(),
+    );
 }
 
 /// The index of `reference`'s sample at `time` (MJD).
@@ -103,7 +115,7 @@ fn sample_at(reference: &FieldEphemeris, time: f64) -> usize {
 }
 
 /// XRADIO's `time_ephemeris` layout reads as the MSv2's own ephemeris: the
-/// samples from the last at or before the first time to the first after
+/// samples from the last before the first time to the first after
 /// the last, the offset recovered from its sum with the body's direction,
 /// and the frames.
 #[test]
@@ -128,12 +140,13 @@ fn xradios_ephemeris_samples_read_as_the_msv2_holds_them() {
     let first = sample_at(reference, ephemeris.times_mjd()[0]);
     assert_samples(ephemeris, reference, first);
     let samples = ephemeris.times_mjd();
-    assert!(samples[0] <= times[0] && samples[1] > times[0]);
+    assert!(samples[0] < times[0] && samples[1] >= times[0]);
     let last = samples[samples.len() - 1];
     assert!(last > times[times.len() - 1] && samples[samples.len() - 2] <= times[times.len() - 1]);
 }
 
-/// XRADIO's default layout, the samples interpolated onto the visibility
+/// XRADIO's interpolated layout (`ephemeris_interpolate=True`), the samples
+/// interpolated onto the visibility
 /// times, reads as those values: the MSv2's samples interpolated linearly
 /// in angle (and in distance) at each time. The test interpolates in MJD
 /// days, whose rounding (0.6 µs) moves this body by up to 2e-12 rad and
@@ -144,9 +157,14 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
     let v2 = catalogue(&fixture(root.path(), "ms_trial_ephemeris.ms"));
     let store = fixture(root.path(), "ms_trial_ephemeris_interpolated.ps.zarr");
     let v4 = catalogue(&store);
-    let (_, reference) = moving_field(&v2);
+    let (reference_field, reference) = moving_field(&v2);
     let (field, ephemeris) = moving_field(&v4);
-    assert!(field.phase_centre.as_angles().0.abs() > 0.0);
+    let (offset, reference_offset) = (
+        field.phase_centre.as_angles(),
+        reference_field.phase_centre.as_angles(),
+    );
+    assert_close("offset", offset.0, reference_offset.0, 1.0e-15);
+    assert_close("offset", offset.1, reference_offset.1, 1.0e-15);
     let (times, _) = times(&store);
     assert_eq!(ephemeris.times_mjd().len(), times.len());
     for (index, time) in times.iter().enumerate() {
@@ -186,7 +204,7 @@ fn xradios_interpolated_ephemeris_reads_as_its_values_at_the_times() {
 }
 
 /// The converter carries a moving field both ways: into an MSv4 the
-/// samples from the last at or before the first time to the first two
+/// samples from the last before the first time to the first two
 /// minutes past the last (so the last time's TDB is covered), reported for
 /// the rest; back into an MSv2 the same samples as the table casacore
 /// reads, the field's `EPHEMERIS_ID`, its offset as `PHASE_DIR` and its
@@ -206,14 +224,14 @@ fn a_moving_field_converts_both_ways() {
     assert_samples(ephemeris, reference, first);
     let samples = ephemeris.times_mjd();
     let reach = times[times.len() - 1] + 120.0 / DAY_S;
-    assert!(samples[0] <= times[0] && samples[1] > times[0]);
+    assert!(samples[0] < times[0] && samples[1] >= times[0]);
     assert!(samples[samples.len() - 1] >= reach && samples[samples.len() - 2] < reach);
     let unwritten = reference.times_mjd().len() - samples.len();
     let losses: Vec<String> = report.losses.iter().map(ToString::to_string).collect();
     assert!(
-        losses.iter().any(|loss| loss.contains(&format!(
-            "samples beyond every partition's times and those either side ({unwritten})"
-        ))),
+        losses
+            .iter()
+            .any(|loss| loss.contains(&format!("samples no dataset keeps ({unwritten};"))),
         "{losses:?}"
     );
     assert!(
@@ -307,6 +325,201 @@ fn copy_dir(from: &Path, to: &Path) {
         } else {
             std::fs::copy(entry.path(), target).expect("copy");
         }
+    }
+}
+
+/// Seconds [`two_sessions_two_fields`] moves its second session later:
+/// past the samples the first session's dataset keeps.
+const APART_S: f64 = 600.0;
+
+/// The second field's offset from the body, radians: west of it, so that
+/// its right ascension wraps.
+const WEST_RAD: [f64; 2] = [-2.0e-5, 3.0e-6];
+
+/// The ephemeris fixture with a second field, `west`, following the same
+/// body at [`WEST_RAD`] and observed at every other time of the first
+/// session, and its later times a second session moved [`APART_S`] later. The body's table is
+/// replaced by one, sampled as often, that moves linearly in angle and
+/// reaches past the moved times.
+fn two_sessions_two_fields(root: &Path) -> PathBuf {
+    let path = fixture(root, "ms_trial_ephemeris.ms");
+    let original = catalogue(&path);
+    let (_, body) = moving_field(&original);
+    let step_s = (body.times_mjd()[1] - body.times_mjd()[0]) * DAY_S;
+    let rows: Vec<EphemerisRow> = (0..body.times_mjd().len() + (APART_S / step_s) as usize)
+        .map(|sample| {
+            let t = sample as f64 * step_s;
+            [
+                body.times_mjd()[0] + t / DAY_S,
+                120.0 + 1.5e-4 * t,
+                18.0 - 4.0e-5 * t,
+                0.00257,
+                1.0e-5,
+            ]
+        })
+        .collect();
+    std::fs::remove_dir_all(path.join("FIELD/EPHEM0_Moonish.tab")).expect("the old table");
+    write_field_ephemeris_in(&path, 0, "Moonish", &rows, EphemerisFrame::J2000);
+    super::convert::split_sessions(&path, false);
+
+    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    let mut west = ms
+        .subtable(casa_ms::SubtableId::Field)
+        .and_then(|table| table.rows().ok()?.first().cloned())
+        .expect("a field");
+    west.upsert(
+        "NAME",
+        Value::Scalar(ScalarValue::String("west".to_string())),
+    );
+    let offset = Value::Array(ArrayValue::Float64(
+        ndarray::ArrayD::from_shape_vec(vec![2, 1], WEST_RAD.to_vec()).expect("shape"),
+    ));
+    for column in ["PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"] {
+        west.upsert(column, offset.clone());
+    }
+    ms.subtable_mut(casa_ms::SubtableId::Field)
+        .expect("FIELD")
+        .add_row(west)
+        .expect("a second field");
+    let scalar = |ms: &casa_ms::MeasurementSet, row: usize, column: &str| {
+        ms.main_table()
+            .cell_accessor(row, column)
+            .and_then(|cell| cell.scalar().cloned())
+            .expect("a cell")
+    };
+    let times: Vec<f64> = (0..ms.main_table().row_count())
+        .map(|row| match scalar(&ms, row, "TIME") {
+            ScalarValue::Float64(time) => time,
+            other => panic!("TIME {other:?}"),
+        })
+        .collect();
+    let mut distinct = times.clone();
+    distinct.sort_by(f64::total_cmp);
+    distinct.dedup();
+    for (row, time) in times.iter().enumerate() {
+        let index = distinct.partition_point(|known| known < time);
+        let later = scalar(&ms, row, "OBSERVATION_ID") == ScalarValue::Int32(1);
+        let mut cells = vec![(
+            "FIELD_ID",
+            ScalarValue::Int32(i32::from(!later && index % 2 == 1)),
+        )];
+        if later {
+            for column in ["TIME", "TIME_CENTROID"] {
+                let ScalarValue::Float64(value) = scalar(&ms, row, column) else {
+                    panic!("{column}");
+                };
+                cells.push((column, ScalarValue::Float64(value + APART_S)));
+            }
+        }
+        for (column, value) in cells {
+            ms.main_table_mut()
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| cell.set(Value::Scalar(value)))
+                .expect("a cell");
+        }
+    }
+    ms.save().expect("save");
+    path
+}
+
+/// The difference of two angles, radians, whatever turn each is stated in.
+fn angle_between(a: f64, b: f64) -> f64 {
+    (a - b + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+}
+
+/// Two fields of one body in two datasets whose samples have a gap between
+/// them, one field in both and the other, west of the body, in the first
+/// only: the reader makes each one catalogue field, the one whose offset
+/// wraps as well as the other, and both follow one ephemeris, the union of
+/// the datasets' samples (a body's, not a field's). Into an MSv2 that union
+/// becomes one evenly spaced table, its gap filled by the ephemeris's
+/// interpolation and reported.
+#[test]
+fn one_bodys_fields_in_two_datasets_follow_their_united_samples() {
+    let root = tempfile::tempdir().expect("root");
+    let source = two_sessions_two_fields(root.path());
+    let v2 = catalogue(&source);
+    let reference = v2.fields[0].ephemeris.as_deref().expect("an ephemeris");
+    let v4_path = root.path().join("apart.ps.zarr");
+    let options = super::convert::options(&ACCEPT);
+    to_msv4(&source, &v4_path, &options).expect("to MSv4");
+    let v4 = catalogue(&v4_path);
+    assert_eq!(v4.partitions.len(), 2);
+    let [first, second] = v4.fields.as_slice() else {
+        panic!("two fields, not {:?}", v4.fields);
+    };
+    // An MSv4 names a field by its MSv2 name and row, as XRADIO does.
+    for (field, stated) in [first, second].into_iter().zip(&v2.fields) {
+        assert!(field.name.starts_with(&stated.name), "{}", field.name);
+        let (offset, expected) = (
+            field.phase_centre.as_angles(),
+            stated.phase_centre.as_angles(),
+        );
+        assert_close("offset", angle_between(offset.0, expected.0), 0.0, 4.0e-15);
+        assert_close("offset", angle_between(offset.1, expected.1), 0.0, 4.0e-15);
+    }
+    let united = first.ephemeris.as_ref().expect("an ephemeris");
+    assert!(Arc::ptr_eq(
+        united,
+        second.ephemeris.as_ref().expect("an ephemeris")
+    ));
+    let step = reference.times_mjd()[1] - reference.times_mjd()[0];
+    let samples = united.times_mjd();
+    for (index, time) in samples.iter().enumerate() {
+        assert_sample(united, index, reference, sample_at(reference, *time));
+    }
+    let span = ((samples[samples.len() - 1] - samples[0]) / step).round() as usize + 1;
+    let filled = span - samples.len();
+    assert!(filled > 0, "the datasets' samples have a gap");
+
+    let back_path = root.path().join("apart.ms");
+    let report = to_msv2(&v4_path, &back_path, &options).expect("to MSv2");
+    let losses: Vec<String> = report.losses.iter().map(ToString::to_string).collect();
+    assert!(
+        losses.iter().any(|loss| loss.contains(&format!(
+            "the ephemeris of {}: that its samples have gaps ({filled} rows filled",
+            united.name()
+        ))),
+        "{losses:?}"
+    );
+    let back = catalogue(&back_path);
+    let back_ephemeris = back.fields[0].ephemeris.as_deref().expect("an ephemeris");
+    assert!(
+        back.fields
+            .iter()
+            .all(|field| field.ephemeris.as_deref() == Some(back_ephemeris))
+    );
+    assert_eq!(back_ephemeris.times_mjd().len(), span);
+    // A row in the gap is the united ephemeris's own interpolation there
+    // (of Cartesian positions, which leaves this body's path, linear in
+    // angle, by up to 1.3e-8 rad); every other row is a sample.
+    for (index, time) in back_ephemeris.times_mjd().iter().enumerate() {
+        assert_close(
+            "time",
+            *time,
+            samples[0] + index as f64 * step,
+            1.0e-6 / DAY_S,
+        );
+        if let Some(at) = samples
+            .iter()
+            .position(|sample| (sample - time).abs() <= 1.0e-6 / DAY_S)
+        {
+            assert_sample(back_ephemeris, index, united, at);
+            continue;
+        }
+        let [x, y, z] = united.sample(*time).expect("inside the samples").position_m;
+        let distance = (x * x + y * y + z * z).sqrt();
+        let direction = [y.atan2(x), (z / distance).asin()];
+        for (axis, expected) in direction.into_iter().enumerate() {
+            let found = back_ephemeris.directions_rad()[index][axis];
+            assert_close("direction", angle_between(found, expected), 0.0, 1.0e-14);
+        }
+        assert_close(
+            "distance",
+            back_ephemeris.distances_m()[index],
+            distance,
+            1.0e-14 * distance,
+        );
     }
 }
 

@@ -7,7 +7,7 @@ oracle.
 
 writes OUT/ms_trial_ephemeris.ps.zarr (`ephemeris_interpolate=False`: the
 samples on `time_ephemeris`) and OUT/ms_trial_ephemeris_interpolated.ps.zarr
-(`ephemeris_interpolate=True`, XRADIO's default: the samples interpolated onto
+(`ephemeris_interpolate=True`; XRADIO's default is `False`: the samples interpolated onto
 the visibility times), one dataset each, without pointing.
 """
 

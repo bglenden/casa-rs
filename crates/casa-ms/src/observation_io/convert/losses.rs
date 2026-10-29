@@ -556,34 +556,45 @@ const EPHEMERIS_EXTRAS: [&str; 7] = [
 ];
 
 /// A field dataset's ephemeris variables a conversion does not carry
-/// ([`EPHEMERIS_EXTRAS`]), as one column loss.
+/// ([`EPHEMERIS_EXTRAS`]), as one column loss; and an ephemeris in XRADIO's
+/// interpolated layout (no `time_ephemeris`), whose samples stop at the
+/// dataset's last time, so that no time's TDB after it is covered and an
+/// MSv2 written from them cannot be evaluated at that time
+/// (`MeasComet::fillMeas` refuses a table's last row).
 fn ephemeris_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+    let name = |path: &Path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let label = format!(
+        "{}/{}",
+        path.parent().map(name).unwrap_or_default(),
+        name(path)
+    );
+    let moving = std::fs::read_to_string(path.join("zarr.json"))
+        .is_ok_and(|metadata| metadata.contains("field_and_source_ephemeris"));
+    if moving && !path.join("time_ephemeris").join("zarr.json").is_file() {
+        losses.push(Loss::Column(format!(
+            "{label} ephemeris samples (interpolated by XRADIO onto the visibility times; the \
+             table's own samples are not in the store, nor any past the last time, so the body \
+             cannot be found at the TDB of the last 69 s of times)"
+        )));
+    }
     let mut lost = Vec::new();
     for child in std::fs::read_dir(path).map_err(storage)? {
-        let name = child
+        let child = child
             .map_err(storage)?
             .file_name()
             .to_string_lossy()
             .into_owned();
-        if EPHEMERIS_EXTRAS.contains(&name.as_str()) {
-            lost.push(name);
+        if EPHEMERIS_EXTRAS.contains(&child.as_str()) {
+            lost.push(child);
         }
     }
     if !lost.is_empty() {
         lost.sort();
-        let dataset = path
-            .parent()
-            .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let group = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        losses.push(Loss::Column(format!(
-            "{dataset}/{group} {}",
-            lost.join(", ")
-        )));
+        losses.push(Loss::Column(format!("{label} {}", lost.join(", "))));
     }
     Ok(())
 }

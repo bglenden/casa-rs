@@ -21,6 +21,7 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
+use super::Loss;
 use crate::ephemeris::AU_METRES;
 use crate::observation_io::update::storage;
 use crate::schema::SubtableId;
@@ -40,13 +41,10 @@ const COLUMNS: [(&str, &str); 5] = [
     ("RadVel", "AU/d"),
 ];
 
-/// The keywords written; anything else a source table states is not
-/// carried.
-pub(super) const KEYWORDS: [&str; 12] = [
-    "VS_CREATE",
-    "VS_DATE",
-    "VS_VERSION",
-    "VS_TYPE",
+/// The keywords whose values are carried; anything else a source table
+/// states is not. The `VS_*` set is written too, but anew: it dates and
+/// versions the table written, so a source table's own is not carried.
+pub(super) const KEYWORDS: [&str; 8] = [
     "NAME",
     "MJD0",
     "dMJD",
@@ -97,26 +95,112 @@ pub(super) fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), Observation
                 what: "writing an MSv2 ephemeris whose radial velocities are not geocentric",
             });
         }
-        if spacing(ephemeris).is_none() {
+        if table_grid(ephemeris).is_none() {
             return Err(ObservationError::Unsupported {
-                what: "writing an MSv2 ephemeris whose samples are not evenly spaced in time \
-                       (casacore's MeasComet reads only evenly spaced tables)",
+                what: "writing an MSv2 ephemeris whose samples are not on one evenly spaced \
+                       grid of times (casacore's MeasComet reads only evenly spaced tables)",
             });
         }
     }
     Ok(())
 }
 
-/// The samples' step, days, when they are evenly spaced.
-fn spacing(ephemeris: &FieldEphemeris) -> Option<f64> {
+/// The most rows a table this writes may hold.
+const MOST_ROWS: usize = 1_000_000;
+
+/// The evenly spaced times of an MSv2 table of an ephemeris: its step
+/// (days) and, at each of its rows, the sample there, or `None` for a time
+/// between samples. A union of datasets' samples has gaps (two sessions,
+/// say), but its samples lie on the original table's grid.
+struct TableGrid {
+    step: f64,
+    rows: Vec<Option<usize>>,
+}
+
+/// [`TableGrid`] of `ephemeris`, when every sample is on the grid of the
+/// smallest step (to [`SPACING_TOLERANCE_DAYS`]) and the table holds at
+/// most [`MOST_ROWS`] rows.
+fn table_grid(ephemeris: &FieldEphemeris) -> Option<TableGrid> {
     let times = ephemeris.times_mjd();
     let first = times[0];
-    let step = (times[times.len() - 1] - first) / (times.len() - 1) as f64;
-    times
-        .iter()
-        .enumerate()
-        .all(|(index, time)| (time - (first + index as f64 * step)).abs() <= SPACING_TOLERANCE_DAYS)
-        .then_some(step)
+    let smallest = times
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .fold(f64::INFINITY, f64::min);
+    // The step from the whole span, which rounding disturbs least.
+    let span = ((times[times.len() - 1] - first) / smallest).round();
+    if !(span.is_finite() && span >= 1.0 && span < MOST_ROWS as f64) {
+        return None;
+    }
+    let step = (times[times.len() - 1] - first) / span;
+    let mut rows = vec![None; span as usize + 1];
+    for (sample, time) in times.iter().enumerate() {
+        let row = ((time - first) / step).round();
+        if (time - (first + row * step)).abs() > SPACING_TOLERANCE_DAYS {
+            return None;
+        }
+        rows[row as usize] = Some(sample);
+    }
+    Some(TableGrid { step, rows })
+}
+
+/// Each ephemeris the catalogue's fields follow whose samples have gaps on
+/// their grid, as a loss: an MSv2 table holds every row of it, so the rows
+/// in the gaps are the ephemeris's own interpolation
+/// ([`FieldEphemeris::sample`]), as casacore and casa-rs would evaluate it
+/// there.
+pub(super) fn filled_rows(catalogue: &Catalogue) -> Vec<Loss> {
+    followed(catalogue)
+        .0
+        .into_iter()
+        .filter_map(|ephemeris| {
+            let grid = table_grid(ephemeris)?;
+            let filled = grid.rows.iter().filter(|row| row.is_none()).count();
+            (filled > 0).then(|| {
+                Loss::Column(format!(
+                    "the ephemeris of {}: that its samples have gaps ({filled} rows filled by \
+                     its interpolation, as casacore's MeasComet reads only evenly spaced \
+                     tables)",
+                    ephemeris.name()
+                ))
+            })
+        })
+        .collect()
+}
+
+/// The table row at `mjd` of `ephemeris`: `MJD`, `RA` and `DEC` (degrees,
+/// the ephemeris's frame), `Rho` (AU) and `RadVel` (AU a day), from
+/// `sample` or, between samples, from the ephemeris's interpolation.
+fn table_row(ephemeris: &FieldEphemeris, mjd: f64, sample: Option<usize>) -> Option<[f64; 5]> {
+    let (time, [ra, dec], distance, velocity) = match sample {
+        Some(sample) => (
+            ephemeris.times_mjd()[sample],
+            ephemeris.directions_rad()[sample],
+            ephemeris.distances_m()[sample],
+            ephemeris.radial_velocities_m_s()[sample],
+        ),
+        None => {
+            let at = ephemeris.sample(mjd)?;
+            let [x, y, z] = at.position_m;
+            let distance = (x * x + y * y + z * z).sqrt();
+            (
+                mjd,
+                [
+                    y.atan2(x).rem_euclid(std::f64::consts::TAU),
+                    (z / distance).asin(),
+                ],
+                distance,
+                at.radial_velocity_m_s,
+            )
+        }
+    };
+    Some([
+        time,
+        ra.to_degrees(),
+        dec.to_degrees(),
+        distance / AU_METRES,
+        velocity * 86_400.0 / AU_METRES,
+    ])
 }
 
 /// Give `ms`'s `FIELD` rows (one per catalogue field, in order) the
@@ -201,8 +285,8 @@ fn write_table(
     ephemeris: &FieldEphemeris,
     creation_date: &str,
 ) -> Result<(), ObservationError> {
-    let step = spacing(ephemeris).ok_or(ObservationError::Unsupported {
-        what: "writing an MSv2 ephemeris whose samples are not evenly spaced in time",
+    let TableGrid { step, rows } = table_grid(ephemeris).ok_or(ObservationError::Unsupported {
+        what: "writing an MSv2 ephemeris whose samples are not on one evenly spaced grid",
     })?;
     let schema = TableSchema::new(
         COLUMNS
@@ -212,15 +296,13 @@ fn write_table(
     )
     .map_err(storage)?;
     let mut table = Table::with_schema(schema);
-    for sample in 0..ephemeris.times_mjd().len() {
-        let [ra, dec] = ephemeris.directions_rad()[sample];
-        let values = [
-            ephemeris.times_mjd()[sample],
-            ra.to_degrees(),
-            dec.to_degrees(),
-            ephemeris.distances_m()[sample] / AU_METRES,
-            ephemeris.radial_velocities_m_s()[sample] * 86_400.0 / AU_METRES,
-        ];
+    let first = ephemeris.times_mjd()[0];
+    for (row, sample) in rows.into_iter().enumerate() {
+        let values = table_row(ephemeris, first + row as f64 * step, sample).ok_or(
+            ObservationError::Unsupported {
+                what: "writing an MSv2 ephemeris row outside its samples",
+            },
+        )?;
         table
             .add_row(RecordValue::new(
                 COLUMNS
@@ -244,7 +326,6 @@ fn write_table(
         DirectionRef::J2000 => "ICRF/J2000.0",
         _ => "ICRF/ICRS",
     };
-    let first = ephemeris.times_mjd()[0];
     for (keyword, value) in [
         ("VS_CREATE", string(&stamp)),
         ("VS_DATE", string(&stamp)),
@@ -318,13 +399,24 @@ mod tests {
     }
 
     #[test]
-    fn only_evenly_spaced_samples_have_a_step() {
+    fn samples_on_one_grid_fill_their_gaps_and_others_have_none() {
         let step = 1.0 / 1_440.0;
         let even: Vec<f64> = (0..5).map(|i| 60_000.0 + f64::from(i) * step).collect();
-        assert!((spacing(&ephemeris(even.clone())).expect("even") - step).abs() < 1e-12);
-        let mut gapped = even;
+        let grid = table_grid(&ephemeris(even.clone())).expect("even");
+        assert!((grid.step - step).abs() < 1e-12);
+        assert!(grid.rows.iter().all(Option::is_some));
+        let mut gapped = even.clone();
         gapped.remove(2);
-        assert!(spacing(&ephemeris(gapped)).is_none());
+        let gapped = ephemeris(gapped);
+        let grid = table_grid(&gapped).expect("on the grid");
+        assert_eq!(grid.rows, [Some(0), Some(1), None, Some(2), Some(3)]);
+        let filled = table_row(&gapped, even[2], None).expect("between samples");
+        let sample = gapped.sample(even[2]).expect("between samples");
+        assert!((filled[3] * AU_METRES - 3.8e8).abs() < 1e-3);
+        assert!((filled[4] * AU_METRES / 86_400.0 - sample.radial_velocity_m_s).abs() < 1e-12);
+        let mut uneven = even;
+        uneven[2] += 10.0 / 86_400.0;
+        assert!(table_grid(&ephemeris(uneven)).is_none());
     }
 
     #[test]

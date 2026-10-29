@@ -5,7 +5,7 @@
 # (docs/measurement-set/trial/README.md): the trial MSv2 with its field
 # following a Moon-like body (ms_trial_ephemeris.ms), and XRADIO's
 # conversions of it in its two layouts, the samples on their own times
-# (ms_trial_ephemeris.ps.zarr) and, XRADIO's default, interpolated onto the
+# (ms_trial_ephemeris.ps.zarr, XRADIO's default) and interpolated onto the
 # visibility times (ms_trial_ephemeris_interpolated.ps.zarr). It starts from
 # the committed ms_trial.ms, so the other fixtures are untouched. Needs cargo
 # and uv; the XRADIO oracle environment is tools/ms-trial/uv.lock.
