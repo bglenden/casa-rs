@@ -22,10 +22,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::SelectedObservationEphemeris;
+use crate::ephemeris::FieldMotion;
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
-use casa_observation::FieldEphemeris;
 
 /// Engine for computing derived quantities from MS metadata.
 ///
@@ -58,9 +58,9 @@ pub struct MsCalEngine {
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
     field_phase_offsets: Box<[[f64; 2]]>,
-    /// The ephemeris each field follows, once attached
+    /// What each field follows, once attached
     /// ([`Self::with_field_ephemerides`]); empty until then.
-    field_ephemerides: Box<[Option<Arc<FieldEphemeris>>]>,
+    field_motions: Box<[FieldMotion]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
@@ -133,7 +133,7 @@ impl MsCalEngine {
         let antenna_count = ms.antenna()?.row_count();
         let field_count = ms.field()?.row_count();
         // The fields' ephemerides ([`Self::with_field_ephemerides`]).
-        let ephemerides = crate::ephemeris::field_ephemerides_bytes(ms)
+        let ephemerides = crate::ephemeris::field_motions_bytes(ms)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         antenna_count
             .checked_mul(
@@ -216,7 +216,7 @@ impl MsCalEngine {
             antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
-            field_ephemerides: Box::new([]),
+            field_motions: Box::new([]),
             observatory_position,
             time_reference,
             measures: Some(measures),
@@ -289,7 +289,7 @@ impl MsCalEngine {
             antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
-            field_ephemerides: Box::new([]),
+            field_motions: Box::new([]),
             observatory_position,
             time_reference: detect_time_reference(ms),
             measures: Some(measures),
@@ -326,26 +326,26 @@ impl MsCalEngine {
     /// towards the body offset by its `PHASE_DIR`, whatever the imaging
     /// phase centre ([`Self::observation_direction_j2000`]); a field whose
     /// `NUM_POLY` is above zero follows its polynomial, as casacore reads
-    /// it. Imaging attaches them; an engine without them reads every
-    /// field's `PHASE_DIR` as its direction, as it always has.
+    /// it. A field whose table cannot be read is refused only where its
+    /// direction is asked for. Imaging attaches them; an engine without
+    /// them reads every field's `PHASE_DIR` as its direction, as it always
+    /// has.
     ///
     /// # Errors
     ///
-    /// A field follows an ephemeris whose table is missing or is not one
-    /// an ephemeris is read from.
+    /// FIELD cannot be read.
     pub fn with_field_ephemerides(mut self, ms: &MeasurementSet) -> MsResult<Self> {
-        self.field_ephemerides = crate::ephemeris::field_ephemerides(ms)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.field_motions = crate::ephemeris::field_motions(ms)?;
         Ok(self)
     }
 
     /// Whether `field_id` follows an attached ephemeris
-    /// ([`Self::with_field_ephemerides`]).
+    /// ([`Self::with_field_ephemerides`]), readable or not.
     #[must_use]
     pub fn field_moves(&self, field_id: usize) -> bool {
-        self.field_ephemerides
+        self.field_motions
             .get(field_id)
-            .is_some_and(Option::is_some)
+            .is_some_and(|motion| !matches!(motion, FieldMotion::Fixed))
     }
 
     /// Create an engine with explicit data (useful for testing).
@@ -372,7 +372,7 @@ impl MsCalEngine {
             antenna_response_family_envelope: None,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
-            field_ephemerides: Box::new([]),
+            field_motions: Box::new([]),
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
@@ -610,7 +610,16 @@ impl MsCalEngine {
     }
 
     /// The J2000 direction rows of `field_id` are observed towards at
-    /// `time_mjd_sec` ([`Self::direction_at`]).
+    /// `time_mjd_sec`: its constant `PHASE_DIR`, or, for a field that
+    /// follows an attached ephemeris ([`Self::with_field_ephemerides`]), the
+    /// body's direction from the observatory (its samples interpolated at
+    /// the time's TDB, as CASA's imager reads a `MeasComet`) shifted by
+    /// `PHASE_DIR`'s true angle, as casacore's `phaseDirMeas` shifts it.
+    ///
+    /// # Errors
+    ///
+    /// An unknown field, a field whose ephemeris cannot be read or does not
+    /// cover the time, or a failed conversion.
     pub fn observation_direction_j2000(
         &self,
         time_mjd_sec: f64,
@@ -619,18 +628,16 @@ impl MsCalEngine {
         Ok(self.direction_at(time_mjd_sec, field_id)?.into_owned())
     }
 
-    /// The J2000 direction of `field_id` at `time_mjd_sec`: its constant
-    /// `PHASE_DIR`, or, for a field that follows an attached ephemeris, the
-    /// body's direction from the observatory (its samples interpolated at
-    /// the time's TDB, as CASA's imager reads a `MeasComet`) shifted by
-    /// `PHASE_DIR`'s true angle, as casacore's `phaseDirMeas` shifts it.
+    /// [`Self::observation_direction_j2000`], borrowed for a fixed field.
     fn direction_at(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<Cow<'_, MDirection>> {
-        let Some(ephemeris) = self
-            .field_ephemerides
-            .get(field_id)
-            .and_then(Option::as_ref)
-        else {
-            return Ok(Cow::Borrowed(self.field_dir(field_id)?));
+        let ephemeris = match self.field_motions.get(field_id) {
+            None | Some(FieldMotion::Fixed) => return Ok(Cow::Borrowed(self.field_dir(field_id)?)),
+            Some(FieldMotion::Ephemeris(ephemeris)) => ephemeris,
+            Some(FieldMotion::Unreadable(reason)) => {
+                return Err(MsError::InvalidInput(format!(
+                    "FIELD_ID {field_id} follows an ephemeris that cannot be read: {reason}"
+                )));
+            }
         };
         let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
@@ -656,6 +663,9 @@ impl MsCalEngine {
     }
 
     /// Returns the constant term of `FIELD.PHASE_DIR` at `field_id` in J2000.
+    /// For a field that follows an ephemeris ([`Self::field_moves`]) that is
+    /// the offset from the body, not a direction: use
+    /// [`Self::observation_direction_j2000`].
     ///
     /// The engine resolves it once, at construction, for fixed and
     /// row-varying direction references, using the field row's own `TIME`

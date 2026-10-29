@@ -347,7 +347,10 @@ refused, as for a moving centre.
 The MSv2 adapter refuses to open a MeasurementSet whose attached table
 today's reader refuses (no table or several for an id, a non-geocentric
 `obsloc`, a `posrefsys` other than ICRS or J2000, fewer than two rows),
-even when no field read follows it; casacore is more lenient there.
+even when no field read follows it. casacore is more lenient, and so is
+today's route: its engine refuses only the direction of a field whose
+table cannot be read. Before the cutover the boundary must either carry
+an unreadable ephemeris as such or the owner accept the refusal.
 
 Evidence:
 - T1 (`casars-imager` T1 `ephemeris`): the track's field attached to a

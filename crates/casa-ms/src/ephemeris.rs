@@ -117,7 +117,7 @@ impl SelectedObservationEphemeris {
         field_ids: impl IntoIterator<Item = usize>,
         budget: SelectedObservationReferenceDataBudget,
     ) -> Result<Self, SelectedObservationEphemerisError> {
-        let field = measurement_set.field()?;
+        let ephemeris_ids = field_ephemeris_ids(measurement_set)?;
         let root = measurement_set
             .path()
             .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
@@ -127,9 +127,10 @@ impl SelectedObservationEphemeris {
             if !selected.insert(field_id) {
                 continue;
             }
-            let ephemeris_id = field
-                .ephemeris_id(field_id)?
-                .filter(|value| *value >= 0)
+            let ephemeris_id = ephemeris_ids
+                .get(field_id)
+                .copied()
+                .flatten()
                 .ok_or(SelectedObservationEphemerisError::MissingTrackedField { field_id })?;
             let path = find_field_ephemeris(root, ephemeris_id)?;
             requested.push((field_id, path));
@@ -300,40 +301,58 @@ pub(crate) fn field_ephemeris_ids(
         .collect())
 }
 
-/// The ephemeris each FIELD row of `measurement_set` follows
+/// What a FIELD row's direction follows.
+#[derive(Clone, Debug)]
+pub(crate) enum FieldMotion {
+    /// Its `PHASE_DIR` (or `PHASE_DIR` polynomial).
+    Fixed,
+    /// Its attached ephemeris, `PHASE_DIR` then the offset from the body.
+    Ephemeris(Arc<FieldEphemeris>),
+    /// An attached ephemeris that could not be read, and why: refused
+    /// wherever the field's direction is asked for, not before.
+    Unreadable(Arc<str>),
+}
+
+/// What each FIELD row of `measurement_set` follows
 /// ([`field_ephemeris_ids`]), each table read once however many rows share
-/// it ([`attached_ephemeris`]).
+/// it ([`attached_ephemeris`]). A table that cannot be read leaves its
+/// fields [`FieldMotion::Unreadable`]: casacore opens such a MeasurementSet,
+/// and a run that never asks for those fields' directions images as before.
 ///
 /// # Errors
 ///
-/// A field follows an ephemeris of an in-memory MeasurementSet, or one
-/// whose table is missing or is not one an ephemeris is read from.
-pub(crate) fn field_ephemerides(
+/// FIELD cannot be read.
+pub(crate) fn field_motions(
     measurement_set: &MeasurementSet,
-) -> Result<Box<[Option<Arc<FieldEphemeris>>]>, SelectedObservationEphemerisError> {
+) -> Result<Box<[FieldMotion]>, MsError> {
     let ids = field_ephemeris_ids(measurement_set)?;
-    let mut read: BTreeMap<i32, Arc<FieldEphemeris>> = BTreeMap::new();
-    ids.iter()
+    let mut read: BTreeMap<i32, FieldMotion> = BTreeMap::new();
+    Ok(ids
+        .iter()
         .map(|id| {
             let Some(id) = *id else {
-                return Ok(None);
+                return FieldMotion::Fixed;
             };
-            if let Some(series) = read.get(&id) {
-                return Ok(Some(Arc::clone(series)));
-            }
-            let root = measurement_set
-                .path()
-                .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
-            let series = Arc::new(attached_ephemeris(root, id)?);
-            read.insert(id, Arc::clone(&series));
-            Ok(Some(series))
+            read.entry(id)
+                .or_insert_with(|| {
+                    let series = measurement_set
+                        .path()
+                        .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)
+                        .and_then(|root| attached_ephemeris(root, id));
+                    match series {
+                        Ok(series) => FieldMotion::Ephemeris(Arc::new(series)),
+                        Err(error) => FieldMotion::Unreadable(Arc::from(error.to_string())),
+                    }
+                })
+                .clone()
         })
-        .collect()
+        .collect())
 }
 
-/// At most the bytes [`field_ephemerides`] holds for `measurement_set`,
-/// from each table's row count, before any row is read.
-pub(crate) fn field_ephemerides_bytes(
+/// At most the bytes [`field_motions`] holds for `measurement_set`, from
+/// each readable table's row count, before any row is read; a table that
+/// cannot be read holds only its reason.
+pub(crate) fn field_motions_bytes(
     measurement_set: &MeasurementSet,
 ) -> Result<usize, SelectedObservationEphemerisError> {
     let ids = field_ephemeris_ids(measurement_set)?
@@ -343,15 +362,17 @@ pub(crate) fn field_ephemerides_bytes(
     let slots = measurement_set
         .field()?
         .row_count()
-        .checked_mul(size_of::<Option<Arc<FieldEphemeris>>>())
+        .checked_mul(size_of::<FieldMotion>())
         .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
     ids.into_iter().try_fold(slots, |bytes, id| {
-        let root = measurement_set
+        let table = measurement_set
             .path()
-            .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
-        let table = EphemerisSeriesPreflight::open(&find_field_ephemeris(root, id)?)?;
+            .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)
+            .and_then(|root| EphemerisSeriesPreflight::open(&find_field_ephemeris(root, id)?));
+        // An unreadable table's reason is a short message.
+        let held = table.map_or(256, |table| table.retained_bytes);
         bytes
-            .checked_add(table.retained_bytes)
+            .checked_add(held)
             .ok_or(SelectedObservationEphemerisError::ByteOverflow)
     })
 }

@@ -165,9 +165,20 @@ pub(super) fn fields_and_uvw(ms: &MeasurementSet) -> Result<Fields, ObservationE
         .map(|row| field.ephemeris_id(row).map_err(storage))
         .collect::<Result<Vec<_>, ObservationError>>()?;
     // What each field follows, read as today's imaging reads it: a field
-    // whose `NUM_POLY` is above zero follows its polynomial instead.
-    let attached = crate::ephemeris::field_ephemerides(ms)
-        .map_err(|error| invalid(format!("the ephemeris a field follows: {error}")))?;
+    // whose `NUM_POLY` is above zero follows its polynomial instead. The
+    // boundary holds every field, so a table that cannot be read refuses
+    // the opening.
+    let attached = crate::ephemeris::field_motions(ms)
+        .map_err(storage)?
+        .iter()
+        .map(|motion| match motion {
+            crate::ephemeris::FieldMotion::Fixed => Ok(None),
+            crate::ephemeris::FieldMotion::Ephemeris(series) => Ok(Some(series.clone())),
+            crate::ephemeris::FieldMotion::Unreadable(reason) => {
+                Err(invalid(format!("the ephemeris a field follows: {reason}")))
+            }
+        })
+        .collect::<Result<Vec<_>, ObservationError>>()?;
     let phase_dir = DirectionColumn::phase_dir(field_table);
     let fields = (0..field.row_count())
         .map(|row| {

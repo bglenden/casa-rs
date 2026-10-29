@@ -77,10 +77,9 @@ pub(super) fn resolve_centre(
     };
     let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
         None => {
-            let field = ms.field()?;
             for field_id in &survey.fields {
                 let row = usize::try_from(*field_id).expect("validated FIELD_ID");
-                if field.ephemeris_id(row)?.is_some_and(|id| id >= 0) {
+                if engine.field_moves(row) {
                     return Err(PrepareError::EphemerisFieldWithoutCentre {
                         field_id: *field_id,
                     });
@@ -113,7 +112,7 @@ pub(super) fn resolve_centre(
             )
         }
         Some(text) => {
-            let ephemeris = named_ephemeris(text, ms, survey, budget)?;
+            let ephemeris = named_ephemeris(text, survey, engine, budget)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
                 PhaseCentreLaw::Ephemeris(text.to_string()),
@@ -179,7 +178,7 @@ pub(super) fn primary_beam_centres(
         .iter()
         .map(|field_id| {
             let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
-            if field.ephemeris_id(field_id)?.is_some_and(|id| id >= 0) {
+            if engine.field_moves(field_id) {
                 return Err(PrepareError::MovingAnalyticPrimaryBeam);
             }
             if phase_direction_varies(field.phase_dir(field_id)?) {
@@ -297,8 +296,8 @@ fn image_centre(
 /// A named ephemeris (or an external table).
 fn named_ephemeris(
     text: &str,
-    ms: &MeasurementSet,
     survey: &Survey,
+    engine: &casa_ms::derived::engine::MsCalEngine,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationEphemeris, PrepareError> {
     let budget = budget.reference_data_budget();
@@ -307,24 +306,18 @@ fn named_ephemeris(
     } else {
         SelectedObservationEphemeris::named(text, budget)?
     };
-    let field = ms.field()?;
-    let mut attached = Vec::new();
+    // The engine observes each attached field towards its own body
+    // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
+    // of which only some move is refused.
+    let mut moving = 0;
     for field_id in &survey.fields {
         let field_id = usize::try_from(*field_id).map_err(|_| PrepareError::NegativeMainId {
             column: "FIELD_ID",
             value: *field_id,
         })?;
-        if field
-            .ephemeris_id(field_id)?
-            .is_some_and(|value| value >= 0)
-        {
-            attached.push(field_id);
-        }
+        moving += usize::from(engine.field_moves(field_id));
     }
-    // The engine observes each attached field towards its own body
-    // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
-    // of which only some move is refused.
-    if !attached.is_empty() && attached.len() != survey.fields.len() {
+    if moving != 0 && moving != survey.fields.len() {
         return Err(PrepareError::MixedEphemerisFields);
     }
     Ok(ephemeris)

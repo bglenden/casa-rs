@@ -886,4 +886,26 @@ fn fields_carry_the_ephemerides_they_follow() {
         open(&v2, &OpenOptions::default()).err(),
         Some(ObservationError::InvalidStore { reason }) if reason.contains("ephemeris")
     ));
+
+    // Today's imaging engine keeps casacore's leniency: it refuses
+    // only the direction of a field whose table cannot be read.
+    let ms = MeasurementSet::open(&v2).expect("ms");
+    let engine = casa_ms::derived::engine::MsCalEngine::with_measures(
+        &ms,
+        casa_test_support::deterministic_measures_provider(),
+    )
+    .and_then(|engine| engine.with_field_ephemerides(&ms))
+    .expect("an engine over a table it cannot read");
+    let time_s = 59_000.25 * 86_400.0;
+    assert!(engine.field_moves(0) && engine.field_moves(1) && !engine.field_moves(2));
+    let refused = engine.observation_direction_j2000(time_s, 0).err();
+    assert!(
+        refused
+            .as_ref()
+            .is_some_and(|error| error.to_string().contains("cannot be read")),
+        "{refused:?}"
+    );
+    engine
+        .observation_direction_j2000(time_s, 2)
+        .expect("the fixed field's direction");
 }
