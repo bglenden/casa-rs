@@ -191,6 +191,20 @@ pub enum GainSolveError {
     #[error("gain solve selection produced no rows")]
     EmptySelection,
 
+    /// Two data descriptions of the selection share a spectral window.
+    /// CASA solves each description apart and writes each one's solutions
+    /// under the window; casa-rs keys a solve by its window and does not
+    /// take this layout yet.
+    #[error(
+        "DATA_DESC_IDs {data_desc_ids:?} share spectral window {spw_id}; casa-rs does not solve data descriptions that share a window yet (#979); select one of them"
+    )]
+    SharedSpectralWindow {
+        /// The shared window.
+        spw_id: i32,
+        /// The selected data descriptions on it.
+        data_desc_ids: Vec<i32>,
+    },
+
     /// The solve requires a point-source Stokes-I model.
     #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
     UnsupportedSkyModel {
@@ -665,7 +679,9 @@ fn phase_only(gain: Complex32) -> Complex32 {
 /// Divide every gain of each window by the root mean power of the window's
 /// unflagged solutions, taken over all its intervals, antennas and
 /// receptors together, as CASA's `solnorm` does
-/// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`).
+/// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
+/// window with one unflagged solution or none stays, as `normSolnArray`
+/// normalizes only more than one.
 fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
     let mut power = BTreeMap::<i32, (f64, usize)>::new();
     for row in rows.iter() {
@@ -682,7 +698,7 @@ fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
             continue;
         };
         let factor = (sum / count.max(1) as f64).sqrt() as f32;
-        if count == 0 || !(factor.is_finite() && factor > 0.0) {
+        if count <= 1 || !(factor.is_finite() && factor > 0.0) {
             continue;
         }
         for gain in &mut row.gains {
@@ -797,6 +813,8 @@ mod solnorm_tests {
             // A flagged solution is divided but does not count.
             row(0, 20.0, [100.0, 3.0], [true, false]),
             row(1, 0.0, [4.0, 4.0], [false, false]),
+            // One unflagged solution is not normalized (normSolnArray).
+            row(2, 0.0, [4.0, 5.0], [false, true]),
         ];
         normalize_gain_solution_amplitudes(&mut rows);
         let factor = ((1.0_f32 + 9.0 + 4.0 + 9.0 + 9.0) / 5.0).sqrt();
@@ -815,5 +833,6 @@ mod solnorm_tests {
             &[100.0 / factor, 3.0 / factor]
         ));
         assert!(close(&amplitudes(&rows[3]), &[1.0, 1.0]));
+        assert!(close(&amplitudes(&rows[4]), &[4.0, 5.0]));
     }
 }

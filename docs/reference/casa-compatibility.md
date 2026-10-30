@@ -15,7 +15,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 2 | 4 | 0 |
-| bandpass | bandpass | yes | 35 | 35 | 0 | 11 | 4 | 0 |
+| bandpass | bandpass | yes | 35 | 35 | 0 | 8 | 4 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
@@ -63,7 +63,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `minblperant`, `minsnr`, `corrdepflags`, `append`, `fillgaps`, `visnorm`, `maskcenter`, `maskedge`
+- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `append`, `fillgaps`, `visnorm`, `maskcenter`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none

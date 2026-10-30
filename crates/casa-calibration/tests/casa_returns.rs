@@ -310,6 +310,120 @@ fn solvestats_counts_the_reference_antenna_flex_hands_on_to() {
     );
 }
 
+/// A `solint` interval starts at its group's earliest time, whatever the
+/// order of the fields `combine` joins: CASA sorts the combined axes out
+/// before time.
+#[test]
+fn combined_fields_keep_casas_interval_boundaries() {
+    let dir = TempDir::new().unwrap();
+    let cluster = |time_seconds, scan_number| common::SyntheticGainTimeCluster {
+        time_seconds,
+        scan_number,
+        gains: [[Complex32::new(1.0, 0.0); 2]; 3],
+    };
+    // Field 1 is observed first, in scan 1; field 0 thirty seconds later.
+    let ms = common::create_gain_solve_fixture_ms_from_clusters(
+        dir.path(),
+        &[cluster(130.0, 2), cluster(131.0, 2), cluster(132.0, 2)],
+    );
+    let mut opened = casa_ms::ms::MeasurementSet::open(&ms).expect("open");
+    for time_seconds in [100.0, 101.0, 102.0] {
+        common::append_gain_solve_cluster_for_field(&mut opened, 1, &cluster(time_seconds, 1));
+    }
+    opened.save().expect("save");
+    let value = returned(
+        dir.path(),
+        "gaincal",
+        json!({
+            "vis": ms.to_str().unwrap(), "caltable": "g.gcal", "refant": "0",
+            "minblperant": 2, "combine": "scan,field", "solint": "20s",
+        }),
+    );
+    assert_eq!(ints(entry(entry(&value, "solvestats"), "expected")), [2, 2]);
+}
+
+/// Two data descriptions on one window: CASA solves each apart, which
+/// casa-rs does not yet, so the solve is refused naming #979, whether the
+/// second repeats the first's correlations or holds the cross hands.
+#[test]
+fn data_descriptions_sharing_a_window_are_refused_naming_979() {
+    for cross_hands in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let ms =
+            common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+        share_window_zero(&ms, cross_hands);
+        for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
+            let (output, reply) = json_run(
+                dir.path(),
+                surface,
+                json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
+                       "minblperant": 2, "smodel": [1, 0, 0, 0]}),
+            );
+            match reply {
+                Some(TaskReply::Failed { message, .. }) => assert!(
+                    message.contains("share spectral window 0") && message.contains("#979"),
+                    "{message}"
+                ),
+                other => panic!(
+                    "{surface} {cross_hands}: {other:?}\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            }
+        }
+    }
+}
+
+/// Puts every other MAIN row of `ms` on a new data description of window
+/// 0, with polarization 0's correlations or a new setup of the cross hands.
+fn share_window_zero(ms: &Path, cross_hands: bool) {
+    use casa_ms::schema::{self as ms_schema, SubtableId};
+    use casa_types::{ArrayValue, ScalarValue, Value as CellValue};
+    let int = |value| CellValue::Scalar(ScalarValue::Int32(value));
+    let mut opened = casa_ms::ms::MeasurementSet::open(ms).expect("open");
+    let polarization_id = if cross_hands {
+        let products = ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![0, 1, 1, 0]).unwrap();
+        let types = ndarray::ArrayD::from_shape_vec(vec![2], vec![6, 7]).unwrap();
+        opened
+            .subtable_mut(SubtableId::Polarization)
+            .expect("POLARIZATION")
+            .add_row(common::make_subtable_row(
+                ms_schema::polarization::REQUIRED_COLUMNS,
+                &[
+                    ("NUM_CORR", int(2)),
+                    ("CORR_TYPE", CellValue::Array(ArrayValue::Int32(types))),
+                    (
+                        "CORR_PRODUCT",
+                        CellValue::Array(ArrayValue::Int32(products)),
+                    ),
+                ],
+            ))
+            .expect("add POLARIZATION row");
+        1
+    } else {
+        0
+    };
+    let descriptions = opened
+        .subtable_mut(SubtableId::DataDescription)
+        .expect("DATA_DESCRIPTION");
+    let description = i32::try_from(descriptions.row_count()).unwrap();
+    descriptions
+        .add_row(common::make_subtable_row(
+            ms_schema::data_description::REQUIRED_COLUMNS,
+            &[
+                ("SPECTRAL_WINDOW_ID", int(0)),
+                ("POLARIZATION_ID", int(polarization_id)),
+            ],
+        ))
+        .expect("add DATA_DESCRIPTION row");
+    let main = opened.main_table_mut();
+    for row in (1..main.row_count()).step_by(2) {
+        main.column_accessor_mut("DATA_DESC_ID")
+            .and_then(|mut column| column.set(row, int(description)))
+            .expect("set DATA_DESC_ID");
+    }
+    opened.save().expect("save");
+}
+
 #[test]
 fn bandpass_returns_its_tables_and_selected_data() {
     let dir = TempDir::new().unwrap();
@@ -324,12 +438,29 @@ fn bandpass_returns_its_tables_and_selected_data() {
             bandpass_gains: [[unit; 2]; 3],
         }),
     );
+    // The fixture's three antennas have two baselines each, which CASA's
+    // default minblperant of 4 does not solve; CASA writes no table.
+    let (output, reply) = json_run(
+        dir.path(),
+        "bandpass",
+        json!({
+            "vis": ms.to_str().unwrap(), "caltable": "none.bcal", "refant": "0",
+            "smodel": [1, 0, 0, 0],
+        }),
+    );
+    match reply {
+        Some(TaskReply::Failed { message, .. }) => {
+            assert!(message.contains("no solution"), "{message}");
+        }
+        other => panic!("{other:?}\n{}", String::from_utf8_lossy(&output.stderr)),
+    }
+
     let value = returned(
         dir.path(),
         "bandpass",
         json!({
             "vis": ms.to_str().unwrap(), "caltable": "b.bcal", "refant": "0",
-            "smodel": [1, 0, 0, 0],
+            "smodel": [1, 0, 0, 0], "minblperant": 2,
         }),
     );
     assert_eq!(structure(&value), casa("bandpass"));
@@ -337,6 +468,7 @@ fn bandpass_returns_its_tables_and_selected_data() {
     // CASA counts a bandpass solve by interval, not by channel.
     let window = entry(entry(&value, "solvestats"), "spw0");
     assert_eq!(ints(entry(window, "expected")), [1, 1]);
+    assert_eq!(ints(entry(window, "above_minblperant")), [1, 1]);
     assert_eq!(ints(entry(entry(window, "ant2"), "above_minsnr")), [1, 1]);
     assert_eq!(ints(entry(entry(window, "ant0"), "used_as_refant")), [1]);
 }
@@ -376,6 +508,80 @@ fn fluxscale_returns_flux_densities_per_field_and_window() {
         panic!("fluxd");
     };
     assert_eq!(shape, &[4]);
+}
+
+/// Two windows are fitted as CASA fits them, about their geometric mean
+/// frequency (`fluxscale/fit.rs` holds CASA's probed values).
+#[test]
+fn fluxscale_fits_the_spectrum_across_windows() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let mut rows = Vec::new();
+    for (spectral_window_id, transfer) in [(0, 2.0_f32), (1, 2.5)] {
+        for antenna_id in 0..3 {
+            let scatter = 1.0 + 0.02 * antenna_id as f32;
+            for (time_seconds, field_id, gain) in
+                [(10.0, 0, scatter), (20.0, 1, transfer * scatter)]
+            {
+                rows.push(common::SyntheticGainSolutionRow {
+                    time_seconds,
+                    field_id,
+                    spectral_window_id,
+                    antenna_id,
+                    gains: vec![Complex32::new(gain, 0.0); 2],
+                    flags: vec![false, false],
+                });
+            }
+        }
+    }
+    let gains = common::create_apply_gain_caltable(
+        &dir.path().join("gain.gcal"),
+        &["REF0", "TARGET0"],
+        &rows,
+    );
+    let value = returned(
+        dir.path(),
+        "fluxscale",
+        json!({
+            "vis": ms.to_str().unwrap(),
+            "caltable": gains.to_str().unwrap(),
+            "fluxtable": "flux.gcal",
+            "reference": ["REF0"],
+            "transfer": ["TARGET0"],
+        }),
+    );
+    let float = |value: &CasaValue| match value {
+        CasaValue::Float { value } => value.0,
+        other => panic!("{other:?}"),
+    };
+    let floats = |value: &CasaValue| match value {
+        CasaValue::FloatArray { shape, data, .. } => (
+            shape.clone(),
+            data.iter().map(|value| value.0).collect::<Vec<_>>(),
+        ),
+        other => panic!("{other:?}"),
+    };
+    // Each window's frequency is its middle channel, CASA's solFreq.
+    let (_, frequencies) = floats(entry(&value, "freq"));
+    assert_eq!(frequencies, [1.001e9, 1.101e9]);
+    let field = entry(&value, "1");
+    let fluxes = ["0", "1"].map(|window| floats(entry(entry(field, window), "fluxd")).1[0]);
+    let reference_frequency = float(entry(field, "fitRefFreq"));
+    assert!((reference_frequency - (1.001e9_f64 * 1.101e9).sqrt()).abs() < 1.0);
+    let fitted = float(entry(field, "fitFluxd"));
+    assert!(
+        fluxes[0] < fitted && fitted < fluxes[1],
+        "{fitted} {fluxes:?}"
+    );
+    let (_, spidx) = floats(entry(field, "spidx"));
+    assert!(
+        (spidx[0] - fitted.log10()).abs() < 1e-12 && spidx[1] > 0.0,
+        "{spidx:?}"
+    );
+    // Two windows leave the fit no degree of freedom: no errors, but the
+    // covariance of the two coefficients.
+    assert_eq!(floats(entry(field, "spidxerr")).1, [0.0, 0.0]);
+    assert_eq!(floats(entry(field, "covarMat")).0, [2, 2]);
 }
 
 #[test]
@@ -419,7 +625,6 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         ("gaincal", "solmode", json!("L1")),
         ("gaincal", "uvrange", json!(">1klambda")),
         ("gaincal", "intent", json!("*PHASE*")),
-        ("bandpass", "minsnr", json!(2.0)),
         ("bandpass", "solint", json!("int")),
         ("bandpass", "fillgaps", json!(2)),
     ] {
@@ -470,7 +675,8 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
         ),
         (
             "bandpass",
-            json!({"vis": ms, "caltable": "b.bcal", "refant": "0", "maskedge": 10}),
+            json!({"vis": ms, "caltable": "b.bcal", "refant": "0", "minblperant": 2,
+                   "maskedge": 60}),
         ),
         (
             "gencal",

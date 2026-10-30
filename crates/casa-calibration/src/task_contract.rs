@@ -16,12 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode, ApplyPlanRequest,
-    BandpassSolveCombine, BandpassSolveRequest, BandpassType, CalibrationDataset,
-    CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis, CalibrationStatsRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainType, GencalRequest, RefAntSelector, calibration_stats,
-    execute_apply_from_path_with_options, export_corrected_data, fluxscale, gencal,
-    plan_apply_from_path, solve_calibration, summarize_tables,
+    BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest, BandpassType,
+    CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis,
+    CalibrationStatsRequest, FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode,
+    GainSolveModelSource, GainSolveRequest, GainType, GencalRequest, RefAntSelector,
+    calibration_stats, execute_apply_from_path_with_options, export_corrected_data, fluxscale,
+    gencal, plan_apply_from_path, solve_calibration, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -290,6 +290,9 @@ pub struct SolveBandpassTaskRequest {
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
+    /// Per-channel cuts and the `BPOLY` edge mask, or none.
+    #[serde(default)]
+    pub cuts: Option<BandpassSolveCuts>,
 }
 
 /// Canonical calibration task request envelope.
@@ -416,6 +419,7 @@ impl CalibrationTaskRequest {
                     amplitude_degree: request.amplitude_degree,
                     phase_degree: request.phase_degree,
                     smodel: request.smodel,
+                    cuts: request.cuts,
                 }),
             )
             .map(|result| match result {

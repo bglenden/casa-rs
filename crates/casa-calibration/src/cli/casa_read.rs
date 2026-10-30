@@ -26,7 +26,7 @@ use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant_selector};
 use crate::{
-    ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine, BandpassType,
+    ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine, BandpassSolveCuts, BandpassType,
     CalibrationTaskRequest, ExecuteApplyTaskRequest, FluxScaleRequest, GainSolveCombine,
     GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
     GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
@@ -76,12 +76,7 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
 
 fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
     let measurement_set = task.path("vis")?;
-    let min_snr = task.number("minsnr")? as f32;
-    if !min_snr.is_finite() || min_snr < 0.0 {
-        return Err(
-            TaskFailure::validation("minsnr must be a finite non-negative number").at("minsnr"),
-        );
-    }
+    let min_snr = min_snr(task)?;
     let (model_source, smodel) = model(task, &measurement_set)?;
     Ok(SolveGainTaskRequest {
         selection: selection(task)?,
@@ -114,6 +109,20 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         other => return Err(unknown("bandtype", other, "'B' or 'BPOLY'")),
     };
     let combine = combine(task)?;
+    // CASA reads maskedge only for BPOLY.
+    let mask_edge_percent = match band_type {
+        BandpassType::B => BandpassSolveCuts::CASA_DEFAULTS.mask_edge_percent,
+        BandpassType::BPoly => {
+            let percent = task.number("maskedge")?;
+            if !(0.0..50.0).contains(&percent) {
+                return Err(TaskFailure::validation(
+                    "maskedge must be a percentage of the channels from 0 to below 50",
+                )
+                .at("maskedge"));
+            }
+            percent as f32
+        }
+    };
     Ok(SolveBandpassTaskRequest {
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
@@ -129,8 +138,25 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
         smodel,
+        cuts: Some(BandpassSolveCuts {
+            min_baselines_per_antenna: count(task, "minblperant")?,
+            min_snr: min_snr(task)?,
+            mask_edge_percent,
+        }),
         measurement_set,
     })
+}
+
+/// `minsnr`, which CASA takes as any number; casa-rs takes it finite and
+/// not negative.
+fn min_snr(task: &TaskInvocation<'_>) -> Result<f32, TaskFailure> {
+    let min_snr = task.number("minsnr")? as f32;
+    if !min_snr.is_finite() || min_snr < 0.0 {
+        return Err(
+            TaskFailure::validation("minsnr must be a finite non-negative number").at("minsnr"),
+        );
+    }
+    Ok(min_snr)
 }
 
 fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure> {
@@ -318,7 +344,9 @@ fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
 
 /// The sky model of a solve: CASA's empty `smodel` is the `MODEL_DATA`
 /// column where the MeasurementSet has one and a 1 Jy point source where it
-/// does not; `[I, Q, U, V]` is a point source. CASA reads a field's virtual
+/// does not; `[I, Q, U, V]` is a point source, and a shorter list, `[I]` to
+/// `[I, Q, U]`, is too, its missing Stokes zero (probed with CASA 6.7.6.14,
+/// whose `gaincal` aborts on more than four). CASA reads a field's virtual
 /// model (`setjy` with `usescratch=False`) before `MODEL_DATA`; casa-rs
 /// does not implement it yet, so an empty `smodel` on a MeasurementSet
 /// that holds one is refused.
@@ -352,20 +380,21 @@ fn model(
             };
             Ok((source, [1.0, 0.0, 0.0, 0.0]))
         }
-        &[i, q, u, v] => {
+        &[i, ref polarized @ ..] if polarized.len() < 4 => {
             if !(i > 0.0 && i.is_finite()) {
                 return Err(TaskFailure::validation(
                     "smodel's Stokes I must be a positive finite flux density",
                 )
                 .at("smodel"));
             }
-            if [q, u, v] != [0.0; 3] {
+            if polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
             Ok((GainSolveModelSource::PointSource, [i as f32, 0.0, 0.0, 0.0]))
         }
         _ => Err(TaskFailure::validation(format!(
-            "smodel takes [I, Q, U, V], or [] for the MODEL_DATA column; found {} values",
+            "smodel takes [I, Q, U, V], or fewer with the rest zero, or [] for the MODEL_DATA \
+             column; found {} values",
             smodel.len()
         ))
         .at("smodel")),
@@ -404,19 +433,19 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
     }
 }
 
-/// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: text that
-/// contains `inf`, in any case, is one solution per scan; text that
-/// contains `int`, one per integration; anything else is a time, in
-/// seconds when it has no unit. A time of zero is CASA's `inf`, and a
-/// negative one its `int`. Channel intervals (`'inf,2ch'`) are not
+/// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty
+/// text, or text that contains `inf`, in any case, is one solution per
+/// scan; text that contains `int`, one per integration; anything else is a
+/// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
+/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
 /// implemented yet.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
-    let text = task.required_text("solint")?;
+    let text = task.text("solint")?.unwrap_or_default();
     if text.contains(',') {
         return Err(not_yet("solint", &text));
     }
     let upper = text.to_ascii_uppercase();
-    if upper.contains("INF") {
+    if upper.is_empty() || upper.contains("INF") {
         return Ok(GainSolveInterval::Infinite);
     }
     if upper.contains("INT") {

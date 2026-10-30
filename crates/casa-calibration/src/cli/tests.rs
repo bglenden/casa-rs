@@ -529,6 +529,7 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
             amplitude_degree: 5,
             phase_degree: 4,
             smodel: [3.0, 0.0, 0.0, 0.0],
+            cuts: None,
         })
     );
 }

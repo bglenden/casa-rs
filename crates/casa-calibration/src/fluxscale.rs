@@ -8,6 +8,8 @@
 //! - optional `refspwmap`
 //! - optional `gainthreshold`
 //! - full-table output or incremental correction-factor output
+//! - each transfer field's spectral fit across its windows, as CASA reports
+//!   it
 //!
 //! The acceptance contract is twofold:
 //!
@@ -28,6 +30,8 @@ use thiserror::Error;
 
 use crate::constants::{COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_SPECTRAL_WINDOW_ID};
 use crate::summary::{CalibrationTableError, summarize_table};
+
+mod fit;
 
 /// Request for a first-wave `fluxscale` solve.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -66,17 +70,20 @@ pub struct FluxScaleFieldResult {
     pub field_name: String,
     /// Per-SPW transfer flux results keyed by SPW id.
     pub spw_results: BTreeMap<i32, FluxScaleSpwResult>,
-    /// Fitted reference frequency in Hz, or `0.0` when no single-SPW fit is available.
+    /// The fit's reference frequency in Hz, the windows' geometric mean
+    /// frequency, or the one window's frequency.
     pub fit_ref_frequency_hz: f64,
-    /// Fitted Stokes-I flux density, or `0.0` when spectral fitting is deferred.
+    /// Fitted Stokes-I flux density at the reference frequency, or the one
+    /// window's flux density.
     pub fit_fluxd: f64,
     /// Fitted Stokes-I flux-density uncertainty.
     pub fit_fluxd_err: f64,
-    /// Deferred spectral-index coefficients.
+    /// The fit's coefficients, `log10 S = spidx[0] + spidx[1] log10(f / f0)`,
+    /// as CASA's `fitorder=1` fits them; zero for one window.
     pub spidx: Vec<f64>,
-    /// Deferred spectral-index uncertainties.
+    /// The coefficients' uncertainties.
     pub spidx_err: Vec<f64>,
-    /// Deferred covariance matrix.
+    /// The fit's covariance matrix, empty for one window.
     pub covar_mat: Vec<Vec<f64>>,
 }
 
@@ -642,7 +649,7 @@ fn build_report(
 
     for field_id in transfer_field_ids {
         let mut spw_results = BTreeMap::new();
-        let mut single_spw = None;
+        let mut windows = Vec::new();
         for (&(candidate_field_id, spw_id), estimate) in estimates {
             if candidate_field_id != *field_id {
                 continue;
@@ -656,22 +663,16 @@ fn build_report(
                     num_sol: [estimate.num_sol as f64, 0.0, 0.0, 0.0],
                 },
             );
-            single_spw = Some((spw_id, estimate));
-        }
-
-        let (fit_ref_frequency_hz, fit_fluxd, fit_fluxd_err) = if spw_results.len() == 1 {
-            let (spw_id, estimate) = single_spw.expect("single spw estimate");
-            (
-                spw_info
+            windows.push(fit::WindowFlux {
+                frequency_hz: spw_info
                     .get(&spw_id)
                     .map(|info| info.ref_frequency_hz)
                     .unwrap_or(0.0),
-                estimate.flux_density_jy,
-                0.0,
-            )
-        } else {
-            (0.0, 0.0, 0.0)
-        };
+                flux_density_jy: estimate.flux_density_jy,
+                flux_density_error_jy: estimate.flux_density_error_jy,
+            });
+        }
+        let fit = fit::spectral_fit(&windows);
 
         fields.insert(
             *field_id,
@@ -681,12 +682,12 @@ fn build_report(
                     .map(|info| info.name.clone())
                     .unwrap_or_default(),
                 spw_results,
-                fit_ref_frequency_hz,
-                fit_fluxd,
-                fit_fluxd_err,
-                spidx: vec![0.0, 0.0],
-                spidx_err: vec![0.0, 0.0],
-                covar_mat: Vec::new(),
+                fit_ref_frequency_hz: fit.ref_frequency_hz,
+                fit_fluxd: fit.fluxd,
+                fit_fluxd_err: fit.fluxd_err,
+                spidx: fit.spidx,
+                spidx_err: fit.spidx_err,
+                covar_mat: fit.covariance,
             },
         );
     }
@@ -821,9 +822,10 @@ fn get_ref_frequency(table: &Table, row: usize) -> Result<f64, FluxScaleError> {
             path: "CHAN_FREQ".to_string(),
             source: Box::new(source),
         })?;
+    // CASA's solution frequency, `solFreq`, is the window's middle channel.
     match chan_freq {
         ArrayValue::Float64(values) if !values.is_empty() => {
-            Ok(values.iter().copied().sum::<f64>() / values.len() as f64)
+            Ok(values.iter().copied().nth(values.len() / 2).unwrap_or(0.0))
         }
         _ => match table
             .cell_accessor(row, "REF_FREQUENCY")
