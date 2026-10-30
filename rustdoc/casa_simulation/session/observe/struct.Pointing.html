@@ -2,7 +2,7 @@
     pub source: <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>,
     pub start_s: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     pub stop_s: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
-    pub direction: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../casa_types/measures/direction/struct.MDirection.html" title="struct casa_types::measures::direction::MDirection">MDirection</a>&gt;,
+    pub direction: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;MDirection&gt;,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>One pointing of <code>sm.observemany</code>: a field, by name, observed from
 <code>start_s</code> to <code>stop_s</code>, its phase centre moved to <code>direction</code> when one is
 given.</p>
@@ -10,7 +10,7 @@ given.</p>
 </div><span id="structfield.start_s" class="structfield section-header"><a href="#structfield.start_s" class="anchor field">§</a><code>start_s: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></code></span><div class="docblock"><p>Start, seconds, as <a href="struct.ObserveSpec.html#structfield.start_s" title="field casa_simulation::session::observe::ObserveSpec::start_s"><code>ObserveSpec::start_s</code></a> (an element of
 <code>starttimes</code>).</p>
 </div><span id="structfield.stop_s" class="structfield section-header"><a href="#structfield.stop_s" class="anchor field">§</a><code>stop_s: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></code></span><div class="docblock"><p>Stop, seconds (an element of <code>stoptimes</code>).</p>
-</div><span id="structfield.direction" class="structfield section-header"><a href="#structfield.direction" class="anchor field">§</a><code>direction: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../casa_types/measures/direction/struct.MDirection.html" title="struct casa_types::measures::direction::MDirection">MDirection</a>&gt;</code></span><div class="docblock"><p>The pointing’s phase centre (an element of <code>directions</code>). <code>None</code>
+</div><span id="structfield.direction" class="structfield section-header"><a href="#structfield.direction" class="anchor field">§</a><code>direction: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;MDirection&gt;</code></span><div class="docblock"><p>The pointing’s phase centre (an element of <code>directions</code>). <code>None</code>
 keeps the field’s, or the previous pointing’s when the field is the
 same; casatools passes the pole for an empty direction, which
 <code>NewMSSimulator</code> reads as none.</p>

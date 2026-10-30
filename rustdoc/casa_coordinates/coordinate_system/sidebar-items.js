@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["CoordinateSystem"]};
+window.SIDEBAR_ITEMS = {"struct":["CoordinateSystem","RecordCoordinate"]};

@@ -1989,6 +1989,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A subimage offsets a tabular coordinate's world values instead of moving its table
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2107,7 +2118,9 @@ Calibration behaviours casa-rs does not follow:
 <a href="#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame">component spectra in another frame</a>.
 Flagging behaviours casa-rs does not follow:
 <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
-<a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.</p>
+<a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.
+Coordinate behaviours casa-rs does not follow:
+<a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">a tabular coordinate's subimage</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -4292,6 +4305,30 @@ unknown: 13", then aborts the Python process with an uncaught
 <code>std::out_of_range</code> from <code>map::at</code>; there is no summary. casa-rs names
 every correlation by casacore's <code>Stokes::name</code>, so the summary keys those
 correlations <code>RX</code>, <code>RY</code>, <code>LX</code> and <code>LY</code> (<code>listobs::stokes_name</code>).</p>
+<h2 id="a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">A subimage offsets a tabular coordinate's world values instead of moving its table<a class="headerlink" href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1001, PR #1005 review)</li>
+<li>Affected code: casacore <code>coordinates/Coordinates/CoordinateSystem.cc</code>
+  (<code>subImageInSitu</code>) and <code>TabularCoordinate.cc</code> (<code>toWorld</code>,
+  <code>setReferencePixel</code>)</li>
+</ul>
+<p>A <code>TabularCoordinate</code> with a nonlinear table converts a pixel through its
+channel corrector first and its linear part (<code>crval</code>, <code>cdelt</code>, <code>crpix</code>)
+second. <code>subImageInSitu</code> moves a tabular coordinate's reference pixel by the
+subimage's start, as for a linear axis, but the corrector stays in the input's
+pixels. A subimage's world values are therefore the input's at the same
+pixel, offset by <code>cdelt × start</code>, not the input's at the pixel they were cut
+from. For a table at pixels <code>[0, 1, 3, 4]</code> with world values
+<code>[10, 11, 15, 22]</code>, <code>coordsys.subimage(originshft=[0, 1])</code> gives world values
+<code>[13, 14, 16]</code> at pixels 0 to 2, where the input has <code>[11, 13, 15]</code> (CASA
+6.7.6). A tabular spectral coordinate is not affected: <code>subImageInSitu</code>
+rebuilds its table over the subimage's channels. casa-rs moves the table's
+pixels with the reference pixel (<code>casa_images</code> <code>imsubimage</code>), so a subimage
+reads the input's world values at the pixels it was cut from. CASA's
+<code>imsubimage</code> ignores a box on an image without a direction coordinate, the
+only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
+CASA.</p>
 
 
 
