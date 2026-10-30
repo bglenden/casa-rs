@@ -193,9 +193,16 @@ mod tests {
         let catalog = builtin_application_catalog().unwrap();
         assert_eq!(catalog.schema_version, APPLICATION_CATALOG_SCHEMA_VERSION);
         let mut entry = serde_json::to_value(&catalog.applications[0]).unwrap();
+        // As a set: serde_json keeps insertion order when another crate in
+        // the build enables its `preserve_order` feature.
         assert_eq!(
-            entry.as_object().unwrap().keys().collect::<Vec<_>>(),
-            ["dataset_kinds", "id", "include_in_suite", "launch"]
+            entry
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["dataset_kinds", "id", "include_in_suite", "launch"])
         );
         entry["show_in_tui"] = serde_json::json!(true);
         let error = serde_json::from_value::<ApplicationDefinition>(entry).unwrap_err();
