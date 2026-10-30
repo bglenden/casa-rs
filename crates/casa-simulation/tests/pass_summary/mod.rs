@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The "simulation pass" summary `close` emits, as a test reads it: a
-//! subscriber that sees only that event, on the thread that closes.
+//! subscriber that sees only that event, on the thread that closes, and
+//! whether that thread is taking a write batch's buffers
+//! ([`in_visibility_batch`]).
 
 #![allow(dead_code, reason = "each test file reads part of the summary")]
 
+use std::cell::Cell;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -54,16 +57,42 @@ impl Visit for PassSummary {
     }
 }
 
-/// Keeps the last pass summary; every other event and span is disabled.
+/// The span `close` takes each write batch's buffers in.
+const VISIBILITY_BATCH: &str = "visibility_batch";
+
+/// The id [`Capture`] gives a [`VISIBILITY_BATCH`] span.
+const VISIBILITY_BATCH_ID: u64 = 2;
+
+std::thread_local! {
+    /// Whether this thread is in a [`VISIBILITY_BATCH`] span.
+    static IN_BATCH: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread, closing in [`capture`], is taking a write batch's
+/// buffers: what it allocates now is the writer's batch, however many of
+/// them the writer's pace leaves live.
+pub fn in_visibility_batch() -> bool {
+    IN_BATCH.try_with(Cell::get).unwrap_or(false)
+}
+
+/// Keeps the last pass summary, and marks this thread while it is in a
+/// [`VISIBILITY_BATCH`] span; every other event and span is disabled.
 struct Capture(Arc<Mutex<Option<PassSummary>>>);
 
 impl Subscriber for Capture {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        if metadata.is_span() {
+            return metadata.name() == VISIBILITY_BATCH;
+        }
         metadata.is_event() && metadata.fields().field("peak_reserved_bytes").is_some()
     }
 
-    fn new_span(&self, _: &Attributes<'_>) -> Id {
-        Id::from_u64(1)
+    fn new_span(&self, attributes: &Attributes<'_>) -> Id {
+        Id::from_u64(if attributes.metadata().name() == VISIBILITY_BATCH {
+            VISIBILITY_BATCH_ID
+        } else {
+            1
+        })
     }
 
     fn record(&self, _: &Id, _: &Record<'_>) {}
@@ -76,9 +105,17 @@ impl Subscriber for Capture {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(summary);
     }
 
-    fn enter(&self, _: &Id) {}
+    fn enter(&self, span: &Id) {
+        if span.into_u64() == VISIBILITY_BATCH_ID {
+            IN_BATCH.set(true);
+        }
+    }
 
-    fn exit(&self, _: &Id) {}
+    fn exit(&self, span: &Id) {
+        if span.into_u64() == VISIBILITY_BATCH_ID {
+            IN_BATCH.set(false);
+        }
+    }
 }
 
 /// Run `work` on this thread, returning what it returns and the summary of

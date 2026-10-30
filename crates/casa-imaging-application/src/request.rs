@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The imaging request: the provider-contracts catalog's `imager` surface,
+//! The imaging request: the provider-contracts catalog's `tclean` surface,
 //! resolved, as one typed record (plan section 5.8, decision D8).
 //!
-//! Field names and choices are the catalog's, and so are the defaults: a
-//! request is deserialized only from resolved catalog values (every route,
-//! the command line and `--json-run` alike, resolves through the catalog),
-//! so nothing here restates a default and a missing field is an error. The
-//! catalog spells an unset optional value `"none"`. Parameters that are
-//! active only for one gridder live in that gridder's variant.
+//! A request is made only from resolved catalog values (every route, the
+//! command line and `--json-run` alike, resolves through the catalog), by
+//! [`ImagingRequest::from_tclean`], which reads CASA's tclean parameters as
+//! CASA's modes read them (`crate::tclean`); so nothing here restates a
+//! default and a missing field is an error. Most fields are tclean's
+//! parameters by name; the reader fills the few casa-rs holds in its own
+//! form. An unset optional value is spelled `"none"` or left blank.
+//! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
@@ -112,9 +114,7 @@ pub struct ImagingRequest {
     pub restoringbeam: RestoringBeamPolicy,
     /// Whether a cube's density weighting is per output channel.
     pub perchanweightdensity: bool,
-    /// Write the dirty products only, with no minor cycle.
-    pub dirty_only: bool,
-    /// Total minor-cycle iterations.
+    /// Total minor-cycle iterations; zero writes the dirty products only.
     pub niter: usize,
     /// Absolute stopping threshold in Jy/beam.
     #[serde(deserialize_with = "threshold_jy")]
@@ -532,16 +532,16 @@ impl ImagingRequest {
     }
 
     /// Whether the run solves for a model: `mtmfs` always, the other
-    /// solvers unless the run is dirty (`dirty_only` or `niter = 0`).
+    /// solvers unless the run is dirty (`niter = 0`).
     #[must_use]
     pub fn solves(&self) -> bool {
-        self.deconvolver == Deconvolver::Mtmfs || (!self.dirty_only && self.niter > 0)
+        self.deconvolver == Deconvolver::Mtmfs || self.niter > 0
     }
 
-    /// Total minor-cycle iterations: none for `dirty_only`.
+    /// Total minor-cycle iterations.
     #[must_use]
     pub const fn iterations(&self) -> usize {
-        if self.dirty_only { 0 } else { self.niter }
+        self.niter
     }
 
     /// The resource policy `parallel` asks for: the balanced share of the
@@ -1037,26 +1037,30 @@ pub(crate) mod tests {
 
     use super::*;
 
-    /// The active values the catalog resolves from `overrides` over its
-    /// defaults, with a MeasurementSet and image name.
-    fn resolved(
+    /// The values the catalog resolves from `overrides` over its defaults,
+    /// with a MeasurementSet, an image name and a cell.
+    pub(crate) fn resolved(
         overrides: Value,
     ) -> Result<serde_json::Map<String, Value>, casa_task_runtime::ResolveError> {
-        let mut values = json!({ "vis": "unused.ms", "imagename": "unused" });
+        let mut values = json!({ "vis": "unused.ms", "imagename": "unused", "cell": "1arcsec" });
         let fields = values.as_object_mut().expect("object");
         fields.extend(overrides.as_object().expect("overrides object").clone());
         casa_task_runtime::resolve_plain_values(
-            casa_provider_contracts::builtin_surface_bundle("imager").expect("imager surface"),
+            casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
             PathBuf::from("."),
             fields,
         )
     }
 
+    /// The request tclean's `overrides` make, or its refusal.
+    pub(crate) fn read(overrides: Value) -> Result<ImagingRequest, crate::TcleanRefusal> {
+        ImagingRequest::from_tclean(&resolved(overrides).expect("catalog values"))
+    }
+
     /// A request resolved through the catalog from `overrides` over its
-    /// defaults, with a MeasurementSet and image name.
+    /// defaults, with a MeasurementSet, an image name and a cell.
     pub(crate) fn request(overrides: Value) -> ImagingRequest {
-        let resolved = resolved(overrides).expect("catalog values");
-        serde_json::from_value(Value::Object(resolved)).expect("imaging request")
+        read(overrides).expect("imaging request")
     }
 
     fn refusal(overrides: Value) -> &'static str {
@@ -1064,22 +1068,6 @@ pub(crate) mod tests {
             .validate()
             .expect_err("an invalid request")
             .parameters
-    }
-
-    /// `facets` is active only with the standard gridder, so naming it with
-    /// another gridder is refused, not ignored.
-    #[test]
-    fn facets_with_another_gridder_are_refused() {
-        for gridder in ["wproject", "mosaic", "awproject"] {
-            let error = resolved(json!({ "gridder": gridder, "facets": 2 }))
-                .expect_err("facets with a non-standard gridder");
-            assert!(
-                error.to_string().contains("\"facets\" is inactive"),
-                "{gridder}: {error}"
-            );
-        }
-        let resolved = resolved(json!({ "gridder": "standard", "facets": 2 })).expect("facets");
-        assert_eq!(resolved["facets"], json!(2));
     }
 
     #[test]
@@ -1133,12 +1121,8 @@ pub(crate) mod tests {
     #[test]
     fn uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
         use std::f64::consts::{LN_2, PI};
-        let parsed = |value: Value| {
-            serde_json::from_value::<ImagingRequest>(Value::Object(
-                resolved(json!({ "uvtaper": value })).expect("catalog values"),
-            ))
-            .map(|request| request.uvtaper)
-        };
+        let parsed =
+            |value: Value| read(json!({ "uvtaper": value })).map(|request| request.uvtaper);
         let close = |actual: f64, expected: f64| {
             assert!(
                 (actual - expected).abs() <= 1.0e-12 * expected,
@@ -1182,10 +1166,9 @@ pub(crate) mod tests {
     fn contradictory_parameters_are_refused_before_any_data_is_read() {
         for (overrides, parameters) in [
             (
-                json!({ "phasecenter": "J2000 0rad 0rad", "phasecenter_field": "0" }),
-                "phasecenter, phasecenter_field",
+                json!({ "deconvolver": "mtmfs", "nterms": 0 }),
+                "nterms, deconvolver",
             ),
-            (json!({ "nterms": 2 }), "nterms, deconvolver"),
             (
                 json!({ "deconvolver": "mtmfs", "nterms": 2, "specmode": "cube" }),
                 "deconvolver, specmode",
@@ -1196,10 +1179,6 @@ pub(crate) mod tests {
                 "save_continuum_residual, fitspw",
             ),
             (json!({ "fitspw": "0:0~3" }), "fitspw, specmode"),
-            (
-                json!({ "usemask": "auto-multithresh", "mask_box": "0,0,4,4" }),
-                "usemask, mask_image, mask_box",
-            ),
             (json!({ "pblimit": 1.0 }), "psfcutoff, pblimit"),
             (
                 json!({ "deconvolver": "mtmfs", "nterms": 2, "startmodel": "deep.model" }),
@@ -1215,14 +1194,17 @@ pub(crate) mod tests {
         let aw = |planes: Value| {
             json!({
                 "gridder": "awproject",
+                "conjbeams": true,
                 "cfcache": "cf",
                 "wprojplanes": planes,
             })
         };
         assert_eq!(refusal(aw(json!(16))), "wprojplanes");
+        assert_eq!(refusal(aw(json!(-1))), "wprojplanes");
         request(aw(json!(32))).validate().expect("32 planes");
         let native = json!({
             "gridder": "awproject",
+            "conjbeams": true,
             "aw_cf_source": "native-evla",
             "wprojplanes": 32,
             "native_cf_cache": "cache",
@@ -1238,81 +1220,22 @@ pub(crate) mod tests {
         );
     }
 
-    /// Every parameter the catalog resolves is a required field of the
-    /// request, for every gridder and AW source: a binding the request does
-    /// not read would otherwise be dropped silently (the flattened gridder
-    /// rules out `deny_unknown_fields`).
-    #[test]
-    fn every_resolved_parameter_is_a_required_field() {
-        for overrides in [
-            json!({}),
-            json!({ "gridder": "wproject" }),
-            json!({ "gridder": "mosaic" }),
-            json!({ "gridder": "awproject", "cfcache": "cf" }),
-            json!({
-                "gridder": "awproject",
-                "aw_cf_source": "native-evla",
-                "native_cf_cache": "cache",
-                "evla_surface": "surface",
-                "native_cf_working_size": 64,
-                "native_cf_oversampling": 4,
-                "native_cf_cache_bytes": 1_048_576,
-                "native_cf_maximum_cells": 64,
-            }),
-        ] {
-            let values = resolved(overrides.clone()).expect("catalog values");
-            serde_json::from_value::<ImagingRequest>(Value::Object(values.clone()))
-                .unwrap_or_else(|error| panic!("{overrides}: {error}"));
-            for name in values.keys() {
-                let mut without = values.clone();
-                without.remove(name);
-                assert!(
-                    serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
-                    "{overrides}: the request does not read {name}"
-                );
-            }
-        }
-    }
-
-    /// A blank optional parameter is unset, as it always was.
+    /// A blank optional parameter is unset, as CASA's empty text is.
     #[test]
     fn blank_optional_values_are_unset() {
         let blank = request(json!({
-            "datacolumn": "",
             "phasecenter": "",
-            "mask_image": "",
+            "mask": "",
             "outlierfile": "",
             "restfreq": "",
-            "scales": "",
-            "mask_box": "",
+            "scales": [],
             "field": "",
             "spw": "",
             "start": "",
+            "startmodel": "",
         }));
         assert_eq!(blank, request(json!({})));
-    }
-
-    /// A parameter its gridder does not read is refused when set, and
-    /// absent from the request when not.
-    #[test]
-    fn the_catalog_refuses_a_parameter_its_gridder_does_not_read() {
-        let error = resolved(json!({ "gridder": "standard", "wprojplanes": 4 }))
-            .expect_err("W planes without W projection");
-        assert!(
-            matches!(
-                &error,
-                casa_task_runtime::ResolveError::Invalid { parameter: Some(name), .. }
-                    if name == "wprojplanes"
-            ),
-            "{error:?}"
-        );
-        let values = resolved(json!({ "gridder": "wproject", "wprojplanes": 4 })).expect("W");
-        assert_eq!(values["wprojplanes"], json!(4));
-        assert!(
-            !resolved(json!({}))
-                .expect("defaults")
-                .contains_key("wprojplanes")
-        );
+        assert_eq!(blank.datacolumn, None);
     }
 
     #[test]
@@ -1333,9 +1256,8 @@ pub(crate) mod tests {
             );
         }
         for text in ["IXX", "XXRR", "IQZ", "X", ""] {
-            let refused = resolved(json!({ "stokes": text })).map_or(true, |values| {
-                serde_json::from_value::<ImagingRequest>(Value::Object(values)).is_err()
-            });
+            let refused = resolved(json!({ "stokes": text }))
+                .map_or(true, |values| ImagingRequest::from_tclean(&values).is_err());
             assert!(refused, "{text:?}");
         }
     }

@@ -84,9 +84,9 @@
 //! `tsys-atm`'s (Phase 4c): `setnoise` builds its atmosphere within what it
 //! is admitted, and `close` holds its admission.
 //!
-//! This binary's global allocator counts the live heap; the counters are
-//! the process's, so each law runs alone in a process of its own
-//! ([`alone`]).
+//! This binary's global allocator counts the live heap, and apart from it
+//! the blocks that are not a write batch's ([`heap`]); the counters are the
+//! process's, so each law runs alone in a process of its own ([`alone`]).
 
 #[path = "session_memory/apply.rs"]
 mod apply;
@@ -94,6 +94,8 @@ mod apply;
 mod field_grids;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
+#[path = "session_memory/heap.rs"]
+mod heap;
 #[path = "session_memory/jones.rs"]
 mod jones;
 #[path = "session_memory/mosaic.rs"]
@@ -108,10 +110,9 @@ mod tsys;
 #[path = "session_memory/tsys_atm.rs"]
 mod tsys_atm;
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_components::{
     ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
@@ -134,79 +135,10 @@ use casa_simulation::{
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
+use heap::{BATCH_ALLOCATED, EXCESS, LIVE, OWN_LIVE, OWN_PEAK, PEAK, excess_now};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
-
-#[global_allocator]
-static HEAP: CountingHeap = CountingHeap;
-
-/// The system allocator, counting live bytes and their largest value.
-struct CountingHeap;
-
-static LIVE: AtomicU64 = AtomicU64::new(0);
-static PEAK: AtomicU64 = AtomicU64::new(0);
-/// The most the live bytes exceeded what the process's reservations held,
-/// at any allocation: a heap within its admission at every moment, not only
-/// at the two peaks.
-static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
-
-fn grow(bytes: u64) {
-    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK.fetch_max(live, Ordering::Relaxed);
-    EXCESS.fetch_max(live as i64 - reserved_memory() as i64, Ordering::Relaxed);
-}
-
-/// What the live bytes exceed the reservations by now.
-fn excess_now() -> i64 {
-    LIVE.load(Ordering::Relaxed) as i64 - reserved_memory() as i64
-}
-
-// SAFETY: forwards to `System` with the caller's arguments and adds atomic
-// bookkeeping only.
-unsafe impl GlobalAlloc for CountingHeap {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc`.
-        let pointer = unsafe { System.alloc(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc_zeroed`.
-        let pointer = unsafe { System.alloc_zeroed(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: the caller's contract for `dealloc`.
-        unsafe { System.dealloc(pointer, layout) };
-        LIVE.fetch_sub(layout.size() as u64, Ordering::Relaxed);
-    }
-
-    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let (old, new) = (layout.size() as u64, new_size as u64);
-        // SAFETY: the caller's contract for `realloc`.
-        let moved = unsafe { System.realloc(pointer, layout, new_size) };
-        if !moved.is_null() {
-            if moved != pointer {
-                // Old and new were held at once while the block moved.
-                PEAK.fetch_max(LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
-            }
-            if new >= old {
-                grow(new - old);
-            } else {
-                LIVE.fetch_sub(old - new, Ordering::Relaxed);
-            }
-        }
-        moved
-    }
-}
 
 /// The environment variable that names the law a child process of
 /// [`alone`] runs.

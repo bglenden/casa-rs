@@ -241,9 +241,9 @@ esac
 is_true() {
   [[ "$1" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
 }
-# casars-imager grids AW with conjugate beams and mosaic without them; it has
-# no conjbeams parameter yet (#720, #721). CASA runs the same unless told
-# otherwise: on for AW, tclean's default (off) for every other gridder.
+# casars-imager grids AW with conjugate beams and mosaic without them, and
+# its tclean conjbeams must say so (#720, #721). CASA runs the same unless
+# told otherwise: on for AW, tclean's default (off) for every other gridder.
 if [[ -z "$conjbeams" ]]; then
   if [[ "$rust_gridder" == "awproject" ]]; then
     conjbeams=1
@@ -456,11 +456,10 @@ EOF
   fi
 fi
 
+# A dirty run is tclean's niter=0, for casars-imager as for CASA.
 if [[ "$mode" == "dirty" ]]; then
-  dirty_flag="--dirty-only"
   casa_niter="0"
 else
-  dirty_flag=""
   casa_niter="$niter"
 fi
 
@@ -585,6 +584,21 @@ fi
 rust_wproject_flags=()
 if [[ -n "$wprojplanes" ]]; then
   rust_wproject_flags+=(--wprojplanes "$wprojplanes")
+elif [[ "$rust_gridder" == "wproject" ]]; then
+  # tclean's wprojplanes defaults to one; -1 lets the imager choose.
+  rust_wproject_flags+=(--wprojplanes -1)
+fi
+# tclean's conjbeams and mosweight, as CASA runs them (above).
+rust_beam_flags=()
+if is_true "$conjbeams"; then
+  rust_beam_flags+=(--conjbeams)
+else
+  rust_beam_flags+=(--no-conjbeams)
+fi
+if is_true "$mosweight"; then
+  rust_beam_flags+=(--mosweight)
+else
+  rust_beam_flags+=(--no-mosweight)
 fi
 rust_cube_axis_flags=()
 if [[ -n "$cube_start" ]]; then
@@ -664,12 +678,13 @@ build_rust_cli_args() {
   )
   rust_cli_args+=(${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"})
   rust_cli_args+=(
-    --datacolumn DATA
+    --datacolumn data
     --weighting "$weighting"
     --robust "$robust"
   )
   rust_cli_args+=(${rust_density_flags[@]+"${rust_density_flags[@]}"})
   rust_cli_args+=(${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"})
+  rust_cli_args+=("${rust_beam_flags[@]}")
   rust_cli_args+=(${rust_aw_flags[@]+"${rust_aw_flags[@]}"})
   rust_cli_args+=(
     --deconvolver "$deconvolver"
@@ -688,7 +703,7 @@ build_rust_cli_args() {
   fi
   rust_cli_args+=(
     --smallscalebias "$small_scale_bias"
-    --niter "$niter"
+    --niter "$casa_niter"
     --nmajor "$nmajor"
     --gain "$gain"
     --threshold-jy "$threshold_jy"
@@ -708,10 +723,7 @@ build_rust_cli_args() {
     rust_cli_args+=(--facets "$facets")
   fi
   if [[ -n "$phasecenter_field" ]]; then
-    rust_cli_args+=(--phasecenter-field "$phasecenter_field")
-  fi
-  if [[ -n "$dirty_flag" ]]; then
-    rust_cli_args+=("$dirty_flag")
+    rust_cli_args+=(--phasecenter "$phasecenter_field")
   fi
   # One structured event per phase, read back as the Rust stage medians.
   rust_cli_args+=(--stage-timing --log-stderr-priority INFO)

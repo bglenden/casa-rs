@@ -300,84 +300,26 @@
     },
     {
       "id": "image.geometry.cell",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "cell",
-      "value_domain": {
-        "kind": "array",
-        "element": {
-          "kind": "quantity",
-          "dimension": "angle",
-          "canonical_unit": "arcsec",
-          "special_values": [
-            "auto"
-          ]
-        },
-        "min_items": 2,
-        "max_items": 2,
-        "allow_scalar": true
-      },
-      "normalization": {
-        "kind": "quantity",
-        "canonical_unit": "arcsec"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
+      "value_domain": {"kind": "array", "element": {"kind": "quantity", "dimension": "angle", "canonical_unit": "arcsec", "special_values": []}, "min_items": 0, "max_items": 2, "allow_scalar": true},
+      "normalization": {"kind": "quantity", "canonical_unit": "arcsec"},
+      "base_constraints": [{"kind": "positive"}],
       "unit_dimension": "angle",
       "semantic_role": "geometry",
-      "documentation": {
-        "summary": "Image cell size in arcseconds",
-        "details": "One value for both axes, given alone or as a one-element list, or the x and y cells, as CASA's tclean takes them.",
-        "examples": [
-          "1arcsec",
-          "['0.5arcsec', '0.4arcsec']",
-          "0.1deg",
-          "auto"
-        ]
-      },
+      "documentation": {"summary": "Image cell size", "details": "One angle for both axes, given alone or as a one-element list, or the x and y cells, as CASA's tclean takes them; a bare number is in arcseconds.", "examples": ["'1arcsec'", "['0.5arcsec', '0.4arcsec']", "0.1"]},
       "persistence_class": "profile"
     },
     {
       "id": "image.geometry.imsize",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "imsize",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "array",
-          "element": {
-            "kind": "integer"
-          },
-          "min_items": 2,
-          "max_items": 2,
-          "allow_scalar": true
-        },
-        "states": [
-          "auto"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 1, "max_items": 2, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [{"kind": "positive"}],
       "unit_dimension": null,
       "semantic_role": "geometry",
-      "documentation": {
-        "summary": "Image dimensions in pixels",
-        "details": "One size for both axes, given alone or as a one-element list, or the x and y sizes, as CASA's tclean takes them.",
-        "examples": [
-          "512",
-          "[120]",
-          "[192, 128]",
-          "auto"
-        ]
-      },
+      "documentation": {"summary": "Image dimensions in pixels", "details": "One size for both axes, given alone or as a one-element list, or the x and y sizes, as CASA's tclean takes them.", "examples": ["512", "[120]", "[192, 128]"]},
       "persistence_class": "profile"
     },
     {
@@ -550,20 +492,10 @@
     },
     {
       "id": "imager.width",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "width",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "string"
-        },
-        "states": [
-          "none"
-        ]
-      },
-      "normalization": {
-        "kind": "trim"
-      },
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "number_as_text"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
@@ -2197,17 +2129,9 @@
     },
     {
       "id": "parameter.deconvolver",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "deconvolver",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "clark",
-          "hogbom",
-          "mtmfs",
-          "multiscale"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["asp", "clark", "clark_exp", "clarkstokes", "clarkstokes_exp", "hogbom", "mem", "mtmfs", "multiscale"]},
       "normalization": {
         "kind": "identity"
       },
@@ -2269,28 +2193,6 @@
         "details": null,
         "examples": [
           ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.dirty_only",
-      "semantic_revision": 1,
-      "casa_name": "dirty_only",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Skip CLEAN and only write dirty / residual products",
-        "details": null,
-        "examples": [
-          "false"
         ]
       },
       "persistence_class": "profile"
@@ -3488,17 +3390,9 @@
     },
     {
       "id": "parameter.gridder",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "gridder",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "awproject",
-          "mosaic",
-          "standard",
-          "wproject"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["awp2", "awphpg", "awproject", "awprojectft", "ft", "ftmosaic", "gridft", "imagemosaic", "mosaic", "mosaicft", "standard", "widefield", "wproject", "wprojectft"]},
       "normalization": {
         "kind": "identity"
       },
@@ -4341,47 +4235,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.mask_box",
-      "semantic_revision": 1,
-      "casa_name": "mask_box",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Inclusive clean mask box in pixel coordinates",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.mask_image",
-      "semantic_revision": 1,
-      "casa_name": "mask_image",
-      "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
-      },
-      "normalization": {
-        "kind": "path"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "CASA image mask whose non-zero pixels are cleanable",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.max_points",
       "semantic_revision": 1,
       "casa_name": "max_points",
@@ -4541,28 +4394,6 @@
         "details": null,
         "examples": [
           "0.3"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.minor_cycle_length",
-      "semantic_revision": 1,
-      "casa_name": "minor_cycle_length",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Residual refresh cadence in component updates",
-        "details": null,
-        "examples": [
-          "1000"
         ]
       },
       "persistence_class": "profile"
@@ -4970,20 +4801,10 @@
     },
     {
       "id": "parameter.outframe",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "outframe",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "BARY",
-          "LSRK",
-          "REST",
-          "TOPO"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
@@ -5254,26 +5075,6 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Explicit CASA-style J2000 phase center",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.phasecenter_field",
-      "semantic_revision": 1,
-      "casa_name": "phasecenter_field",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "FIELD_ID used as the imaging phase center",
         "details": null,
         "examples": []
       },
@@ -5726,26 +5527,14 @@
     },
     {
       "id": "parameter.restoringbeam",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "restoringbeam",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "common",
-          "none"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Restored-beam policy for cube outputs",
-        "details": null,
-        "examples": []
-      },
+      "documentation": {"summary": "Restoring beam: empty for each plane's fitted beam, 'common' for one beam over all planes, or a beam's axes and angle", "details": null, "examples": ["[]", "'common'"]},
       "persistence_class": "profile"
     },
     {
@@ -5816,15 +5605,9 @@
     },
     {
       "id": "parameter.savemodel",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "savemodel",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "modelcolumn",
-          "none"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["modelcolumn", "none", "virtual"]},
       "normalization": {
         "kind": "identity"
       },
@@ -5864,19 +5647,15 @@
     },
     {
       "id": "parameter.scales",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "scales",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Comma-separated multiscale kernel sizes in pixels",
+        "summary": "Multiscale component sizes in pixels",
         "details": null,
         "examples": []
       },
@@ -6418,17 +6197,9 @@
     },
     {
       "id": "parameter.specmode",
-      "semantic_revision": 3,
+      "semantic_revision": 4,
       "casa_name": "specmode",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "cube",
-          "cubedata",
-          "cubesource",
-          "mfs"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["cont", "cube", "cubedata", "cubesource", "mfs", "mvc"]},
       "normalization": {
         "kind": "identity"
       },
@@ -7048,15 +6819,9 @@
     },
     {
       "id": "parameter.usemask",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "usemask",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "auto-multithresh",
-          "user"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["auto-multithresh", "pb", "user"]},
       "normalization": {
         "kind": "identity"
       },
@@ -7196,19 +6961,10 @@
     },
     {
       "id": "parameter.veltype",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "veltype",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "BETA",
-          "OPTICAL",
-          "RADIO"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
@@ -7287,17 +7043,9 @@
     },
     {
       "id": "parameter.weighting",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "weighting",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "briggs",
-          "briggsbwtaper",
-          "natural",
-          "uniform"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["briggs", "briggsabs", "briggsbwtaper", "natural", "radial", "superuniform", "uniform"]},
       "normalization": {
         "kind": "identity"
       },
@@ -7337,17 +7085,9 @@
     },
     {
       "id": "parameter.wprojplanes",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "wprojplanes",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "integer"
-        },
-        "states": [
-          "none"
-        ]
-      },
+      "value_domain": {"kind": "integer"},
       "normalization": {
         "kind": "identity"
       },
@@ -7840,18 +7580,9 @@
     },
     {
       "id": "parameter.cfcache",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "cfcache",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "path",
-          "resource_kind": "directory"
-        },
-        "states": [
-          "none"
-        ]
-      },
+      "value_domain": {"kind": "path", "resource_kind": "directory"},
       "normalization": {
         "kind": "path"
       },
@@ -7902,15 +7633,9 @@
     },
     {
       "id": "parameter.normtype",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "normtype",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "flatnoise",
-          "flatsky"
-        ]
-      },
+      "value_domain": {"kind": "choice", "values": ["flatnoise", "flatsky", "pbsquare"]},
       "normalization": {
         "kind": "identity"
       },
@@ -7928,14 +7653,10 @@
     },
     {
       "id": "parameter.pointingoffsetsigdev",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "pointingoffsetsigdev",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
@@ -9872,6 +9593,930 @@
       "unit_dimension": null,
       "semantic_role": "output_policy",
       "documentation": {"summary": "Re-index the output's subtable ids from zero.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.caltable",
+      "semantic_revision": 1,
+      "casa_name": "caltable",
+      "value_domain": {"kind": "path", "resource_kind": "calibration_table"},
+      "normalization": {"kind": "path"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Calibration table the task writes.", "details": null, "examples": ["'gain.cal'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.append",
+      "semantic_revision": 1,
+      "casa_name": "append",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Append fluxscale's solutions to an existing flux table.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.caltable",
+      "semantic_revision": 1,
+      "casa_name": "caltable",
+      "value_domain": {"kind": "path", "resource_kind": "calibration_table"},
+      "normalization": {"kind": "path"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Gain table fluxscale reads, solved for the reference and transfer fields.", "details": null, "examples": ["'gain.cal'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.display",
+      "semantic_revision": 1,
+      "casa_name": "display",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {"summary": "Plot the fitted flux-density spectra.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.fitorder",
+      "semantic_revision": 1,
+      "casa_name": "fitorder",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Polynomial order of the spectral-index fit across spectral windows.", "details": null, "examples": ["1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.fluxtable",
+      "semantic_revision": 1,
+      "casa_name": "fluxtable",
+      "value_domain": {"kind": "path", "resource_kind": "calibration_table"},
+      "normalization": {"kind": "path"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Flux-scaled gain table fluxscale writes.", "details": null, "examples": ["'flux.cal'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.gainthreshold",
+      "semantic_revision": 1,
+      "casa_name": "gainthreshold",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fraction from the median outside which gain amplitudes are excluded; -1 for none.", "details": null, "examples": ["-1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.listfile",
+      "semantic_revision": 1,
+      "casa_name": "listfile",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Text file that receives the derived flux densities; empty for none.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.reference",
+      "semantic_revision": 1,
+      "casa_name": "reference",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Fields whose flux densities are known.", "details": null, "examples": ["['3C286']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.refspwmap",
+      "semantic_revision": 1,
+      "casa_name": "refspwmap",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Reference window for each spectral window; [-1] for none.", "details": null, "examples": ["[-1]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.transfer",
+      "semantic_revision": 1,
+      "casa_name": "transfer",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Fields whose flux densities are derived; empty for all the others.", "details": null, "examples": ["[]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.applymode",
+      "semantic_revision": 1,
+      "casa_name": "applymode",
+      "value_domain": {"kind": "choice", "values": ["", "calflag", "calflagstrict", "calonly", "flagonly", "flagonlystrict", "trial"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "How the calibration applies to data and flags; empty for 'calflag'.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.calwt",
+      "semantic_revision": 1,
+      "casa_name": "calwt",
+      "value_domain": {"kind": "array", "element": {"kind": "bool"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Calibrate the weights as well, one flag per gain table or one for all.", "details": null, "examples": ["[True]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.gainfield",
+      "semantic_revision": 1,
+      "casa_name": "gainfield",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Field selection of the solutions to apply from each gain table; empty for all.", "details": null, "examples": ["['']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.gaintable",
+      "semantic_revision": 1,
+      "casa_name": "gaintable",
+      "value_domain": {"kind": "array", "element": {"kind": "path", "resource_kind": "calibration_table"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "path"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {"summary": "Calibration tables to apply.", "details": null, "examples": ["['bandpass.cal']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.interp",
+      "semantic_revision": 1,
+      "casa_name": "interp",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Interpolation in time (and frequency) for each gain table; empty for 'linear'.", "details": null, "examples": ["['linear']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setapply.spwmap",
+      "semantic_revision": 1,
+      "casa_name": "spwmap",
+      "value_domain": {"kind": "array", "element": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": false}, "min_items": 0, "max_items": null, "allow_scalar": false},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Spectral-window map for each gain table: the window whose solutions each data window takes.", "details": null, "examples": ["[[0, 0, 0, 0]]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.append",
+      "semantic_revision": 1,
+      "casa_name": "append",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Append the solutions to an existing calibration table.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.bandtype",
+      "semantic_revision": 1,
+      "casa_name": "bandtype",
+      "value_domain": {"kind": "choice", "values": ["B", "BPOLY"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Bandpass solution type: channelized 'B' or polynomial 'BPOLY'.", "details": null, "examples": ["'B'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.calmode",
+      "semantic_revision": 1,
+      "casa_name": "calmode",
+      "value_domain": {"kind": "choice", "values": ["a", "ap", "p"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Solve for amplitude 'a', phase 'p' or both 'ap'.", "details": null, "examples": ["'ap'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.combine",
+      "semantic_revision": 1,
+      "casa_name": "combine",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none.", "details": null, "examples": ["'scan'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.corrdepflags",
+      "semantic_revision": 1,
+      "casa_name": "corrdepflags",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Keep solutions when only some correlations are flagged.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.fillgaps",
+      "semantic_revision": 1,
+      "casa_name": "fillgaps",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Largest gap, in channels, filled by interpolation in a bandpass.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.gaintype",
+      "semantic_revision": 1,
+      "casa_name": "gaintype",
+      "value_domain": {"kind": "choice", "values": ["G", "GSPLINE", "K", "KCROSS", "T", "XY+QU", "XYf+QU"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Type of gain solution: 'G' per polarization, 'T' polarization-independent, and the others.", "details": null, "examples": ["'G'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.maskcenter",
+      "semantic_revision": 1,
+      "casa_name": "maskcenter",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Channels at the window center a BPOLY fit excludes.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.maskedge",
+      "semantic_revision": 1,
+      "casa_name": "maskedge",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Percentage of channels at each window edge a BPOLY fit excludes.", "details": null, "examples": ["5"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.minsnr",
+      "semantic_revision": 1,
+      "casa_name": "minsnr",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Solutions below this SNR are flagged.", "details": null, "examples": ["3.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.normtype",
+      "semantic_revision": 1,
+      "casa_name": "normtype",
+      "value_domain": {"kind": "choice", "values": ["mean", "median"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "How solnorm normalizes the solutions: by their mean or median.", "details": null, "examples": ["'mean'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.npointaver",
+      "semantic_revision": 1,
+      "casa_name": "npointaver",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Points a GSPLINE phase solve averages.", "details": null, "examples": ["3"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.phasewrap",
+      "semantic_revision": 1,
+      "casa_name": "phasewrap",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Phase step, in degrees, a GSPLINE solve treats as a wrap.", "details": null, "examples": ["180.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.preavg",
+      "semantic_revision": 1,
+      "casa_name": "preavg",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Pre-averaging interval in seconds within a solution interval; -1 for none.", "details": null, "examples": ["-1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.refantmode",
+      "semantic_revision": 1,
+      "casa_name": "refantmode",
+      "value_domain": {"kind": "choice", "values": ["flex", "strict"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Whether another reference antenna is used where refant has no solution.", "details": null, "examples": ["'flex'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.rmsthresh",
+      "semantic_revision": 1,
+      "casa_name": "rmsthresh",
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "RMS thresholds of a robust solve, in iteration order.", "details": null, "examples": ["[]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.smodel",
+      "semantic_revision": 1,
+      "casa_name": "smodel",
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column.", "details": null, "examples": ["[]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.solmode",
+      "semantic_revision": 1,
+      "casa_name": "solmode",
+      "value_domain": {"kind": "choice", "values": ["", "L1", "L1R", "R"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Robust solving: '' for least squares, 'L1', 'R' or 'L1R'.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.splinetime",
+      "semantic_revision": 1,
+      "casa_name": "splinetime",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Spline timescale, in seconds, of a GSPLINE solve.", "details": null, "examples": ["3600.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "setsolve.visnorm",
+      "semantic_revision": 1,
+      "casa_name": "visnorm",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Normalize the data before the bandpass solve.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.ant_pos_time_limit",
+      "semantic_revision": 1,
+      "casa_name": "ant_pos_time_limit",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Days before or after the observation an antenna-position correction may come from.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.caltype",
+      "semantic_revision": 1,
+      "casa_name": "caltype",
+      "value_domain": {"kind": "choice", "values": ["", "amp", "antpos", "antposvla", "eff", "eop", "evlagain", "gc", "gceff", "jyperk", "mbd", "opac", "ph", "rq", "sbd", "swp/rq", "swpow", "swpwts", "tecim", "tsys"]},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Type of calibration gencal specifies.", "details": null, "examples": ["'amp'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.endpoint",
+      "semantic_revision": 1,
+      "casa_name": "endpoint",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Web service the ALMA antenna positions come from.", "details": null, "examples": ["'asdm'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.infile",
+      "semantic_revision": 1,
+      "casa_name": "infile",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {"summary": "File some calibration types read: weather, EOP or a Jy/K table.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.parameter",
+      "semantic_revision": 1,
+      "casa_name": "parameter",
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Values of the calibration, per antenna, window and polarization as caltype defines.", "details": null, "examples": ["[2.0]"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.pol",
+      "semantic_revision": 1,
+      "casa_name": "pol",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Polarizations the calibration applies to; empty for all.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.retry",
+      "semantic_revision": 1,
+      "casa_name": "retry",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Times the antenna-position web service is asked again.", "details": null, "examples": ["3"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.retry_wait_time",
+      "semantic_revision": 1,
+      "casa_name": "retry_wait_time",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Seconds between requests to the antenna-position web service.", "details": null, "examples": ["5"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.timeout",
+      "semantic_revision": 1,
+      "casa_name": "timeout",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Seconds the antenna-position web service has to answer.", "details": null, "examples": ["180"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "specifycal.uniform",
+      "semantic_revision": 1,
+      "casa_name": "uniform",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Take one Jy/K factor for every antenna.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "tclean.phasecenter",
+      "semantic_revision": 1,
+      "casa_name": "phasecenter",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "number_as_text"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {"summary": "Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field.", "details": null, "examples": ["'J2000 19h59m28.5s +40d44m01.5s'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "tclean.start",
+      "semantic_revision": 1,
+      "casa_name": "start",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "number_as_text"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "First channel of a cube: a channel number, a frequency or a velocity; empty for the first selected channel.", "details": null, "examples": ["'1.4GHz'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "tclean.restfreq",
+      "semantic_revision": 1,
+      "casa_name": "restfreq",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Rest frequencies of a cube's velocity axis; empty for the source's.", "details": null, "examples": ["['1.420405752GHz']"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "tclean.mask",
+      "semantic_revision": 1,
+      "casa_name": "mask",
+      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.", "details": null, "examples": ["'box[[100pix,100pix],[150pix,150pix]]'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.projection",
+      "semantic_revision": 2,
+      "casa_name": "projection",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {"summary": "Spherical projection of the image's direction axes.", "details": null, "examples": ["'SIN'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.psfphasecenter",
+      "semantic_revision": 2,
+      "casa_name": "psfphasecenter",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "number_as_text"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {"summary": "Phase centre the mosaic PSF is made at; empty for phasecenter.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.vptable",
+      "semantic_revision": 2,
+      "casa_name": "vptable",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Voltage-pattern table of the primary beams; empty for the built-in models.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.mosweight",
+      "semantic_revision": 1,
+      "casa_name": "mosweight",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Weigh the visibility density of each mosaic field on its own.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.aterm",
+      "semantic_revision": 1,
+      "casa_name": "aterm",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Include the antenna aperture illumination in the AW-projection kernels.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.psterm",
+      "semantic_revision": 1,
+      "casa_name": "psterm",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.wbawp",
+      "semantic_revision": 1,
+      "casa_name": "wbawp",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Use frequency-dependent A-terms in wideband AW projection.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.conjbeams",
+      "semantic_revision": 1,
+      "casa_name": "conjbeams",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Grid with the beam at the conjugate frequency, removing the beam's spectral index.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.computepastep",
+      "semantic_revision": 2,
+      "casa_name": "computepastep",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Parallactic-angle step, in degrees, between computed A-terms.", "details": null, "examples": ["360.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.rotatepastep",
+      "semantic_revision": 2,
+      "casa_name": "rotatepastep",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Parallactic-angle step, in degrees, between rotated A-terms.", "details": null, "examples": ["360.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.fusedthreshold",
+      "semantic_revision": 1,
+      "casa_name": "fusedthreshold",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Threshold, in Jy, below which deconvolver='asp' switches to Hogbom components.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.largestscale",
+      "semantic_revision": 1,
+      "casa_name": "largestscale",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Largest scale, in pixels, deconvolver='asp' fits; -1 for no limit.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.restoration",
+      "semantic_revision": 1,
+      "casa_name": "restoration",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Restore the model with the clean beam and write the restored image.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.noise",
+      "semantic_revision": 1,
+      "casa_name": "noise",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "trim"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Noise per visibility of weighting='briggsabs'.", "details": null, "examples": ["'1.0Jy'"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.npixels",
+      "semantic_revision": 1,
+      "casa_name": "npixels",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Size, in pixels, of the uv cell of super-uniform and Briggs weighting; 0 for the default.", "details": null, "examples": ["0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.cycleniter",
+      "semantic_revision": 1,
+      "casa_name": "cycleniter",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Most minor-cycle iterations, per plane, before a major cycle; -1 for niter.", "details": null, "examples": ["-1"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.fullsummary",
+      "semantic_revision": 2,
+      "casa_name": "fullsummary",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Return each minor cycle's full detail in the summary record.", "details": null, "examples": ["false"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.pbmask",
+      "semantic_revision": 1,
+      "casa_name": "pbmask",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Primary-beam level of usemask='pb', and the bound of auto-multithresh's mask.", "details": null, "examples": ["0.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.smoothfactor",
+      "semantic_revision": 1,
+      "casa_name": "smoothfactor",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Smoothing of auto-multithresh's mask, in beams.", "details": null, "examples": ["1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.cutthreshold",
+      "semantic_revision": 1,
+      "casa_name": "cutthreshold",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Fraction of the smoothed mask's peak auto-multithresh keeps.", "details": null, "examples": ["0.01"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.dogrowprune",
+      "semantic_revision": 1,
+      "casa_name": "dogrowprune",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Prune auto-multithresh's grown mask.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.minpercentchange",
+      "semantic_revision": 1,
+      "casa_name": "minpercentchange",
+      "value_domain": {"kind": "float"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Mask change, in percent, below which auto-multithresh stops updating a channel; -1 for never.", "details": null, "examples": ["-1.0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.fastnoise",
+      "semantic_revision": 1,
+      "casa_name": "fastnoise",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Estimate auto-multithresh's noise from the whole residual, unmasked.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.restart",
+      "semantic_revision": 1,
+      "casa_name": "restart",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {"summary": "Continue from the products of an earlier run with the same imagename.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.calcres",
+      "semantic_revision": 1,
+      "casa_name": "calcres",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Compute the initial residual image.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.calcpsf",
+      "semantic_revision": 1,
+      "casa_name": "calcpsf",
+      "value_domain": {"kind": "bool"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Compute the PSF image.", "details": null, "examples": ["true"]},
       "persistence_class": "profile"
     }
   ]

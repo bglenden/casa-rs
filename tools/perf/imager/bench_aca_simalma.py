@@ -1257,7 +1257,8 @@ def run_native_imager_product(
 ) -> dict[str, Any]:
     ms_paths = [run_by_name[name]["output_ms"] for name in spec["run_names"]]
     prefix = image_dir / spec["name"]
-    # One front-end request (#931): the binary replies with the run's result.
+    # One front-end tclean request (#931): niter=0 is a dirty run, and the
+    # binary replies with the run's result.
     values: dict[str, Any] = {
         "vis": ms_paths,
         "imagename": str(prefix),
@@ -1267,7 +1268,6 @@ def run_native_imager_product(
         "weighting": "natural",
         "deconvolver": "hogbom",
         "niter": 0,
-        "dirty_only": True,
         "write_pb": True,
         "pblimit": 0.2,
     }
@@ -1275,7 +1275,7 @@ def run_native_imager_product(
         values["phasecenter"] = spec["phasecenter"]
     request_path = image_dir / f"{spec['name']}.request.json"
     request_path.write_text(
-        json.dumps({"surface": "imager", "values": values}, indent=2) + "\n",
+        json.dumps({"surface": "tclean", "values": values}, indent=2) + "\n",
         encoding="utf-8",
     )
     command = [str(imager_binary), "--json-run", str(request_path)]

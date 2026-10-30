@@ -338,7 +338,7 @@ impl Observation {
         f64::from(self.noise_jy) / (self.stokes_i_samples_per_channel() as f64).sqrt()
     }
 
-    /// Run the production route with `controls`, imager parameters by
+    /// Run the production route with `controls`, tclean parameters by
     /// catalog name, merged over the T1 geometry and read back every
     /// product it reports.
     pub fn image(&self, name: &str, controls: Value) -> (ImagerRunReport, Products) {
@@ -367,6 +367,7 @@ impl Observation {
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
+        imager_defaults(fields);
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
@@ -418,6 +419,7 @@ impl Observation {
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
+        imager_defaults(fields);
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
@@ -524,6 +526,26 @@ impl Observation {
 /// row the run imaged equals today's route's to 1e-12 relative (each
 /// quantity to its scale: UVW and phase shift to the baseline length,
 /// pixels to their magnitude, angles in radians).
+/// The imager's defaults these laws were written against, where CASA's
+/// tclean defaults differ (#931): 1000-iteration minor cycles, W planes
+/// derived from the data, and the imager's fixed `conjbeams` and
+/// `mosweight`.
+fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
+    fields.entry("cycleniter").or_insert_with(|| json!(1000));
+    match fields.get("gridder").and_then(Value::as_str) {
+        Some("wproject") => {
+            fields.entry("wprojplanes").or_insert_with(|| json!(-1));
+        }
+        Some("awproject") => {
+            fields.entry("conjbeams").or_insert_with(|| json!(true));
+        }
+        Some("mosaic") => {
+            fields.entry("mosweight").or_insert_with(|| json!(false));
+        }
+        _ => {}
+    }
+}
+
 fn assert_geometry_law(name: &str, request: &ImagingRequest) {
     let comparison =
         compare_geometry(request, &run_context(request)).expect("both geometry routes");

@@ -33,7 +33,7 @@ fn main() -> ExitCode {
     TaskFrontEnd::new(
         "casars-imager",
         casars_imager::imager_task_schema_bundle(),
-        &["imager"],
+        &["tclean"],
         run,
     )
     .expect("the imager contract carries its surface")

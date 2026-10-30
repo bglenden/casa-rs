@@ -185,6 +185,53 @@ impl TaskInvocation<'_> {
             None => Err(missing(name)),
         }
     }
+
+    /// `name` as a list of text, such as CASA's `gainfield=['', '0']`; one
+    /// text is a list of one. Empty items are kept, since a list's
+    /// positions can matter.
+    pub fn texts(&self, name: &str) -> Result<Vec<String>, TaskFailure> {
+        let text = |value: &ParameterValue| match value {
+            ParameterValue::String(text) => Ok(text.clone()),
+            other => Err(mismatch(name, "a list of text", other)),
+        };
+        match self.value(name) {
+            Some(ParameterValue::Array(items)) => items.iter().map(text).collect(),
+            Some(value) => Ok(vec![text(value)?]),
+            None => Err(missing(name)),
+        }
+    }
+
+    /// `name` as a list of flags, such as CASA's `calwt=[True]`; one flag
+    /// is a list of one.
+    pub fn flags(&self, name: &str) -> Result<Vec<bool>, TaskFailure> {
+        let flag = |value: &ParameterValue| match value {
+            ParameterValue::Bool(value) => Ok(*value),
+            other => Err(mismatch(name, "a list of flags", other)),
+        };
+        match self.value(name) {
+            Some(ParameterValue::Array(items)) => items.iter().map(flag).collect(),
+            Some(value) => Ok(vec![flag(value)?]),
+            None => Err(missing(name)),
+        }
+    }
+
+    /// `name` as a list of integer lists, such as CASA's
+    /// `spwmap=[[0, 0, 1], []]`.
+    pub fn integer_lists(&self, name: &str) -> Result<Vec<Vec<i64>>, TaskFailure> {
+        let integer = |value: &ParameterValue| match value {
+            ParameterValue::Integer(value) => Ok(*value),
+            other => Err(mismatch(name, "a list of integer lists", other)),
+        };
+        let list = |value: &ParameterValue| match value {
+            ParameterValue::Array(items) => items.iter().map(integer).collect(),
+            other => Err(mismatch(name, "a list of integer lists", other)),
+        };
+        match self.value(name) {
+            Some(ParameterValue::Array(items)) => items.iter().map(list).collect(),
+            Some(other) => Err(mismatch(name, "a list of integer lists", other)),
+            None => Err(missing(name)),
+        }
+    }
 }
 
 fn missing(name: &str) -> TaskFailure {

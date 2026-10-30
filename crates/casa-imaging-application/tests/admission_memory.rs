@@ -471,7 +471,7 @@ fn request(
         "cell": format!("{CELL_ARCSEC}arcsec"),
         "weighting": "natural",
         "niter": 200,
-        "minor_cycle_length": 50,
+        "cycleniter": 50,
         "gain": 0.2,
         "threshold": "1mJy",
     });
@@ -532,7 +532,7 @@ fn continuum_runs_stay_within_their_admission() {
         ("clark", json!({ "deconvolver": "clark" })),
         (
             "multiscale",
-            json!({ "deconvolver": "multiscale", "scales": "0,4,8" }),
+            json!({ "deconvolver": "multiscale", "scales": [0, 4, 8] }),
         ),
         ("mtmfs", json!({ "deconvolver": "mtmfs", "nterms": 2 })),
         (
@@ -1221,7 +1221,7 @@ fn mtmfs_controls() -> Value {
     json!({
         "deconvolver": "mtmfs",
         "nterms": 2,
-        "scales": "0,5,12",
+        "scales": [0, 5, 12],
         "stage_timing": true,
     })
 }
@@ -1370,7 +1370,7 @@ fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
             "cell": "10arcsec",
             "weighting": "natural",
             "niter": 200,
-            "minor_cycle_length": 50,
+            "cycleniter": 50,
             "gain": 0.2,
             "threshold": "1mJy",
             "gridder": "awproject",

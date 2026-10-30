@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 470
+- Concepts: 542
 - Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 705
+- Surface bindings: 780
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 28 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 29 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -27,11 +27,11 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 5 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 5 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 5 | <code>calibration</code> | 22 | Apply one or more calibration tables to a MeasurementSet. |
-| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 5 | <code>calibration</code> | 29 | Solve antenna gain calibration for a MeasurementSet. |
-| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 5 | <code>calibration</code> | 27 | Solve bandpass calibration for a MeasurementSet. |
-| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 5 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
-| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 5 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 6 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
+| [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
+| [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
+| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 6 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
+| [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
@@ -213,87 +213,122 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>keepblanks</code> | <code>parameter.keepblanks@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Preserve blank source names |
 | <code>evlabands</code> | <code>parameter.evlabands@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Use EVLA band centers and bandwidths for band selection |
 
-<a id="surface-imager"></a>
+<a id="surface-tclean"></a>
 
-## Imager (<code>imager</code>)
+## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `28`
+- Contract version: `29`
 - Category: Imaging
 - Provider family: `imager`
-- Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
+- Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Context | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | no default; required | Products | Output CASA image prefix |
-| <code>imsize</code> | <code>image.geometry.imsize@r2</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
-| <code>cell</code> | <code>image.geometry.cell@r2</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Visibility data column used by the surface. |
-| <code>savemodel</code> | <code>parameter.savemodel@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
-| <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | CASA field selector. |
-| <code>phasecenter_field</code> | <code>parameter.phasecenter_field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | FIELD_ID used as the imaging phase center |
-| <code>ddid</code> | <code>parameter.ddid@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Restrict imaging to one DATA_DESC_ID |
-| <code>phasecenter</code> | <code>parameter.phasecenter@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Explicit CASA-style J2000 phase center |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
-| <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Context | Input MeasurementSet path or paths. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Context | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> False ignores the selection parameters, as CASA's tclean does. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Context | CASA field selector. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated OBSERVATION_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Context | Visibility data column used by the surface.<br><em>Surface:</em> 'corrected' images CORRECTED_DATA, or DATA when the MeasurementSet has no CORRECTED_DATA, as CASA's tclean does. |
+| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | <code>""</code>; required | Products | Output CASA image prefix |
+| <code>imsize</code> | <code>image.geometry.imsize@r3</code> | <code>array&lt;integer&gt;</code> | <code>[100]</code>; optional | Stage Parameters | Image dimensions in pixels |
+| <code>cell</code> | <code>image.geometry.cell@r3</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>[]</code>; optional | Stage Parameters | Image cell size<br><em>Surface:</em> Required in practice: CASA's tclean and casa-rs refuse an empty cell. A bare number is in arcseconds. |
+| <code>phasecenter</code> | <code>tclean.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
-| <code>specmode</code> | <code>parameter.specmode@r3</code> | <code>choice (4 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame |
-| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Cube-axis start channel, frequency, or velocity |
-| <code>width</code> | <code>imager.width@r2</code> | <code>optional&lt;string&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
-| <code>outframe</code> | <code>parameter.outframe@r2</code> | <code>choice (4 values)</code> | <code>"LSRK"</code>; optional | Stages | Spectral frame of a cube's output axis |
-| <code>veltype</code> | <code>parameter.veltype@r2</code> | <code>choice (3 values)</code> | <code>"RADIO"</code>; optional | Stages | Velocity convention of a cube's velocity start and axis |
-| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (2 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Stages | Spectral interpolation mode for cube gridding |
-| <code>restfreq</code> | <code>parameter.restfreq@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Rest frequency used for velocity-style cube axes |
-| <code>restoringbeam</code> | <code>parameter.restoringbeam@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Stages | Restored-beam policy for cube outputs |
-| <code>perchanweightdensity</code> | <code>parameter.perchanweightdensity@r1</code> | <code>bool</code> | <code>specmode="cube"→true; otherwise→false</code>; optional | Stages | Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata |
-| <code>dirty_only</code> | <code>parameter.dirty_only@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Skip CLEAN and only write dirty / residual products |
+| <code>projection</code> | <code>parameter.projection@r2</code> | <code>string</code> | <code>"SIN"</code>; optional | Stage Parameters | Spherical projection of the image's direction axes. |
+| <code>startmodel</code> | <code>parameter.startmodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Stage Parameters | CASA image in Jy/pixel that the model starts from |
+| <code>specmode</code> | <code>parameter.specmode@r4</code> | <code>choice (6 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame |
+| <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>""</code>; optional | Stages | Reference frequency. |
+| <code>nchan</code> | <code>regridms.nchan@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stages | Number of channels of the regridded spectral axis; -1 for all.<br><em>Surface:</em> Output channels of a cube; -1 for all. casa-rs's channel_count gives the same count when nchan is -1. |
+| <code>start</code> | <code>tclean.start@r1</code> | <code>string</code> | <code>""</code>; optional | Stages | First channel of a cube: a channel number, a frequency or a velocity; empty for the first selected channel. |
+| <code>width</code> | <code>imager.width@r3</code> | <code>string</code> | <code>""</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
+| <code>outframe</code> | <code>parameter.outframe@r3</code> | <code>string</code> | <code>"LSRK"</code>; optional | Stages | Spectral frame of a cube's output axis |
+| <code>veltype</code> | <code>parameter.veltype@r3</code> | <code>string</code> | <code>"radio"</code>; optional | Stages | Velocity convention of a cube's velocity start and axis |
+| <code>restfreq</code> | <code>tclean.restfreq@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Stages | Rest frequencies of a cube's velocity axis; empty for the source's. |
+| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (3 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Stages | Spectral interpolation mode for cube gridding |
+| <code>perchanweightdensity</code> | <code>parameter.perchanweightdensity@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata<br><em>Surface:</em> Used by the cube modes only, as CASA's tclean uses it. |
+| <code>gridder</code> | <code>parameter.gridder@r3</code> | <code>choice (14 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
+| <code>facets</code> | <code>parameter.facets@r3</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed. casa-rs's wproject takes one facet. |
+| <code>psfphasecenter</code> | <code>parameter.psfphasecenter@r2</code> | <code>string</code> | <code>""</code>; optional | Advanced Wide-Field | Phase centre the mosaic PSF is made at; empty for phasecenter. |
+| <code>wprojplanes</code> | <code>parameter.wprojplanes@r2</code> | <code>integer</code> | <code>1</code>; optional | Stages | Explicit wproject plane budget<br><em>Surface:</em> -1 derives the W planes from the selected W range; awproject takes CASA's 32-plane EVLA cache. |
+| <code>vptable</code> | <code>parameter.vptable@r2</code> | <code>string</code> | <code>""</code>; optional | Advanced Wide-Field | Voltage-pattern table of the primary beams; empty for the built-in models. |
+| <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Weigh the visibility density of each mosaic field on its own.<br><em>Surface:</em> casa-rs's mosaic weighs density over all fields (CASA's mosweight=False): with the mosaic gridder and density weighting, True is refused (#818). |
+| <code>aterm</code> | <code>parameter.aterm@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Include the antenna aperture illumination in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another aterm is refused. |
+| <code>psterm</code> | <code>parameter.psterm@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another psterm is refused. |
+| <code>wbawp</code> | <code>parameter.wbawp@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Use frequency-dependent A-terms in wideband AW projection.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another wbawp is refused. |
+| <code>conjbeams</code> | <code>parameter.conjbeams@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Grid with the beam at the conjugate frequency, removing the beam's spectral index.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another conjbeams is refused. |
+| <code>cfcache</code> | <code>parameter.cfcache@r3</code> | <code>path (directory)</code> | <code>""</code>; optional | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> awproject with aw_cf_source='casa-import' reads this existing CASA CFS_/WTCFS_ cache read-only; casa-rs never writes it. |
+| <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
+| <code>computepastep</code> | <code>parameter.computepastep@r2</code> | <code>float</code> | <code>360.0</code>; optional | Advanced Wide-Field | Parallactic-angle step, in degrees, between computed A-terms. |
+| <code>rotatepastep</code> | <code>parameter.rotatepastep@r2</code> | <code>float</code> | <code>360.0</code>; optional | Advanced Wide-Field | Parallactic-angle step, in degrees, between rotated A-terms. |
+| <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r2</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
+| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked |
+| <code>normtype</code> | <code>parameter.normtype@r3</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
+| <code>deconvolver</code> | <code>parameter.deconvolver@r2</code> | <code>choice (9 values)</code> | <code>"hogbom"</code>; optional | Stages | Minor-cycle algorithm used for deconvolution |
+| <code>scales</code> | <code>parameter.scales@r2</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Stages | Multiscale component sizes in pixels |
+| <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>2</code>; optional | Stages | Number of Taylor terms.<br><em>Surface:</em> Used by mtmfs only, as CASA's tclean uses it. |
+| <code>smallscalebias</code> | <code>parameter.smallscalebias@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stages | CASA multiscale bias in [-1, 1] |
+| <code>fusedthreshold</code> | <code>parameter.fusedthreshold@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Threshold, in Jy, below which deconvolver='asp' switches to Hogbom components.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223). |
+| <code>largestscale</code> | <code>parameter.largestscale@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Largest scale, in pixels, deconvolver='asp' fits; -1 for no limit.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223). |
+| <code>restoration</code> | <code>parameter.restoration@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Restore the model with the clean beam and write the restored image. |
+| <code>restoringbeam</code> | <code>parameter.restoringbeam@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Stages | Restoring beam: empty for each plane's fitted beam, 'common' for one beam over all planes, or a beam's axes and angle |
+| <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
+| <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>""</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |
+| <code>weighting</code> | <code>parameter.weighting@r2</code> | <code>choice (7 values)</code> | <code>"natural"</code>; optional | Stages | Visibility weighting policy |
+| <code>robust</code> | <code>parameter.robust@r1</code> | <code>float</code> | <code>0.5</code>; optional | Stages | Briggs robust parameter when weighting=briggs or briggsbwtaper |
+| <code>noise</code> | <code>parameter.noise@r1</code> | <code>string</code> | <code>"1.0Jy"</code>; optional | Stages | Noise per visibility of weighting='briggsabs'. |
+| <code>npixels</code> | <code>parameter.npixels@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Size, in pixels, of the uv cell of super-uniform and Briggs weighting; 0 for the default. |
+| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
 | <code>niter</code> | <code>parameter.niter@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Minor-cycle iteration budget; ignored when Dirty Only is enabled |
-| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>"0.0Jy"</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> Canonical threshold maps to provider field threshold_jy. |
-| <code>nmajor</code> | <code>parameter.nmajor@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Major-cycle limit; -1 keeps CASA's unlimited default |
 | <code>gain</code> | <code>parameter.gain@r1</code> | <code>float</code> | <code>0.1</code>; optional | Stage Parameters | Minor-cycle loop gain |
+| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>0.0</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> A bare number is in Jy, as CASA's tclean reads it. |
 | <code>nsigma</code> | <code>parameter.nsigma@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Robust-RMS stopping multiplier |
-| <code>psfcutoff</code> | <code>parameter.psfcutoff@r1</code> | <code>float</code> | <code>0.35</code>; optional | Stage Parameters | PSF beam-fit cutoff fraction |
-| <code>minor_cycle_length</code> | <code>parameter.minor_cycle_length@r1</code> | <code>integer</code> | <code>1000</code>; optional | Stage Parameters | Residual refresh cadence in component updates |
+| <code>cycleniter</code> | <code>parameter.cycleniter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Most minor-cycle iterations, per plane, before a major cycle; -1 for niter.<br><em>Surface:</em> -1 is niter, as CASA's tclean reads it. |
 | <code>cyclefactor</code> | <code>parameter.cyclefactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Stage Parameters | Scale factor used for cycle-threshold derivation |
-| <code>deconvolver</code> | <code>parameter.deconvolver@r1</code> | <code>choice (4 values)</code> | <code>"hogbom"</code>; optional | Stages | Minor-cycle algorithm used for deconvolution |
 | <code>minpsffraction</code> | <code>parameter.minpsffraction@r1</code> | <code>float</code> | <code>0.05</code>; optional | Stage Parameters | Lower clamp for the PSF-fraction controller term |
 | <code>maxpsffraction</code> | <code>parameter.maxpsffraction@r1</code> | <code>float</code> | <code>0.8</code>; optional | Stage Parameters | Upper clamp for the PSF-fraction controller term |
-| <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of Taylor terms. |
-| <code>hogbom_iteration_mode</code> | <code>parameter.hogbom_iteration_mode@r1</code> | <code>string</code> | <code>"strict"</code>; optional | Stage Parameters | Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons |
-| <code>scales</code> | <code>parameter.scales@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Comma-separated multiscale kernel sizes in pixels |
-| <code>smallscalebias</code> | <code>parameter.smallscalebias@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stages | CASA multiscale bias in [-1, 1] |
-| <code>usemask</code> | <code>parameter.usemask@r1</code> | <code>choice (2 values)</code> | <code>"user"</code>; optional | Stage Parameters | Clean-mask generation mode |
+| <code>interactive</code> | <code>parameter.interactive@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Interactive clean. |
+| <code>nmajor</code> | <code>parameter.nmajor@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Major-cycle limit; -1 keeps CASA's unlimited default |
+| <code>fullsummary</code> | <code>parameter.fullsummary@r2</code> | <code>bool</code> | <code>false</code>; optional | Stages | Return each minor cycle's full detail in the summary record.<br><em>Surface:</em> Adds the per-cycle detail of summaryminor to the returned record. |
+| <code>usemask</code> | <code>parameter.usemask@r2</code> | <code>choice (3 values)</code> | <code>"user"</code>; optional | Stage Parameters | Clean-mask generation mode |
+| <code>mask</code> | <code>tclean.mask@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Stage Parameters | Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.<br><em>Surface:</em> A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'. |
+| <code>pbmask</code> | <code>parameter.pbmask@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Primary-beam level of usemask='pb', and the bound of auto-multithresh's mask. |
 | <code>sidelobethreshold</code> | <code>parameter.sidelobethreshold@r1</code> | <code>float</code> | <code>3.0</code>; optional | Stage Parameters | Auto-multithresh sidelobe threshold factor |
 | <code>noisethreshold</code> | <code>parameter.noisethreshold@r1</code> | <code>float</code> | <code>5.0</code>; optional | Stage Parameters | Auto-multithresh noise threshold factor |
 | <code>lownoisethreshold</code> | <code>parameter.lownoisethreshold@r1</code> | <code>float</code> | <code>1.5</code>; optional | Stage Parameters | Auto-multithresh mask-growth threshold factor |
 | <code>negativethreshold</code> | <code>parameter.negativethreshold@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Auto-multithresh negative-feature threshold factor |
+| <code>smoothfactor</code> | <code>parameter.smoothfactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Stage Parameters | Smoothing of auto-multithresh's mask, in beams. |
 | <code>minbeamfrac</code> | <code>parameter.minbeamfrac@r1</code> | <code>float</code> | <code>0.3</code>; optional | Stage Parameters | Auto-multithresh pruning region size as a beam fraction |
+| <code>cutthreshold</code> | <code>parameter.cutthreshold@r1</code> | <code>float</code> | <code>0.01</code>; optional | Stage Parameters | Fraction of the smoothed mask's peak auto-multithresh keeps. |
 | <code>growiterations</code> | <code>parameter.growiterations@r1</code> | <code>integer</code> | <code>75</code>; optional | Stage Parameters | Auto-multithresh constrained mask-growth iterations |
-| <code>mask_box</code> | <code>parameter.mask_box@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stage Parameters | Inclusive clean mask box in pixel coordinates |
-| <code>weighting</code> | <code>parameter.weighting@r1</code> | <code>choice (4 values)</code> | <code>"natural"</code>; optional | Stages | Visibility weighting policy |
-| <code>mask_image</code> | <code>parameter.mask_image@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Stage Parameters | CASA image mask whose non-zero pixels are cleanable |
-| <code>robust</code> | <code>parameter.robust@r1</code> | <code>float</code> | <code>0.5</code>; optional | Stages | Briggs robust parameter when weighting=briggs or briggsbwtaper |
-| <code>wprojplanes</code> | <code>parameter.wprojplanes@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Explicit wproject plane budget |
-| <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
-| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA |
-| <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
-| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked |
-| <code>gridder</code> | <code>parameter.gridder@r2</code> | <code>choice (4 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
-| <code>facets</code> | <code>parameter.facets@r3</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed. |
+| <code>dogrowprune</code> | <code>parameter.dogrowprune@r1</code> | <code>bool</code> | <code>true</code>; optional | Stage Parameters | Prune auto-multithresh's grown mask. |
+| <code>minpercentchange</code> | <code>parameter.minpercentchange@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Stage Parameters | Mask change, in percent, below which auto-multithresh stops updating a channel; -1 for never. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Stage Parameters | Verbose logging. |
+| <code>fastnoise</code> | <code>parameter.fastnoise@r1</code> | <code>bool</code> | <code>true</code>; optional | Stage Parameters | Estimate auto-multithresh's noise from the whole residual, unmasked. |
+| <code>restart</code> | <code>parameter.restart@r1</code> | <code>bool</code> | <code>true</code>; optional | Products | Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> casa-rs overwrites existing products: it never restarts from them (#944). |
+| <code>savemodel</code> | <code>parameter.savemodel@r2</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
+| <code>calcres</code> | <code>parameter.calcres@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the initial residual image. |
+| <code>calcpsf</code> | <code>parameter.calcpsf@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the PSF image. |
+| <code>psfcutoff</code> | <code>parameter.psfcutoff@r1</code> | <code>float</code> | <code>0.35</code>; optional | Stage Parameters | PSF beam-fit cutoff fraction |
 | <code>parallel</code> | <code>parameter.parallel@r2</code> | <code>bool</code> | <code>false</code>; optional | Stages | Image on the host's workers (the balanced resource policy); false images on one worker |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
-| <code>cfcache</code> | <code>parameter.cfcache@r2</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache. |
-| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r2</code> | <code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero. |
-| <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
-| <code>normtype</code> | <code>parameter.normtype@r2</code> | <code>choice (2 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
+| <code>ddid</code> | <code>parameter.ddid@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Restrict imaging to one DATA_DESC_ID |
+| <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
+| <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
+| <code>hogbom_iteration_mode</code> | <code>parameter.hogbom_iteration_mode@r1</code> | <code>string</code> | <code>"strict"</code>; optional | Stage Parameters | Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons |
+| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA |
 | <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |
 | <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial fit order. |
 | <code>save_continuum_residual</code> | <code>parameter.save_continuum_residual@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum Subtraction | Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged. |
+| <code>backend</code> | <code>parameter.backend@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Device the major-cycle passes grid on: auto, cpu or gpu |
+| <code>gridprecision</code> | <code>parameter.gridprecision@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>aw_cf_source</code> | <code>parameter.aw_cf_source@r1</code> | <code>choice (2 values)</code> | <code>"casa-import"</code>; optional | Advanced Wide-Field | Paired AW convolution-function source<br><em>Surface:</em> Exactly one read-only CASA import or frozen native EVLA source; there is no fallback. |
+| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r2</code> | <code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero. |
 | <code>native_cf_cache</code> | <code>parameter.native_cf_cache@r1</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Private native AW cache directory<br><em>Surface:</em> Native prepared-artifact cache; writable for generation actions and not readable by CASA. |
 | <code>evla_surface</code> | <code>parameter.evla_surface@r1</code> | <code>optional&lt;path (file)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | EVLA dish surface model<br><em>Surface:</em> Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery. |
 | <code>native_cf_policy</code> | <code>parameter.native_cf_policy@r1</code> | <code>choice (3 values)</code> | <code>"reuse-only"</code>; optional | Advanced Wide-Field | Native AW cache action<br><em>Surface:</em> reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells. |
@@ -301,13 +336,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>native_cf_oversampling</code> | <code>parameter.native_cf_oversampling@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW convolution oversampling<br><em>Surface:</em> Explicit integer convolution-plane oversampling; validated by the native application owner. |
 | <code>native_cf_cache_bytes</code> | <code>parameter.native_cf_cache_bytes@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory. |
 | <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
-| <code>backend</code> | <code>parameter.backend@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Device the major-cycle passes grid on: auto, cpu or gpu |
-| <code>gridprecision</code> | <code>parameter.gridprecision@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
 | <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner, prediction batch and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
-| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
-| <code>startmodel</code> | <code>parameter.startmodel@r2</code> | <code>path (image)</code> | <code>"none"</code>; optional | Stage Parameters | CASA image in Jy/pixel that the model starts from |
 
 <a id="surface-simobserve"></a>
 
@@ -568,163 +599,207 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
-| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
-| <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
-| <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
-| <code>spwmap</code> | <code>parameter.spwmap@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list |
-| <code>apply_mode</code> | <code>parameter.apply_mode@r1</code> | <code>choice (3 values)</code> | <code>"calflag"</code>; optional | Apply | How to handle flags and mutation during apply |
-| <code>calwt</code> | <code>parameter.calwt@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Comma-separated weight-update flags aligned to --gaintables (single value applies to all) |
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
-| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
+| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
+| <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
+| <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
+| <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
+| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>calwt</code> | <code>setapply.calwt@r1</code> | <code>array&lt;bool&gt;</code> | <code>[true]</code>; optional | Apply | Calibrate the weights as well, one flag per gain table or one for all. |
+| <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
+| <code>applymode</code> | <code>setapply.applymode@r1</code> | <code>choice (7 values)</code> | <code>""</code>; optional | Apply | How the calibration applies to data and flags; empty for 'calflag'. |
 | <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Safety | Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none. |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 
 <a id="surface-gaincal"></a>
 
 ## Gaincal (<code>gaincal</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve antenna gain calibration for a MeasurementSet.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
-| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
-| <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
-| <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
-| <code>spwmap</code> | <code>parameter.spwmap@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list |
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve Gain | Gain solution interval such as inf, int, or 30s |
+| <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
+| <code>preavg</code> | <code>setsolve.preavg@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Solve | Pre-averaging interval in seconds within a solution interval; -1 for none. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; required | Solve | Reference antenna name or id for solve workflows |
+| <code>refantmode</code> | <code>setsolve.refantmode@r1</code> | <code>choice (2 values)</code> | <code>"flex"</code>; optional | Solve | Whether another reference antenna is used where refant has no solution. |
+| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve Gain | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |
+| <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
+| <code>normtype</code> | <code>setsolve.normtype@r1</code> | <code>choice (2 values)</code> | <code>"mean"</code>; optional | Solve | How solnorm normalizes the solutions: by their mean or median. |
+| <code>gaintype</code> | <code>setsolve.gaintype@r1</code> | <code>choice (7 values)</code> | <code>"G"</code>; optional | Solve | Type of gain solution: 'G' per polarization, 'T' polarization-independent, and the others. |
+| <code>smodel</code> | <code>setsolve.smodel@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Solve | Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column. |
+| <code>calmode</code> | <code>setsolve.calmode@r1</code> | <code>choice (3 values)</code> | <code>"ap"</code>; optional | Solve | Solve for amplitude 'a', phase 'p' or both 'ap'. |
+| <code>solmode</code> | <code>setsolve.solmode@r1</code> | <code>choice (4 values)</code> | <code>""</code>; optional | Solve | Robust solving: '' for least squares, 'L1', 'R' or 'L1R'. |
+| <code>rmsthresh</code> | <code>setsolve.rmsthresh@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Solve | RMS thresholds of a robust solve, in iteration order. |
+| <code>corrdepflags</code> | <code>setsolve.corrdepflags@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Keep solutions when only some correlations are flagged. |
+| <code>append</code> | <code>setsolve.append@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Append the solutions to an existing calibration table. |
+| <code>splinetime</code> | <code>setsolve.splinetime@r1</code> | <code>float</code> | <code>3600.0</code>; optional | Solve | Spline timescale, in seconds, of a GSPLINE solve. |
+| <code>npointaver</code> | <code>setsolve.npointaver@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve | Points a GSPLINE phase solve averages. |
+| <code>phasewrap</code> | <code>setsolve.phasewrap@r1</code> | <code>float</code> | <code>180.0</code>; optional | Solve | Phase step, in degrees, a GSPLINE solve treats as a wrap. |
+| <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
+| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
+| <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
+| <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
+| <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
+| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>out_table</code> | <code>parameter.out_table@r1</code> | <code>path (calibration_table)</code> | no default; required | Solve | Output calibration-table path for solve, fluxscale, and gencal workflows |
-| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | no default; required | Solve | Reference antenna name or id for solve workflows |
-| <code>gain_type</code> | <code>parameter.gain_type@r1</code> | <code>choice (2 values)</code> | <code>"g"</code>; optional | Solve Gain | Gain family for solve-gain mode |
-| <code>solve_mode</code> | <code>parameter.solve_mode@r1</code> | <code>choice (2 values)</code> | <code>"p"</code>; optional | Solve Gain | Gain solve mode for solve-gain mode |
-| <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve Gain | Gain solution interval such as inf, int, or 30s |
-| <code>gain_combine</code> | <code>parameter.gain_combine@r1</code> | <code>string</code> | <code>"none"</code>; optional | Solve Gain | Gain solve combine axes such as scan or scan,field |
-| <code>gain_model_source</code> | <code>parameter.gain_model_source@r1</code> | <code>choice (2 values)</code> | <code>"point"</code>; optional | Solve Gain | Visibility model source for solve-gain mode |
-| <code>smodel</code> | <code>parameter.smodel@r1</code> | <code>string</code> | <code>"1,0,0,0"</code>; optional | Solve | Point-source Stokes model for solve-gain and solve-bandpass |
-| <code>min_snr</code> | <code>parameter.min_snr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve Gain | Minimum gain solution SNR before flagging |
-| <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
-| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
-| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve Gain | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 
 <a id="surface-bandpass"></a>
 
 ## Bandpass (<code>bandpass</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Solve bandpass calibration for a MeasurementSet.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
-| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
-| <code>gainfield</code> | <code>parameter.gainfield@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all) |
-| <code>interp</code> | <code>parameter.interp@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear |
-| <code>spwmap</code> | <code>parameter.spwmap@r1</code> | <code>string</code> | <code>"none"</code>; optional | Apply | Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list |
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>out_table</code> | <code>parameter.out_table@r1</code> | <code>path (calibration_table)</code> | no default; required | Solve | Output calibration-table path for solve, fluxscale, and gencal workflows |
-| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | no default; required | Solve | Reference antenna name or id for solve workflows |
-| <code>smodel</code> | <code>parameter.smodel@r1</code> | <code>string</code> | <code>"1,0,0,0"</code>; optional | Solve | Point-source Stokes model for solve-gain and solve-bandpass |
-| <code>min_snr</code> | <code>parameter.min_snr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve Gain | Minimum gain solution SNR before flagging |
-| <code>bandpass_combine</code> | <code>parameter.bandpass_combine@r1</code> | <code>choice (4 values)</code> | <code>"none"</code>; optional | Solve Bandpass | Bandpass combine axes |
-| <code>bandtype</code> | <code>parameter.bandtype@r1</code> | <code>choice (2 values)</code> | <code>"b"</code>; optional | Solve Bandpass | Bandpass output family for solve-bandpass mode |
-| <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
+| <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve | Gain solution interval such as inf, int, or 30s |
+| <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; required | Solve | Reference antenna name or id for solve workflows |
+| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |
+| <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
+| <code>bandtype</code> | <code>setsolve.bandtype@r1</code> | <code>choice (2 values)</code> | <code>"B"</code>; optional | Solve | Bandpass solution type: channelized 'B' or polynomial 'BPOLY'. |
+| <code>smodel</code> | <code>setsolve.smodel@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Solve | Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column. |
+| <code>corrdepflags</code> | <code>setsolve.corrdepflags@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Keep solutions when only some correlations are flagged. |
+| <code>append</code> | <code>setsolve.append@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Append the solutions to an existing calibration table. |
+| <code>fillgaps</code> | <code>setsolve.fillgaps@r1</code> | <code>integer</code> | <code>0</code>; optional | Solve | Largest gap, in channels, filled by interpolation in a bandpass. |
 | <code>degamp</code> | <code>parameter.degamp@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's amplitude |
 | <code>degphase</code> | <code>parameter.degphase@r1</code> | <code>integer</code> | <code>3</code>; optional | Solve Bandpass | Polynomial degree of a BPOLY bandpass's phase |
+| <code>visnorm</code> | <code>setsolve.visnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize the data before the bandpass solve. |
+| <code>maskcenter</code> | <code>setsolve.maskcenter@r1</code> | <code>integer</code> | <code>0</code>; optional | Solve | Channels at the window center a BPOLY fit excludes. |
+| <code>maskedge</code> | <code>setsolve.maskedge@r1</code> | <code>integer</code> | <code>5</code>; optional | Solve | Percentage of channels at each window edge a BPOLY fit excludes. |
+| <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
+| <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
+| <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
+| <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
+| <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
+| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 
 <a id="surface-fluxscale"></a>
 
 ## Fluxscale (<code>fluxscale</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Scale gain solutions using reference calibrator fields.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from. |
+| <code>caltable</code> | <code>scaling.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Fluxscale | Gain table fluxscale reads, solved for the reference and transfer fields. |
+| <code>fluxtable</code> | <code>scaling.fluxtable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Fluxscale | Flux-scaled gain table fluxscale writes. |
+| <code>reference</code> | <code>scaling.reference@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; required | Fluxscale | Fields whose flux densities are known. |
+| <code>transfer</code> | <code>scaling.transfer@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Fluxscale | Fields whose flux densities are derived; empty for all the others. |
+| <code>listfile</code> | <code>scaling.listfile@r1</code> | <code>string</code> | <code>""</code>; optional | Fluxscale | Text file that receives the derived flux densities; empty for none. |
+| <code>append</code> | <code>scaling.append@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Append fluxscale's solutions to an existing flux table. |
+| <code>refspwmap</code> | <code>scaling.refspwmap@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Fluxscale | Reference window for each spectral window; [-1] for none. |
+| <code>gainthreshold</code> | <code>scaling.gainthreshold@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Fluxscale | Fraction from the median outside which gain amplitudes are excluded; -1 for none. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Write incremental correction factors instead of absolute transfer gains |
+| <code>fitorder</code> | <code>scaling.fitorder@r1</code> | <code>integer</code> | <code>1</code>; optional | Fluxscale | Polynomial order of the spectral-index fit across spectral windows. |
+| <code>display</code> | <code>scaling.display@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Plot the fitted flux-density spectra. |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>out_table</code> | <code>parameter.out_table@r1</code> | <code>path (calibration_table)</code> | no default; required | Solve | Output calibration-table path for solve, fluxscale, and gencal workflows |
-| <code>fluxscale_input</code> | <code>parameter.fluxscale_input@r1</code> | <code>path (calibration_table)</code> | no default; required | Fluxscale | Input gain table for fluxscale mode |
-| <code>reference_fields</code> | <code>parameter.reference_fields@r1</code> | <code>string</code> | no default; required | Fluxscale | Reference fields for fluxscale mode |
-| <code>transfer_fields</code> | <code>parameter.transfer_fields@r1</code> | <code>string</code> | <code>"none"</code>; optional | Fluxscale | Optional transfer-field restriction for fluxscale mode |
-| <code>refspwmap</code> | <code>parameter.refspwmap@r1</code> | <code>string</code> | <code>"none"</code>; optional | Fluxscale | Optional fluxscale reference spectral-window remap |
-| <code>gainthreshold</code> | <code>parameter.gainthreshold@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Fluxscale | Reject unstable transfer factors above this threshold in fluxscale mode |
-| <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Write incremental correction factors instead of absolute transfer gains |
 
 <a id="surface-gencal"></a>
 
 ## Gencal (<code>gencal</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Generate a calibration table such as antpos, gceff, or opac.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
+| <code>caltype</code> | <code>specifycal.caltype@r1</code> | <code>choice (20 values)</code> | <code>""</code>; required | Gencal | Type of calibration gencal specifies. |
+| <code>infile</code> | <code>specifycal.infile@r1</code> | <code>string</code> | <code>""</code>; optional | Gencal | File some calibration types read: weather, EOP or a Jy/K table. |
+| <code>endpoint</code> | <code>specifycal.endpoint@r1</code> | <code>string</code> | <code>"asdm"</code>; optional | Gencal | Web service the ALMA antenna positions come from. |
+| <code>timeout</code> | <code>specifycal.timeout@r1</code> | <code>integer</code> | <code>180</code>; optional | Gencal | Seconds the antenna-position web service has to answer. |
+| <code>retry</code> | <code>specifycal.retry@r1</code> | <code>integer</code> | <code>3</code>; optional | Gencal | Times the antenna-position web service is asked again. |
+| <code>retry_wait_time</code> | <code>specifycal.retry_wait_time@r1</code> | <code>integer</code> | <code>5</code>; optional | Gencal | Seconds between requests to the antenna-position web service. |
+| <code>ant_pos_time_limit</code> | <code>specifycal.ant_pos_time_limit@r1</code> | <code>integer</code> | <code>0</code>; optional | Gencal | Days before or after the observation an antenna-position correction may come from. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>pol</code> | <code>specifycal.pol@r1</code> | <code>string</code> | <code>""</code>; optional | Gencal | Polarizations the calibration applies to; empty for all. |
+| <code>parameter</code> | <code>specifycal.parameter@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Gencal | Values of the calibration, per antenna, window and polarization as caltype defines. |
+| <code>uniform</code> | <code>specifycal.uniform@r1</code> | <code>bool</code> | <code>true</code>; optional | Gencal | Take one Jy/K factor for every antenna. |
+| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>out_table</code> | <code>parameter.out_table@r1</code> | <code>path (calibration_table)</code> | no default; required | Solve | Output calibration-table path for solve, fluxscale, and gencal workflows |
-| <code>caltype</code> | <code>parameter.caltype@r1</code> | <code>optional&lt;choice (3 values)&gt; (states: none)</code> | no default; required | Gencal | Generated calibration family. |
-| <code>parameter</code> | <code>parameter.parameter@r1</code> | <code>string</code> | <code>"none"</code>; optional | Gencal | Numeric parameter list for the selected generated calibration type. |
-| <code>gaincurve_table</code> | <code>parameter.gaincurve_table@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; optional | Gencal | Optional gaincurve input table for gceff. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>gaincurve_table</code> | <code>parameter.gaincurve_table@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Gencal | Optional gaincurve input table for gceff. |
 
 <a id="surface-plotms"></a>
 

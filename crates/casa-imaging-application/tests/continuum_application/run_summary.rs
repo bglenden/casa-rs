@@ -25,7 +25,7 @@ fn bounded_cycles(measurement_set: &Path, image_name: &Path) -> ImagingRequest {
         image_name,
         json!({
             "niter": 3,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": 3,
             "gain": 0.37,
             "threshold": "1e-12Jy",

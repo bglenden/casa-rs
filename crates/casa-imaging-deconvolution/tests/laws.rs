@@ -275,6 +275,13 @@ fn taylor_recovers_two_components_with_their_spectra() {
         .map(|record| record.flux.abs())
         .sum::<f64>();
     assert!((outcome.absolute_flux - traced).abs() < 1e-12 * traced);
+    // The model flux is the first term's signed update (CASA's modelFlux).
+    let first_term = outcome.delta.term(0).map(|(_, flux)| flux).sum::<f64>();
+    assert!(
+        (outcome.model_flux - first_term).abs() < 1e-12,
+        "{} vs {first_term}",
+        outcome.model_flux
+    );
 }
 
 /// #449: the scale solvers' transforms on several FFTW threads clean as on
@@ -371,6 +378,9 @@ fn hogbom_reports_the_peak_magnitude_of_a_negative_source() {
     let outcome = plane.run(&Hogbom::new(false), &cycle(1, 0.0)).unwrap();
     assert_eq!(outcome.trace[0].flux, -0.1);
     assert!((outcome.peak - 0.9).abs() < 1e-12, "{}", outcome.peak);
+    // The model's flux falls by the component's, where its absolute flux
+    // grows (Astra's #1015 F2).
+    assert_eq!((outcome.model_flux, outcome.absolute_flux), (-0.1, 0.1));
 }
 
 /// A solver whose steps clean their whole budget with zero flux and report

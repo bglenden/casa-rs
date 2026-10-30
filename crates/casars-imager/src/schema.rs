@@ -5,8 +5,8 @@ use casa_ms::presentation::UiCommandSchema;
 
 /// Build the launcher-facing UI schema for the standalone imager.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("imager")
-        .expect("built-in imager parameter surface must remain valid");
+    let bundle = casa_provider_contracts::builtin_surface_bundle("tclean")
+        .expect("built-in tclean parameter surface must remain valid");
     let mut schema: UiCommandSchema =
         serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical imager UI projection must match UiCommandSchema");
@@ -23,8 +23,8 @@ mod tests {
     #[test]
     fn schema_exposes_workflow_surface_for_casars() {
         let schema = command_schema("casars-imager");
-        assert_eq!(schema.command_id, "imager");
-        assert_eq!(schema.display_name, "Imager");
+        assert_eq!(schema.command_id, "tclean");
+        assert_eq!(schema.display_name, "Tclean");
         assert_eq!(schema.category, "Imaging");
         assert_eq!(
             schema
@@ -147,7 +147,7 @@ mod tests {
 
         assert_eq!(default_for("gain"), "0.1");
         assert_eq!(default_for("pblimit"), "0.2");
-        assert_eq!(default_for("minor_cycle_length"), "1000");
+        assert_eq!(default_for("cycleniter"), "-1");
         assert_eq!(default_for("minpsffraction"), "0.05");
         assert_eq!(default_for("parallel"), "false");
         assert_eq!(default_for("gridprecision"), "auto");

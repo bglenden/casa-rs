@@ -115,20 +115,16 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == IMSIZE_CONCEPT_ID)
             .unwrap();
+        // CASA's tclean takes one size for both axes, alone or as a
+        // one-element list (its default `[100]`), or the two sizes.
         assert!(matches!(
             imsize.value_domain,
-            ParameterType::Optional {
-                ref value,
-                ref states,
-            } if states == &["auto".to_string()] && matches!(
-                value.as_ref(),
-                ParameterType::Array {
-                    min_items: 2,
-                    max_items: Some(2),
-                    allow_scalar: true,
-                    ..
-                }
-            )
+            ParameterType::Array {
+                min_items: 1,
+                max_items: Some(2),
+                allow_scalar: true,
+                ..
+            }
         ));
         let cell = catalog
             .catalog
@@ -136,10 +132,11 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
+        // Its cell default is `[]`, which the run refuses as CASA does.
         assert!(matches!(
             cell.value_domain,
             ParameterType::Array {
-                min_items: 2,
+                min_items: 0,
                 max_items: Some(2),
                 allow_scalar: true,
                 ..
@@ -344,9 +341,13 @@ mod tests {
     #[test]
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
-        let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 28);
-        assert_eq!(surface.bindings().len(), 83);
+        let surface = catalog.surface("tclean").unwrap();
+        // The imager was re-surfaced as CASA's tclean (#931): its former id
+        // still finds the surface, so an old profile can migrate.
+        assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
+        assert_eq!(surface.casa_task(), Some("tclean"));
+        assert_eq!(surface.contract_version(), 29);
+        assert_eq!(surface.bindings().len(), 114);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -375,7 +376,7 @@ mod tests {
             value: ParameterValue::String(name.to_string()),
         };
         let awproject = gridder("awproject");
-        for name in ["aw_cf_source", "cf_resident_mb", "pointingoffsetsigdev"] {
+        for name in ["aw_cf_source", "cf_resident_mb"] {
             let binding = surface
                 .bindings()
                 .iter()
@@ -391,24 +392,23 @@ mod tests {
             assert!(binding.projections.python.is_some(), "{name}");
         }
 
-        // Parameters read by some gridders only are active for those.
-        for (name, gridders) in [
-            ("normtype", ["awproject", "mosaic"]),
-            ("usepointing", ["awproject", "mosaic"]),
-            ("wprojplanes", ["awproject", "wproject"]),
+        // CASA's parameters are always active, as CASA's tclean takes them
+        // whatever the gridder; the request ignores the ones a gridder does
+        // not read.
+        for name in [
+            "normtype",
+            "usepointing",
+            "wprojplanes",
+            "pointingoffsetsigdev",
+            "facets",
+            "cfcache",
         ] {
             let binding = surface
                 .bindings()
                 .iter()
                 .find(|binding| binding.name == name)
                 .unwrap_or_else(|| panic!("missing imager binding {name}"));
-            assert_eq!(
-                binding.active_when,
-                Predicate::Any {
-                    predicates: gridders.map(gridder).to_vec(),
-                },
-                "{name}"
-            );
+            assert_eq!(binding.active_when, Predicate::Always, "{name}");
         }
 
         let precision = surface
@@ -451,9 +451,14 @@ mod tests {
                 .all(|binding| binding.aliases.is_empty()),
             "current imager profiles expose canonical names only"
         );
-        assert!(
-            surface.migrations().is_empty(),
-            "current imager profiles retain no migration reader"
+        // A contract-28 imager profile migrates to tclean's names.
+        assert_eq!(
+            surface
+                .migrations()
+                .iter()
+                .map(|migration| (migration.from_contract, migration.to_contract))
+                .collect::<Vec<_>>(),
+            [(28, 29)]
         );
     }
 
@@ -705,7 +710,7 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "imager" | "simobserve"),
+                        matches!(surface.id(), "tclean" | "simobserve"),
                         "{} product sources",
                         surface.id()
                     );

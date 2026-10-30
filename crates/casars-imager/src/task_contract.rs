@@ -33,7 +33,7 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 }
 
 /// The imager's schema bundle in the shared envelope; the catalog's
-/// `imager` surface defines the request's parameters.
+/// `tclean` surface defines the request's parameters.
 pub fn imager_task_schema_bundle() -> TaskProviderContract {
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
@@ -62,8 +62,8 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
             python: None,
         },
         parameter_surfaces: vec![
-            builtin_surface_bundle("imager")
-                .expect("built-in imager parameter surface must remain valid"),
+            builtin_surface_bundle("tclean")
+                .expect("built-in tclean parameter surface must remain valid"),
         ],
         domain_schemas: TaskProviderSchemas {
             request_schema,
@@ -73,7 +73,7 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Catalog-named imager parameters as plain JSON: sparse in a request,
+/// Catalog-named `tclean` parameters as plain JSON: sparse in a request,
 /// every active parameter once resolved (the run's request echo).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -138,6 +138,7 @@ impl ImagerRunTaskResult {
                     }
                 }),
                 elapsed_ns: u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+                planes: outcome.plane_layout(),
             },
         }
     }
@@ -162,6 +163,16 @@ pub struct ImagerRunReport {
     pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
     /// Wall time of the run.
     pub elapsed_ns: u64,
+    /// The deconvolved planes, `[fields, channels, stokes]`: the main image
+    /// and each outlier, each with its channels and Stokes planes. The
+    /// minor cycles report their sums over every plane.
+    #[serde(default = "one_plane")]
+    pub planes: [usize; 3],
+}
+
+/// The planes of a report that names none: one image of one plane.
+const fn one_plane() -> [usize; 3] {
+    [1, 1, 1]
 }
 
 /// The visibilities a run predicted and wrote.
@@ -185,8 +196,13 @@ pub enum ImagerCleanStopReason {
     MajorCycleLimitReached,
     /// No pixel could be cleaned.
     NoCleanablePixels,
-    /// The residual peak rose after earlier progress.
-    DivergenceDetected,
+    /// The peak residual did not change across the last major cycle.
+    NoChange,
+    /// The unmasked peak residual grew to more than four times its value at
+    /// the previous major cycle.
+    DivergedFromPrevious,
+    /// The unmasked peak residual grew to more than four times its minimum.
+    DivergedFromMinimum,
 }
 
 impl From<CleanStop> for ImagerCleanStopReason {
@@ -197,9 +213,9 @@ impl From<CleanStop> for ImagerCleanStopReason {
             CleanStop::NSigma => Self::NsigmaThresholdReached,
             CleanStop::ZeroMask => Self::NoCleanablePixels,
             CleanStop::MajorCycles => Self::MajorCycleLimitReached,
-            CleanStop::NoChange
-            | CleanStop::DivergedFromPrevious
-            | CleanStop::DivergedFromMinimum => Self::DivergenceDetected,
+            CleanStop::NoChange => Self::NoChange,
+            CleanStop::DivergedFromPrevious => Self::DivergedFromPrevious,
+            CleanStop::DivergedFromMinimum => Self::DivergedFromMinimum,
         }
     }
 }
@@ -273,6 +289,9 @@ pub struct ImagerMinorCycleDiagnostic {
     pub total_actual_iterations: usize,
     /// Absolute component flux accepted in the cycle.
     pub total_flux: f64,
+    /// Signed first-term component flux the cycle added to the model.
+    #[serde(default)]
+    pub model_flux: f64,
     /// Normalized residual peak at the cycle's start.
     pub initial_peak_flux: f64,
     /// Normalized residual peak at its end.
@@ -309,6 +328,7 @@ fn project_minor_cycle(cycle: &NativeMinorCycleOutcome) -> ImagerMinorCycleDiagn
         actual_iterations: cycle.actual_iterations,
         total_actual_iterations: cycle.total_actual_iterations,
         total_flux: cycle.total_flux,
+        model_flux: cycle.model_flux,
         initial_peak_flux: cycle.initial_peak_flux,
         final_peak_flux: cycle.final_peak_flux,
         noise_rms: cycle.noise_rms,

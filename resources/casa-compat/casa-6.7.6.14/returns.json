@@ -2705,6 +2705,3462 @@
       "returns": {
         "type": "None"
       }
+    },
+    "gaincal": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "apply_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "selectvis",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "antennas",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      5
+                    ]
+                  }
+                ],
+                [
+                  "field",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "intents",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "<U24",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "observation",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "scan",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spw",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "solve_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U32",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "solvestats",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "above_minblperant",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "above_minsnr",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "data_unflagged",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "expected",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spw0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "above_minblperant",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "above_minsnr",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "ant0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant1",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant2",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant3",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant4",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "data_unflagged",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "expected",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "gaincal pre-applied": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "apply_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U32",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "selectvis",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "antennas",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      5
+                    ]
+                  }
+                ],
+                [
+                  "field",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "intents",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "<U24",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "observation",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "scan",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spw",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "solve_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U33",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "solvestats",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "above_minblperant",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "above_minsnr",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "data_unflagged",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "expected",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spw0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "above_minblperant",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "above_minsnr",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "ant0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant1",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant2",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant3",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant4",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "data_unflagged",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "expected",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "bandpass": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "apply_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "selectvis",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "antennas",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      5
+                    ]
+                  }
+                ],
+                [
+                  "field",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "intents",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "<U24",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "observation",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "scan",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ],
+                [
+                  "spw",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      1
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "solve_tables",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U32",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "solvestats",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "above_minblperant",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "above_minsnr",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "data_unflagged",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "expected",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "int64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spw0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "above_minblperant",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "above_minsnr",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "ant0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant1",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant2",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant3",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "ant4",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "above_minblperant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "above_minsnr",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "data_unflagged",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "expected",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  2
+                                ]
+                              }
+                            ],
+                            [
+                              "used_as_refant",
+                              "str",
+                              {
+                                "type": "ndarray",
+                                "dtype": "int64",
+                                "shape": [
+                                  1
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "data_unflagged",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ],
+                      [
+                        "expected",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "int64",
+                          "shape": [
+                            2
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "fluxscale": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "1",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "fluxd",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            4
+                          ]
+                        }
+                      ],
+                      [
+                        "fluxdErr",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            4
+                          ]
+                        }
+                      ],
+                      [
+                        "numSol",
+                        "str",
+                        {
+                          "type": "ndarray",
+                          "dtype": "float64",
+                          "shape": [
+                            4
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "covarMat",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      0,
+                      0
+                    ]
+                  }
+                ],
+                [
+                  "fieldName",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "fitFluxd",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ],
+                [
+                  "fitFluxdErr",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ],
+                [
+                  "fitRefFreq",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ],
+                [
+                  "spidx",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ],
+                [
+                  "spidxerr",
+                  "str",
+                  {
+                    "type": "ndarray",
+                    "dtype": "float64",
+                    "shape": [
+                      2
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "freq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "spwID",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "spwName",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U4",
+              "shape": [
+                1
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "applycal": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "gencal": {
+      "returns": {
+        "type": "None"
+      }
+    },
+    "tclean niter0": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "float"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "int"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "float"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean niter100": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                11
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean fullsummary": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                11
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "startIterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startPeakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startModelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "startPeakResNM",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakResNM",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleStartIters",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "masksum",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "mpiServer",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "stopCode",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
+    },
+    "tclean cube": {
+      "returns": {
+        "type": "dict",
+        "items": [
+          [
+            "cleanstate",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cyclefactor",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cycleiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cycleniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "cyclethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "interactiveiterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivemode",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "interactiveniter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "interactivethreshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "iterdone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "loopgain",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "maxpsfsidelobe",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "minpsffraction",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "niter",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nmajordone",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "nsigma",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopcode",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "summarymajor",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                3
+              ]
+            }
+          ],
+          [
+            "summaryminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  0,
+                  "int",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        0,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        1,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        2,
+                        "int",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              0,
+                              "int",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "iterDone",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "peakRes",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "modelFlux",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "cycleThresh",
+                                    "str",
+                                    {
+                                      "type": "list",
+                                      "items": [
+                                        {
+                                          "type": "numpy.float64"
+                                        },
+                                        {
+                                          "type": "numpy.float64"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "threshold",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "stopDescription",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      }
     }
   }
 }

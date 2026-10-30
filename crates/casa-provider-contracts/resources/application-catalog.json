@@ -54,7 +54,7 @@
       "include_in_suite": true
     },
     {
-      "id": "imager",
+      "id": "tclean",
       "kind": "task",
       "launch": {
         "executable": "casars-imager",

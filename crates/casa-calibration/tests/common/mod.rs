@@ -2241,7 +2241,7 @@ fn set_measinfo_keyword(
     table.set_column_keywords(column, keywords);
 }
 
-fn make_subtable_row(columns: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
+pub fn make_subtable_row(columns: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
     let fields = columns
         .iter()
         .map(|column| {
