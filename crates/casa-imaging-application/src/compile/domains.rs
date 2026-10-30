@@ -292,6 +292,19 @@ fn reproject_image_mask(
             return Err(PrepareError::ComplexMaskImage);
         }
     };
+    let index = source_coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or(PrepareError::MaskImageDirection)?;
+    // The plane is taken from the first two axes, which are the direction's
+    // only when it is the first coordinate: a degenerate transposed mask
+    // passes the shape check below with its plane transposed.
+    if index != 0 {
+        return Err(PrepareError::MaskImageDirectionAxes {
+            axes: (0..source_coordinates.n_coordinates())
+                .flat_map(|k| source_coordinates.coordinate(k).axis_names())
+                .collect(),
+        });
+    }
     if source_shape.len() < 2
         || source_shape[2..].iter().any(|extent| *extent != 1)
         || source_support.len() != source_shape[0] * source_shape[1]
@@ -300,9 +313,6 @@ fn reproject_image_mask(
             shape: source_shape,
         });
     }
-    let index = source_coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .ok_or(PrepareError::MaskImageDirection)?;
     let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
     let support = casa_imaging_deconvolution::reproject_mask_support(
         source_spec,
@@ -368,4 +378,72 @@ pub(super) fn model_samples(
         .and_then(|samples| samples.checked_mul(planes))
         .and_then(|samples| samples.checked_mul(polarizations.len()))
         .ok_or(PrepareError::ImageSize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_coordinates::{
+        DirectionCoordinate, Projection as CoordinateProjection, SpectralCoordinate,
+        StokesCoordinate, StokesType,
+    };
+    use casa_images::PagedImage;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    fn direction() -> DirectionCoordinate {
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            CoordinateProjection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-1e-5, 1e-5],
+            [1.5, 0.0],
+        )
+    }
+
+    /// A one-plane mask of ones on a 4 by 1 direction plane, with the
+    /// direction first or (as a transposed CASA mask reads) after Stokes.
+    fn mask(path: &Path, direction_first: bool) -> DirectionCoordinateSpec {
+        let mut coordinates = CoordinateSystem::new();
+        let stokes = StokesCoordinate::new(vec![StokesType::I]);
+        let shape = if direction_first {
+            coordinates.add_coordinate(direction());
+            coordinates.add_coordinate(stokes);
+            vec![4, 1, 1, 1]
+        } else {
+            coordinates.add_coordinate(stokes);
+            coordinates.add_coordinate(direction());
+            vec![1, 4, 1, 1]
+        };
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.0e9,
+            1.0e6,
+            0.0,
+            1.0e9,
+        ));
+        let mut image = PagedImage::<f32>::create(shape, coordinates, path).unwrap();
+        image.set(1.0).unwrap();
+        image.save().unwrap();
+        direction_model_spec(&CoordinateModel::Direction(direction())).unwrap()
+    }
+
+    #[test]
+    fn a_mask_whose_direction_is_not_on_its_first_two_axes_is_refused() {
+        // [Stokes, RA, Dec, Freq] of shape [1, 4, 1, 1] passes the
+        // one-plane shape check, but its first two axes are Stokes and RA:
+        // read as the direction plane, its 4 by 1 row would become a column.
+        let dir = tempfile::tempdir().unwrap();
+        let transposed = dir.path().join("transposed.mask");
+        let target = mask(&transposed, false);
+        let error = reproject_image_mask(&transposed, target, [4, 1]).unwrap_err();
+        assert!(
+            matches!(&error, PrepareError::MaskImageDirectionAxes { axes }
+                if axes[..2] == ["Stokes", "Right Ascension"]),
+            "{error}"
+        );
+
+        let first = dir.path().join("first.mask");
+        let target = mask(&first, true);
+        assert!(reproject_image_mask(&first, target, [4, 1]).is_ok());
+    }
 }
