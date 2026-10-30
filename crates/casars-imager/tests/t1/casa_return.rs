@@ -194,6 +194,17 @@ fn tclean_returns_casas_summary_record() {
         panic!("nmajordone is an int");
     };
     assert_eq!(major.len(), usize::try_from(*majors).expect("count"));
+    // CASA's cyclethreshold is the one it computes after the last major
+    // cycle, which the report does not hold (Astra's #1015 F6); a dirty
+    // run's is CASA's integer zero.
+    let CasaValue::Float { value: cycle } = entry(&clean, "cyclethreshold") else {
+        panic!("cyclethreshold is a float");
+    };
+    assert!(cycle.0.is_nan(), "{cycle:?}");
+    assert_eq!(
+        entry(&dirty, "cyclethreshold"),
+        &CasaValue::Int { value: 0 }
+    );
 
     let full = run("full", json!({ "niter": 40, "fullsummary": true }));
     assert_eq!(describe(&full), casa("tclean fullsummary"));
