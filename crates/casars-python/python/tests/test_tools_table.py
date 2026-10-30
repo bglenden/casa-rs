@@ -172,6 +172,23 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
         return {"error": {"type": type(error).__name__, "message": str(error).replace(path, PLACEHOLDER)}}
 
 
+def same_cells_as_getcell(
+    tool: Any, step: dict[str, Any], value: dict[str, Any], path: str, where: str
+) -> None:
+    """CASA cannot return a `getcol` of an `int64` column, so the array
+    casa-rs returns is checked against the same rows read cell by cell
+    (`getcell` of that column is CASA's and recorded): its shape and every
+    value, not only its dtype."""
+    column = decode_value(step["args"][0], path)
+    kwargs = {name: decode_value(item, path) for name, item in step["kwargs"].items()}
+    first, count, step_ = kwargs.get("startrow", 0), kwargs.get("nrow", -1), kwargs.get("rowincr", 1)
+    last = tool.nrows() if count < 0 else min(tool.nrows(), first + count * step_)
+    rows = range(first, last, step_)
+    expected = [tool.getcell(column, row) for row in rows]
+    assert value["shape"] == [len(expected)], where
+    assert value["data"] == expected, where
+
+
 #: Recorded from CASA but not implemented yet (`getcoldesc`, `getdminfo`,
 #: `addrows`, `removerows`, `addcols`, `renamecol`, `removecols`); a scenario
 #: leaves this set as its methods land.
@@ -199,6 +216,7 @@ def test_the_tool_answers_as_casa_does(
         if "error" in step:
             if step["error"]["message"] == "Unknown casa DataType!":
                 assert "value" in got and got["value"]["ndarray"] == "int64", where
+                same_cells_as_getcell(tool, step, got["value"], path, where)
             else:
                 assert "error" in got, f"{where}: CASA raised {step['error']}, casa-rs gave {got}"
                 same_error(got["error"], step["error"], where)

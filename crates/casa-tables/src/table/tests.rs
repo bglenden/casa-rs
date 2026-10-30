@@ -6253,6 +6253,45 @@ mod lock_tests {
         );
     }
 
+    /// A release that fails while the table holds unwritten changes, and
+    /// whose reload fails too, leaves nothing for the drop to write in full
+    /// (`unlock_metadata_only_or_discard`). The lock may stay held, as the
+    /// publication of a write needs the control file too; the drop then only
+    /// publishes.
+    #[test]
+    fn a_failed_release_discards_the_changes_and_leaves_nothing_for_a_drop_to_write() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+
+        // The control file becomes a directory: the metadata flush of the
+        // release fails, and so does the reload.
+        let control = opts.path().join("table.dat");
+        let hidden = opts.path().join("hidden-control");
+        std::fs::rename(&control, &hidden).unwrap();
+        std::fs::create_dir(&control).unwrap();
+        assert!(
+            writer.unlock_metadata_only_or_discard().is_err(),
+            "the blocked release succeeded"
+        );
+        std::fs::remove_dir(&control).unwrap();
+        std::fs::rename(&hidden, &control).unwrap();
+
+        let data = std::fs::read(opts.path().join("table.f0")).unwrap();
+        let dat = std::fs::read(&control).unwrap();
+        drop(writer);
+        assert_eq!(std::fs::read(opts.path().join("table.f0")).unwrap(), data);
+        assert_eq!(std::fs::read(&control).unwrap(), dat);
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(1)
+        );
+    }
+
     /// An unlock whose flush fails returns the error and keeps the write
     /// lock and the write it started; the next unlock flushes and publishes
     /// it once.
