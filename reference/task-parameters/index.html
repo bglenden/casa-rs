@@ -1303,9 +1303,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 470</li>
+<li>Concepts: 517</li>
 <li>Surfaces: 26 (26 task, 0 session)</li>
-<li>Surface bindings: 705</li>
+<li>Surface bindings: 749</li>
 </ul>
 <table>
 <thead>
@@ -1410,41 +1410,41 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-applycal">Applycal</a><br><code>applycal</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">22</td>
+<td style="text-align: right;">25</td>
 <td>Apply one or more calibration tables to a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-gaincal">Gaincal</a><br><code>gaincal</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">29</td>
+<td style="text-align: right;">42</td>
 <td>Solve antenna gain calibration for a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-bandpass">Bandpass</a><br><code>bandpass</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">27</td>
+<td style="text-align: right;">39</td>
 <td>Solve bandpass calibration for a MeasurementSet.</td>
 </tr>
 <tr>
 <td><a href="#surface-fluxscale">Fluxscale</a><br><code>fluxscale</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">10</td>
+<td style="text-align: right;">18</td>
 <td>Scale gain solutions using reference calibrator fields.</td>
 </tr>
 <tr>
 <td><a href="#surface-gencal">Gencal</a><br><code>gencal</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>calibration</code></td>
-<td style="text-align: right;">10</td>
+<td style="text-align: right;">18</td>
 <td>Generate a calibration table such as antpos, gceff, or opac.</td>
 </tr>
 <tr>
@@ -4802,7 +4802,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="applycal-applycal">Applycal (<code>applycal</code>)<a class="headerlink" href="#applycal-applycal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Apply one or more calibration tables to a MeasurementSet.</li>
@@ -4823,71 +4823,175 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
 </tr>
 <tr>
-<td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r2</code></td>
-<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Input</td>
-<td>Calibration-table paths to apply in order</td>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>selectdata</code></td>
+<td><code>parameter.selectdata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Selection</td>
+<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Inclusive TIME range in MJD seconds</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>UV range selector.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated scan numbers</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>msselect</code></td>
+<td><code>ms.selection.msselect@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+</tr>
+<tr>
+<td><code>docallib</code></td>
+<td><code>mstransform.docallib@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Calibration</td>
+<td>Apply calibration from callib on the fly.</td>
 </tr>
 <tr>
 <td><code>callib</code></td>
 <td><code>parameter.callib@r1</code></td>
 <td><code>path (calibration_table)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Input</td>
 <td>CASA callibrary file describing the calibration-table chain</td>
 </tr>
 <tr>
+<td><code>gaintable</code></td>
+<td><code>setapply.gaintable@r1</code></td>
+<td><code>array&lt;path (calibration_table)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Input</td>
+<td>Calibration tables to apply.</td>
+</tr>
+<tr>
 <td><code>gainfield</code></td>
-<td><code>parameter.gainfield@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.gainfield@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all)</td>
+<td>Field selection of the solutions to apply from each gain table; empty for all.</td>
 </tr>
 <tr>
 <td><code>interp</code></td>
-<td><code>parameter.interp@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.interp@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear</td>
+<td>Interpolation in time (and frequency) for each gain table; empty for 'linear'.</td>
 </tr>
 <tr>
 <td><code>spwmap</code></td>
-<td><code>parameter.spwmap@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.spwmap@r1</code></td>
+<td><code>array&lt;array&lt;integer&gt;&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list</td>
-</tr>
-<tr>
-<td><code>apply_mode</code></td>
-<td><code>parameter.apply_mode@r1</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"calflag"</code>; optional</td>
-<td>Apply</td>
-<td>How to handle flags and mutation during apply</td>
+<td>Spectral-window map for each gain table: the window whose solutions each data window takes.</td>
 </tr>
 <tr>
 <td><code>calwt</code></td>
-<td><code>parameter.calwt@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.calwt@r1</code></td>
+<td><code>array&lt;bool&gt;</code></td>
+<td><code>[true]</code>; optional</td>
 <td>Apply</td>
-<td>Comma-separated weight-update flags aligned to --gaintables (single value applies to all)</td>
+<td>Calibrate the weights as well, one flag per gain table or one for all.</td>
+</tr>
+<tr>
+<td><code>parang</code></td>
+<td><code>parameter.parang@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Apply</td>
+<td>Apply the parallactic-angle P Jones term during calibration</td>
+</tr>
+<tr>
+<td><code>applymode</code></td>
+<td><code>setapply.applymode@r1</code></td>
+<td><code>choice (7 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Apply</td>
+<td>How the calibration applies to data and flags; empty for 'calflag'.</td>
+</tr>
+<tr>
+<td><code>flagbackup</code></td>
+<td><code>parameter.flagbackup@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Safety</td>
+<td>Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.</td>
 </tr>
 <tr>
 <td><code>output</code></td>
 <td><code>calibration.report.output@r1</code></td>
 <td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
 <td>Optional destination for a calibration task report.</td>
 </tr>
@@ -4900,14 +5004,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Replace an existing output file</td>
 </tr>
 <tr>
-<td><code>parang</code></td>
-<td><code>parameter.parang@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Apply</td>
-<td>Apply the parallactic-angle P Jones term during calibration</td>
-</tr>
-<tr>
 <td><code>format</code></td>
 <td><code>parameter.format@r1</code></td>
 <td><code>choice (2 values)</code></td>
@@ -4916,84 +5012,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Execution report format</td>
 </tr>
 <tr>
-<td><code>selectdata</code></td>
-<td><code>parameter.selectdata@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Selection</td>
-<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
-</tr>
-<tr>
-<td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
-</tr>
-<tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
-</tr>
-<tr>
-<td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated scan numbers</td>
-</tr>
-<tr>
-<td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
-</tr>
-<tr>
 <td><code>array</code></td>
 <td><code>ms.selection.array@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated ARRAY_ID integers</td>
-</tr>
-<tr>
-<td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
-</tr>
-<tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
-</tr>
-<tr>
-<td><code>flagbackup</code></td>
-<td><code>parameter.flagbackup@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Safety</td>
-<td>Create a flagmanager backup before mutating flags.<br><em>Surface:</em> Saves the flags to the next applycal_N flag version before a calflag run; calonly and trial change no flags and save none.</td>
 </tr>
 </tbody>
 </table>
@@ -5001,7 +5025,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="gaincal-gaincal">Gaincal (<code>gaincal</code>)<a class="headerlink" href="#gaincal-gaincal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Solve antenna gain calibration for a MeasurementSet.</li>
@@ -5022,55 +5046,311 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
 </tr>
 <tr>
-<td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r2</code></td>
-<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Input</td>
-<td>Calibration-table paths to apply in order</td>
+<td><code>caltable</code></td>
+<td><code>calibration.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Solve</td>
+<td>Calibration table the task writes.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>selectdata</code></td>
+<td><code>parameter.selectdata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Selection</td>
+<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Inclusive TIME range in MJD seconds</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>UV range selector.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated scan numbers</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>msselect</code></td>
+<td><code>ms.selection.msselect@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+</tr>
+<tr>
+<td><code>solint</code></td>
+<td><code>parameter.solint@r1</code></td>
+<td><code>string</code></td>
+<td><code>"inf"</code>; optional</td>
+<td>Solve Gain</td>
+<td>Gain solution interval such as inf, int, or 30s</td>
+</tr>
+<tr>
+<td><code>combine</code></td>
+<td><code>setsolve.combine@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Solve</td>
+<td>Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none.</td>
+</tr>
+<tr>
+<td><code>preavg</code></td>
+<td><code>setsolve.preavg@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Solve</td>
+<td>Pre-averaging interval in seconds within a solution interval; -1 for none.</td>
+</tr>
+<tr>
+<td><code>refant</code></td>
+<td><code>parameter.refant@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; required</td>
+<td>Solve</td>
+<td>Reference antenna name or id for solve workflows</td>
+</tr>
+<tr>
+<td><code>refantmode</code></td>
+<td><code>setsolve.refantmode@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"flex"</code>; optional</td>
+<td>Solve</td>
+<td>Whether another reference antenna is used where refant has no solution.</td>
+</tr>
+<tr>
+<td><code>minblperant</code></td>
+<td><code>parameter.minblperant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>4</code>; optional</td>
+<td>Solve Gain</td>
+<td>Minimum unflagged baselines an antenna needs to be solved for</td>
+</tr>
+<tr>
+<td><code>minsnr</code></td>
+<td><code>setsolve.minsnr@r1</code></td>
+<td><code>float</code></td>
+<td><code>3.0</code>; optional</td>
+<td>Solve</td>
+<td>Solutions below this SNR are flagged.</td>
+</tr>
+<tr>
+<td><code>solnorm</code></td>
+<td><code>parameter.solnorm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Normalize solved amplitudes to unity average amplitude</td>
+</tr>
+<tr>
+<td><code>normtype</code></td>
+<td><code>setsolve.normtype@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"mean"</code>; optional</td>
+<td>Solve</td>
+<td>How solnorm normalizes the solutions: by their mean or median.</td>
+</tr>
+<tr>
+<td><code>gaintype</code></td>
+<td><code>setsolve.gaintype@r1</code></td>
+<td><code>choice (7 values)</code></td>
+<td><code>"G"</code>; optional</td>
+<td>Solve</td>
+<td>Type of gain solution: 'G' per polarization, 'T' polarization-independent, and the others.</td>
+</tr>
+<tr>
+<td><code>smodel</code></td>
+<td><code>setsolve.smodel@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Solve</td>
+<td>Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column.</td>
+</tr>
+<tr>
+<td><code>calmode</code></td>
+<td><code>setsolve.calmode@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"ap"</code>; optional</td>
+<td>Solve</td>
+<td>Solve for amplitude 'a', phase 'p' or both 'ap'.</td>
+</tr>
+<tr>
+<td><code>solmode</code></td>
+<td><code>setsolve.solmode@r1</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Solve</td>
+<td>Robust solving: '' for least squares, 'L1', 'R' or 'L1R'.</td>
+</tr>
+<tr>
+<td><code>rmsthresh</code></td>
+<td><code>setsolve.rmsthresh@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Solve</td>
+<td>RMS thresholds of a robust solve, in iteration order.</td>
+</tr>
+<tr>
+<td><code>corrdepflags</code></td>
+<td><code>setsolve.corrdepflags@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Keep solutions when only some correlations are flagged.</td>
+</tr>
+<tr>
+<td><code>append</code></td>
+<td><code>setsolve.append@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Append the solutions to an existing calibration table.</td>
+</tr>
+<tr>
+<td><code>splinetime</code></td>
+<td><code>setsolve.splinetime@r1</code></td>
+<td><code>float</code></td>
+<td><code>3600.0</code>; optional</td>
+<td>Solve</td>
+<td>Spline timescale, in seconds, of a GSPLINE solve.</td>
+</tr>
+<tr>
+<td><code>npointaver</code></td>
+<td><code>setsolve.npointaver@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Solve</td>
+<td>Points a GSPLINE phase solve averages.</td>
+</tr>
+<tr>
+<td><code>phasewrap</code></td>
+<td><code>setsolve.phasewrap@r1</code></td>
+<td><code>float</code></td>
+<td><code>180.0</code>; optional</td>
+<td>Solve</td>
+<td>Phase step, in degrees, a GSPLINE solve treats as a wrap.</td>
+</tr>
+<tr>
+<td><code>docallib</code></td>
+<td><code>mstransform.docallib@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Calibration</td>
+<td>Apply calibration from callib on the fly.</td>
 </tr>
 <tr>
 <td><code>callib</code></td>
 <td><code>parameter.callib@r1</code></td>
 <td><code>path (calibration_table)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Input</td>
 <td>CASA callibrary file describing the calibration-table chain</td>
 </tr>
 <tr>
+<td><code>gaintable</code></td>
+<td><code>setapply.gaintable@r1</code></td>
+<td><code>array&lt;path (calibration_table)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Input</td>
+<td>Calibration tables to apply.</td>
+</tr>
+<tr>
 <td><code>gainfield</code></td>
-<td><code>parameter.gainfield@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.gainfield@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all)</td>
+<td>Field selection of the solutions to apply from each gain table; empty for all.</td>
 </tr>
 <tr>
 <td><code>interp</code></td>
-<td><code>parameter.interp@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.interp@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear</td>
+<td>Interpolation in time (and frequency) for each gain table; empty for 'linear'.</td>
 </tr>
 <tr>
 <td><code>spwmap</code></td>
-<td><code>parameter.spwmap@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>setapply.spwmap@r1</code></td>
+<td><code>array&lt;array&lt;integer&gt;&gt;</code></td>
+<td><code>[]</code>; optional</td>
 <td>Apply</td>
-<td>Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list</td>
+<td>Spectral-window map for each gain table: the window whose solutions each data window takes.</td>
+</tr>
+<tr>
+<td><code>parang</code></td>
+<td><code>parameter.parang@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Apply</td>
+<td>Apply the parallactic-angle P Jones term during calibration</td>
 </tr>
 <tr>
 <td><code>output</code></td>
 <td><code>calibration.report.output@r1</code></td>
 <td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
 <td>Optional destination for a calibration task report.</td>
 </tr>
@@ -5091,164 +5371,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Execution report format</td>
 </tr>
 <tr>
-<td><code>out_table</code></td>
-<td><code>parameter.out_table@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td>no default; required</td>
-<td>Solve</td>
-<td>Output calibration-table path for solve, fluxscale, and gencal workflows</td>
-</tr>
-<tr>
-<td><code>refant</code></td>
-<td><code>parameter.refant@r1</code></td>
-<td><code>string</code></td>
-<td>no default; required</td>
-<td>Solve</td>
-<td>Reference antenna name or id for solve workflows</td>
-</tr>
-<tr>
-<td><code>gain_type</code></td>
-<td><code>parameter.gain_type@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"g"</code>; optional</td>
-<td>Solve Gain</td>
-<td>Gain family for solve-gain mode</td>
-</tr>
-<tr>
-<td><code>solve_mode</code></td>
-<td><code>parameter.solve_mode@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"p"</code>; optional</td>
-<td>Solve Gain</td>
-<td>Gain solve mode for solve-gain mode</td>
-</tr>
-<tr>
-<td><code>solint</code></td>
-<td><code>parameter.solint@r1</code></td>
-<td><code>string</code></td>
-<td><code>"inf"</code>; optional</td>
-<td>Solve Gain</td>
-<td>Gain solution interval such as inf, int, or 30s</td>
-</tr>
-<tr>
-<td><code>gain_combine</code></td>
-<td><code>parameter.gain_combine@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Solve Gain</td>
-<td>Gain solve combine axes such as scan or scan,field</td>
-</tr>
-<tr>
-<td><code>gain_model_source</code></td>
-<td><code>parameter.gain_model_source@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"point"</code>; optional</td>
-<td>Solve Gain</td>
-<td>Visibility model source for solve-gain mode</td>
-</tr>
-<tr>
-<td><code>smodel</code></td>
-<td><code>parameter.smodel@r1</code></td>
-<td><code>string</code></td>
-<td><code>"1,0,0,0"</code>; optional</td>
-<td>Solve</td>
-<td>Point-source Stokes model for solve-gain and solve-bandpass</td>
-</tr>
-<tr>
-<td><code>min_snr</code></td>
-<td><code>parameter.min_snr@r1</code></td>
-<td><code>float</code></td>
-<td><code>3.0</code>; optional</td>
-<td>Solve Gain</td>
-<td>Minimum gain solution SNR before flagging</td>
-</tr>
-<tr>
-<td><code>solnorm</code></td>
-<td><code>parameter.solnorm@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Solve</td>
-<td>Normalize solved amplitudes to unity average amplitude</td>
-</tr>
-<tr>
-<td><code>selectdata</code></td>
-<td><code>parameter.selectdata@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Selection</td>
-<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
-</tr>
-<tr>
-<td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
-</tr>
-<tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
-</tr>
-<tr>
-<td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated scan numbers</td>
-</tr>
-<tr>
-<td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
-</tr>
-<tr>
 <td><code>array</code></td>
 <td><code>ms.selection.array@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated ARRAY_ID integers</td>
-</tr>
-<tr>
-<td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
-</tr>
-<tr>
-<td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
-</tr>
-<tr>
-<td><code>minblperant</code></td>
-<td><code>parameter.minblperant@r1</code></td>
-<td><code>integer</code></td>
-<td><code>4</code>; optional</td>
-<td>Solve Gain</td>
-<td>Minimum unflagged baselines an antenna needs to be solved for</td>
 </tr>
 </tbody>
 </table>
@@ -5256,7 +5384,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="bandpass-bandpass">Bandpass (<code>bandpass</code>)<a class="headerlink" href="#bandpass-bandpass" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Solve bandpass calibration for a MeasurementSet.</li>
@@ -5277,129 +5405,41 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
 </tr>
 <tr>
-<td><code>gaintables</code></td>
-<td><code>parameter.gaintables@r2</code></td>
-<td><code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Input</td>
-<td>Calibration-table paths to apply in order</td>
-</tr>
-<tr>
-<td><code>callib</code></td>
-<td><code>parameter.callib@r1</code></td>
+<td><code>caltable</code></td>
+<td><code>calibration.caltable@r1</code></td>
 <td><code>path (calibration_table)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Input</td>
-<td>CASA callibrary file describing the calibration-table chain</td>
-</tr>
-<tr>
-<td><code>gainfield</code></td>
-<td><code>parameter.gainfield@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Apply</td>
-<td>Semicolon-separated gainfield overrides aligned to --gaintables (single value applies to all)</td>
-</tr>
-<tr>
-<td><code>interp</code></td>
-<td><code>parameter.interp@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Apply</td>
-<td>Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear</td>
-</tr>
-<tr>
-<td><code>spwmap</code></td>
-<td><code>parameter.spwmap@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Apply</td>
-<td>Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list</td>
-</tr>
-<tr>
-<td><code>output</code></td>
-<td><code>calibration.report.output@r1</code></td>
-<td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Output</td>
-<td>Optional destination for a calibration task report.</td>
-</tr>
-<tr>
-<td><code>overwrite</code></td>
-<td><code>output.overwrite@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Output</td>
-<td>Replace an existing output file</td>
-</tr>
-<tr>
-<td><code>format</code></td>
-<td><code>parameter.format@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"text"</code>; optional</td>
-<td>Output</td>
-<td>Execution report format</td>
-</tr>
-<tr>
-<td><code>out_table</code></td>
-<td><code>parameter.out_table@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Solve</td>
-<td>Output calibration-table path for solve, fluxscale, and gencal workflows</td>
+<td>Calibration table the task writes.</td>
 </tr>
 <tr>
-<td><code>refant</code></td>
-<td><code>parameter.refant@r1</code></td>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r1</code></td>
 <td><code>string</code></td>
-<td>no default; required</td>
-<td>Solve</td>
-<td>Reference antenna name or id for solve workflows</td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
 </tr>
 <tr>
-<td><code>smodel</code></td>
-<td><code>parameter.smodel@r1</code></td>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
 <td><code>string</code></td>
-<td><code>"1,0,0,0"</code>; optional</td>
-<td>Solve</td>
-<td>Point-source Stokes model for solve-gain and solve-bandpass</td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
 </tr>
 <tr>
-<td><code>min_snr</code></td>
-<td><code>parameter.min_snr@r1</code></td>
-<td><code>float</code></td>
-<td><code>3.0</code>; optional</td>
-<td>Solve Gain</td>
-<td>Minimum gain solution SNR before flagging</td>
-</tr>
-<tr>
-<td><code>bandpass_combine</code></td>
-<td><code>parameter.bandpass_combine@r1</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Solve Bandpass</td>
-<td>Bandpass combine axes</td>
-</tr>
-<tr>
-<td><code>bandtype</code></td>
-<td><code>parameter.bandtype@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"b"</code>; optional</td>
-<td>Solve Bandpass</td>
-<td>Bandpass output family for solve-bandpass mode</td>
-</tr>
-<tr>
-<td><code>solnorm</code></td>
-<td><code>parameter.solnorm@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Solve</td>
-<td>Normalize solved amplitudes to unity average amplitude</td>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Intent selector.</td>
 </tr>
 <tr>
 <td><code>selectdata</code></td>
@@ -5410,26 +5450,26 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow.</td>
 </tr>
 <tr>
-<td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
+<td>Inclusive TIME range in MJD seconds</td>
 </tr>
 <tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+<td>UV range selector.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
 <td><code>ms.selection.antenna@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
 </tr>
@@ -5437,7 +5477,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>scan</code></td>
 <td><code>ms.selection.scan@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated scan numbers</td>
 </tr>
@@ -5445,33 +5485,105 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>observation</code></td>
 <td><code>ms.selection.observation@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Comma-separated OBSERVATION_ID integers</td>
-</tr>
-<tr>
-<td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
-</tr>
-<tr>
-<td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
 <td><code>ms.selection.msselect@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
 <td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+</tr>
+<tr>
+<td><code>solint</code></td>
+<td><code>parameter.solint@r1</code></td>
+<td><code>string</code></td>
+<td><code>"inf"</code>; optional</td>
+<td>Solve</td>
+<td>Gain solution interval such as inf, int, or 30s</td>
+</tr>
+<tr>
+<td><code>combine</code></td>
+<td><code>setsolve.combine@r1</code></td>
+<td><code>string</code></td>
+<td><code>"scan"</code>; optional</td>
+<td>Solve</td>
+<td>Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none.</td>
+</tr>
+<tr>
+<td><code>refant</code></td>
+<td><code>parameter.refant@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; required</td>
+<td>Solve</td>
+<td>Reference antenna name or id for solve workflows</td>
+</tr>
+<tr>
+<td><code>minblperant</code></td>
+<td><code>parameter.minblperant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>4</code>; optional</td>
+<td>Solve</td>
+<td>Minimum unflagged baselines an antenna needs to be solved for</td>
+</tr>
+<tr>
+<td><code>minsnr</code></td>
+<td><code>setsolve.minsnr@r1</code></td>
+<td><code>float</code></td>
+<td><code>3.0</code>; optional</td>
+<td>Solve</td>
+<td>Solutions below this SNR are flagged.</td>
+</tr>
+<tr>
+<td><code>solnorm</code></td>
+<td><code>parameter.solnorm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Normalize solved amplitudes to unity average amplitude</td>
+</tr>
+<tr>
+<td><code>bandtype</code></td>
+<td><code>setsolve.bandtype@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"B"</code>; optional</td>
+<td>Solve</td>
+<td>Bandpass solution type: channelized 'B' or polynomial 'BPOLY'.</td>
+</tr>
+<tr>
+<td><code>smodel</code></td>
+<td><code>setsolve.smodel@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Solve</td>
+<td>Point-source Stokes model [I, Q, U, V] in Jy; empty for the MODEL_DATA column.</td>
+</tr>
+<tr>
+<td><code>corrdepflags</code></td>
+<td><code>setsolve.corrdepflags@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Keep solutions when only some correlations are flagged.</td>
+</tr>
+<tr>
+<td><code>append</code></td>
+<td><code>setsolve.append@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Append the solutions to an existing calibration table.</td>
+</tr>
+<tr>
+<td><code>fillgaps</code></td>
+<td><code>setsolve.fillgaps@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Solve</td>
+<td>Largest gap, in channels, filled by interpolation in a bandpass.</td>
 </tr>
 <tr>
 <td><code>degamp</code></td>
@@ -5489,34 +5601,91 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Solve Bandpass</td>
 <td>Polynomial degree of a BPOLY bandpass's phase</td>
 </tr>
-</tbody>
-</table>
-<p><a id="surface-fluxscale"></a></p>
-<h2 id="fluxscale-fluxscale">Fluxscale (<code>fluxscale</code>)<a class="headerlink" href="#fluxscale-fluxscale" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
-<li>Category: Calibration</li>
-<li>Provider family: <code>calibration</code></li>
-<li>Summary: Scale gain solutions using reference calibrator fields.</li>
-</ul>
-<table>
-<thead>
 <tr>
-<th>Parameter</th>
-<th>Concept ID / revision</th>
-<th>Type / unit</th>
-<th>Default / required</th>
-<th>Group</th>
-<th>Summary</th>
+<td><code>visnorm</code></td>
+<td><code>setsolve.visnorm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Solve</td>
+<td>Normalize the data before the bandpass solve.</td>
 </tr>
-</thead>
-<tbody>
+<tr>
+<td><code>maskcenter</code></td>
+<td><code>setsolve.maskcenter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Solve</td>
+<td>Channels at the window center a BPOLY fit excludes.</td>
+</tr>
+<tr>
+<td><code>maskedge</code></td>
+<td><code>setsolve.maskedge@r1</code></td>
+<td><code>integer</code></td>
+<td><code>5</code>; optional</td>
+<td>Solve</td>
+<td>Percentage of channels at each window edge a BPOLY fit excludes.</td>
+</tr>
+<tr>
+<td><code>docallib</code></td>
+<td><code>mstransform.docallib@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Calibration</td>
+<td>Apply calibration from callib on the fly.</td>
+</tr>
+<tr>
+<td><code>callib</code></td>
+<td><code>parameter.callib@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>CASA callibrary file describing the calibration-table chain</td>
+</tr>
+<tr>
+<td><code>gaintable</code></td>
+<td><code>setapply.gaintable@r1</code></td>
+<td><code>array&lt;path (calibration_table)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Input</td>
+<td>Calibration tables to apply.</td>
+</tr>
+<tr>
+<td><code>gainfield</code></td>
+<td><code>setapply.gainfield@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Apply</td>
+<td>Field selection of the solutions to apply from each gain table; empty for all.</td>
+</tr>
+<tr>
+<td><code>interp</code></td>
+<td><code>setapply.interp@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Apply</td>
+<td>Interpolation in time (and frequency) for each gain table; empty for 'linear'.</td>
+</tr>
+<tr>
+<td><code>spwmap</code></td>
+<td><code>setapply.spwmap@r1</code></td>
+<td><code>array&lt;array&lt;integer&gt;&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Apply</td>
+<td>Spectral-window map for each gain table: the window whose solutions each data window takes.</td>
+</tr>
+<tr>
+<td><code>parang</code></td>
+<td><code>parameter.parang@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Apply</td>
+<td>Apply the parallactic-angle P Jones term during calibration</td>
+</tr>
 <tr>
 <td><code>output</code></td>
 <td><code>calibration.report.output@r1</code></td>
 <td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
 <td>Optional destination for a calibration task report.</td>
 </tr>
@@ -5537,52 +5706,131 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Execution report format</td>
 </tr>
 <tr>
-<td><code>out_table</code></td>
-<td><code>parameter.out_table@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td>no default; required</td>
-<td>Solve</td>
-<td>Output calibration-table path for solve, fluxscale, and gencal workflows</td>
-</tr>
-<tr>
-<td><code>fluxscale_input</code></td>
-<td><code>parameter.fluxscale_input@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td>no default; required</td>
-<td>Fluxscale</td>
-<td>Input gain table for fluxscale mode</td>
-</tr>
-<tr>
-<td><code>reference_fields</code></td>
-<td><code>parameter.reference_fields@r1</code></td>
+<td><code>array</code></td>
+<td><code>ms.selection.array@r1</code></td>
 <td><code>string</code></td>
-<td>no default; required</td>
-<td>Fluxscale</td>
-<td>Reference fields for fluxscale mode</td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated ARRAY_ID integers</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-fluxscale"></a></p>
+<h2 id="fluxscale-fluxscale">Fluxscale (<code>fluxscale</code>)<a class="headerlink" href="#fluxscale-fluxscale" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>6</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Scale gain solutions using reference calibrator fields.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from.</td>
 </tr>
 <tr>
-<td><code>transfer_fields</code></td>
-<td><code>parameter.transfer_fields@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>caltable</code></td>
+<td><code>scaling.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
 <td>Fluxscale</td>
-<td>Optional transfer-field restriction for fluxscale mode</td>
+<td>Gain table fluxscale reads, solved for the reference and transfer fields.</td>
+</tr>
+<tr>
+<td><code>fluxtable</code></td>
+<td><code>scaling.fluxtable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Fluxscale</td>
+<td>Flux-scaled gain table fluxscale writes.</td>
+</tr>
+<tr>
+<td><code>reference</code></td>
+<td><code>scaling.reference@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; required</td>
+<td>Fluxscale</td>
+<td>Fields whose flux densities are known.</td>
+</tr>
+<tr>
+<td><code>transfer</code></td>
+<td><code>scaling.transfer@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Fluxscale</td>
+<td>Fields whose flux densities are derived; empty for all the others.</td>
+</tr>
+<tr>
+<td><code>listfile</code></td>
+<td><code>scaling.listfile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Fluxscale</td>
+<td>Text file that receives the derived flux densities; empty for none.</td>
+</tr>
+<tr>
+<td><code>append</code></td>
+<td><code>scaling.append@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Fluxscale</td>
+<td>Append fluxscale's solutions to an existing flux table.</td>
 </tr>
 <tr>
 <td><code>refspwmap</code></td>
-<td><code>parameter.refspwmap@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>scaling.refspwmap@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[-1]</code>; optional</td>
 <td>Fluxscale</td>
-<td>Optional fluxscale reference spectral-window remap</td>
+<td>Reference window for each spectral window; [-1] for none.</td>
 </tr>
 <tr>
 <td><code>gainthreshold</code></td>
-<td><code>parameter.gainthreshold@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>scaling.gainthreshold@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
 <td>Fluxscale</td>
-<td>Reject unstable transfer factors above this threshold in fluxscale mode</td>
+<td>Fraction from the median outside which gain amplitudes are excluded; -1 for none.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Inclusive TIME range in MJD seconds</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated scan numbers</td>
 </tr>
 <tr>
 <td><code>incremental</code></td>
@@ -5592,13 +5840,53 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Fluxscale</td>
 <td>Write incremental correction factors instead of absolute transfer gains</td>
 </tr>
+<tr>
+<td><code>fitorder</code></td>
+<td><code>scaling.fitorder@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Fluxscale</td>
+<td>Polynomial order of the spectral-index fit across spectral windows.</td>
+</tr>
+<tr>
+<td><code>display</code></td>
+<td><code>scaling.display@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Fluxscale</td>
+<td>Plot the fitted flux-density spectra.</td>
+</tr>
+<tr>
+<td><code>output</code></td>
+<td><code>calibration.report.output@r1</code></td>
+<td><code>path (any)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Optional destination for a calibration task report.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>format</code></td>
+<td><code>parameter.format@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"text"</code>; optional</td>
+<td>Output</td>
+<td>Execution report format</td>
+</tr>
 </tbody>
 </table>
 <p><a id="surface-gencal"></a></p>
 <h2 id="gencal-gencal">Gencal (<code>gencal</code>)<a class="headerlink" href="#gencal-gencal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Generate a calibration table such as antpos, gceff, or opac.</li>
@@ -5619,15 +5907,119 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Input</td>
 <td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.</td>
+</tr>
+<tr>
+<td><code>caltable</code></td>
+<td><code>calibration.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Solve</td>
+<td>Calibration table the task writes.</td>
+</tr>
+<tr>
+<td><code>caltype</code></td>
+<td><code>specifycal.caltype@r1</code></td>
+<td><code>choice (20 values)</code></td>
+<td><code>""</code>; required</td>
+<td>Gencal</td>
+<td>Type of calibration gencal specifies.</td>
+</tr>
+<tr>
+<td><code>infile</code></td>
+<td><code>specifycal.infile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Gencal</td>
+<td>File some calibration types read: weather, EOP or a Jy/K table.</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td><code>specifycal.endpoint@r1</code></td>
+<td><code>string</code></td>
+<td><code>"asdm"</code>; optional</td>
+<td>Gencal</td>
+<td>Web service the ALMA antenna positions come from.</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>specifycal.timeout@r1</code></td>
+<td><code>integer</code></td>
+<td><code>180</code>; optional</td>
+<td>Gencal</td>
+<td>Seconds the antenna-position web service has to answer.</td>
+</tr>
+<tr>
+<td><code>retry</code></td>
+<td><code>specifycal.retry@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Gencal</td>
+<td>Times the antenna-position web service is asked again.</td>
+</tr>
+<tr>
+<td><code>retry_wait_time</code></td>
+<td><code>specifycal.retry_wait_time@r1</code></td>
+<td><code>integer</code></td>
+<td><code>5</code>; optional</td>
+<td>Gencal</td>
+<td>Seconds between requests to the antenna-position web service.</td>
+</tr>
+<tr>
+<td><code>ant_pos_time_limit</code></td>
+<td><code>specifycal.ant_pos_time_limit@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Gencal</td>
+<td>Days before or after the observation an antenna-position correction may come from.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>pol</code></td>
+<td><code>specifycal.pol@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Gencal</td>
+<td>Polarizations the calibration applies to; empty for all.</td>
+</tr>
+<tr>
+<td><code>parameter</code></td>
+<td><code>specifycal.parameter@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Gencal</td>
+<td>Values of the calibration, per antenna, window and polarization as caltype defines.</td>
+</tr>
+<tr>
+<td><code>uniform</code></td>
+<td><code>specifycal.uniform@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Gencal</td>
+<td>Take one Jy/K factor for every antenna.</td>
 </tr>
 <tr>
 <td><code>output</code></td>
 <td><code>calibration.report.output@r1</code></td>
 <td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
 <td>Optional destination for a calibration task report.</td>
 </tr>
@@ -5648,52 +6040,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Execution report format</td>
 </tr>
 <tr>
-<td><code>out_table</code></td>
-<td><code>parameter.out_table@r1</code></td>
-<td><code>path (calibration_table)</code></td>
-<td>no default; required</td>
-<td>Solve</td>
-<td>Output calibration-table path for solve, fluxscale, and gencal workflows</td>
-</tr>
-<tr>
-<td><code>caltype</code></td>
-<td><code>parameter.caltype@r1</code></td>
-<td><code>optional&lt;choice (3 values)&gt; (states: none)</code></td>
-<td>no default; required</td>
-<td>Gencal</td>
-<td>Generated calibration family.</td>
-</tr>
-<tr>
-<td><code>parameter</code></td>
-<td><code>parameter.parameter@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Gencal</td>
-<td>Numeric parameter list for the selected generated calibration type.</td>
-</tr>
-<tr>
 <td><code>gaincurve_table</code></td>
 <td><code>parameter.gaincurve_table@r1</code></td>
 <td><code>path (calibration_table)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Gencal</td>
 <td>Optional gaincurve input table for gceff.</td>
-</tr>
-<tr>
-<td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
-</tr>
-<tr>
-<td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
 </tr>
 </tbody>
 </table>

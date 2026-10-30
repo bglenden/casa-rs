@@ -1310,24 +1310,24 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>applycal</td>
 <td>applycal</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">21</td>
-<td style="text-align: right;">16</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">21</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">6</td>
-<td style="text-align: right;">13</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>bandpass</td>
 <td>bandpass</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">35</td>
-<td style="text-align: right;">19</td>
-<td style="text-align: right;">16</td>
+<td style="text-align: right;">35</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">8</td>
-<td style="text-align: right;">15</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>exportfits</td>
@@ -1376,35 +1376,35 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td>fluxscale</td>
 <td>fluxscale</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">15</td>
-<td style="text-align: right;">3</td>
-<td style="text-align: right;">12</td>
+<td style="text-align: right;">15</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">7</td>
-<td style="text-align: right;">2</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>gaincal</td>
 <td>gaincal</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">38</td>
-<td style="text-align: right;">18</td>
-<td style="text-align: right;">20</td>
+<td style="text-align: right;">38</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">11</td>
-<td style="text-align: right;">14</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>gencal</td>
 <td>gencal</td>
-<td>no</td>
+<td>yes</td>
 <td style="text-align: right;">14</td>
-<td style="text-align: right;">5</td>
-<td style="text-align: right;">9</td>
+<td style="text-align: right;">14</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">5</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>imager</td>
@@ -1581,24 +1581,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>returns at line 53: <code>ret</code></li>
 <li>returns at line 55: <code>None</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>intent</code>, <code>uvrange</code>, <code>docallib</code>, <code>gaintable</code>, <code>applymode</code></li>
-<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>apply_mode</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
-<li>Shared parameters: 16, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>observation</code>: <code>''</code>, <code>none</code></li>
-<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
-<li><code>callib</code>: <code>''</code>, <code>none</code></li>
-<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
-<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
-<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
-<li><code>calwt</code>: <code>[True]</code>, <code>none</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #979: <code>intent</code>, <code>uvrange</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
+<li>Shared parameters: 21, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="bandpass">bandpass<a class="headerlink" href="#bandpass" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1606,26 +1594,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casatasks/private/task_bandpass.py</code>, <code>bandpass</code> (line 8): 1 return statements, 1 raise statements</li>
 <li>returns at line 139: <code>results_dict</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>intent</code>, <code>uvrange</code>, <code>solint</code>, <code>combine</code>, <code>minblperant</code>, <code>minsnr</code>, <code>corrdepflags</code>, <code>append</code>, <code>fillgaps</code>, <code>visnorm</code>, <code>maskcenter</code>, <code>maskedge</code>, <code>docallib</code>, <code>gaintable</code>, <code>parang</code></li>
-<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>min_snr</code>, <code>bandpass_combine</code>, <code>array</code></li>
-<li>Shared parameters: 19, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>observation</code>: <code>''</code>, <code>none</code></li>
-<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
-<li><code>refant</code>: <code>''</code>, <code>required</code></li>
-<li><code>bandtype</code>: <code>'B'</code>, <code>b</code></li>
-<li><code>smodel</code>: <code>[]</code>, <code>1,0,0,0</code></li>
-<li><code>callib</code>: <code>''</code>, <code>none</code></li>
-<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
-<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
-<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #979: <code>intent</code>, <code>uvrange</code>, <code>solint</code>, <code>corrdepflags</code>, <code>append</code>, <code>fillgaps</code>, <code>visnorm</code>, <code>maskcenter</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
+<li>Shared parameters: 35, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="exportfits">exportfits<a class="headerlink" href="#exportfits" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1687,13 +1661,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casatasks/private/task_fluxscale.py</code>, <code>fluxscale</code> (line 95): 1 return statements, 2 raise statements</li>
 <li>returns at line 211: <code>output</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>vis</code>, <code>caltable</code>, <code>fluxtable</code>, <code>reference</code>, <code>transfer</code>, <code>listfile</code>, <code>append</code>, <code>antenna</code>, <code>timerange</code>, <code>scan</code>, <code>fitorder</code>, <code>display</code></li>
-<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>fluxscale_input</code>, <code>reference_fields</code>, <code>transfer_fields</code></li>
-<li>Shared parameters: 3, in CASA's order: yes</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>refspwmap</code>: <code>[-1]</code>, <code>none</code></li>
-<li><code>gainthreshold</code>: <code>-1.0</code>, <code>none</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #979: <code>listfile</code>, <code>append</code>, <code>antenna</code>, <code>timerange</code>, <code>scan</code>, <code>fitorder</code>, <code>display</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code></li>
+<li>Shared parameters: 15, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="gaincal">gaincal<a class="headerlink" href="#gaincal" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1701,41 +1674,24 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casatasks/private/task_gaincal.py</code>, <code>gaincal</code> (line 8): 1 return statements, 1 raise statements</li>
 <li>returns at line 164: <code>results_dict</code></li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>intent</code>, <code>uvrange</code>, <code>combine</code>, <code>preavg</code>, <code>refantmode</code>, <code>minsnr</code>, <code>normtype</code>, <code>gaintype</code>, <code>calmode</code>, <code>solmode</code>, <code>rmsthresh</code>, <code>corrdepflags</code>, <code>append</code>, <code>splinetime</code>, <code>npointaver</code>, <code>phasewrap</code>, <code>docallib</code>, <code>gaintable</code>, <code>parang</code></li>
-<li>casa-rs parameters CASA lacks: <code>gaintables</code>, <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>gain_type</code>, <code>solve_mode</code>, <code>gain_combine</code>, <code>gain_model_source</code>, <code>min_snr</code>, <code>array</code></li>
-<li>Shared parameters: 18, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>timerange</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>scan</code>: <code>''</code>, <code>none</code></li>
-<li><code>observation</code>: <code>''</code>, <code>none</code></li>
-<li><code>msselect</code>: <code>''</code>, <code>none</code></li>
-<li><code>refant</code>: <code>''</code>, <code>required</code></li>
-<li><code>smodel</code>: <code>[]</code>, <code>1,0,0,0</code></li>
-<li><code>callib</code>: <code>''</code>, <code>none</code></li>
-<li><code>gainfield</code>: <code>[]</code>, <code>none</code></li>
-<li><code>interp</code>: <code>[]</code>, <code>none</code></li>
-<li><code>spwmap</code>: <code>[]</code>, <code>none</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #979: <code>intent</code>, <code>uvrange</code>, <code>preavg</code>, <code>refantmode</code>, <code>normtype</code>, <code>solmode</code>, <code>rmsthresh</code>, <code>corrdepflags</code>, <code>append</code>, <code>splinetime</code>, <code>npointaver</code>, <code>phasewrap</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
+<li>Shared parameters: 38, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="gencal">gencal<a class="headerlink" href="#gencal" title="Permanent link">&para;</a></h3>
 <ul>
 <li>CASA source: <code>casatasks/gencal.py</code>, 14 parameters</li>
 <li>Implementation: <code>casatasks/private/task_gencal.py</code>, <code>gencal</code> (line 14): 0 return statements, 4 raise statements</li>
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>caltable</code>, <code>infile</code>, <code>endpoint</code>, <code>timeout</code>, <code>retry</code>, <code>retry_wait_time</code>, <code>ant_pos_time_limit</code>, <code>pol</code>, <code>uniform</code></li>
-<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>out_table</code>, <code>gaincurve_table</code></li>
-<li>Shared parameters: 5, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>caltype</code>: <code>''</code>, <code>required</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>antenna</code>: <code>''</code>, <code>none</code></li>
-<li><code>parameter</code>: <code>[]</code>, <code>none</code></li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #979: <code>infile</code>, <code>endpoint</code>, <code>timeout</code>, <code>retry</code>, <code>retry_wait_time</code>, <code>ant_pos_time_limit</code>, <code>pol</code>, <code>uniform</code></li>
+<li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>gaincurve_table</code></li>
+<li>Shared parameters: 14, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="imager-casas-tclean">imager (CASA's tclean)<a class="headerlink" href="#imager-casas-tclean" title="Permanent link">&para;</a></h3>
 <ul>

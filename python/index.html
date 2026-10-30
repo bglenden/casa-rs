@@ -775,8 +775,8 @@ Rust-owned parameter and result contracts. A call resolves its parameters in
 Rust, starts the task's executable as a child process with <code>--json-run -</code>,
 passes the task's log lines to <code>sys.stderr</code> as they arrive. A task whose
 surface names its CASA task (the image tasks, the MeasurementSet and
-flagging tasks and <code>simobserve</code> so far) has CASA's exact signature and
-returns CASA's value; the others return a
+flagging tasks, the calibration tasks and <code>simobserve</code> so far) has CASA's
+exact signature and returns CASA's value; the others return a
 <code>TaskCompletion</code> until their families are converted (#931). A task that
 refuses its parameters raises <code>casars.tasks.TaskParameterError</code>, a
 <code>ValueError</code>, and one that does not succeed

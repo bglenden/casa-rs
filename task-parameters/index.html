@@ -1090,12 +1090,14 @@ Rust-owned.</p>
 <p>The CASA-named wrappers and their type stubs are generated from the catalog,
 under <code>casars.tasks</code>; there is no second provider-specific task API. A
 surface that names its CASA task (<code>casa_task</code>; the image tasks, <code>flagdata</code>,
-<code>flagmanager</code>, <code>importvla</code>, <code>mstransform</code>, <code>split</code> and <code>simobserve</code> so far)
-has CASA's exact signature: CASA's parameters in CASA's order, positional or
-by keyword, with CASA's defaults, then casa-rs's own controls, keyword-only.
-Its wrapper returns CASA's value: <code>imstat</code>'s statistics dictionary with NumPy
-arrays, <code>immath</code>'s <code>True</code>, <code>flagdata</code>'s summary dictionary in summary mode
-and <code>{}</code> in its other modes, <code>flagmanager</code>'s version list in list mode,
+<code>flagmanager</code>, <code>importvla</code>, <code>mstransform</code>, <code>split</code>, <code>applycal</code>, <code>gaincal</code>,
+<code>bandpass</code>, <code>fluxscale</code>, <code>gencal</code> and <code>simobserve</code> so far) has CASA's exact
+signature: CASA's parameters in CASA's order, positional or by keyword, with
+CASA's defaults, then casa-rs's own controls, keyword-only. Its wrapper
+returns CASA's value: <code>imstat</code>'s statistics dictionary with NumPy arrays,
+<code>immath</code>'s <code>True</code>, <code>flagdata</code>'s summary dictionary in summary mode and <code>{}</code>
+in its other modes, <code>flagmanager</code>'s version list in list mode, <code>gaincal</code>'s
+and <code>bandpass</code>'s tables and selected data, <code>fluxscale</code>'s flux densities,
 <code>None</code> for most tasks. A parameter casa-rs does not implement yet is taken
 only at CASA's
 default and refused at any other value, naming its issue; the wrapper's

@@ -659,11 +659,21 @@
 <li><code>calibrate(mode=..., ...)</code>, the workflow surface: <code>apply</code> (the default),
   <code>solve_gain</code>, <code>solve_bandpass</code>, <code>fluxscale</code>, <code>gencal</code>, <code>summary</code>, <code>stats</code>
   and <code>export_corrected_data</code>;</li>
-<li><code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>, the CASA-named
-  surfaces.</li>
+<li><code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>, with CASA
+  6.7.6's signatures (#931): CASA's parameters in CASA's order with CASA's
+  defaults, then casa-rs's keyword-only <code>output</code>, <code>overwrite</code> and <code>format</code>
+  (and <code>array</code>, <code>gaincurve_table</code> where they apply).</li>
 </ul>
-<p>Each takes the surface's parameters as keyword arguments and returns a
-<code>TaskCompletion</code>. The call starts the <code>calibrate</code> executable directly, with
+<p>The CASA-named functions return what CASA's tasks return: <code>gaincal</code> and
+<code>bandpass</code> a dictionary of the tables applied (<code>apply_tables</code>) and solved
+(<code>solve_tables</code>), the data selected (<code>selectvis</code>) and how many solution
+intervals each window and antenna reached at each stage (<code>solvestats</code>);
+<code>fluxscale</code> its flux densities per field and spectral window; <code>applycal</code>
+and <code>gencal</code> <code>None</code>. <code>calibrate(...)</code> and
+<code>tasks.run(name, ...)</code> return a <code>TaskCompletion</code>. A CASA parameter casa-rs
+does not implement yet is taken only at its default, and a CASA value it
+does not implement yet is refused; both refusals name #979.</p>
+<p>Each call starts the <code>calibrate</code> executable directly, with
 the surface as its first word (<code>calibrate gaincal</code>), and sends one
 <code>TaskRunRequest</code> on <code>--json-run -</code>: the values the call set, resolved inside
 the executable against the same contract as its own command line (#931). Its
@@ -672,10 +682,16 @@ builds no Rust request. A refused value names its parameter: the task's
 refusal raises <code>TaskParameterError</code>, a <code>ValueError</code>, and a run that does not
 succeed raises <code>TaskExecutionError</code>; the <code>.completion</code> of either has its
 <code>status</code>, <code>message</code> and <code>parameter</code>.</p>
-<p><code>gaintables</code> and <code>summary_paths</code> are lists of calibration-table paths: a list,
-or one comma-separated string. The per-table controls (<code>gainfield</code>, <code>interp</code>,
-<code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings aligned to <code>gaintables</code>, one
-value for every table or one per table.</p>
+<p>On the CASA-named surfaces the chain is CASA's: <code>gaintable</code> is a list of
+tables, and <code>gainfield</code>, <code>interp</code> and <code>spwmap</code> are positional lists, so
+<code>gaintable[i]</code> takes <code>gainfield[i]</code>, <code>interp[i]</code> and <code>spwmap[i]</code>, and a table
+past the end of a list takes CASA's default for it (every field, <code>'linear'</code>,
+no window map). <code>calwt</code> holds one flag for every table or one per table.
+<code>docallib=True</code> applies the calibration library <code>callib</code> instead.</p>
+<p>On <code>calibrate</code>, <code>gaintables</code> and <code>summary_paths</code> are lists of
+calibration-table paths: a list, or one comma-separated string. Its per-table
+controls (<code>gainfield</code>, <code>interp</code>, <code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings
+aligned to <code>gaintables</code>, one value for every table or one per table.</p>
 <p>The <code>calibrate</code> binary takes the same parameters on its own command line. The
 developer subcommands it once had (<code>summary</code>, <code>plan-apply</code>, <code>solve-gain</code> and
 the rest) are the surfaces and modes above.</p>
