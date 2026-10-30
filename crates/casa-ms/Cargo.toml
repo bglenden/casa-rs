@@ -171,6 +171,10 @@ name = "flagging"
 path = "tests/flagging.rs"
 
 [[test]]
+name = "casa_returns"
+path = "tests/casa_returns.rs"
+
+[[test]]
 name = "existing_outputs"
 path = "tests/existing_outputs.rs"
 

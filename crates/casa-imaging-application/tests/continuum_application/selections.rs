@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Row selections by UV distance and intent, on both observation routes,
-//! and what the observation-batch route does not read yet.
+//! what the observation-batch route does not read yet, and the visibility
+//! column a request names.
 
 use super::*;
 
@@ -185,4 +186,56 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     .err()
     .expect("a state sharing its OBS_MODE with an unselected one");
     assert!(error.to_string().contains("sharing an OBS_MODE"), "{error}");
+}
+
+/// `datacolumn='corrected'` on a MeasurementSet holding only `DATA` images
+/// `DATA`, as CASA's `tclean` does (simulation plan §3, decision 6): on
+/// both observation routes the compiled problem reads `DATA` and its
+/// products are those of `datacolumn='DATA'`.
+#[test]
+fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let path = tiny_measurement_set(root.path());
+    assert!(
+        MeasurementSet::open(&path)
+            .unwrap()
+            .data_column(VisibilityDataColumn::CorrectedData)
+            .is_err(),
+        "the fixture holds DATA only"
+    );
+    let image = |name: &str, datacolumn: &str, route: SourceRoute| {
+        let image_name = root.path().join(name);
+        let mut imaging = request(
+            &path,
+            &image_name,
+            json!({ "niter": 0, "datacolumn": datacolumn }),
+        );
+        imaging.source_route = route;
+        let outcome = execute(&imaging).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            outcome.problem.observation().sources()[0]
+                .columns()
+                .visibility(),
+            casa_imaging_model::VisibilityColumn::Data,
+            "{name}"
+        );
+        image_name
+    };
+    let data = image("data", "DATA", SourceRoute::SelectedRows);
+    for (name, route) in [
+        ("corrected", SourceRoute::SelectedRows),
+        ("corrected-batches", SourceRoute::ObservationBatches),
+    ] {
+        let corrected = image(name, "corrected", route);
+        for suffix in [".psf", ".residual", ".sumwt"] {
+            let plane = |image_name: &Path| {
+                product_plane(image_name, suffix)
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            };
+            assert_real_agreement(&plane(&data), &plane(&corrected));
+        }
+    }
 }

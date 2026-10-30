@@ -30,14 +30,23 @@ SMALL_MS_ARCHIVE = Path(
 )
 
 
-@pytest.fixture
-def flagmanager() -> str:
+def task_executable(name: str) -> str:
     try:
-        return _runner._task_executable("flagmanager")
+        return _runner._task_executable(name)
     except tasks.TaskBinaryNotFoundError as missing:
         if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
             raise
-        pytest.skip(f"no flagmanager executable: {missing}")
+        pytest.skip(f"no {name} executable: {missing}")
+
+
+@pytest.fixture
+def flagmanager() -> str:
+    return task_executable("flagmanager")
+
+
+@pytest.fixture
+def flagdata() -> str:
+    return task_executable("flagdata")
 
 
 def require_executables(*names: str) -> None:
@@ -85,19 +94,48 @@ def test_a_task_runs_its_real_executable(
     # The task logs at INFO, which stderr shows only when asked to.
     monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "INFO")
 
-    completion = tasks.flagmanager(vis=small_ms.name, mode="list", comment="from Python")
+    completion = tasks.run("flagmanager", vis=small_ms.name, mode="list", comment="from Python")
 
     assert completion.successful, completion.describe()
     assert completion.command[0] == flagmanager
     assert completion.command[1:] == ("--json-run", "-")
-    # flagmanager returns the versions in list mode, the main table first.
-    assert completion.value[0]["name"] == "main"
+    # flagmanager returns CASA's version list: no saved versions yet, and
+    # the MeasurementSet's absolute path.
+    assert completion.value == {"MS": str(small_ms.resolve())}
     # The log streamed to stderr as the task ran.
     assert "flagmanager started" in completion.stderr
     assert "flagmanager completed" in completion.stderr
     assert completion.stderr in capsys.readouterr().err
     # A Python call neither loads nor saves Last.
     assert (last.read_bytes(), last_successful.read_bytes()) == before
+
+
+def test_flagdata_returns_casas_summary_and_empty_dictionary(
+    flagdata: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #931 PR 4c: CASA's flagdata returns its summary in summary mode and
+    # {} in its other modes.
+    monkeypatch.chdir(small_ms.parent)
+    summary = tasks.flagdata(vis=small_ms.name, mode="summary")
+    assert list(summary) == [
+        "antenna",
+        "array",
+        "correlation",
+        "field",
+        "flagged",
+        "name",
+        "observation",
+        "scan",
+        "spw",
+        "total",
+        "type",
+    ]
+    assert (summary["name"], summary["type"]) == ("Summary", "summary")
+    assert isinstance(summary["total"], float) and summary["total"] > 0
+    assert all(set(counts) == {"flagged", "total"} for counts in summary["antenna"].values())
+
+    assert tasks.flagdata(vis=small_ms.name, mode="manual", action="") == {}
+    assert tasks.flagdata(vis=small_ms.name, mode="summary")["flagged"] == summary["flagged"]
 
 
 def test_a_real_refusal_names_its_parameter(

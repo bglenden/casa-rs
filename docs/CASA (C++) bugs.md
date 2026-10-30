@@ -12,7 +12,8 @@ CASA behaviours casa-rs follows for parity:
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
-[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field).
+[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
+[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -105,6 +106,11 @@ Calibration behaviours casa-rs does not follow:
 [`incell` as two cells](#modifymodel-indexes-the-map-it-makes-of-two-cells),
 [the component-only model's unset width](#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment),
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
+Flagging behaviours casa-rs does not follow:
+[a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
+Coordinate behaviours casa-rs does not follow:
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -477,6 +483,38 @@ A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
 division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
+
+## `tclean` images DATA when CORRECTED_DATA is missing, and says nothing
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour casa-rs follows, with a warning (simulation plan
+  §3, decision 6)
+- Affected code: `synthesis/ImagerObjects/SIMapperCollection.cc` (`grid`),
+  `synthesis/TransformMachines2/FTMachine.cc` (`makeImage`),
+  `synthesis/ImagerObjects/SynthesisImagerVi2.cc` (`selectData`)
+
+`datacolumn='corrected'` sets `FTMachine::CORRECTED` in `selectData`
+without looking at the MeasurementSet. When a VisBuffer has no corrected
+visibilities, `SIMapperCollection::grid` and `FTMachine::makeImage` switch
+to `OBSERVED`, so `tclean` images `DATA` (less the model in a major cycle).
+`SynthesisImager::selectData` once logged "CORRECTED_DATA column does not
+exist. Using DATA column instead"; that block is commented out, and CASA
+6.7.6's `libcasacpp_synthesis` does not contain the message, so CASA logs
+no message for the fallback.
+
+casa-rs's simulator writes `DATA` only, so its imager follows the fallback
+and logs CASA's old message as a warning, since the column imaged is not
+the one asked for.
+
+VisibilityIterator2's `existsColumn` also counts `CORRECTED_DATA` as
+missing in an iteration chunk whose first row's cell is undefined
+(`isDefined(0)` on the chunk's attached table), so CASA can image `DATA`
+chunk by chunk from a partly written column. casa-rs decides by the
+column's presence alone and images an existing `CORRECTED_DATA` as before.
+That is a deliberate scope limit, not full parity: casa-tables'
+metadata-only probe (`array_cell_is_defined_uncached`) answers only for
+lazy, disk-backed `TiledShapeStMan` columns, and one probe would not
+reproduce the per-chunk rule.
 
 ## The Airy beam's blockage term uses the inverse length ratio
 
@@ -2499,3 +2537,60 @@ A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is
 physically sound for a continuum model, and casa-rs keeps it. A cube's start
 model must have the cube's spectral axis.
+
+## `flagmanager` gives the version a save renames the new comment
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatasks `private/task_flagmanager.py` (mode `save`,
+  lines 51–83)
+
+Saving a version under a name that already exists first renames the old
+version to `<name>.old.<seconds since 1970>`, so both stay restorable. The
+task then rewrites the old entry of `FLAG_VERSION_LIST` as
+`tmpname + ' : ' + comment`, where `comment` is the comment of the new save.
+CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
+1: {'name': 'v1', 'comment': 'second'}}` after saving `v1` with `'first'`
+and then `'second'`; the first comment is lost. casa-rs renames the version
+the same way and keeps its own comment (`flagmanager`'s
+`keep_existing_version`).
+
+## `flagdata`'s summary aborts on a correlation it cannot name
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatools `flagging/Flagging/FlagMSHandler.cc` (`open`) and
+  `FlagDataHandler.cc` (`generatePolarizationsMap`)
+
+With a polarization whose `CORR_TYPE` is RX, RY, LX and LY (casacore Stokes
+types 13 to 16), CASA 6.7.6.14's `flagdata(mode='summary')` warns
+"Correlation product unknown found: 13" and "The 0 th correlation is
+unknown: 13", then aborts the Python process with an uncaught
+`std::out_of_range` from `map::at`; there is no summary. casa-rs names
+every correlation by casacore's `Stokes::name`, so the summary keys those
+correlations `RX`, `RY`, `LX` and `LY` (`listobs::stokes_name`).
+
+## A subimage offsets a tabular coordinate's world values instead of moving its table
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#1001, PR #1005 review)
+- Affected code: casacore `coordinates/Coordinates/CoordinateSystem.cc`
+  (`subImageInSitu`) and `TabularCoordinate.cc` (`toWorld`,
+  `setReferencePixel`)
+
+A `TabularCoordinate` with a nonlinear table converts a pixel through its
+channel corrector first and its linear part (`crval`, `cdelt`, `crpix`)
+second. `subImageInSitu` moves a tabular coordinate's reference pixel by the
+subimage's start, as for a linear axis, but the corrector stays in the input's
+pixels. A subimage's world values are therefore the input's at the same
+pixel, offset by `cdelt × start`, not the input's at the pixel they were cut
+from. For a table at pixels `[0, 1, 3, 4]` with world values
+`[10, 11, 15, 22]`, `coordsys.subimage(originshft=[0, 1])` gives world values
+`[13, 14, 16]` at pixels 0 to 2, where the input has `[11, 13, 15]` (CASA
+6.7.6). A tabular spectral coordinate is not affected: `subImageInSitu`
+rebuilds its table over the subimage's channels. casa-rs moves the table's
+pixels with the reference pixel (`casa_images` `imsubimage`), so a subimage
+reads the input's world values at the pixels it was cut from. CASA's
+`imsubimage` ignores a box on an image without a direction coordinate, the
+only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
+CASA.

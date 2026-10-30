@@ -152,22 +152,24 @@ def calibrate(
     return _run("calibrate", _explicit(locals(), ('mode', 'vis', 'outputvis', 'summary_paths', 'gaintables', 'table_path', 'callib', 'gainfield', 'interp', 'spwmap', 'apply_mode', 'calwt', 'output', 'overwrite', 'parang', 'format', 'stats_axis', 'stats_datacolumn', 'use_flags', 'out_table', 'refant', 'gain_type', 'solve_mode', 'solint', 'gain_combine', 'gain_model_source', 'smodel', 'min_snr', 'bandpass_combine', 'bandtype', 'solnorm', 'fluxscale_input', 'reference_fields', 'transfer_fields', 'refspwmap', 'gainthreshold', 'incremental', 'selectdata', 'field', 'spw', 'antenna', 'scan', 'observation', 'array', 'timerange', 'msselect', 'caltype', 'parameter', 'gaincurve_table', 'flagbackup', 'minblperant', 'degamp', 'degphase')))
 
 def importvla(
-    *,
-    archivefiles: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    bandname: Literal['4', 'C', 'K', 'Ka', 'L', 'P', 'Q', 'S', 'U', 'X', 'none'] | object = _UNSET,
-    frequencytol: str | object = _UNSET,
-    project: str | object = _UNSET,
-    starttime: str | object = _UNSET,
-    stoptime: str | object = _UNSET,
-    applytsys: bool | object = _UNSET,
-    autocorr: bool | object = _UNSET,
-    antnamescheme: Literal['new', 'old'] | object = _UNSET,
-    keepblanks: bool | object = _UNSET,
-    evlabands: bool | object = _UNSET,
-) -> TaskCompletion:
-    """scan or import old VLA export archives from disk"""
-    return _run("importvla", _explicit(locals(), ('archivefiles', 'vis', 'bandname', 'frequencytol', 'project', 'starttime', 'stoptime', 'applytsys', 'autocorr', 'antnamescheme', 'keepblanks', 'evlabands')))
+    archivefiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    bandname: Literal['', '4', 'C', 'K', 'Ka', 'L', 'P', 'Q', 'S', 'U', 'X'] = '',
+    frequencytol: str = '150000.0Hz',
+    project: str = '',
+    starttime: str = '',
+    stoptime: str = '',
+    applytsys: bool = True,
+    autocorr: bool = False,
+    antnamescheme: Literal['new', 'old'] = 'new',
+    keepblanks: bool = False,
+    evlabands: bool = False,
+) -> Any:
+    """scan or import old VLA export archives from disk
+
+    CASA's ``importvla``: its parameters, defaults and return value.
+    """
+    return _call_casa(importvla, locals())
 
 def imager(
     *,
@@ -399,38 +401,110 @@ def exportfits(
     return _call_casa(exportfits, locals())
 
 def mstransform(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outputvis: StrPath | object = _UNSET,
-    spw: str | object = _UNSET,
-    width: int | object = _UNSET,
-    field: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    datacolumn: str | object = _UNSET,
-    keepflags: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Materialize a selected MeasurementSet into a new output MS."""
-    return _run("mstransform", _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags')))
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    outputvis: StrPath = '',
+    createmms: bool = False,
+    separationaxis: str = 'auto',
+    numsubms: str = 'auto',
+    tileshape: list[int] | tuple[int, ...] = [0],
+    field: str = '',
+    spw: str = '',
+    scan: str = '',
+    antenna: str = '',
+    correlation: str = '',
+    timerange: str = '',
+    intent: str = '',
+    array: str = '',
+    uvrange: str = '',
+    observation: str = '',
+    feed: str = '',
+    datacolumn: str = 'corrected',
+    realmodelcol: bool = False,
+    keepflags: bool = True,
+    usewtspectrum: bool = False,
+    combinespws: bool = False,
+    chanaverage: bool = False,
+    chanbin: int = 1,
+    hanning: bool = False,
+    regridms: bool = False,
+    mode: str = 'channel',
+    nchan: int = -1,
+    start: int = 0,
+    width: int = 1,
+    nspw: int = 1,
+    interpolation: str = 'linear',
+    phasecenter: str = '',
+    restfreq: str = '',
+    outframe: str = '',
+    veltype: str = 'radio',
+    preaverage: bool = False,
+    timeaverage: bool = False,
+    timebin: str = '0s',
+    timespan: str = '',
+    maxuvwdistance: float = 0.0,
+    docallib: bool = False,
+    callib: StrPath = '',
+    douvcontsub: bool = False,
+    fitspw: str = '',
+    fitorder: int = 0,
+    want_cont: bool = False,
+    denoising_lib: bool = True,
+    nthreads: int = 1,
+    niter: int = 1,
+    disableparallel: bool = False,
+    ddistart: int = -1,
+    taql: str = '',
+    monolithic_processing: bool = False,
+    reindex: bool = True,
+) -> Any:
+    """Materialize a selected MeasurementSet into a new output MS.
+
+    CASA's ``mstransform``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
+    ``correlation``, ``intent``, ``array``, ``uvrange``, ``observation``,
+    ``feed``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
+    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
+    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
+    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
+    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
+    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
+    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
+    ``ddistart``, ``monolithic_processing``, ``reindex``.
+    """
+    return _call_casa(mstransform, locals())
 
 def split(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    outputvis: StrPath = '',
+    keepmms: bool = True,
+    field: str = '',
+    spw: str = '',
+    scan: str = '',
+    antenna: str = '',
+    correlation: str = '',
+    timerange: str = '',
+    intent: str = '',
+    array: str = '',
+    uvrange: str = '',
+    observation: str = '',
+    feed: str = '',
+    datacolumn: str = 'corrected',
+    keepflags: bool = True,
+    width: int = 1,
+    timebin: str = '0s',
+    combine: str = '',
     *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    outputvis: StrPath | object = _UNSET,
-    spw: str | object = _UNSET,
-    width: int | object = _UNSET,
-    field: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    datacolumn: str | object = _UNSET,
-    keepflags: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Create a selected MeasurementSet subset, equivalent to CASA split."""
-    return _run("split", _explicit(locals(), ('vis', 'outputvis', 'spw', 'width', 'field', 'scan', 'antenna', 'timerange', 'msselect', 'datacolumn', 'keepflags')))
+    msselect: str = '',
+) -> Any:
+    """Create a selected MeasurementSet subset, equivalent to CASA split.
+
+    CASA's ``split``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``keepmms``, ``correlation``, ``intent``, ``array``, ``uvrange``,
+    ``observation``, ``feed``, ``timebin``, ``combine``.
+    """
+    return _call_casa(split, locals())
 
 def applycal(
     *,
@@ -633,40 +707,115 @@ def plotms(
     return _run("plotms", _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output')))
 
 def flagdata(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    mode: Literal['clip', 'extend', 'manual', 'quack', 'rflag', 'summary', 'tfcrop'] | object = _UNSET,
-    spw: str | object = _UNSET,
-    field: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    datacolumn: str | object = _UNSET,
-    action: Literal['flag', 'unflag'] | object = _UNSET,
-    flagbackup: bool | object = _UNSET,
-    clipzeros: bool | object = _UNSET,
-    quackinterval: float | object = _UNSET,
-    quackmode: Literal['beg', 'end'] | object = _UNSET,
-    timecutoff: float | object = _UNSET,
-    freqcutoff: float | object = _UNSET,
-    timedev: float | Literal['none'] | object = _UNSET,
-    freqdev: float | Literal['none'] | object = _UNSET,
-    extendflags: bool | object = _UNSET,
-    extendpols: bool | object = _UNSET,
-) -> TaskCompletion:
-    """Run native CASA-style MeasurementSet flagging."""
-    return _run("flagdata", _explicit(locals(), ('vis', 'mode', 'spw', 'field', 'scan', 'antenna', 'datacolumn', 'action', 'flagbackup', 'clipzeros', 'quackinterval', 'quackmode', 'timecutoff', 'freqcutoff', 'timedev', 'freqdev', 'extendflags', 'extendpols')))
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    mode: Literal['antint', 'clip', 'elevation', 'extend', 'list', 'manual', 'manualflag', 'quack', 'rflag', 'shadow', 'summary', 'tfcrop', 'unflag'] = 'manual',
+    autocorr: bool = False,
+    inpfile: str = '',
+    reason: str = 'any',
+    tbuff: float = 0.0,
+    spw: str = '',
+    field: str = '',
+    antenna: str = '',
+    uvrange: str = '',
+    timerange: str = '',
+    correlation: str = '',
+    scan: str = '',
+    intent: str = '',
+    array: str = '',
+    observation: str = '',
+    feed: str = '',
+    clipminmax: list[float] | tuple[float, ...] = [],
+    datacolumn: str = 'DATA',
+    clipoutside: bool = True,
+    channelavg: bool = False,
+    chanbin: int = 1,
+    timeavg: bool = False,
+    timebin: str = '0s',
+    clipzeros: bool = False,
+    quackinterval: float = 1.0,
+    quackmode: Literal['beg', 'end', 'endb', 'tail'] = 'beg',
+    quackincrement: bool = False,
+    tolerance: float = 0.0,
+    addantenna: str = '',
+    lowerlimit: float = 0.0,
+    upperlimit: float = 90.0,
+    ntime: str = 'scan',
+    combinescans: bool = False,
+    timecutoff: float = 4.0,
+    freqcutoff: float = 3.0,
+    timefit: str = 'line',
+    freqfit: str = 'poly',
+    maxnpieces: int = 7,
+    flagdimension: str = 'freqtime',
+    usewindowstats: str = 'none',
+    halfwin: int = 1,
+    extendflags: bool = True,
+    winsize: int = 3,
+    timedev: float | Literal['', 'none'] = '',
+    freqdev: float | Literal['', 'none'] = '',
+    timedevscale: float = 5.0,
+    freqdevscale: float = 5.0,
+    spectralmax: float = 1000000.0,
+    spectralmin: float = 0.0,
+    antint_ref_antenna: str = '',
+    minchanfrac: float = 0.6,
+    verbose: bool = False,
+    extendpols: bool = True,
+    growtime: float = 50.0,
+    growfreq: float = 50.0,
+    growaround: bool = False,
+    flagneartime: bool = False,
+    flagnearfreq: bool = False,
+    minrel: float = 0.0,
+    maxrel: float = 1.0,
+    minabs: int = 0,
+    maxabs: int = -1,
+    spwchan: bool = False,
+    spwcorr: bool = False,
+    basecnt: bool = False,
+    fieldcnt: bool = False,
+    name: str = 'Summary',
+    action: Literal['', 'apply', 'calculate', 'none'] = 'apply',
+    display: str = '',
+    flagbackup: bool = True,
+    savepars: bool = False,
+    cmdreason: str = '',
+    outfile: str = '',
+    overwrite: bool = True,
+    writeflags: bool = True,
+) -> Any:
+    """Run native CASA-style MeasurementSet flagging.
+
+    CASA's ``flagdata``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #978:
+    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
+    ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
+    ``feed``, ``clipminmax``, ``clipoutside``, ``channelavg``, ``chanbin``,
+    ``timeavg``, ``timebin``, ``quackincrement``, ``tolerance``,
+    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
+    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
+    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
+    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
+    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
+    ``maxabs``, ``spwchan``, ``spwcorr``, ``basecnt``, ``fieldcnt``,
+    ``name``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``, ``writeflags``.
+    """
+    return _call_casa(flagdata, locals())
 
 def flagmanager(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    mode: Literal['delete', 'list', 'rename', 'restore', 'save'] | object = _UNSET,
-    versionname: str | object = _UNSET,
-    oldname: str | object = _UNSET,
-    comment: str | object = _UNSET,
-    merge: Literal['and', 'or', 'replace'] | object = _UNSET,
-) -> TaskCompletion:
-    """Manage MeasurementSet flag-version snapshots."""
-    return _run("flagmanager", _explicit(locals(), ('vis', 'mode', 'versionname', 'oldname', 'comment', 'merge')))
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    mode: Literal['delete', 'list', 'rename', 'restore', 'save'] = 'list',
+    versionname: str = '',
+    oldname: str = '',
+    comment: str = '',
+    merge: Literal['and', 'or', 'replace'] = 'replace',
+) -> Any:
+    """Manage MeasurementSet flag-version snapshots.
+
+    CASA's ``flagmanager``: its parameters, defaults and return value.
+    """
+    return _call_casa(flagmanager, locals())
 
 def impbcor(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',

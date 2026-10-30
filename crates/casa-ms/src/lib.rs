@@ -42,6 +42,7 @@
 //! ```
 
 pub mod builder;
+mod casa_return;
 pub mod column_def;
 pub mod columns;
 pub mod derived;
@@ -85,13 +86,16 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
+pub use casa_return::{
+    FLAGDATA_SUMMARY_NAME, flagdata_empty_record, flagdata_summary_record, flagmanager_list_record,
+};
 pub use ephemeris::{SelectedObservationEphemeris, SelectedObservationEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::{
-    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
-    FlagVersionEntry, FlaggingError, QuackMode, delete_flag_version, flagdata, flagdata_path,
-    list_flag_versions, rename_flag_version, restore_flag_version, save_flag_version,
-    save_next_flag_backup,
+    FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
+    FlagMerge, FlagSummaryBreakdown, FlagVersionEntry, FlaggingError, QuackMode,
+    delete_flag_version, flagdata, flagdata_path, list_flag_versions, rename_flag_version,
+    restore_flag_version, save_flag_version, save_next_flag_backup,
 };
 pub use listobs::{
     ListObsOptions as MeasurementSetSummaryOptions,

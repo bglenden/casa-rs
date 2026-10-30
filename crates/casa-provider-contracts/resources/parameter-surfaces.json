@@ -7379,11 +7379,12 @@
     {
       "kind": "task",
       "id": "importvla",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "ImportVLA",
       "category": "Import",
       "summary": "scan or import old VLA export archives from disk",
       "provider_family": "importvla",
+      "casa_task": "importvla",
       "execution": {
         "invocation_name": "importvla",
         "fixed_args": [],
@@ -7411,11 +7412,15 @@
           "name": "archivefiles",
           "concept": {
             "id": "parameter.archivefiles",
-            "semantic_revision": 2
+            "semantic_revision": 3
           },
           "order": 0,
           "default": {
-            "kind": "required"
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
           },
           "required_when": {
             "kind": "always"
@@ -7464,8 +7469,8 @@
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "array",
-              "value": []
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -7482,7 +7487,7 @@
             }
           ],
           "context_role": "output_product",
-          "surface_note": null,
+          "surface_note": "When vis is empty, casa-rs names the MeasurementSet after the first archive file, where CASA raises.",
           "projections": {
             "cli": {
               "positional": null,
@@ -7494,7 +7499,7 @@
             },
             "provider": {
               "field": "vis",
-              "adapter": "identity"
+              "adapter": "omit_none"
             },
             "python": {
               "name": "vis",
@@ -7517,14 +7522,14 @@
           "name": "bandname",
           "concept": {
             "id": "parameter.bandname",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -7624,7 +7629,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -7674,7 +7679,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -7724,7 +7729,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -7863,7 +7868,10 @@
             }
           },
           "aliases": [],
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "importvla's autocorr keeps autocorrelations on import, distinct from flagdata's selection of them to flag."
+          }
         },
         {
           "name": "antnamescheme",
@@ -8042,6 +8050,14 @@
           "from_contract": 3,
           "to_contract": 4,
           "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {"kind": "replace_value", "parameter": "bandname", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
+          ],
           "changed_defaults": []
         }
       ]
@@ -16044,11 +16060,12 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
       "provider_family": "mstransform",
+      "casa_task": "mstransform",
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
@@ -16074,560 +16091,835 @@
       "bindings": [
         {
           "name": "vis",
-          "concept": {
-            "id": "data.input.vis",
-            "semantic_revision": 1
-          },
+          "concept": {"id": "data.input.vis", "semantic_revision": 1},
           "order": 0,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "always"},
+          "active_when": {"kind": "always"},
+          "refinements": [{"kind": "length", "min": 0, "max": 1}],
           "context_role": "input_dataset",
           "surface_note": "Canonical vis maps to provider field ms.",
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--ms",
-                "--vis"
-              ],
-              "false_flags": [],
-              "metavar": "MS"
-            },
-            "provider": {
-              "field": "ms",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "vis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Input MS",
-              "group": "Input",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "outputvis",
-          "concept": {
-            "id": "parameter.outputvis",
-            "semantic_revision": 1
-          },
-          "order": 1,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": "Canonical outputvis maps to provider field out.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--out",
-                "--outputvis"
-              ],
-              "false_flags": [],
-              "metavar": "MS"
-            },
-            "provider": {
-              "field": "out",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "outputvis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output MS",
-              "group": "Output",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "spw",
-          "concept": {
-            "id": "ms.selection.spw",
-            "semantic_revision": 1
-          },
-          "order": 2,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "spectral_window_selection",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--spw"
-              ],
-              "false_flags": [],
-              "metavar": "SPW[:CHANNELS]"
-            },
-            "provider": {
-              "field": "spw",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "spw",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Spectral Window",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "width",
-          "concept": {
-            "id": "ms.transform.width",
-            "semantic_revision": 1
-          },
-          "order": 3,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--width"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "width",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "width",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Channel Width",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": {
-            "review_id": "ADR-0006",
-            "reason": "Channel-averaging width is distinct from image and PV-slice widths."
+            "cli": {"flags": ["--ms", "--vis"], "metavar": "MS"},
+            "provider": {"field": "ms", "adapter": "identity"},
+            "python": {"name": "vis"},
+            "presentation": {"label": "Input MS", "group": "Input"}
           }
         },
         {
-          "name": "field",
-          "concept": {
-            "id": "ms.selection.field",
-            "semantic_revision": 1
-          },
-          "order": 4,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "field_selection",
-          "surface_note": null,
+          "name": "outputvis",
+          "concept": {"id": "parameter.outputvis", "semantic_revision": 1},
+          "order": 1,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "always"},
+          "active_when": {"kind": "always"},
+          "surface_note": "Canonical outputvis maps to provider field out.",
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--field"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "field",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "field",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Field",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--out", "--outputvis"], "metavar": "MS"},
+            "provider": {"field": "out", "adapter": "identity"},
+            "python": {"name": "outputvis"},
+            "presentation": {"label": "Output MS", "group": "Output"}
+          }
+        },
+        {
+          "name": "createmms",
+          "concept": {"id": "mstransform.createmms", "semantic_revision": 1},
+          "order": 2,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--createmms"], "false_flags": ["--no-createmms"]},
+            "provider": {"field": "createmms"},
+            "python": {"name": "createmms"},
+            "presentation": {"label": "Create MMS", "group": "Output", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "separationaxis",
+          "concept": {"id": "mstransform.separationaxis", "semantic_revision": 1},
+          "order": 3,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "auto"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--separationaxis"], "metavar": "AXIS"},
+            "provider": {"field": "separationaxis"},
+            "python": {"name": "separationaxis"},
+            "presentation": {"label": "Separation Axis", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "numsubms",
+          "concept": {"id": "mstransform.numsubms", "semantic_revision": 1},
+          "order": 4,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "auto"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--numsubms"], "metavar": "N"},
+            "provider": {"field": "numsubms"},
+            "python": {"name": "numsubms"},
+            "presentation": {"label": "Sub-MS Count", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "tileshape",
+          "concept": {"id": "mstransform.tileshape", "semantic_revision": 1},
+          "order": 5,
+          "default": {"kind": "literal", "value": {"kind": "array", "value": [{"kind": "integer", "value": 0}]}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--tileshape"], "metavar": "SHAPE"},
+            "provider": {"field": "tileshape"},
+            "python": {"name": "tileshape"},
+            "presentation": {"label": "Tile Shape", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "field",
+          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "order": 6,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "context_role": "field_selection",
+          "projections": {
+            "cli": {"flags": ["--field"], "metavar": "IDS"},
+            "provider": {"field": "field", "adapter": "omit_none"},
+            "python": {"name": "field"},
+            "presentation": {"label": "Field", "group": "Selection"}
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "order": 7,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
+            "provider": {"field": "spw", "adapter": "omit_none"},
+            "python": {"name": "spw"},
+            "presentation": {"label": "Spectral Window", "group": "Selection"}
+          }
         },
         {
           "name": "scan",
-          "concept": {
-            "id": "ms.selection.scan",
-            "semantic_revision": 1
-          },
-          "order": 5,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "order": 8,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--scan"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "scan",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "scan",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Scan",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--scan"], "metavar": "IDS"},
+            "provider": {"field": "scan", "adapter": "omit_none"},
+            "python": {"name": "scan"},
+            "presentation": {"label": "Scan", "group": "Selection"}
+          }
         },
         {
           "name": "antenna",
-          "concept": {
-            "id": "ms.selection.antenna",
-            "semantic_revision": 1
-          },
-          "order": 6,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "order": 9,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--antenna"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "antenna",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "antenna",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Antenna",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--antenna"], "metavar": "IDS"},
+            "provider": {"field": "antenna", "adapter": "omit_none"},
+            "python": {"name": "antenna"},
+            "presentation": {"label": "Antenna", "group": "Selection"}
+          }
+        },
+        {
+          "name": "correlation",
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "order": 10,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
+            "provider": {"field": "correlation"},
+            "python": {"name": "correlation"},
+            "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "timerange",
-          "concept": {
-            "id": "ms.selection.timerange",
-            "semantic_revision": 1
-          },
-          "order": 7,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "order": 11,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--timerange"
-              ],
-              "false_flags": [],
-              "metavar": "START~END"
-            },
-            "provider": {
-              "field": "timerange",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "timerange",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Time Range",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--timerange"], "metavar": "START~END"},
+            "provider": {"field": "timerange", "adapter": "omit_none"},
+            "python": {"name": "timerange"},
+            "presentation": {"label": "Time Range", "group": "Selection"}
+          }
         },
         {
-          "name": "msselect",
-          "concept": {
-            "id": "ms.selection.msselect",
-            "semantic_revision": 1
-          },
-          "order": 8,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "name": "intent",
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "order": 12,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--msselect"
-              ],
-              "false_flags": [],
-              "metavar": "TAQL"
-            },
-            "provider": {
-              "field": "msselect",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "msselect",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "MS Select",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
+            "provider": {"field": "intent"},
+            "python": {"name": "intent"},
+            "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "array",
+          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "order": 13,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
+            "provider": {"field": "array"},
+            "python": {"name": "array"},
+            "presentation": {"label": "Array", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "uvrange",
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "order": 14,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
+            "provider": {"field": "uvrange"},
+            "python": {"name": "uvrange"},
+            "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "observation",
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "order": 15,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
+            "provider": {"field": "observation"},
+            "python": {"name": "observation"},
+            "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "feed",
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "order": 16,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
+            "provider": {"field": "feed"},
+            "python": {"name": "feed"},
+            "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "datacolumn",
-          "concept": {
-            "id": "parameter.datacolumn",
-            "semantic_revision": 1
-          },
-          "order": 9,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "DATA"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "parameter.datacolumn", "semantic_revision": 1},
+          "order": 17,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "corrected"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--datacolumn"
-              ],
-              "false_flags": [],
-              "metavar": "COLUMN"
-            },
-            "provider": {
-              "field": "datacolumn",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "datacolumn",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Data Column",
-              "group": "Data",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--datacolumn"], "metavar": "COLUMN"},
+            "provider": {"field": "datacolumn", "adapter": "identity"},
+            "python": {"name": "datacolumn"},
+            "presentation": {"label": "Data Column", "group": "Data"}
+          }
+        },
+        {
+          "name": "realmodelcol",
+          "concept": {"id": "mstransform.realmodelcol", "semantic_revision": 1},
+          "order": 18,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--realmodelcol"], "false_flags": ["--no-realmodelcol"]},
+            "provider": {"field": "realmodelcol"},
+            "python": {"name": "realmodelcol"},
+            "presentation": {"label": "Real Model Column", "group": "Data", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "model"}},
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "all"}},
+            {"kind": "equals", "parameter": "datacolumn", "value": {"kind": "string", "value": "data,model,corrected"}}
+          ]}}
         },
         {
           "name": "keepflags",
-          "concept": {
-            "id": "parameter.keepflags",
-            "semantic_revision": 1
-          },
-          "order": 10,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "parameter.keepflags", "semantic_revision": 1},
+          "order": 19,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--keepflags"
-              ],
-              "false_flags": [
-                "--no-keepflags"
-              ],
-              "metavar": null
-            },
-            "provider": {
-              "field": "keepflags",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "keepflags",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Keep Fully Flagged Rows",
-              "group": "Data",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--keepflags"], "false_flags": ["--no-keepflags"]},
+            "provider": {"field": "keepflags", "adapter": "identity"},
+            "python": {"name": "keepflags"},
+            "presentation": {"label": "Keep Fully Flagged Rows", "group": "Data"}
+          }
+        },
+        {
+          "name": "usewtspectrum",
+          "concept": {"id": "mstransform.usewtspectrum", "semantic_revision": 1},
+          "order": 20,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--usewtspectrum"], "false_flags": ["--no-usewtspectrum"]},
+            "provider": {"field": "usewtspectrum"},
+            "python": {"name": "usewtspectrum"},
+            "presentation": {"label": "Use Weight Spectrum", "group": "Data", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
-        }
-      ],
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "combinespws",
+          "concept": {"id": "mstransform.combinespws", "semantic_revision": 1},
+          "order": 21,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--combinespws"], "false_flags": ["--no-combinespws"]},
+            "provider": {"field": "combinespws"},
+            "python": {"name": "combinespws"},
+            "presentation": {"label": "Combine SPWs", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "chanaverage",
+          "concept": {"id": "mstransform.chanaverage", "semantic_revision": 1},
+          "order": 22,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--chanaverage"], "false_flags": ["--no-chanaverage"]},
+            "provider": {"field": "chanaverage"},
+            "python": {"name": "chanaverage"},
+            "presentation": {"label": "Average Channels", "group": "Spectral"}
+          }
+        },
+        {
+          "name": "chanbin",
+          "concept": {"id": "parameter.chanbin", "semantic_revision": 1},
+          "order": 23,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "surface_note": "Averages chanbin channels when chanaverage is True, as CASA's mstransform does.",
+          "projections": {
+            "cli": {"flags": ["--chanbin"], "metavar": "N"},
+            "provider": {"field": "chanbin", "adapter": "identity"},
+            "python": {"name": "chanbin"},
+            "presentation": {"label": "Channel Bin", "group": "Spectral"}
+          }
+        },
+        {
+          "name": "hanning",
+          "concept": {"id": "mstransform.hanning", "semantic_revision": 1},
+          "order": 24,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--hanning"], "false_flags": ["--no-hanning"]},
+            "provider": {"field": "hanning"},
+            "python": {"name": "hanning"},
+            "presentation": {"label": "Hanning Smooth", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "regridms",
+          "concept": {"id": "mstransform.regridms", "semantic_revision": 1},
+          "order": 25,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--regridms"], "false_flags": ["--no-regridms"]},
+            "provider": {"field": "regridms"},
+            "python": {"name": "regridms"},
+            "presentation": {"label": "Regrid", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "mode",
+          "concept": {"id": "regridms.mode", "semantic_revision": 1},
+          "order": 26,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "channel"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--mode"], "metavar": "MODE"},
+            "provider": {"field": "mode"},
+            "python": {"name": "mode"},
+            "presentation": {"label": "Mode", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's mode chooses how the regridded spectral axis is given, distinct from other tasks' operation modes."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "nchan",
+          "concept": {"id": "regridms.nchan", "semantic_revision": 1},
+          "order": 27,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": -1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--nchan"], "metavar": "N"},
+            "provider": {"field": "nchan"},
+            "python": {"name": "nchan"},
+            "presentation": {"label": "Channels", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "start",
+          "concept": {"id": "regridms.start", "semantic_revision": 1},
+          "order": 28,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--start"], "metavar": "START"},
+            "provider": {"field": "start"},
+            "python": {"name": "start"},
+            "presentation": {"label": "Start", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's start is the first channel of the regridded spectral axis, distinct from the imager's and impv's starts."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "width",
+          "concept": {"id": "regridms.width", "semantic_revision": 1},
+          "order": 29,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--width"], "metavar": "WIDTH"},
+            "provider": {"field": "width"},
+            "python": {"name": "width"},
+            "presentation": {"label": "Width", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's width is the channel width of the regridded spectral axis, distinct from channel averaging and image widths."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "nspw",
+          "concept": {"id": "regridms.nspw", "semantic_revision": 1},
+          "order": 30,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--nspw"], "metavar": "N"},
+            "provider": {"field": "nspw"},
+            "python": {"name": "nspw"},
+            "presentation": {"label": "Output SPWs", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "interpolation",
+          "concept": {"id": "regridms.interpolation", "semantic_revision": 1},
+          "order": 31,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "linear"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--interpolation"], "metavar": "METHOD"},
+            "provider": {"field": "interpolation"},
+            "python": {"name": "interpolation"},
+            "presentation": {"label": "Interpolation", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's interpolation regrids the spectral axis, distinct from image regridding interpolation."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "phasecenter",
+          "concept": {"id": "parameter.phasecenter", "semantic_revision": 1},
+          "order": 32,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--phasecenter"], "metavar": "DIRECTION"},
+            "provider": {"field": "phasecenter"},
+            "python": {"name": "phasecenter"},
+            "presentation": {"label": "Phase Center", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "restfreq",
+          "concept": {"id": "parameter.restfreq", "semantic_revision": 1},
+          "order": 33,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--restfreq"], "metavar": "FREQUENCY"},
+            "provider": {"field": "restfreq"},
+            "python": {"name": "restfreq"},
+            "presentation": {"label": "Rest Frequency", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "outframe",
+          "concept": {"id": "regridms.outframe", "semantic_revision": 1},
+          "order": 34,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--outframe"], "metavar": "FRAME"},
+            "provider": {"field": "outframe"},
+            "python": {"name": "outframe"},
+            "presentation": {"label": "Output Frame", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's outframe is the regridded MeasurementSet's frame, distinct from the imager's choice of frame."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "veltype",
+          "concept": {"id": "regridms.veltype", "semantic_revision": 1},
+          "order": 35,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "radio"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--veltype"], "metavar": "TYPE"},
+            "provider": {"field": "veltype"},
+            "python": {"name": "veltype"},
+            "presentation": {"label": "Velocity Type", "group": "Spectral", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's veltype names the velocity definition in CASA's lower-case spelling, distinct from the imager's choice."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "preaverage",
+          "concept": {"id": "regridms.preaverage", "semantic_revision": 1},
+          "order": 36,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--preaverage"], "false_flags": ["--no-preaverage"]},
+            "provider": {"field": "preaverage"},
+            "python": {"name": "preaverage"},
+            "presentation": {"label": "Pre-average", "group": "Spectral", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "regridms", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "timeaverage",
+          "concept": {"id": "mstransform.timeaverage", "semantic_revision": 1},
+          "order": 37,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timeaverage"], "false_flags": ["--no-timeaverage"]},
+            "provider": {"field": "timeaverage"},
+            "python": {"name": "timeaverage"},
+            "presentation": {"label": "Time Average", "group": "Time", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "timebin",
+          "concept": {"id": "parameter.timebin", "semantic_revision": 2},
+          "order": 38,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "0s"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timebin"], "metavar": "QUANTITY"},
+            "provider": {"field": "timebin"},
+            "python": {"name": "timebin"},
+            "presentation": {"label": "Time Bin", "group": "Time", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "timespan",
+          "concept": {"id": "mstransform.timespan", "semantic_revision": 1},
+          "order": 39,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timespan"], "metavar": "AXES"},
+            "provider": {"field": "timespan"},
+            "python": {"name": "timespan"},
+            "presentation": {"label": "Time Span", "group": "Time", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "maxuvwdistance",
+          "concept": {"id": "mstransform.maxuvwdistance", "semantic_revision": 1},
+          "order": 40,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--maxuvwdistance"], "metavar": "METRES"},
+            "provider": {"field": "maxuvwdistance"},
+            "python": {"name": "maxuvwdistance"},
+            "presentation": {"label": "Max UVW Distance", "group": "Time", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "docallib",
+          "concept": {"id": "mstransform.docallib", "semantic_revision": 1},
+          "order": 41,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--docallib"], "false_flags": ["--no-docallib"]},
+            "provider": {"field": "docallib"},
+            "python": {"name": "docallib"},
+            "presentation": {"label": "Apply Cal Library", "group": "Calibration", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "callib",
+          "concept": {"id": "parameter.callib", "semantic_revision": 1},
+          "order": 42,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--callib"], "metavar": "PATH"},
+            "provider": {"field": "callib"},
+            "python": {"name": "callib"},
+            "presentation": {"label": "Cal Library", "group": "Calibration", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "docallib", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "douvcontsub",
+          "concept": {"id": "mstransform.douvcontsub", "semantic_revision": 1},
+          "order": 43,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--douvcontsub"], "false_flags": ["--no-douvcontsub"]},
+            "provider": {"field": "douvcontsub"},
+            "python": {"name": "douvcontsub"},
+            "presentation": {"label": "Continuum Subtraction", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "fitspw",
+          "concept": {"id": "parameter.fitspw", "semantic_revision": 1},
+          "order": 44,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--fitspw"], "metavar": "SELECTOR"},
+            "provider": {"field": "fitspw"},
+            "python": {"name": "fitspw"},
+            "presentation": {"label": "Fit SPW", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "fitorder",
+          "concept": {"id": "parameter.fitorder", "semantic_revision": 1},
+          "order": 45,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--fitorder"], "metavar": "N"},
+            "provider": {"field": "fitorder"},
+            "python": {"name": "fitorder"},
+            "presentation": {"label": "Fit Order", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "want_cont",
+          "concept": {"id": "uvcontsub.want_cont", "semantic_revision": 1},
+          "order": 46,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--want_cont"], "false_flags": ["--no-want_cont"]},
+            "provider": {"field": "want_cont"},
+            "python": {"name": "want_cont"},
+            "presentation": {"label": "Keep Continuum", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "denoising_lib",
+          "concept": {"id": "uvcontsub.denoising_lib", "semantic_revision": 1},
+          "order": 47,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--denoising_lib"], "false_flags": ["--no-denoising_lib"]},
+            "provider": {"field": "denoising_lib"},
+            "python": {"name": "denoising_lib"},
+            "presentation": {"label": "Denoising Library", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "nthreads",
+          "concept": {"id": "uvcontsub.nthreads", "semantic_revision": 1},
+          "order": 48,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--nthreads"], "metavar": "N"},
+            "provider": {"field": "nthreads"},
+            "python": {"name": "nthreads"},
+            "presentation": {"label": "Threads", "group": "Continuum", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "niter",
+          "concept": {"id": "uvcontsub.niter", "semantic_revision": 1},
+          "order": 49,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--niter"], "metavar": "N"},
+            "provider": {"field": "niter"},
+            "python": {"name": "niter"},
+            "presentation": {"label": "Iterations", "group": "Continuum", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "mstransform's niter is the continuum fit's iteration count, distinct from the imager's and imstat's iteration limits."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "douvcontsub", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "disableparallel",
+          "concept": {"id": "mstransform.disableparallel", "semantic_revision": 1},
+          "order": 50,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--disableparallel"], "false_flags": ["--no-disableparallel"]},
+            "provider": {"field": "disableparallel"},
+            "python": {"name": "disableparallel"},
+            "presentation": {"label": "Disable Parallel", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "ddistart",
+          "concept": {"id": "mstransform.ddistart", "semantic_revision": 1},
+          "order": 51,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": -1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--ddistart"], "metavar": "N"},
+            "provider": {"field": "ddistart"},
+            "python": {"name": "ddistart"},
+            "presentation": {"label": "DDI Start", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "taql",
+          "concept": {"id": "mstransform.taql", "semantic_revision": 1},
+          "order": 52,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--taql", "--msselect"], "metavar": "TAQL"},
+            "provider": {"field": "taql", "adapter": "omit_none"},
+            "python": {"name": "taql"},
+            "presentation": {"label": "TaQL", "group": "Selection"}
+          }
+        },
+        {
+          "name": "monolithic_processing",
+          "concept": {"id": "mstransform.monolithic_processing", "semantic_revision": 1},
+          "order": 53,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--monolithic_processing"], "false_flags": ["--no-monolithic_processing"]},
+            "provider": {"field": "monolithic_processing"},
+            "python": {"name": "monolithic_processing"},
+            "presentation": {"label": "Monolithic Processing", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "reindex",
+          "concept": {"id": "mstransform.reindex", "semantic_revision": 1},
+          "order": 54,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--reindex"], "false_flags": ["--no-reindex"]},
+            "provider": {"field": "reindex"},
+            "python": {"name": "reindex"},
+            "presentation": {"label": "Reindex", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        }      ],
       "migrations": [
         {
           "from_contract": 1,
@@ -16646,17 +16938,29 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {"kind": "rename", "from": "width", "to": "chanbin"},
+            {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "chanbin"}},
+            {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": false}, "when": {"kind": "equals", "parameter": "chanbin", "value": {"kind": "integer", "value": 1}}},
+            {"kind": "rename", "from": "msselect", "to": "taql"}
+          ],
+          "changed_defaults": ["datacolumn"]
         }
       ]
     },
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
       "provider_family": "mstransform",
+      "casa_task": "split",
       "execution": {
         "invocation_name": "mstransform",
         "fixed_args": [],
@@ -16682,557 +16986,301 @@
       "bindings": [
         {
           "name": "vis",
-          "concept": {
-            "id": "data.input.vis",
-            "semantic_revision": 1
-          },
+          "concept": {"id": "data.input.vis", "semantic_revision": 1},
           "order": 0,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "always"},
+          "active_when": {"kind": "always"},
+          "refinements": [{"kind": "length", "min": 0, "max": 1}],
           "context_role": "input_dataset",
           "surface_note": "Canonical vis maps to provider field ms.",
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--ms",
-                "--vis"
-              ],
-              "false_flags": [],
-              "metavar": "MS"
-            },
-            "provider": {
-              "field": "ms",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "vis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Input MS",
-              "group": "Input",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--ms", "--vis"], "metavar": "MS"},
+            "provider": {"field": "ms", "adapter": "identity"},
+            "python": {"name": "vis"},
+            "presentation": {"label": "Input MS", "group": "Input"}
+          }
         },
         {
           "name": "outputvis",
-          "concept": {
-            "id": "parameter.outputvis",
-            "semantic_revision": 1
-          },
+          "concept": {"id": "parameter.outputvis", "semantic_revision": 1},
           "order": 1,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "always"},
+          "active_when": {"kind": "always"},
           "surface_note": "Canonical outputvis maps to provider field out.",
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--out",
-                "--outputvis"
-              ],
-              "false_flags": [],
-              "metavar": "MS"
-            },
-            "provider": {
-              "field": "out",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "outputvis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output MS",
-              "group": "Output",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--out", "--outputvis"], "metavar": "MS"},
+            "provider": {"field": "out", "adapter": "identity"},
+            "python": {"name": "outputvis"},
+            "presentation": {"label": "Output MS", "group": "Output"}
+          }
         },
         {
-          "name": "spw",
-          "concept": {
-            "id": "ms.selection.spw",
-            "semantic_revision": 1
-          },
+          "name": "keepmms",
+          "concept": {"id": "parameter.keepmms", "semantic_revision": 1},
           "order": 2,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "spectral_window_selection",
-          "surface_note": null,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--spw"
-              ],
-              "false_flags": [],
-              "metavar": "SPW[:CHANNELS]"
-            },
-            "provider": {
-              "field": "spw",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "spw",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Spectral Window",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--keepmms"], "false_flags": ["--no-keepmms"]},
+            "provider": {"field": "keepmms"},
+            "python": {"name": "keepmms"},
+            "presentation": {"label": "Keep MMS", "group": "Output", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "width",
-          "concept": {
-            "id": "ms.transform.width",
-            "semantic_revision": 1
-          },
-          "order": 3,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--width"
-              ],
-              "false_flags": [],
-              "metavar": "N"
-            },
-            "provider": {
-              "field": "width",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "width",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Channel Width",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "field",
-          "concept": {
-            "id": "ms.selection.field",
-            "semantic_revision": 1
-          },
-          "order": 4,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
+          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "order": 3,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "context_role": "field_selection",
-          "surface_note": null,
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--field"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "field",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "field",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Field",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--field"], "metavar": "IDS"},
+            "provider": {"field": "field", "adapter": "omit_none"},
+            "python": {"name": "field"},
+            "presentation": {"label": "Field", "group": "Selection"}
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "order": 4,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "context_role": "spectral_window_selection",
+          "projections": {
+            "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
+            "provider": {"field": "spw", "adapter": "omit_none"},
+            "python": {"name": "spw"},
+            "presentation": {"label": "Spectral Window", "group": "Selection"}
+          }
         },
         {
           "name": "scan",
-          "concept": {
-            "id": "ms.selection.scan",
-            "semantic_revision": 1
-          },
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
           "order": 5,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--scan"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "scan",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "scan",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Scan",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--scan"], "metavar": "IDS"},
+            "provider": {"field": "scan", "adapter": "omit_none"},
+            "python": {"name": "scan"},
+            "presentation": {"label": "Scan", "group": "Selection"}
+          }
         },
         {
           "name": "antenna",
-          "concept": {
-            "id": "ms.selection.antenna",
-            "semantic_revision": 1
-          },
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
           "order": 6,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--antenna"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "antenna",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "antenna",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Antenna",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--antenna"], "metavar": "IDS"},
+            "provider": {"field": "antenna", "adapter": "omit_none"},
+            "python": {"name": "antenna"},
+            "presentation": {"label": "Antenna", "group": "Selection"}
+          }
+        },
+        {
+          "name": "correlation",
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "order": 7,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
+            "provider": {"field": "correlation"},
+            "python": {"name": "correlation"},
+            "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "timerange",
-          "concept": {
-            "id": "ms.selection.timerange",
-            "semantic_revision": 1
-          },
-          "order": 7,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "order": 8,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--timerange"
-              ],
-              "false_flags": [],
-              "metavar": "START~END"
-            },
-            "provider": {
-              "field": "timerange",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "timerange",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Time Range",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--timerange"], "metavar": "START~END"},
+            "provider": {"field": "timerange", "adapter": "omit_none"},
+            "python": {"name": "timerange"},
+            "presentation": {"label": "Time Range", "group": "Selection"}
+          }
         },
         {
-          "name": "msselect",
-          "concept": {
-            "id": "ms.selection.msselect",
-            "semantic_revision": 1
-          },
-          "order": 8,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "name": "intent",
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "order": 9,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--msselect"
-              ],
-              "false_flags": [],
-              "metavar": "TAQL"
-            },
-            "provider": {
-              "field": "msselect",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "msselect",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "MS Select",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
+            "provider": {"field": "intent"},
+            "python": {"name": "intent"},
+            "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
           },
-          "aliases": [],
-          "reviewed_homonym": null
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "array",
+          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "order": 10,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
+            "provider": {"field": "array"},
+            "python": {"name": "array"},
+            "presentation": {"label": "Array", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "uvrange",
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "order": 11,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
+            "provider": {"field": "uvrange"},
+            "python": {"name": "uvrange"},
+            "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "observation",
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "order": 12,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
+            "provider": {"field": "observation"},
+            "python": {"name": "observation"},
+            "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "feed",
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "order": 13,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
+            "provider": {"field": "feed"},
+            "python": {"name": "feed"},
+            "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
         },
         {
           "name": "datacolumn",
-          "concept": {
-            "id": "parameter.datacolumn",
-            "semantic_revision": 1
-          },
-          "order": 9,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "DATA"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "parameter.datacolumn", "semantic_revision": 1},
+          "order": 14,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "corrected"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--datacolumn"
-              ],
-              "false_flags": [],
-              "metavar": "COLUMN"
-            },
-            "provider": {
-              "field": "datacolumn",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "datacolumn",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Data Column",
-              "group": "Data",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
+            "cli": {"flags": ["--datacolumn"], "metavar": "COLUMN"},
+            "provider": {"field": "datacolumn", "adapter": "identity"},
+            "python": {"name": "datacolumn"},
+            "presentation": {"label": "Data Column", "group": "Data"}
+          }
         },
         {
           "name": "keepflags",
-          "concept": {
-            "id": "parameter.keepflags",
-            "semantic_revision": 1
-          },
-          "order": 10,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "concept": {"id": "parameter.keepflags", "semantic_revision": 1},
+          "order": 15,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
           "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--keepflags"
-              ],
-              "false_flags": [
-                "--no-keepflags"
-              ],
-              "metavar": null
-            },
-            "provider": {
-              "field": "keepflags",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "keepflags",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Keep Fully Flagged Rows",
-              "group": "Data",
-              "advanced": false,
-              "hidden": false
-            }
+            "cli": {"flags": ["--keepflags"], "false_flags": ["--no-keepflags"]},
+            "provider": {"field": "keepflags", "adapter": "identity"},
+            "python": {"name": "keepflags"},
+            "presentation": {"label": "Keep Fully Flagged Rows", "group": "Data"}
+          }
+        },
+        {
+          "name": "width",
+          "concept": {"id": "ms.transform.width", "semantic_revision": 1},
+          "order": 16,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--width"], "metavar": "N"},
+            "provider": {"field": "width", "adapter": "identity"},
+            "python": {"name": "width"},
+            "presentation": {"label": "Channel Width", "group": "Selection"}
           },
-          "aliases": [],
-          "reviewed_homonym": null
-        }
-      ],
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Channel-averaging width is distinct from image and PV-slice widths."}
+        },
+        {
+          "name": "timebin",
+          "concept": {"id": "parameter.timebin", "semantic_revision": 2},
+          "order": 17,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "0s"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timebin"], "metavar": "QUANTITY"},
+            "provider": {"field": "timebin"},
+            "python": {"name": "timebin"},
+            "presentation": {"label": "Time Bin", "group": "Averaging", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "combine",
+          "concept": {"id": "parameter.combine", "semantic_revision": 1},
+          "order": 18,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--combine"], "metavar": "AXES"},
+            "provider": {"field": "combine"},
+            "python": {"name": "combine"},
+            "presentation": {"label": "Combine", "group": "Averaging", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "timebin", "value": {"kind": "string", "value": "0s"}}}}
+        },
+        {
+          "name": "msselect",
+          "concept": {"id": "ms.selection.msselect", "semantic_revision": 1},
+          "order": 19,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "surface_note": "casa-rs's own control: CASA's split has no msselect parameter.",
+          "projections": {
+            "cli": {"flags": ["--msselect"], "metavar": "TAQL"},
+            "provider": {"field": "msselect", "adapter": "omit_none"},
+            "python": {"name": "msselect", "keyword_only": true},
+            "presentation": {"label": "MS Select", "group": "Selection"}
+          }
+        }      ],
       "migrations": [
         {
           "from_contract": 1,
@@ -17251,6 +17299,12 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [],
+          "changed_defaults": ["datacolumn"]
         }
       ]
     },
@@ -26091,11 +26145,12 @@
     {
       "kind": "task",
       "id": "flagdata",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Flag Data",
       "category": "Flagging",
       "summary": "Run native CASA-style MeasurementSet flagging.",
       "provider_family": "flagdata",
+      "casa_task": "flagdata",
       "execution": {
         "invocation_name": "flagdata",
         "fixed_args": [],
@@ -26106,6 +26161,899 @@
       },
       "bindings": [
         {
+          "name": "autocorr",
+          "concept": {"id": "flagdata.autocorr", "semantic_revision": 1},
+          "order": 2,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--autocorr"], "false_flags": ["--no-autocorr"]},
+            "provider": {"field": "autocorr"},
+            "python": {"name": "autocorr"},
+            "presentation": {"label": "Autocorrelations", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manualflag"}}
+          ]}}
+        },
+        {
+          "name": "inpfile",
+          "concept": {"id": "flagdata.inpfile", "semantic_revision": 1},
+          "order": 3,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--inpfile"], "metavar": "PATH"},
+            "provider": {"field": "inpfile"},
+            "python": {"name": "inpfile"},
+            "presentation": {"label": "Input File", "group": "Input", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
+        },
+        {
+          "name": "reason",
+          "concept": {"id": "flagdata.reason", "semantic_revision": 1},
+          "order": 4,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "any"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--reason"], "metavar": "REASON"},
+            "provider": {"field": "reason"},
+            "python": {"name": "reason"},
+            "presentation": {"label": "Reason", "group": "Input", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
+        },
+        {
+          "name": "tbuff",
+          "concept": {"id": "flagdata.tbuff", "semantic_revision": 1},
+          "order": 5,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--tbuff"], "metavar": "SECONDS"},
+            "provider": {"field": "tbuff"},
+            "python": {"name": "tbuff"},
+            "presentation": {"label": "Time Buffer", "group": "Input", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}}}
+        },
+        {
+          "name": "uvrange",
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "order": 9,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
+            "provider": {"field": "uvrange"},
+            "python": {"name": "uvrange"},
+            "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "timerange",
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "order": 10,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timerange"], "metavar": "SELECTOR"},
+            "provider": {"field": "timerange"},
+            "python": {"name": "timerange"},
+            "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "correlation",
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "order": 11,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
+            "provider": {"field": "correlation"},
+            "python": {"name": "correlation"},
+            "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "intent",
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "order": 13,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
+            "provider": {"field": "intent"},
+            "python": {"name": "intent"},
+            "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "array",
+          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "order": 14,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
+            "provider": {"field": "array"},
+            "python": {"name": "array"},
+            "presentation": {"label": "Array", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "observation",
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "order": 15,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
+            "provider": {"field": "observation"},
+            "python": {"name": "observation"},
+            "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "feed",
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "order": 16,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
+            "provider": {"field": "feed"},
+            "python": {"name": "feed"},
+            "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "clipminmax",
+          "concept": {"id": "flagdata.clipminmax", "semantic_revision": 1},
+          "order": 17,
+          "default": {"kind": "literal", "value": {"kind": "array", "value": []}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--clipminmax"], "metavar": "MIN,MAX"},
+            "provider": {"field": "clipminmax"},
+            "python": {"name": "clipminmax"},
+            "presentation": {"label": "Clip Range", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
+        },
+        {
+          "name": "clipoutside",
+          "concept": {"id": "flagdata.clipoutside", "semantic_revision": 1},
+          "order": 19,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--clipoutside"], "false_flags": ["--no-clipoutside"]},
+            "provider": {"field": "clipoutside"},
+            "python": {"name": "clipoutside"},
+            "presentation": {"label": "Clip Outside", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
+        },
+        {
+          "name": "channelavg",
+          "concept": {"id": "flagdata.channelavg", "semantic_revision": 1},
+          "order": 20,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--channelavg"], "false_flags": ["--no-channelavg"]},
+            "provider": {"field": "channelavg"},
+            "python": {"name": "channelavg"},
+            "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
+        },
+        {
+          "name": "chanbin",
+          "concept": {"id": "parameter.chanbin", "semantic_revision": 1},
+          "order": 21,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--chanbin"], "metavar": "N"},
+            "provider": {"field": "chanbin"},
+            "python": {"name": "chanbin"},
+            "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
+        },
+        {
+          "name": "timeavg",
+          "concept": {"id": "flagdata.timeavg", "semantic_revision": 1},
+          "order": 22,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timeavg"], "false_flags": ["--no-timeavg"]},
+            "provider": {"field": "timeavg"},
+            "python": {"name": "timeavg"},
+            "presentation": {"label": "Time Average", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
+        },
+        {
+          "name": "timebin",
+          "concept": {"id": "parameter.timebin", "semantic_revision": 2},
+          "order": 23,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "0s"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timebin"], "metavar": "QUANTITY"},
+            "provider": {"field": "timebin"},
+            "python": {"name": "timebin"},
+            "presentation": {"label": "Time Bin", "group": "Clip", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
+          ]}}
+        },
+        {
+          "name": "quackincrement",
+          "concept": {"id": "flagdata.quackincrement", "semantic_revision": 1},
+          "order": 27,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--quackincrement"], "false_flags": ["--no-quackincrement"]},
+            "provider": {"field": "quackincrement"},
+            "python": {"name": "quackincrement"},
+            "presentation": {"label": "Quack Increment", "group": "Quack", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "quack"}}}
+        },
+        {
+          "name": "tolerance",
+          "concept": {"id": "flagdata.tolerance", "semantic_revision": 1},
+          "order": 28,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--tolerance"], "metavar": "METRES"},
+            "provider": {"field": "tolerance"},
+            "python": {"name": "tolerance"},
+            "presentation": {"label": "Tolerance", "group": "Shadow", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
+        },
+        {
+          "name": "addantenna",
+          "concept": {"id": "flagdata.addantenna", "semantic_revision": 1},
+          "order": 29,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--addantenna"], "metavar": "PATH"},
+            "provider": {"field": "addantenna"},
+            "python": {"name": "addantenna"},
+            "presentation": {"label": "Add Antenna", "group": "Shadow", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}}}
+        },
+        {
+          "name": "lowerlimit",
+          "concept": {"id": "flagdata.lowerlimit", "semantic_revision": 1},
+          "order": 30,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--lowerlimit"], "metavar": "DEGREES"},
+            "provider": {"field": "lowerlimit"},
+            "python": {"name": "lowerlimit"},
+            "presentation": {"label": "Lower Limit", "group": "Elevation", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
+        },
+        {
+          "name": "upperlimit",
+          "concept": {"id": "flagdata.upperlimit", "semantic_revision": 1},
+          "order": 31,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 90.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--upperlimit"], "metavar": "DEGREES"},
+            "provider": {"field": "upperlimit"},
+            "python": {"name": "upperlimit"},
+            "presentation": {"label": "Upper Limit", "group": "Elevation", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}}}
+        },
+        {
+          "name": "ntime",
+          "concept": {"id": "flagdata.ntime", "semantic_revision": 1},
+          "order": 32,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "scan"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--ntime"], "metavar": "TIME"},
+            "provider": {"field": "ntime"},
+            "python": {"name": "ntime"},
+            "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
+          },
+          "surface_note": "CASA's flagdata parses ntime in every mode before it runs one, so a value other than 'scan' is refused in every mode until #978.",
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "combinescans",
+          "concept": {"id": "flagdata.combinescans", "semantic_revision": 1},
+          "order": 33,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--combinescans"], "false_flags": ["--no-combinescans"]},
+            "provider": {"field": "combinescans"},
+            "python": {"name": "combinescans"},
+            "presentation": {"label": "Combine Scans", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+          ]}}
+        },
+        {
+          "name": "timefit",
+          "concept": {"id": "flagdata.timefit", "semantic_revision": 1},
+          "order": 36,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "line"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timefit"], "metavar": "FIT"},
+            "provider": {"field": "timefit"},
+            "python": {"name": "timefit"},
+            "presentation": {"label": "Time Fit", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "freqfit",
+          "concept": {"id": "flagdata.freqfit", "semantic_revision": 1},
+          "order": 37,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "poly"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--freqfit"], "metavar": "FIT"},
+            "provider": {"field": "freqfit"},
+            "python": {"name": "freqfit"},
+            "presentation": {"label": "Frequency Fit", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "maxnpieces",
+          "concept": {"id": "flagdata.maxnpieces", "semantic_revision": 1},
+          "order": 38,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 7}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--maxnpieces"], "metavar": "N"},
+            "provider": {"field": "maxnpieces"},
+            "python": {"name": "maxnpieces"},
+            "presentation": {"label": "Max Pieces", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "flagdimension",
+          "concept": {"id": "flagdata.flagdimension", "semantic_revision": 1},
+          "order": 39,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "freqtime"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--flagdimension"], "metavar": "DIMENSION"},
+            "provider": {"field": "flagdimension"},
+            "python": {"name": "flagdimension"},
+            "presentation": {"label": "Flag Dimension", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "usewindowstats",
+          "concept": {"id": "flagdata.usewindowstats", "semantic_revision": 1},
+          "order": 40,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "none"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--usewindowstats"], "metavar": "STATS"},
+            "provider": {"field": "usewindowstats"},
+            "python": {"name": "usewindowstats"},
+            "presentation": {"label": "Window Statistics", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "halfwin",
+          "concept": {"id": "flagdata.halfwin", "semantic_revision": 1},
+          "order": 41,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--halfwin"], "metavar": "N"},
+            "provider": {"field": "halfwin"},
+            "python": {"name": "halfwin"},
+            "presentation": {"label": "Half Window", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}}}
+        },
+        {
+          "name": "winsize",
+          "concept": {"id": "flagdata.winsize", "semantic_revision": 1},
+          "order": 43,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 3}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--winsize"], "metavar": "N"},
+            "provider": {"field": "winsize"},
+            "python": {"name": "winsize"},
+            "presentation": {"label": "Window Size", "group": "Automatic", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}}
+        },
+        {
+          "name": "timedevscale",
+          "concept": {"id": "flagdata.timedevscale", "semantic_revision": 1},
+          "order": 46,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 5.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--timedevscale"], "metavar": "SCALE"},
+            "provider": {"field": "timedevscale"},
+            "python": {"name": "timedevscale"},
+            "presentation": {"label": "Time Deviation Scale", "group": "Automatic", "advanced": true}
+          }
+        },
+        {
+          "name": "freqdevscale",
+          "concept": {"id": "flagdata.freqdevscale", "semantic_revision": 1},
+          "order": 47,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 5.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--freqdevscale"], "metavar": "SCALE"},
+            "provider": {"field": "freqdevscale"},
+            "python": {"name": "freqdevscale"},
+            "presentation": {"label": "Frequency Deviation Scale", "group": "Automatic", "advanced": true}
+          }
+        },
+        {
+          "name": "spectralmax",
+          "concept": {"id": "flagdata.spectralmax", "semantic_revision": 1},
+          "order": 48,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 1000000.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--spectralmax"], "metavar": "VALUE"},
+            "provider": {"field": "spectralmax"},
+            "python": {"name": "spectralmax"},
+            "presentation": {"label": "Spectral Max", "group": "Automatic", "advanced": true}
+          }
+        },
+        {
+          "name": "spectralmin",
+          "concept": {"id": "flagdata.spectralmin", "semantic_revision": 1},
+          "order": 49,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--spectralmin"], "metavar": "VALUE"},
+            "provider": {"field": "spectralmin"},
+            "python": {"name": "spectralmin"},
+            "presentation": {"label": "Spectral Min", "group": "Automatic", "advanced": true}
+          }
+        },
+        {
+          "name": "antint_ref_antenna",
+          "concept": {"id": "flagdata.antint_ref_antenna", "semantic_revision": 1},
+          "order": 50,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--antint_ref_antenna"], "metavar": "ANTENNA"},
+            "provider": {"field": "antint_ref_antenna"},
+            "python": {"name": "antint_ref_antenna"},
+            "presentation": {"label": "Reference Antenna", "group": "Antint", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+        },
+        {
+          "name": "minchanfrac",
+          "concept": {"id": "flagdata.minchanfrac", "semantic_revision": 1},
+          "order": 51,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.6}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--minchanfrac"], "metavar": "FRACTION"},
+            "provider": {"field": "minchanfrac"},
+            "python": {"name": "minchanfrac"},
+            "presentation": {"label": "Min Channel Fraction", "group": "Antint", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+        },
+        {
+          "name": "verbose",
+          "concept": {"id": "parameter.verbose", "semantic_revision": 1},
+          "order": 52,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--verbose"], "false_flags": ["--no-verbose"]},
+            "provider": {"field": "verbose"},
+            "python": {"name": "verbose"},
+            "presentation": {"label": "Verbose", "group": "Antint", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}}
+        },
+        {
+          "name": "growtime",
+          "concept": {"id": "flagdata.growtime", "semantic_revision": 1},
+          "order": 54,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 50.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--growtime"], "metavar": "PERCENT"},
+            "provider": {"field": "growtime"},
+            "python": {"name": "growtime"},
+            "presentation": {"label": "Grow Time", "group": "Extend", "advanced": true}
+          }
+        },
+        {
+          "name": "growfreq",
+          "concept": {"id": "flagdata.growfreq", "semantic_revision": 1},
+          "order": 55,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 50.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--growfreq"], "metavar": "PERCENT"},
+            "provider": {"field": "growfreq"},
+            "python": {"name": "growfreq"},
+            "presentation": {"label": "Grow Frequency", "group": "Extend", "advanced": true}
+          }
+        },
+        {
+          "name": "growaround",
+          "concept": {"id": "flagdata.growaround", "semantic_revision": 1},
+          "order": 56,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--growaround"], "false_flags": ["--no-growaround"]},
+            "provider": {"field": "growaround"},
+            "python": {"name": "growaround"},
+            "presentation": {"label": "Grow Around", "group": "Extend", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+        },
+        {
+          "name": "flagneartime",
+          "concept": {"id": "flagdata.flagneartime", "semantic_revision": 1},
+          "order": 57,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--flagneartime"], "false_flags": ["--no-flagneartime"]},
+            "provider": {"field": "flagneartime"},
+            "python": {"name": "flagneartime"},
+            "presentation": {"label": "Flag Near Time", "group": "Extend", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+        },
+        {
+          "name": "flagnearfreq",
+          "concept": {"id": "flagdata.flagnearfreq", "semantic_revision": 1},
+          "order": 58,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--flagnearfreq"], "false_flags": ["--no-flagnearfreq"]},
+            "provider": {"field": "flagnearfreq"},
+            "python": {"name": "flagnearfreq"},
+            "presentation": {"label": "Flag Near Frequency", "group": "Extend", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}}
+        },
+        {
+          "name": "minrel",
+          "concept": {"id": "flagdata.minrel", "semantic_revision": 1},
+          "order": 59,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 0.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--minrel"], "metavar": "FRACTION"},
+            "provider": {"field": "minrel"},
+            "python": {"name": "minrel"},
+            "presentation": {"label": "Min Relative", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "maxrel",
+          "concept": {"id": "flagdata.maxrel", "semantic_revision": 1},
+          "order": 60,
+          "default": {"kind": "literal", "value": {"kind": "float", "value": 1.0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--maxrel"], "metavar": "FRACTION"},
+            "provider": {"field": "maxrel"},
+            "python": {"name": "maxrel"},
+            "presentation": {"label": "Max Relative", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "minabs",
+          "concept": {"id": "flagdata.minabs", "semantic_revision": 1},
+          "order": 61,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": 0}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--minabs"], "metavar": "N"},
+            "provider": {"field": "minabs"},
+            "python": {"name": "minabs"},
+            "presentation": {"label": "Min Absolute", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "maxabs",
+          "concept": {"id": "flagdata.maxabs", "semantic_revision": 1},
+          "order": 62,
+          "default": {"kind": "literal", "value": {"kind": "integer", "value": -1}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--maxabs"], "metavar": "N"},
+            "provider": {"field": "maxabs"},
+            "python": {"name": "maxabs"},
+            "presentation": {"label": "Max Absolute", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "spwchan",
+          "concept": {"id": "flagdata.spwchan", "semantic_revision": 1},
+          "order": 63,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--spwchan"], "false_flags": ["--no-spwchan"]},
+            "provider": {"field": "spwchan"},
+            "python": {"name": "spwchan"},
+            "presentation": {"label": "SPW Channels", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "spwcorr",
+          "concept": {"id": "flagdata.spwcorr", "semantic_revision": 1},
+          "order": 64,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--spwcorr"], "false_flags": ["--no-spwcorr"]},
+            "provider": {"field": "spwcorr"},
+            "python": {"name": "spwcorr"},
+            "presentation": {"label": "SPW Correlations", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "basecnt",
+          "concept": {"id": "flagdata.basecnt", "semantic_revision": 1},
+          "order": 65,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--basecnt"], "false_flags": ["--no-basecnt"]},
+            "provider": {"field": "basecnt"},
+            "python": {"name": "basecnt"},
+            "presentation": {"label": "Baseline Counts", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "fieldcnt",
+          "concept": {"id": "flagdata.fieldcnt", "semantic_revision": 1},
+          "order": 66,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--fieldcnt"], "false_flags": ["--no-fieldcnt"]},
+            "provider": {"field": "fieldcnt"},
+            "python": {"name": "fieldcnt"},
+            "presentation": {"label": "Field Counts", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "name",
+          "concept": {"id": "flagdata.name", "semantic_revision": 1},
+          "order": 67,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "Summary"}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--name"], "metavar": "NAME"},
+            "provider": {"field": "name"},
+            "python": {"name": "name"},
+            "presentation": {"label": "Name", "group": "Summary", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+        },
+        {
+          "name": "display",
+          "concept": {"id": "flagdata.display", "semantic_revision": 1},
+          "order": 69,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--display"], "metavar": "DISPLAY"},
+            "provider": {"field": "display"},
+            "python": {"name": "display"},
+            "presentation": {"label": "Display", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "apply"}},
+            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "calculate"}}
+          ]}}
+        },
+        {
+          "name": "savepars",
+          "concept": {"id": "flagdata.savepars", "semantic_revision": 1},
+          "order": 71,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--savepars"], "false_flags": ["--no-savepars"]},
+            "provider": {"field": "savepars"},
+            "python": {"name": "savepars"},
+            "presentation": {"label": "Save Parameters", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
+          "name": "cmdreason",
+          "concept": {"id": "flagdata.cmdreason", "semantic_revision": 1},
+          "order": 72,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--cmdreason"], "metavar": "REASON"},
+            "provider": {"field": "cmdreason"},
+            "python": {"name": "cmdreason"},
+            "presentation": {"label": "Command Reason", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "outfile",
+          "concept": {"id": "savepars.outfile", "semantic_revision": 1},
+          "order": 73,
+          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--outfile"], "metavar": "PATH"},
+            "provider": {"field": "outfile"},
+            "python": {"name": "outfile"},
+            "presentation": {"label": "Command File", "group": "Output", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's outfile receives the saved flag commands, distinct from an output image path."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "overwrite",
+          "concept": {"id": "savepars.overwrite", "semantic_revision": 1},
+          "order": 74,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--overwrite"], "false_flags": ["--no-overwrite"]},
+            "provider": {"field": "overwrite"},
+            "python": {"name": "overwrite"},
+            "presentation": {"label": "Overwrite", "group": "Output", "advanced": true}
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's overwrite lets savepars replace its command file, distinct from replacing a task's output product."},
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+        },
+        {
+          "name": "writeflags",
+          "concept": {"id": "flagdata.writeflags", "semantic_revision": 1},
+          "order": 75,
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
+          "required_when": {"kind": "never"},
+          "active_when": {"kind": "always"},
+          "projections": {
+            "cli": {"flags": ["--writeflags"], "false_flags": ["--no-writeflags"]},
+            "provider": {"field": "writeflags"},
+            "python": {"name": "writeflags"},
+            "presentation": {"label": "Write Flags", "group": "Output", "advanced": true}
+          },
+          "unimplemented": {"issue": 978}
+        },
+        {
           "name": "vis",
           "concept": {
             "id": "data.input.vis",
@@ -26113,7 +27061,11 @@
           },
           "order": 0,
           "default": {
-            "kind": "required"
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
           },
           "required_when": {
             "kind": "always"
@@ -26162,14 +27114,14 @@
           "name": "mode",
           "concept": {
             "id": "flagdata.mode",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "summary"
+              "value": "manual"
             }
           },
           "required_when": {
@@ -26217,12 +27169,12 @@
             "id": "ms.selection.spw",
             "semantic_revision": 1
           },
-          "order": 2,
+          "order": 6,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26267,12 +27219,12 @@
             "id": "ms.selection.field",
             "semantic_revision": 1
           },
-          "order": 3,
+          "order": 7,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26317,12 +27269,12 @@
             "id": "ms.selection.scan",
             "semantic_revision": 1
           },
-          "order": 4,
+          "order": 12,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26367,12 +27319,12 @@
             "id": "ms.selection.antenna",
             "semantic_revision": 1
           },
-          "order": 5,
+          "order": 8,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26417,12 +27369,12 @@
             "id": "parameter.datacolumn",
             "semantic_revision": 1
           },
-          "order": 6,
+          "order": 18,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "data"
+              "value": "DATA"
             }
           },
           "required_when": {
@@ -26465,14 +27417,14 @@
           "name": "action",
           "concept": {
             "id": "flagdata.action",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
-          "order": 7,
+          "order": 68,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "flag"
+              "value": "apply"
             }
           },
           "required_when": {
@@ -26517,7 +27469,7 @@
             "id": "parameter.flagbackup",
             "semantic_revision": 1
           },
-          "order": 8,
+          "order": 70,
           "default": {
             "kind": "literal",
             "value": {
@@ -26569,7 +27521,7 @@
             "id": "parameter.clipzeros",
             "semantic_revision": 1
           },
-          "order": 9,
+          "order": 24,
           "default": {
             "kind": "literal",
             "value": {
@@ -26619,12 +27571,12 @@
             "id": "parameter.quackinterval",
             "semantic_revision": 1
           },
-          "order": 10,
+          "order": 25,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "float",
-              "value": 0.0
+              "value": 1.0
             }
           },
           "required_when": {
@@ -26667,9 +27619,9 @@
           "name": "quackmode",
           "concept": {
             "id": "parameter.quackmode",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
-          "order": 11,
+          "order": 26,
           "default": {
             "kind": "literal",
             "value": {
@@ -26719,7 +27671,7 @@
             "id": "parameter.timecutoff",
             "semantic_revision": 1
           },
-          "order": 12,
+          "order": 34,
           "default": {
             "kind": "literal",
             "value": {
@@ -26769,7 +27721,7 @@
             "id": "parameter.freqcutoff",
             "semantic_revision": 1
           },
-          "order": 13,
+          "order": 35,
           "default": {
             "kind": "literal",
             "value": {
@@ -26817,14 +27769,14 @@
           "name": "timedev",
           "concept": {
             "id": "parameter.timedev",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
-          "order": 14,
+          "order": 44,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26835,7 +27787,8 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
+          "surface_note": "One threshold for every field and window, scaled by timedevscale; '', 'none' or [] lets rflag compute it.",
+          "unimplemented_forms": {"issue": 978, "forms": "per-field and per-window thresholds ([[field, spw, threshold], ...]) and threshold files"},
           "projections": {
             "cli": {
               "positional": null,
@@ -26867,14 +27820,14 @@
           "name": "freqdev",
           "concept": {
             "id": "parameter.freqdev",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
-          "order": 15,
+          "order": 45,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -26885,7 +27838,8 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
+          "surface_note": "One threshold for every field and window, scaled by freqdevscale; '', 'none' or [] lets rflag compute it.",
+          "unimplemented_forms": {"issue": 978, "forms": "per-field and per-window thresholds ([[field, spw, threshold], ...]) and threshold files"},
           "projections": {
             "cli": {
               "positional": null,
@@ -26919,12 +27873,12 @@
             "id": "parameter.extendflags",
             "semantic_revision": 1
           },
-          "order": 16,
+          "order": 42,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -26972,12 +27926,12 @@
             "id": "parameter.extendpols",
             "semantic_revision": 1
           },
-          "order": 17,
+          "order": 53,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -27035,17 +27989,33 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
+            {"kind": "set", "parameter": "action", "value": {"kind": "string", "value": "apply"}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "mode"}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
+            {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}},
+            {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "unflag"}, "to": {"kind": "string", "value": "apply"}},
+            {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "flag"}, "to": {"kind": "string", "value": "apply"}},
+            {"kind": "replace_value", "parameter": "quackmode", "from": {"kind": "string", "value": "end"}, "to": {"kind": "string", "value": "endb"}},
+            {"kind": "set", "parameter": "timedevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "timedev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "timedev", "value": {"kind": "string", "value": "none"}}}]}},
+            {"kind": "set", "parameter": "freqdevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "freqdev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "freqdev", "value": {"kind": "string", "value": "none"}}}]}}
+          ],
+          "changed_defaults": ["mode", "quackinterval", "extendflags", "extendpols", "growtime", "growfreq"]
         }
       ]
     },
     {
       "kind": "task",
       "id": "flagmanager",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "Flag Manager",
       "category": "Flagging",
       "summary": "Manage MeasurementSet flag-version snapshots.",
       "provider_family": "flagmanager",
+      "casa_task": "flagmanager",
       "execution": {
         "invocation_name": "flagmanager",
         "fixed_args": [],
@@ -27063,7 +28033,11 @@
           },
           "order": 0,
           "default": {
-            "kind": "required"
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
           },
           "required_when": {
             "kind": "always"
@@ -27172,7 +28146,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -27222,7 +28196,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -27272,7 +28246,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -27378,6 +28352,12 @@
         {
           "from_contract": 3,
           "to_contract": 4,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
           "steps": [],
           "changed_defaults": []
         }

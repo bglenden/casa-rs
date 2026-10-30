@@ -31,8 +31,9 @@ CASA-named function that takes CASA's parameters. These functions share the
 Rust-owned parameter and result contracts. A call resolves its parameters in
 Rust, starts the task's executable as a child process with `--json-run -`,
 passes the task's log lines to `sys.stderr` as they arrive. A task whose
-surface names its CASA task (the image tasks and `simobserve` so far) has
-CASA's exact signature and returns CASA's value; the others return a
+surface names its CASA task (the image tasks, the MeasurementSet and
+flagging tasks and `simobserve` so far) has CASA's exact signature and
+returns CASA's value; the others return a
 `TaskCompletion` until their families are converted (#931). A task that
 refuses its parameters raises `casars.tasks.TaskParameterError`, a
 `ValueError`, and one that does not succeed
