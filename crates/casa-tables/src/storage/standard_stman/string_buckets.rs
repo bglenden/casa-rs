@@ -2,11 +2,15 @@
 //! The string buckets of a StandardStMan file being written: where long
 //! scalar strings and string arrays are stored (casacore's `SSMStringHandler`).
 
+use std::convert::Infallible;
+
 use super::StorageError;
 
 /// Bytes of a string bucket's header: four canonical (big-endian) ints,
-/// the free link, the used length, the deleted count (the bytes not in
-/// use) and the next bucket of a string that continues there.
+/// the free link (zero while the bucket is in use, as casacore leaves it:
+/// its bucket cache links a bucket into its free list there once it is
+/// freed), the used length, the deleted count (the bytes not in use) and
+/// the next bucket of a string that continues there.
 const HEADER_BYTES: usize = 16;
 
 /// Free bytes of the open bucket below which data that does not fit
@@ -17,10 +21,11 @@ const SPLIT_FREE_BYTES: usize = 50;
 /// String buckets as they are filled.
 ///
 /// Strings are only ever appended to the last bucket, so the ones before it
-/// are final. A writer that streams its file writes them out as the next
-/// one starts and releases them ([`Self::release`]), holding one bucket
-/// whatever the row count; a writer that assembles the file in memory keeps
-/// them all. Bucket numbers count the released buckets too.
+/// are final. A writer that streams its file writes each one out as the
+/// next one starts and drops it ([`Self::stream`]), so it holds one bucket
+/// whatever the row count and however many buckets a string spans; a writer
+/// that assembles the file in memory keeps them all ([`Self::allocate`]).
+/// Bucket numbers count the released buckets too.
 #[derive(Debug, Default)]
 pub(super) struct StringBuckets {
     /// The file's bucket number of the first, which a bucket's link to the
@@ -52,19 +57,44 @@ impl StringBuckets {
         &self.held
     }
 
-    /// Store `data` in buckets of `bucket_size` bytes and return the number
-    /// (among these buckets) of the bucket it starts in and its offset in
-    /// that bucket's data area, as casacore's `SSMStringHandler::put`
-    /// places it: in the open bucket, unless it does not fit there and
-    /// fewer than [`SPLIT_FREE_BYTES`] are free, when it starts a new one.
-    /// What does not fit continues in new buckets, each linked by its file
-    /// bucket number from the full one before it, so only the last bucket
-    /// is ever open.
+    /// Store `data` in buckets of `bucket_size` bytes, keeping every
+    /// bucket, and return where it starts ([`Self::place`]).
     pub(super) fn allocate(&mut self, data: &[u8], bucket_size: usize) -> (usize, usize) {
+        let Ok(start) = self.place(data, bucket_size, |_| Ok::<_, Infallible>(()));
+        start
+    }
+
+    /// Store `data` in buckets of `bucket_size` bytes, passing each bucket
+    /// to `write` with its number as soon as it is finished, before the
+    /// next one starts, and dropping it; return where `data` starts
+    /// ([`Self::place`]). Only the open bucket is held afterwards.
+    pub(super) fn stream(
+        &mut self,
+        data: &[u8],
+        bucket_size: usize,
+        mut write: impl FnMut(usize, &[u8]) -> Result<(), StorageError>,
+    ) -> Result<(usize, usize), StorageError> {
+        self.place(data, bucket_size, |buckets| buckets.release(&mut write))
+    }
+
+    /// Store `data` and return the number (among these buckets) of the
+    /// bucket it starts in and its offset in that bucket's data area, as
+    /// casacore's `SSMStringHandler::put` places it: in the open bucket,
+    /// unless it does not fit there and fewer than [`SPLIT_FREE_BYTES`] are
+    /// free, when it starts a new one. What does not fit continues in new
+    /// buckets, each linked by its file bucket number from the full one
+    /// before it, so only the last bucket is ever open. `finish` is given
+    /// the buckets each time the open one is final, before the next starts.
+    fn place<E>(
+        &mut self,
+        data: &[u8],
+        bucket_size: usize,
+        mut finish: impl FnMut(&mut Self) -> Result<(), E>,
+    ) -> Result<(usize, usize), E> {
         let capacity = bucket_size - HEADER_BYTES;
         let free = self.held.last().map(|open| capacity - used(open));
         if free.is_none_or(|free| data.len() > free && free < SPLIT_FREE_BYTES) {
-            self.open_new(bucket_size);
+            self.open_next(bucket_size, &mut finish)?;
         }
         let start = (
             self.len() - 1,
@@ -82,40 +112,43 @@ impl StringBuckets {
             open[4..8].copy_from_slice(&(used as i32).to_be_bytes());
             open[8..12].copy_from_slice(&((capacity - used) as i32).to_be_bytes());
             if later.is_empty() {
-                return start;
+                return Ok(start);
             }
             open[12..16].copy_from_slice(&next.to_be_bytes());
-            self.open_new(bucket_size);
+            self.open_next(bucket_size, &mut finish)?;
             rest = later;
         }
     }
 
-    /// Start a new, empty bucket after the held ones: no free link, nothing
-    /// used, all of it unused, no next bucket.
-    fn open_new(&mut self, bucket_size: usize) {
+    /// Finish the open bucket, if there is one, and start a new, empty one
+    /// after it: a zero free link, nothing used, all of it unused, no next
+    /// bucket.
+    fn open_next<E>(
+        &mut self,
+        bucket_size: usize,
+        finish: &mut impl FnMut(&mut Self) -> Result<(), E>,
+    ) -> Result<(), E> {
+        if !self.held.is_empty() {
+            finish(self)?;
+        }
         let mut bucket = vec![0u8; bucket_size];
-        bucket[0..4].copy_from_slice(&(-1i32).to_be_bytes());
         bucket[8..12].copy_from_slice(&((bucket_size - HEADER_BYTES) as i32).to_be_bytes());
         bucket[12..16].copy_from_slice(&(-1i32).to_be_bytes());
         self.held.push(bucket);
+        Ok(())
     }
 
-    /// Pass each finished bucket, and with `all` the open one too, to
-    /// `write` with its number, in order, then drop them.
+    /// Pass each held bucket, the open one included, to `write` with its
+    /// number, in order, then drop them.
     pub(super) fn release(
         &mut self,
-        all: bool,
         mut write: impl FnMut(usize, &[u8]) -> Result<(), StorageError>,
     ) -> Result<(), StorageError> {
-        let finished = if all {
-            self.held.len()
-        } else {
-            self.held.len().saturating_sub(1)
-        };
-        for (index, bucket) in self.held.drain(..finished).enumerate() {
+        let count = self.held.len();
+        for (index, bucket) in self.held.drain(..).enumerate() {
             write(self.released + index, &bucket)?;
         }
-        self.released += finished;
+        self.released += count;
         Ok(())
     }
 }
@@ -129,6 +162,26 @@ fn used(bucket: &[u8]) -> usize {
 mod tests {
     use super::*;
 
+    /// Store `data` in `streamed`, recording each bucket written, and check
+    /// that it is placed as in `kept` and that only the open bucket is held.
+    fn stream_beside(
+        (kept, streamed): (&mut StringBuckets, &mut StringBuckets),
+        data: &[u8],
+        bucket_size: usize,
+        written: &mut Vec<(usize, Vec<u8>)>,
+    ) {
+        let place = kept.allocate(data, bucket_size);
+        let streamed_place = streamed
+            .stream(data, bucket_size, |number, bucket| {
+                written.push((number, bucket.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(streamed_place, place);
+        assert_eq!(streamed.held().len(), 1);
+        assert_eq!(written.len() + 1, streamed.len());
+    }
+
     #[test]
     fn released_buckets_keep_their_numbers() {
         let bucket_size = HEADER_BYTES + 8;
@@ -136,18 +189,15 @@ mod tests {
         let mut streamed = StringBuckets::default();
         let mut written = Vec::new();
         for string in [&b"abcde"[..], b"fgh", b"ijklmn", b"op", b"qrstuvwx"] {
-            let place = kept.allocate(string, bucket_size);
-            assert_eq!(streamed.allocate(string, bucket_size), place);
-            streamed
-                .release(false, |number, bucket| {
-                    written.push((number, bucket.to_vec()));
-                    Ok(())
-                })
-                .unwrap();
-            assert!(streamed.held().len() <= 1);
+            stream_beside(
+                (&mut kept, &mut streamed),
+                string,
+                bucket_size,
+                &mut written,
+            );
         }
         streamed
-            .release(true, |number, bucket| {
+            .release(|number, bucket| {
                 written.push((number, bucket.to_vec()));
                 Ok(())
             })
@@ -198,16 +248,16 @@ mod tests {
         assert_eq!(place, (0, 0));
         let held = buckets.held();
         assert_eq!(held.len(), 3);
-        assert_eq!(header(&held[0]), [-1, 100, 0, 6]);
-        assert_eq!(header(&held[1]), [-1, 100, 0, 7]);
-        assert_eq!(header(&held[2]), [-1, 50, 50, -1]);
+        assert_eq!(header(&held[0]), [0, 100, 0, 6]);
+        assert_eq!(header(&held[1]), [0, 100, 0, 7]);
+        assert_eq!(header(&held[2]), [0, 50, 50, -1]);
         assert_eq!(chained((held, 5), place, long.len()), long);
     }
 
-    /// Data that does not fit starts in the open bucket while 50 bytes or
-    /// more are free there, and in a new bucket otherwise.
+    /// Data that does not fit starts in the open bucket where plenty is
+    /// free, 70 bytes, and in a new bucket where little is, 40 bytes.
     #[test]
-    fn data_that_does_not_fit_splits_only_where_fifty_bytes_are_free() {
+    fn data_that_does_not_fit_continues_from_a_roomy_bucket_only() {
         let bucket_size = HEADER_BYTES + 100;
         let mut buckets = StringBuckets::default();
         let data = |length: usize, fill: u8| vec![fill; length];
@@ -222,17 +272,43 @@ mod tests {
         // 70 bytes free: the 90 start there; 40 free: the 85 start anew.
         assert_eq!(places, [(0, 0), (0, 30), (1, 20), (2, 0)]);
         let held = buckets.held();
-        assert_eq!(header(&held[0]), [-1, 100, 0, 1]);
-        assert_eq!(header(&held[1]), [-1, 60, 40, -1]);
-        assert_eq!(header(&held[2]), [-1, 85, 15, -1]);
+        assert_eq!(header(&held[0]), [0, 100, 0, 1]);
+        assert_eq!(header(&held[1]), [0, 60, 40, -1]);
+        assert_eq!(header(&held[2]), [0, 85, 15, -1]);
         for (place, data) in &placed {
             assert_eq!(&chained((held, 0), *place, data.len()), data);
         }
     }
 
+    /// The split rule at its edge, in a 100-byte data area: with exactly 50
+    /// bytes free, 51 bytes start there and continue; with 49 free, 50
+    /// bytes start a new bucket; and 49 bytes that fit the last 49 stay.
+    #[test]
+    fn fifty_free_bytes_continue_and_forty_nine_start_anew() {
+        /// Store `first` bytes, then `second`, and check where the second
+        /// start and the buckets' headers.
+        fn check((first, second): (usize, usize), place: (usize, usize), headers: &[[i32; 4]]) {
+            let bucket_size = HEADER_BYTES + 100;
+            let mut buckets = StringBuckets::default();
+            let before = vec![b'a'; first];
+            let data = vec![b'b'; second];
+            assert_eq!(buckets.allocate(&before, bucket_size), (0, 0));
+            let placed = buckets.allocate(&data, bucket_size);
+            assert_eq!(placed, place, "{second} bytes after {first}");
+            let held = buckets.held();
+            let stated: Vec<_> = held.iter().map(|bucket| header(bucket)).collect();
+            assert_eq!(stated, headers, "{second} bytes after {first}");
+            assert_eq!(chained((held, 0), (0, 0), first), before);
+            assert_eq!(chained((held, 0), placed, second), data);
+        }
+        check((50, 51), (0, 50), &[[0, 100, 0, 1], [0, 1, 99, -1]]);
+        check((51, 50), (1, 0), &[[0, 51, 49, -1], [0, 50, 50, -1]]);
+        check((51, 49), (0, 51), &[[0, 100, 0, -1]]);
+    }
+
     /// A writer that streams its buckets writes what one that keeps them
-    /// holds, with data longer than a bucket among them, and holds one
-    /// bucket after each release.
+    /// holds, with data longer than a bucket among them, writing each
+    /// bucket as it finishes, so that it holds only the open one.
     #[test]
     fn streamed_long_data_matches_kept() {
         let bucket_size = HEADER_BYTES + 64;
@@ -240,19 +316,15 @@ mod tests {
         let mut streamed = StringBuckets::default();
         let mut written = Vec::new();
         for (length, fill) in [(20, b'a'), (300, b'b'), (10, b'c'), (64, b'd'), (129, b'e')] {
-            let data = vec![fill; length];
-            let place = kept.allocate(&data, bucket_size);
-            assert_eq!(streamed.allocate(&data, bucket_size), place);
-            streamed
-                .release(false, |number, bucket| {
-                    written.push((number, bucket.to_vec()));
-                    Ok(())
-                })
-                .unwrap();
-            assert!(streamed.held().len() <= 1);
+            stream_beside(
+                (&mut kept, &mut streamed),
+                &vec![fill; length],
+                bucket_size,
+                &mut written,
+            );
         }
         streamed
-            .release(true, |number, bucket| {
+            .release(|number, bucket| {
                 written.push((number, bucket.to_vec()));
                 Ok(())
             })

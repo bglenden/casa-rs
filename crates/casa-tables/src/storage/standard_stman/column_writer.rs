@@ -7,12 +7,14 @@
 //! appended to the array file (`table.fNi`) and long strings to the string
 //! buckets in that column-major order. Each column's slice of a data bucket
 //! is written at its place in the file as soon as it is full, and each
-//! string bucket once the next one starts; the index is generated as it is
-//! streamed into its buckets ([`super::index`]). So the writer holds one
-//! slice, one string bucket, one index bucket and the array file's buffer
-//! whatever the row count. The file is laid out as casacore's `SSMBase`
-//! reads it: the 512-byte header, the data buckets, the string buckets,
-//! then the index buckets.
+//! string bucket once the next one starts, even within one long string;
+//! the index is generated as it is streamed into its buckets
+//! ([`super::index`]). So the writer holds one slice, one string bucket,
+//! one index bucket and the array file's buffer, whatever the row count and
+//! however long a string, and while it stores a string array cell, that
+//! cell's encoding (its elements' lengths and bytes). The file is laid out
+//! as casacore's `SSMBase` reads it: the 512-byte header, the data buckets,
+//! the string buckets, then the index buckets.
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -117,23 +119,16 @@ fn column_bits(col_descs: &[ColumnDescContents]) -> Vec<usize> {
         .collect()
 }
 
-/// Write the finished string buckets, and with `all` the open one too, at
-/// their places from bucket `first_bucket` on, and release them.
-fn write_string_buckets(
-    strings: &mut StringBuckets,
+/// Write a string bucket at its place in the file: bucket `number` of
+/// buckets of `bucket_bytes` bytes.
+fn write_string_bucket(
     file: &mut File,
-    first_bucket: usize,
-    bucket_bytes: usize,
-    all: bool,
+    (number, bucket_bytes): (usize, usize),
+    bucket: &[u8],
 ) -> Result<(), StorageError> {
-    strings.release(all, |number, bucket| {
-        file.seek(SeekFrom::Start(bucket_offset(
-            first_bucket + number,
-            bucket_bytes,
-        )))?;
-        file.write_all(bucket)?;
-        Ok(())
-    })
+    file.seek(SeekFrom::Start(bucket_offset(number, bucket_bytes)))?;
+    file.write_all(bucket)?;
+    Ok(())
 }
 
 /// Write a StandardStMan data file from `cells`, column by column, and
@@ -211,17 +206,17 @@ pub(super) fn write_ssm_file_columns(
                         desc.data_type,
                         nrelem,
                         value.as_deref(),
-                        &mut strings,
+                        &mut |data| {
+                            strings.stream(data, bucket_bytes, |number, bucket| {
+                                write_string_bucket(
+                                    &mut file,
+                                    (nr_data_buckets + number, bucket_bytes),
+                                    bucket,
+                                )
+                            })
+                        },
                         nr_data_buckets,
-                        bucket_bytes,
                         big_endian,
-                    );
-                    write_string_buckets(
-                        &mut strings,
-                        &mut file,
-                        nr_data_buckets,
-                        bucket_bytes,
-                        false,
                     )?;
                 }
             }
@@ -231,7 +226,10 @@ pub(super) fn write_ssm_file_columns(
             file.write_all(&slice)?;
         }
     }
-    write_string_buckets(&mut strings, &mut file, nr_data_buckets, bucket_bytes, true)?;
+    // The open string bucket, the last.
+    strings.release(|number, bucket| {
+        write_string_bucket(&mut file, (nr_data_buckets + number, bucket_bytes), bucket)
+    })?;
     if let Some(writer) = array_writer.as_mut() {
         writer.finish()?;
     }

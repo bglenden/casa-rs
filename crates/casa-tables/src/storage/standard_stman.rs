@@ -1377,7 +1377,6 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
 
     for (bucket_nr, mutations) in mutations_by_bucket {
         let mut bucket = read_bucket(&mut file, &header, bucket_nr)?;
-        let mut unused_string_buckets = StringBuckets::default();
         for (col_idx, row_in_bucket, scalar) in mutations {
             let value = scalar.map(Value::Scalar);
             write_cell_to_bucket(
@@ -1388,11 +1387,10 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
                 col_descs[col_idx].data_type,
                 1,
                 value.as_ref(),
-                &mut unused_string_buckets,
+                &mut no_string_buckets,
                 header.nr_buckets as usize,
-                header.bucket_size as usize,
                 big_endian,
-            );
+            )?;
         }
         let offset = SSM_HEADER_SIZE + u64::from(bucket_nr) * u64::from(header.bucket_size);
         file.seek(SeekFrom::Start(offset))?;
@@ -2301,11 +2299,10 @@ fn write_ssm_file_in_memory(
                     col_desc.data_type,
                     nrelem,
                     value,
-                    &mut string_buckets,
+                    &mut |data| Ok(string_buckets.allocate(data, bucket_size as usize)),
                     nr_data_buckets,
-                    bucket_size as usize,
                     big_endian,
-                );
+                )?;
             }
         }
     }
@@ -2438,7 +2435,6 @@ fn write_ssm_fixed_scalar_sources_streaming(
     let mut file = File::create(file_path)?;
     // The header, written once the index is.
     file.write_all(&[0u8; SSM_HEADER_SIZE as usize])?;
-    let mut unused_string_buckets = StringBuckets::default();
     // One block of encoded cells, at most 8 bytes each, whichever column
     // fills it.
     let widest_cell = col_sizes_bits
@@ -2498,11 +2494,10 @@ fn write_ssm_fixed_scalar_sources_streaming(
                     col_desc.data_type,
                     1,
                     value.as_ref(),
-                    &mut unused_string_buckets,
+                    &mut no_string_buckets,
                     nr_data_buckets,
-                    bucket_size as usize,
                     big_endian,
-                );
+                )?;
             }
         }
         file.write_all(&bucket)?;
@@ -2644,7 +2639,24 @@ fn write_encoded_cells_to_bucket(dst: &mut [u8], data_type: CasacoreDataType, en
     }
 }
 
-/// Write a single cell value into a data bucket using the specified byte order.
+/// Where a writer puts the bytes of a long string or a string array: it
+/// stores them in its string buckets and returns the bucket (counted from
+/// the first string bucket) and the offset in its data area where they
+/// start ([`StringBuckets`]).
+type StoreStrings<'a> = dyn FnMut(&[u8]) -> Result<(usize, usize), StorageError> + 'a;
+
+/// The string store of a writer whose columns hold no strings that need
+/// string buckets: it refuses, so a locator never names a bucket that is
+/// not written.
+fn no_string_buckets(_: &[u8]) -> Result<(usize, usize), StorageError> {
+    Err(StorageError::FormatMismatch(
+        "this StandardStMan writer has no string buckets".to_string(),
+    ))
+}
+
+/// Write a single cell value into a data bucket using the specified byte
+/// order, putting long strings and string arrays in `strings`, whose
+/// buckets follow the file's `string_bucket_base` data buckets.
 #[allow(clippy::too_many_arguments)]
 fn write_cell_to_bucket(
     bucket: &mut [u8],
@@ -2654,11 +2666,10 @@ fn write_cell_to_bucket(
     data_type: CasacoreDataType,
     nrelem: usize,
     value: Option<&casa_types::Value>,
-    string_buckets: &mut StringBuckets,
+    strings: &mut StoreStrings<'_>,
     string_bucket_base: usize,
-    bucket_size: usize,
     big_endian: bool,
-) {
+) -> Result<(), StorageError> {
     use casa_types::{ArrayValue, ScalarValue, Value};
 
     match data_type {
@@ -2702,7 +2713,7 @@ fn write_cell_to_bucket(
                             .copy_from_slice(&bytes[..copy_len]);
                     }
                 }
-                return;
+                return Ok(());
             }
             // C++ SSM stores ONE 12-byte reference (bucketNr, offset, length)
             // per row, regardless of nrelem. For scalars (nrelem=1), short
@@ -2726,7 +2737,7 @@ fn write_cell_to_bucket(
                         write_i32_le(&mut bucket[ref_offset + 8..], len);
                     }
                 } else {
-                    let (sb_nr, sb_offset) = string_buckets.allocate(s.as_bytes(), bucket_size);
+                    let (sb_nr, sb_offset) = strings(s.as_bytes())?;
                     let abs_bucket = (string_bucket_base + sb_nr) as i32;
                     if big_endian {
                         write_i32_be(&mut bucket[ref_offset..], abs_bucket);
@@ -2741,38 +2752,48 @@ fn write_cell_to_bucket(
             } else {
                 // String arrays also use one 12-byte locator per row.
                 // Fixed-shape arrays store only the element data; variable-shape
-                // arrays prefix ndim, shape, and a filled flag.
-                let (shape, strings) = match value {
+                // arrays prefix ndim, shape, and a filled flag. The elements
+                // are borrowed in Fortran order and encoded once, as one block.
+                let (shape, elements) = match value {
                     Some(Value::Array(ArrayValue::String(arr))) => (
                         stored_shape(arr.shape()),
-                        arr.t().iter().cloned().collect::<Vec<_>>(),
+                        arr.t().into_iter().map(String::as_str).collect::<Vec<_>>(),
                     ),
                     // An unwritten cell of a variable-shape column stays
                     // undefined: casacore's SSMIndStringColumn reads a zero
                     // length as no array in the row.
-                    _ if col_desc.shape.is_empty() => return,
+                    _ if col_desc.shape.is_empty() => return Ok(()),
                     _ => {
                         let shape: Vec<usize> =
                             col_desc.shape.iter().map(|&dim| dim as usize).collect();
                         let count = shape.iter().product();
-                        (shape, vec![String::new(); count])
+                        (shape, vec![""; count])
                     }
                 };
 
-                let mut block = Vec::new();
+                // Variable shapes' ndim, shape and filled flag, then each
+                // element's length and bytes.
+                let prefix = if col_desc.shape.is_empty() {
+                    4 * (shape.len() + 2)
+                } else {
+                    0
+                };
+                let mut block = Vec::with_capacity(
+                    prefix + elements.iter().map(|s| 4 + s.len()).sum::<usize>(),
+                );
                 if col_desc.shape.is_empty() {
                     block.extend_from_slice(&(shape.len() as u32).to_be_bytes());
                     for &dim in &shape {
                         block.extend_from_slice(&(dim as i32).to_be_bytes());
                     }
-                    let filled = if strings.iter().any(|s| !s.is_empty()) {
+                    let filled = if elements.iter().any(|s| !s.is_empty()) {
                         1u32
                     } else {
                         0u32
                     };
                     block.extend_from_slice(&filled.to_be_bytes());
                 }
-                for s in &strings {
+                for s in &elements {
                     block.extend_from_slice(&(s.len() as u32).to_be_bytes());
                     block.extend_from_slice(s.as_bytes());
                 }
@@ -2780,7 +2801,7 @@ fn write_cell_to_bucket(
                 if block.is_empty() {
                     // All empty strings — leave reference as zeroes
                 } else {
-                    let (sb_nr, sb_offset) = string_buckets.allocate(&block, bucket_size);
+                    let (sb_nr, sb_offset) = strings(&block)?;
                     let abs_bucket = (string_bucket_base + sb_nr) as i32;
                     let total = block.len() as i32;
                     if big_endian {
@@ -2807,6 +2828,7 @@ fn write_cell_to_bucket(
             );
         }
     }
+    Ok(())
 }
 
 /// The header's last string bucket in use, where casacore appends the next

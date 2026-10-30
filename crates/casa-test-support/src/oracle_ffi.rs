@@ -511,6 +511,20 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_write_ssm_long_strings_by_column(
+        path: *const std::ffi::c_char,
+        big_endian: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_update_ssm_long_strings(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_ssm_statistics(
+        path: *const std::ffi::c_char,
+        out_statistics: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     pub(crate) fn cpp_table_write_aipsio_complex64_2d_array(
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,

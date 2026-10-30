@@ -740,6 +740,76 @@ pub(crate) fn cpp_lock_read_relock(path: &std::path::Path) -> Result<(u64, u32),
     Ok((rows, columns))
 }
 
+/// Write the long-string rows in C++ casacore column by column, in
+/// StandardStMan buckets of 32 KiB, in the given byte order.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_write_ssm_long_strings_by_column(
+    path: &std::path::Path,
+    big_endian: bool,
+) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_table_write_ssm_long_strings_by_column(
+            c_path.as_ptr(),
+            i32::from(big_endian),
+            &mut error,
+        )
+    };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.write_ssm_long_strings_by_column",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
+    }
+    .map_err(|error| error.to_string())
+}
+
+/// Update the long-string table at `path` in C++ casacore, then reopen it
+/// there and check every cell.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_update_ssm_long_strings(path: &std::path::Path) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { cpp_table_update_ssm_long_strings(c_path.as_ptr(), &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.update_ssm_long_strings",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
+    }
+    .map_err(|error| error.to_string())
+}
+
+/// C++ casacore's account of the StandardStMan holding column `NAME` of
+/// the table at `path`.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_ssm_statistics(path: &std::path::Path) -> Result<SsmStatistics, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let mut statistics = [0i64; 4];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc =
+        unsafe { cpp_table_ssm_statistics(c_path.as_ptr(), statistics.as_mut_ptr(), &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.ssm_statistics", rc, error, cpp_table_free_error)
+    }
+    .map_err(|error| error.to_string())?;
+    let [buckets, free_buckets, first_free_bucket, last_string_bucket] = statistics;
+    Ok(SsmStatistics {
+        buckets,
+        free_buckets,
+        first_free_bucket,
+        last_string_bucket,
+    })
+}
+
 /// Open the table that a table keyword of the table at `path` (of its column
 /// `column`, when given) refers to in C++ casacore and return its name.
 #[cfg(has_casacore_cpp)]
@@ -1098,6 +1168,21 @@ pub struct BulkScalarIoBenchResult {
 pub struct DeepCopyBenchResult {
     pub write_ns: u64,
     pub copy_ns: u64,
+}
+
+/// C++ casacore's account of a StandardStMan file
+/// ([`crate::TableOracle::ssm_statistics`]), as `SSMBase` keeps it in the
+/// file's header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SsmStatistics {
+    /// Buckets in the file: data, string and index buckets, free ones too.
+    pub buckets: i64,
+    /// Buckets on the free list, for casacore to reuse.
+    pub free_buckets: i64,
+    /// The head of the free list, or -1.
+    pub first_free_bucket: i64,
+    /// The string bucket casacore appends the next string to, or -1.
+    pub last_string_bucket: i64,
 }
 
 #[cfg(has_casacore_cpp)]

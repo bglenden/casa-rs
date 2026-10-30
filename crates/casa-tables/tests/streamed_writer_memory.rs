@@ -8,7 +8,8 @@
 //! ([`streamed_scalar_columns_resident_bytes`]), in StandardStMan and
 //! IncrementalStMan, at a block boundary and across several blocks. The
 //! StandardStMan column writer, which writes groups holding strings, holds
-//! the same heap whatever the row count.
+//! the same heap whatever the row count, and a string longer than a string
+//! bucket costs it a bucket or two, not the buckets it spans.
 //!
 //! This binary's global allocator counts the live heap; each law compares a
 //! write's peak beyond the heap live before it with the writer's charge. The
@@ -27,7 +28,8 @@ use casa_tables::{
     StreamingTiledShapeWriter, Table, TableOptions, TableSchema,
     streamed_scalar_columns_resident_bytes,
 };
-use casa_types::{PrimitiveType, ScalarValue};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 
 #[global_allocator]
@@ -491,5 +493,84 @@ fn the_ssm_column_writer_holds_the_same_heap_whatever_the_rows() {
         large <= small + COLUMN_WRITER_GROWTH_BYTES,
         "{large_rows} rows held {large} bytes, {rows} rows {small}: \
          the writer holds more as rows grow"
+    );
+}
+
+/// Bytes of a long cell: a string, or a string array's elements together,
+/// spanning 129 string buckets of 32 KiB.
+const LONG_CELL_BYTES: usize = 4 << 20;
+
+/// Elements of the string array cell.
+const ARRAY_ELEMENTS: usize = 64;
+
+/// Bytes of a short cell's strings, beyond inlining but within a bucket.
+const SHORT_BYTES: usize = 100;
+
+/// The string buckets the column writer holds while it writes a cell, the
+/// open one and the one it is finishing, with room to spare (32 KiB
+/// each, StandardStMan's bucket for a table of a few rows).
+const CELL_BUCKETS_BYTES: u64 = 4 * 32 * 1024;
+
+/// Other allocations a long cell may cost a save: its array's element
+/// references.
+const LONG_CELL_SLACK_BYTES: u64 = 8 * 1024;
+
+/// The heap a StandardStMan save of one row of the string `name` and the
+/// string array `list` held beyond what was live before it, which holds the
+/// row. Both cells are too long to inline, so the column writer stores them
+/// in string buckets.
+fn save_strings(path: &Path, name: usize, list: usize) -> u64 {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("NAME", PrimitiveType::String),
+        ColumnSchema::array_variable("LIST", PrimitiveType::String, Some(1)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    let element = "e".repeat(list / ARRAY_ELEMENTS);
+    let elements = ArrayD::from_shape_vec(IxDyn(&[ARRAY_ELEMENTS]), vec![element; ARRAY_ELEMENTS])
+        .expect("shape");
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("NAME", Value::Scalar(ScalarValue::String("n".repeat(name)))),
+            RecordField::new("LIST", Value::Array(ArrayValue::String(elements))),
+        ]))
+        .expect("row");
+    let options = TableOptions::new(path)
+        .with_data_manager(DataManagerKind::StandardStMan)
+        .with_endian_format(EndianFormat::LittleEndian);
+
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    table.save(options).expect("save");
+    PEAK.load(Ordering::Relaxed) - baseline
+}
+
+#[test]
+fn the_ssm_column_writer_holds_a_string_bucket_or_two_whatever_the_cell() {
+    if !alone("the_ssm_column_writer_holds_a_string_bucket_or_two_whatever_the_cell") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    // A first save settles what the process allocates once.
+    save_strings(&root.path().join("settle"), SHORT_BYTES, SHORT_BYTES);
+    let short = save_strings(&root.path().join("short"), SHORT_BYTES, SHORT_BYTES);
+    let long_name = save_strings(&root.path().join("name"), LONG_CELL_BYTES, SHORT_BYTES);
+    let long_list = save_strings(&root.path().join("list"), SHORT_BYTES, LONG_CELL_BYTES);
+    println!(
+        "string writer: short cells held {short} bytes, a {LONG_CELL_BYTES}-byte string \
+         {long_name}, a {LONG_CELL_BYTES}-byte string array {long_list}"
+    );
+    assert!(
+        long_name <= short + CELL_BUCKETS_BYTES + LONG_CELL_SLACK_BYTES,
+        "a {LONG_CELL_BYTES}-byte string held {long_name} bytes, short cells {short}: \
+         the writer holds the buckets a string spans"
+    );
+    // A string array is encoded whole, its elements' lengths and bytes,
+    // before it is stored.
+    let encoding = (LONG_CELL_BYTES + 4 * ARRAY_ELEMENTS) as u64;
+    assert!(
+        long_list <= short + encoding + CELL_BUCKETS_BYTES + LONG_CELL_SLACK_BYTES,
+        "a {LONG_CELL_BYTES}-byte string array held {long_list} bytes, short cells {short}: \
+         the writer holds more than the array's encoding and a bucket or two"
     );
 }
