@@ -155,7 +155,9 @@ def same_error(got: dict[str, str], want: dict[str, str], where: str) -> None:
     if want["message"].startswith(DATA_MANAGER):
         assert got["message"].startswith(DATA_MANAGER), where
     else:
-        assert got["message"] == want["message"], where
+        # CASA appends "... thrown by <function>" lines naming its own code to
+        # some messages; only the first line is compared.
+        assert got["message"].split("\n")[0] == want["message"].split("\n")[0], where
 
 
 def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
@@ -170,7 +172,7 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
 #: Recorded from CASA but not implemented yet (slice 3 of #1028: `putcell`,
 #: `putcol`, `putvarcol` and the other cell writes); they leave this set as
 #: the methods land.
-PENDING: set[str] = set()
+PENDING: set[str] = {"slices", "ms_slices"}
 
 REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
 

@@ -455,6 +455,73 @@ CELL_WRITES = [
     ["close", [], {}],
 ]
 
+#: Slices of cells and columns on the python fixture table: `spectrum` is a
+#: 2 x 2 float array in each of 3 rows, `vary` a one-dimensional double
+#: array of a different length in each, `id` a scalar column.
+SLICES = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["getcellslice", ["spectrum", 0, [0, 0], [1, 1], [1, 1]], {}],
+    ["getcellslice", ["spectrum", 1, [0, 0], [0, 1], [1, 1]], {}],
+    ["getcellslice", ["spectrum", 1, [1, 0], [1, 1], [1, 1]], {}],
+    ["getcellslice", ["spectrum", 2, [0, 0], [-1, -1], [1, 1]], {}],
+    ["getcellslice", ["spectrum", 2, [0, 0], [1, 1], [2, 1]], {}],
+    ["getcellslice", ["spectrum", 3, [0, 0], [1, 1], [1, 1]], {}],
+    ["getcellslice", ["nosuchcolumn", 0, [0, 0], [1, 1], [1, 1]], {}],
+    ["getcellslice", ["vary", 1, [1], [2]], {}],
+    ["getcolslice", ["spectrum", [0, 0], [0, 1], [1, 1]], {}],
+    ["getcolslice", ["spectrum", [0, 0], [1, 1], [1, 1]], {"startrow": 1, "nrow": 2}],
+    ["getcolslice", ["spectrum", [0, 0], [1, 1], [1, 1]], {"startrow": 0, "nrow": -1, "rowincr": 2}],
+    ["getcolslice", ["spectrum", [0, 0], [-1, -1], [1, 1]], {}],
+    ["getcolslice", ["vary", [0], [0], [1]], {}],
+    ["getcolslice", ["id", [0], [0], [1]], {}],
+    ["putcellslice", ["spectrum", 0, np.array([[9.0, 8.0]]), [0, 0], [0, 1], [1, 1]], {}],
+    ["getcell", ["spectrum", 0], {}],
+    ["putcellslice", ["spectrum", 0, np.array([[7, 6]], dtype=np.int32), [1, 0], [1, 1], [1, 1]], {}],
+    ["getcell", ["spectrum", 0], {}],
+    ["putcellslice", ["spectrum", 0, np.array([[1.0, 2.0, 3.0]]), [0, 0], [0, 1], [1, 1]], {}],
+    ["putcellslice", ["spectrum", 0, np.array([[5.0, 5.0]]), [0, 0], [0, 1], [1, 1]], {}],
+    ["putcellslice", ["spectrum", 1, np.array([[4.0], [4.0]]), [0, 0], [1, 0], [1, 1]], {}],
+    ["getcell", ["spectrum", 1], {}],
+    ["putcellslice", ["spectrum", 0, 3.5, [0, 0], [0, 0], [1, 1]], {}],
+    ["getcell", ["spectrum", 0], {}],
+    ["putcellslice", ["spectrum", 3, np.array([[1.0]]), [0, 0], [0, 0], [1, 1]], {}],
+    ["putcolslice", ["spectrum", np.zeros((1, 2, 3)), [0, 0], [0, 1], [1, 1]], {}],
+    ["getcol", ["spectrum"], {}],
+    ["putcolslice", ["spectrum", np.ones((1, 2, 2)), [1, 0], [1, 1], [1, 1]], {"startrow": 1, "nrow": 2}],
+    ["getcol", ["spectrum"], {}],
+    ["putcolslice", ["spectrum", np.ones((1, 2, 2)), [0, 0], [0, 1], [1, 1]], {}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["getcol", ["spectrum"], {}],
+    ["putcellslice", ["spectrum", 0, np.array([[1.0, 1.0]]), [0, 0], [0, 1], [1, 1]], {}],
+    ["close", [], {}],
+]
+
+#: Slices of the MeasurementSet's complex `DATA` and bool `FLAG` arrays
+#: (4 x 64 in the rows probed).
+MS_SLICES = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["getcellslice", ["DATA", 0, [0, 0], [1, 3], [1, 1]], {}],
+    ["getcellslice", ["DATA", 0, [0, 62], [3, -1], [1, 1]], {}],
+    ["getcellslice", ["FLAG", 0, [0, 0], [3, 0], [1, 1]], {}],
+    ["getcolslice", ["DATA", [0, 0], [1, 3], [1, 1]], {"startrow": 0, "nrow": 2}],
+    ["getcolslice", ["FLAG", [0, 0], [3, 1], [1, 1]], {"startrow": 1, "nrow": 2}],
+    ["putcellslice", ["DATA", 0, np.zeros((2, 4), dtype=np.complex128), [0, 0], [1, 3], [1, 1]], {}],
+    ["getcellslice", ["DATA", 0, [0, 0], [1, 3], [1, 1]], {}],
+    ["putcellslice", ["DATA", 1, np.ones((2, 4)), [2, 10], [3, 13], [1, 1]], {}],
+    ["getcellslice", ["DATA", 1, [2, 10], [3, 13], [1, 1]], {}],
+    ["putcellslice", ["FLAG", 0, np.ones((4, 1), dtype=bool), [0, 5], [3, 5], [1, 1]], {}],
+    ["getcellslice", ["FLAG", 0, [0, 4], [3, 6], [1, 1]], {}],
+    ["putcolslice", ["DATA", np.ones((2, 2, 2), dtype=np.complex64) * (1 + 1j), [0, 0], [1, 1], [1, 1]], {"startrow": 0, "nrow": 2}],
+    ["getcolslice", ["DATA", [0, 0], [1, 1], [1, 1]], {"startrow": 0, "nrow": 2}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["getcellslice", ["DATA", 0, [0, 0], [1, 1], [1, 1]], {}],
+    ["getcellslice", ["DATA", 1, [2, 10], [3, 13], [1, 1]], {}],
+    ["getcellslice", ["FLAG", 0, [0, 4], [3, 6], [1, 1]], {}],
+    ["close", [], {}],
+]
+
 #: The scenario the MeasurementSet gets: for each column of the main table,
 #: its description and, for the first rows, its cells. Built from the table
 #: itself, so a column is probed whatever the fixture holds.
@@ -587,6 +654,8 @@ def main():
     scenarios["cells_write"] = {"fixture": "table", "steps": CELL_WRITES, "source": arguments.fixture}
     scenarios["ms"] = {"fixture": "ms", "steps": ms_steps(arguments.ms), "source": arguments.ms}
     scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
+    scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
+    scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}
     names = arguments.only.split(",") if arguments.only else list(scenarios)
     if arguments.only and arguments.json.exists():
         record = json.loads(arguments.json.read_text(encoding="utf-8"))

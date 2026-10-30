@@ -29204,6 +29204,3116 @@
      }
     }
    ]
+  },
+  "ms_slices": {
+   "fixture": "ms",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       4
+      ],
+      "data": [
+       [
+        "-0.006665834225714207",
+        "0.00016352595412172377"
+       ],
+       [
+        "-0.0014717335579916835",
+        "0.00029262539464980364"
+       ],
+       [
+        "-9.897623385768384e-05",
+        "0.00036578174331225455"
+       ],
+       [
+        "-0.0003485684865154326",
+        "0.0003916016430594027"
+       ],
+       [
+        "-0.00021946904598735273",
+        "-0.000533610989805311"
+       ],
+       [
+        "-6.454972026403993e-05",
+        "-1.2909944416605867e-05"
+       ],
+       [
+        "-0.00011188618373125792",
+        "0.00011188618373125792"
+       ],
+       [
+        "-0.00013340274745132774",
+        "-1.2909944416605867e-05"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 62,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": -1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Exception: All elements of trc must be greater than or equal to 0.\n... thrown by void casac::table::_checkCorner(const vector<long> &, const String &, const IPosition &, const pair<vector<long>, vector<long>> *const &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/table/table_cmpt.cc, line: 1393"
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       4,
+       1
+      ],
+      "data": [
+       true,
+       true,
+       true,
+       true
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       4,
+       2
+      ],
+      "data": [
+       [
+        "-0.006665834225714207",
+        "0.00016352595412172377"
+       ],
+       [
+        "-0.0100224195048213",
+        "4.303314563003369e-05"
+       ],
+       [
+        "-0.0014717335579916835",
+        "0.00029262539464980364"
+       ],
+       [
+        "-0.003008016850799322",
+        "0.00012479611905291677"
+       ],
+       [
+        "-9.897623385768384e-05",
+        "0.00036578174331225455"
+       ],
+       [
+        "-0.00032705190824344754",
+        "6.0246406064834446e-05"
+       ],
+       [
+        "-0.0003485684865154326",
+        "0.0003916016430594027"
+       ],
+       [
+        "-0.0006971369730308652",
+        "-6.0246406064834446e-05"
+       ],
+       [
+        "-0.00021946904598735273",
+        "-0.000533610989805311"
+       ],
+       [
+        "0.00549963628873229",
+        "0.00833982415497303"
+       ],
+       [
+        "-6.454972026403993e-05",
+        "-1.2909944416605867e-05"
+       ],
+       [
+        "0.0009123026975430548",
+        "0.0015836197417229414"
+       ],
+       [
+        "-0.00011188618373125792",
+        "0.00011188618373125792"
+       ],
+       [
+        "-0.00020655911066569388",
+        "-0.00028832207317464054"
+       ],
+       [
+        "-0.00013340274745132774",
+        "-1.2909944416605867e-05"
+       ],
+       [
+        "3.87298314308282e-05",
+        "2.1516572815016843e-05"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "FLAG"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       4,
+       2,
+       2
+      ],
+      "data": [
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "complex128",
+       "shape": [
+        2,
+        4
+       ],
+       "data": [
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ],
+        [
+         "0.0",
+         "0.0"
+        ]
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       4
+      ],
+      "data": [
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ],
+       [
+        "0.0",
+        "0.0"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        2,
+        4
+       ],
+       "data": [
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 2,
+         "type": "int"
+        },
+        {
+         "int": 10,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 13,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 2,
+         "type": "int"
+        },
+        {
+         "int": 10,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 13,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       4
+      ],
+      "data": [
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "bool",
+       "shape": [
+        4,
+        1
+       ],
+       "data": [
+        true,
+        true,
+        true,
+        true
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 5,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 5,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 4,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 6,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       4,
+       3
+      ],
+      "data": [
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true
+      ]
+     }
+    },
+    {
+     "method": "putcolslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "ndarray": "complex64",
+       "shape": [
+        2,
+        2,
+        2
+       ],
+       "data": [
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "1.0",
+         "1.0"
+        ]
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       2,
+       2
+      ],
+      "data": [
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ],
+       [
+        "1.0",
+        "1.0"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 2,
+         "type": "int"
+        },
+        {
+         "int": 10,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 13,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "complex128",
+      "shape": [
+       2,
+       4
+      ],
+      "data": [
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ],
+       [
+        "1.0",
+        "0.0"
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 4,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 6,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       4,
+       3
+      ],
+      "data": [
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true,
+       true
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
+  "slices": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "1.0",
+       "2.0",
+       "3.0",
+       "4.0"
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       1,
+       2
+      ],
+      "data": [
+       "5.0",
+       "6.0"
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       1,
+       2
+      ],
+      "data": [
+       "7.0",
+       "8.0"
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": -1,
+         "type": "int"
+        },
+        {
+         "int": -1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Exception: All elements of trc must be greater than or equal to 0.\n... thrown by void casac::table::_checkCorner(const vector<long> &, const String &, const IPosition &, const pair<vector<long>, vector<long>> *const &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/table/table_cmpt.cc, line: 1393"
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 2,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       1,
+       2
+      ],
+      "data": [
+       "9.0",
+       "10.0"
+      ]
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn: row number 3 exceeds #rows 3 in table <TABLE>"
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "getcellslice",
+     "args": [
+      {
+       "str": "vary"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 2,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2
+      ],
+      "data": [
+       "21.0",
+       "22.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       1,
+       2,
+       3
+      ],
+      "data": [
+       "1.0",
+       "5.0",
+       "9.0",
+       "2.0",
+       "6.0",
+       "10.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       2
+      ],
+      "data": [
+       "5.0",
+       "9.0",
+       "6.0",
+       "10.0",
+       "7.0",
+       "11.0",
+       "8.0",
+       "12.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       2
+      ],
+      "data": [
+       "1.0",
+       "9.0",
+       "2.0",
+       "10.0",
+       "3.0",
+       "11.0",
+       "4.0",
+       "12.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": -1,
+         "type": "int"
+        },
+        {
+         "int": -1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       3
+      ],
+      "data": [
+       "1.0",
+       "5.0",
+       "9.0",
+       "2.0",
+       "6.0",
+       "10.0",
+       "3.0",
+       "7.0",
+       "11.0",
+       "4.0",
+       "8.0",
+       "12.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "vary"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       1,
+       3
+      ],
+      "data": [
+       "10.0",
+       "20.0",
+       "30.0"
+      ]
+     }
+    },
+    {
+     "method": "getcolslice",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getColumnSlice: column id is not an array column"
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2
+       ],
+       "data": [
+        "9.0",
+        "8.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "9.0",
+       "8.0",
+       "3.0",
+       "4.0"
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "int32",
+       "shape": [
+        1,
+        2
+       ],
+       "data": [
+        7,
+        6
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "9.0",
+       "8.0",
+       "7.0",
+       "6.0"
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        3
+       ],
+       "data": [
+        "1.0",
+        "2.0",
+        "3.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "ArrayColumn::putSlice for row 0 in column spectrum: Table array conformance error (shape=[1, 3], expected [1, 2])"
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2
+       ],
+       "data": [
+        "5.0",
+        "5.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        2,
+        1
+       ],
+       "data": [
+        "4.0",
+        "4.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "4.0",
+       "6.0",
+       "4.0",
+       "8.0"
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "float": "3.5",
+       "type": "float"
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "ArrayColumn::putSlice for row 0 in column spectrum: Table array conformance error (shape=[1], expected [1, 1])"
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "5.0",
+       "5.0",
+       "7.0",
+       "6.0"
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        1
+       ],
+       "data": [
+        "1.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::TableProxy::putColumn: no such row"
+     }
+    },
+    {
+     "method": "putcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2,
+        3
+       ],
+       "data": [
+        "0.0",
+        "0.0",
+        "0.0",
+        "0.0",
+        "0.0",
+        "0.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       3
+      ],
+      "data": [
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "7.0",
+       "4.0",
+       "11.0",
+       "6.0",
+       "8.0",
+       "12.0"
+      ]
+     }
+    },
+    {
+     "method": "putcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2,
+        2
+       ],
+       "data": [
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       3
+      ],
+      "data": [
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "7.0",
+       "1.0",
+       "1.0",
+       "6.0",
+       "1.0",
+       "1.0"
+      ]
+     }
+    },
+    {
+     "method": "putcolslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2,
+        2
+       ],
+       "data": [
+        "1.0",
+        "1.0",
+        "1.0",
+        "1.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "ArrayColumn::putColumn(slicer) - column spectrum has 3, but array has 2 rows: Table array conformance error"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2,
+       3
+      ],
+      "data": [
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0",
+       "7.0",
+       "1.0",
+       "1.0",
+       "6.0",
+       "1.0",
+       "1.0"
+      ]
+     }
+    },
+    {
+     "method": "putcellslice",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1,
+        2
+       ],
+       "data": [
+        "1.0",
+        "1.0"
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
   }
  }
 }
