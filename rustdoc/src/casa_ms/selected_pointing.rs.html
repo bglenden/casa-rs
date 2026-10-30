@@ -990,7 +990,7 @@
 <a href=#990 id=990 data-nosnippet>990</a>/// sum of every budget check [`MeasurementSet::prepare_selected_pointing_catalog`]
 <a href=#991 id=991 data-nosnippet>991</a>/// makes, so a budget of at least this is never refused. `None` on
 <a href=#992 id=992 data-nosnippet>992</a>/// overflow.
-<a href=#993 id=993 data-nosnippet>993</a></span><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
+<a href=#993 id=993 data-nosnippet>993</a></span><span class="attr">#[cfg(unix)]
 <a href=#994 id=994 data-nosnippet>994</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>catalog_peak_bytes(
 <a href=#995 id=995 data-nosnippet>995</a>    rows: usize,
 <a href=#996 id=996 data-nosnippet>996</a>    antennas: usize,
@@ -1036,7 +1036,7 @@
 <a href=#1036 id=1036 data-nosnippet>1036</a>    <span class="doccomment">/// A catalog of `R` retained rows for `A` antennas (each with its nearest
 <a href=#1037 id=1037 data-nosnippet>1037</a>    /// rows either side) prepared with exactly `catalog_peak_bytes(R, A, S,
 <a href=#1038 id=1038 data-nosnippet>1038</a>    /// terms)` is never refused, whatever the scan block `S`.
-<a href=#1039 id=1039 data-nosnippet>1039</a>    </span><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
+<a href=#1039 id=1039 data-nosnippet>1039</a>    </span><span class="attr">#[cfg(unix)]
 <a href=#1040 id=1040 data-nosnippet>1040</a>    #[test]
 <a href=#1041 id=1041 data-nosnippet>1041</a>    </span><span class="kw">fn </span>catalog_peak_bytes_bounds_every_budget_check() {
 <a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="kw">use </span>casa_types::{RecordField, RecordValue, Value};

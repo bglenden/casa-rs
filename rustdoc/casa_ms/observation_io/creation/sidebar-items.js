@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Destination","Loss","LossKind","PaddingRows"],"fn":["default_memory_bytes"],"struct":["CreationInput","CreationOptions","CreationPlan","CreationReport","HistoryRow","MemoryCharges"]};

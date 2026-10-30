@@ -197,7 +197,7 @@
 <a href=#197 id=197 data-nosnippet>197</a>    options: <span class="kw-2">&amp;</span>OpenOptions,
 <a href=#198 id=198 data-nosnippet>198</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MeasurementSet, Vec&lt;u32&gt;, Arc&lt;Catalogue&gt;), ObservationError&gt; {
 <a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>observation = <span class="kw">super</span>::Msv4Observation::open_with(source, options)<span class="question-mark">?</span>;
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>(subtables, windows) = <span class="kw">super</span>::convert::catalogue_subtables(<span class="kw-2">&amp;</span>observation)<span class="question-mark">?</span>;
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>(subtables, windows) = <span class="kw">super</span>::creation::catalogue_subtables(<span class="kw-2">&amp;</span>observation)<span class="question-mark">?</span>;
 <a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span>windows = windows.into_iter().map(|row| row <span class="kw">as </span>u32).collect();
 <a href=#202 id=202 data-nosnippet>202</a>    <span class="prelude-val">Ok</span>((subtables, windows, Arc::clone(observation.catalogue())))
 <a href=#203 id=203 data-nosnippet>203</a>}

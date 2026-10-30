@@ -1946,6 +1946,72 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#concat-leaves-a-merged-source-rows-time-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat leaves a merged SOURCE row's TIME unchanged
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concats-source-equivalence-lets-its-last-optional-column-decide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat's source equivalence lets its last optional column decide
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat renumbers merged sources so that one can split and fields dangle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concat-leaves-gaps-in-observation-ids-after-removing-duplicates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat leaves gaps in observation IDs after removing duplicates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concat-drops-every-state-when-one-input-has-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat drops every state when one input has none
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concat-writes-into-the-measurementsets-it-appends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat writes into the MeasurementSets it appends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tclean-reads-a-uvtaper-with-no-unit-as-radians" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2091,6 +2157,13 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 <a href="#claddcomponent-stores-four-flux-values-as-stokes"><code>addcomponent</code>'s polarization</a>,
 <a href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make">a shape <code>addcomponent</code> cannot make</a>.
+Concatenation behaviours casa-rs does not follow:
+<a href="#concat-leaves-a-merged-source-rows-time-unchanged">a merged source record's time</a>,
+<a href="#concats-source-equivalence-lets-its-last-optional-column-decide">source equivalence decided by its last column</a>,
+<a href="#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle">merged sources' numbering</a>,
+<a href="#concat-leaves-gaps-in-observation-ids-after-removing-duplicates">observation IDs after removing duplicates</a>,
+<a href="#concat-drops-every-state-when-one-input-has-none">an input without states</a>,
+<a href="#concat-writes-into-the-measurementsets-it-appends">writing into its inputs</a>.
 ATM data errors casa-rs corrects (<code>tools/atmosphere/atm-corrections.patch</code>):
 <a href="#atms-hcn-catalogue-misplaces-a-line-at-106-ghz">HCN's misplaced line</a>,
 <a href="#atms-reference-air-densities-drop-a-digit-at-sea-level">sea-level air densities</a>,
@@ -4238,6 +4311,92 @@ are all image expressions over <code>&lt;project&gt;/&lt;project&gt;.&lt;configu
 project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.</p>
+<h2 id="concat-leaves-a-merged-source-rows-time-unchanged"><code>concat</code> leaves a merged SOURCE row's TIME unchanged<a class="headerlink" href="#concat-leaves-a-merged-source-rows-time-unchanged" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casacore <code>ms/MSOper/MSConcat.cc</code> (<code>updateSource</code>:
+  <code>sourceCol.interval().put(j, newTime)</code> before
+  <code>sourceCol.interval().put(j, newInterval)</code>)</li>
+</ul>
+<p>When two <code>SOURCE</code> rows of one window are equivalent, <code>updateSource</code> keeps the
+first and widens its validity to span both: it computes the union's centre
+and length, then writes the centre into <code>INTERVAL</code> and overwrites it with the
+length. <code>TIME</code> is never written, so the kept row is valid over an interval
+centred on its old time, which misses the end of the other row's validity.
+casa-rs centres the record on the union
+(<code>casa_observation::merge</code>, <code>sources.rs</code>, <code>widen</code>).</p>
+<h2 id="concats-source-equivalence-lets-its-last-optional-column-decide"><code>concat</code>'s source equivalence lets its last optional column decide<a class="headerlink" href="#concats-source-equivalence-lets-its-last-optional-column-decide" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casacore <code>ms/MSOper/MSConcat.cc</code>
+  (<code>sourceRowsEquivalent</code>)</li>
+</ul>
+<p><code>sourceRowsEquivalent</code> compares the required columns with <code>&amp;&amp;</code>, then tests
+each optional column present (<code>POSITION</code>, <code>PULSAR_ID</code>, <code>REST_FREQUENCY</code>,
+<code>SYSVEL</code>, <code>TRANSITION</code>) by assigning its result to <code>areEquivalent</code>, so the last
+optional column tested decides: two rows with different rest frequencies but
+equal transitions are equivalent, and their lines are merged into one.
+casa-rs requires every member to be equal (an optional one stated by both or
+by neither).</p>
+<h2 id="concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle"><code>concat</code> renumbers merged sources so that one can split and fields dangle<a class="headerlink" href="#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casacore <code>ms/MSOper/MSConcat.cc</code> (<code>updateSource</code>, "renumber
+  consecutively"; <code>copyField</code>, <code>newSourceIndex2_p</code>)</li>
+</ul>
+<p>After removing redundant <code>SOURCE</code> rows, <code>updateSource</code> renumbers source IDs
+row by row: a row whose ID exceeds the count so far gets the next number. A
+source of several rows (one per window) after a removed ID therefore gets one
+number for its first row and another for the next, splitting it. The IDs it
+changes are applied to the fields <code>copyField</code> appends, not to the fields
+already in the output, which can then name a source ID no row has. casa-rs
+numbers merged sources in the order they first appear, every record of a
+source keeping its number, and maps every field
+(<code>casa_observation::merge</code>, <code>sources.rs</code>, <code>regroup</code>).</p>
+<h2 id="concat-leaves-gaps-in-observation-ids-after-removing-duplicates"><code>concat</code> leaves gaps in observation IDs after removing duplicates<a class="headerlink" href="#concat-leaves-gaps-in-observation-ids-after-removing-duplicates" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casacore <code>ms/MSOper/MSConcat.cc</code> (<code>copyObservation</code>)</li>
+</ul>
+<p><code>copyObservation</code> appends the incoming <code>OBSERVATION</code> rows, removes each row
+equivalent to an earlier one, and maps it to the last earlier equivalent. It
+does not shift the IDs of the rows after a removed one, as <code>copyProcessor</code>
+does with <code>removedSoFar</code>, so an input of several observations can have its
+rows mapped past the end of the table, or onto another observation, once a
+duplicate is removed. casa-rs maps each duplicate to its first equivalent and
+numbers the distinct observations consecutively, for processors and
+observations alike (<code>casa_observation::merge</code>, <code>distinct</code>).</p>
+<h2 id="concat-drops-every-state-when-one-input-has-none"><code>concat</code> drops every state when one input has none<a class="headerlink" href="#concat-drops-every-state-when-one-input-has-none" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casacore <code>ms/MSOper/MSConcat.cc</code> (<code>concatenate</code>, "merge
+  STATE")</li>
+</ul>
+<p>When one of the two MeasurementSets has no <code>STATE</code> rows, <code>concatenate</code> writes
+no states at all: it deletes the first MeasurementSet's <code>STATE</code> rows and sets
+every row's <code>STATE_ID</code> to -1, so the intents of the input that had them are
+lost. casa-rs keeps them: the rows of an input without states have
+<code>STATE_ID</code> -1, and the others keep their merged states
+(<code>casa_observation::merge</code>, <code>states</code>).</p>
+<h2 id="concat-writes-into-the-measurementsets-it-appends"><code>concat</code> writes into the MeasurementSets it appends<a class="headerlink" href="#concat-writes-into-the-measurementsets-it-appends" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-29</li>
+<li>Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)</li>
+<li>Affected code: casatools <code>src/tools/ms/ms_cmpt.cc</code> (<code>ms::concatenate</code>,
+  line 6497)</li>
+</ul>
+<p>After appending a MeasurementSet, <code>ms::concatenate</code> writes a <code>HISTORY</code> row
+("… appended to …", with its parameters) into the appended MeasurementSet,
+an input, rather than into the output; the inputs' own <code>HISTORY</code> is never
+copied. A task that reads several MeasurementSets to make another should
+leave them as they were. casa-rs never writes an input: the output's
+<code>HISTORY</code> holds what the creating task records of itself
+(<code>CreationOptions::history</code>), and the inputs' <code>HISTORY</code> is a declared loss.</p>
 <h2 id="tclean-reads-a-uvtaper-with-no-unit-as-radians"><code>tclean</code> reads a <code>uvtaper</code> with no unit as radians<a class="headerlink" href="#tclean-reads-a-uvtaper-with-no-unit-as-radians" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-28</li>
