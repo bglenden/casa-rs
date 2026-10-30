@@ -52,7 +52,7 @@
     pub startmodel: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html" title="struct std::path::PathBuf">PathBuf</a>&gt;,
     pub weighting: <a class="enum" href="enum.Weighting.html" title="enum casa_imaging_application::Weighting">Weighting</a>,
     pub robust: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
-    pub uvtaper: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;UvTaper&gt;,
+    pub uvtaper: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../casa_imaging_model/compiled_problem/struct.UvTaper.html" title="struct casa_imaging_model::compiled_problem::UvTaper">UvTaper</a>&gt;,
     pub gridder: <a class="enum" href="enum.Gridder.html" title="enum casa_imaging_application::Gridder">Gridder</a>,
     pub write_pb: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
     pub pbcor: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
@@ -129,7 +129,7 @@ ephemeris name or table.</p>
 (<code>SIImageStore::setModelImageOne</code>).</p>
 </div><span id="structfield.weighting" class="structfield section-header"><a href="#structfield.weighting" class="anchor field">§</a><code>weighting: <a class="enum" href="enum.Weighting.html" title="enum casa_imaging_application::Weighting">Weighting</a></code></span><div class="docblock"><p>Visibility weighting.</p>
 </div><span id="structfield.robust" class="structfield section-header"><a href="#structfield.robust" class="anchor field">§</a><code>robust: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></code></span><div class="docblock"><p>Briggs robustness.</p>
-</div><span id="structfield.uvtaper" class="structfield section-header"><a href="#structfield.uvtaper" class="anchor field">§</a><code>uvtaper: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;UvTaper&gt;</code></span><div class="docblock"><p>CASA’s <code>uvtaper</code>, a Gaussian taper of the imaging weights, read as
+</div><span id="structfield.uvtaper" class="structfield section-header"><a href="#structfield.uvtaper" class="anchor field">§</a><code>uvtaper: <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../casa_imaging_model/compiled_problem/struct.UvTaper.html" title="struct casa_imaging_model::compiled_problem::UvTaper">UvTaper</a>&gt;</code></span><div class="docblock"><p>CASA’s <code>uvtaper</code>, a Gaussian taper of the imaging weights, read as
 <code>VisImagingWeight::setFilter</code> reads it: an angle is the image-plane
 FWHM and wavelengths are the uv-plane HWHM. <code>None</code> when it is empty
 or its first entry is.</p>

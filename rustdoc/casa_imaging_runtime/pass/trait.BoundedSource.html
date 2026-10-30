@@ -2,7 +2,7 @@
     // Required methods
     fn <a href="#tymethod.begin" class="fn">begin</a>(
         &amp;mut self,
-        planes: PlaneRange,
+        planes: <a class="struct" href="../../casa_imaging_operator/accumulator/struct.PlaneRange.html" title="struct casa_imaging_operator::accumulator::PlaneRange">PlaneRange</a>,
         restrict: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
         content: <a class="enum" href="enum.SampleContent.html" title="enum casa_imaging_runtime::pass::SampleContent">SampleContent</a>,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>, <a class="type" href="type.SourceError.html" title="type casa_imaging_runtime::pass::SourceError">SourceError</a>&gt;;
@@ -16,7 +16,7 @@ traverses the MeasurementSet source of <code>casa-imaging-application</code>, it
 one production implementation, which this crate cannot name.</p>
 </div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.begin" class="method"><a class="src rightside" href="../../src/casa_imaging_runtime/pass/mod.rs.html#182-187">Source</a><h4 class="code-header">fn <a href="#tymethod.begin" class="fn">begin</a>(
     &amp;mut self,
-    planes: PlaneRange,
+    planes: <a class="struct" href="../../casa_imaging_operator/accumulator/struct.PlaneRange.html" title="struct casa_imaging_operator::accumulator::PlaneRange">PlaneRange</a>,
     restrict: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
     content: <a class="enum" href="enum.SampleContent.html" title="enum casa_imaging_runtime::pass::SampleContent">SampleContent</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>, <a class="type" href="type.SourceError.html" title="type casa_imaging_runtime::pass::SourceError">SourceError</a>&gt;</h4></section></summary><div class="docblock"><p>Start a traversal for a wave over <code>planes</code>, reading <code>content</code> of each
