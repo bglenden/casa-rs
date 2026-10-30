@@ -4380,381 +4380,476 @@
 <a href=#4380 id=4380 data-nosnippet>4380</a>            <span class="number">372.0e9</span>,
 <a href=#4381 id=4381 data-nosnippet>4381</a>        ));
 <a href=#4382 id=4382 data-nosnippet>4382</a>
-<a href=#4383 id=4383 data-nosnippet>4383</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">2</span>, <span class="number">5</span>];
-<a href=#4384 id=4384 data-nosnippet>4384</a>        <span class="kw">let </span><span class="kw-2">mut </span>source =
-<a href=#4385 id=4385 data-nosnippet>4385</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, <span class="kw-2">&amp;</span>source_path).unwrap();
-<a href=#4386 id=4386 data-nosnippet>4386</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
-<a href=#4387 id=4387 data-nosnippet>4387</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4388 id=4388 data-nosnippet>4388</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
-<a href=#4389 id=4389 data-nosnippet>4389</a>                .map(|value| value <span class="kw">as </span>f32 + <span class="number">0.25</span>)
-<a href=#4390 id=4390 data-nosnippet>4390</a>                .collect(),
-<a href=#4391 id=4391 data-nosnippet>4391</a>        )
-<a href=#4392 id=4392 data-nosnippet>4392</a>        .unwrap();
-<a href=#4393 id=4393 data-nosnippet>4393</a>        source.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4394 id=4394 data-nosnippet>4394</a>        source.set_units(<span class="string">"Jy/beam"</span>).unwrap();
-<a href=#4395 id=4395 data-nosnippet>4395</a>        source
-<a href=#4396 id=4396 data-nosnippet>4396</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
-<a href=#4397 id=4397 data-nosnippet>4397</a>                beam_set: ImageBeamSet::new(GaussianBeam::new(
-<a href=#4398 id=4398 data-nosnippet>4398</a>                    <span class="number">1.7e-4_f64</span>.to_radians(),
-<a href=#4399 id=4399 data-nosnippet>4399</a>                    <span class="number">1.2e-4_f64</span>.to_radians(),
-<a href=#4400 id=4400 data-nosnippet>4400</a>                    (-<span class="number">34.5_f64</span>).to_radians(),
-<a href=#4401 id=4401 data-nosnippet>4401</a>                )),
-<a href=#4402 id=4402 data-nosnippet>4402</a>                image_type: ImageType::Intensity,
-<a href=#4403 id=4403 data-nosnippet>4403</a>                object_name: <span class="string">"TW Hya"</span>.to_string(),
-<a href=#4404 id=4404 data-nosnippet>4404</a>            })
-<a href=#4405 id=4405 data-nosnippet>4405</a>            .unwrap();
-<a href=#4406 id=4406 data-nosnippet>4406</a>        source.save().unwrap();
-<a href=#4407 id=4407 data-nosnippet>4407</a>
-<a href=#4408 id=4408 data-nosnippet>4408</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>first_fits, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
-<a href=#4409 id=4409 data-nosnippet>4409</a>        import_fits(<span class="kw-2">&amp;</span>first_fits, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>).unwrap();
-<a href=#4410 id=4410 data-nosnippet>4410</a>        export_fits(<span class="kw-2">&amp;</span>imported_path, <span class="kw-2">&amp;</span>second_fits, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
-<a href=#4411 id=4411 data-nosnippet>4411</a>
-<a href=#4412 id=4412 data-nosnippet>4412</a>        <span class="kw">let </span>imported = PagedImage::&lt;f32&gt;::open(<span class="kw-2">&amp;</span>imported_path).unwrap();
-<a href=#4413 id=4413 data-nosnippet>4413</a>        <span class="macro">assert_eq!</span>(imported.shape(), <span class="kw-2">&amp;</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">2</span>]);
-<a href=#4414 id=4414 data-nosnippet>4414</a>        <span class="macro">assert_eq!</span>(imported.units(), <span class="string">"Jy/beam"</span>);
-<a href=#4415 id=4415 data-nosnippet>4415</a>        <span class="kw">let </span>info = imported.image_info().unwrap();
-<a href=#4416 id=4416 data-nosnippet>4416</a>        <span class="macro">assert_eq!</span>(info.object_name, <span class="string">"TW Hya"</span>);
-<a href=#4417 id=4417 data-nosnippet>4417</a>        <span class="kw">let </span>beam = info.beam_set.single_beam().unwrap();
-<a href=#4418 id=4418 data-nosnippet>4418</a>        <span class="macro">assert!</span>((beam.major_in(<span class="string">"deg"</span>).unwrap() - <span class="number">1.7e-4</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#4419 id=4419 data-nosnippet>4419</a>        <span class="macro">assert!</span>((beam.minor_in(<span class="string">"deg"</span>).unwrap() - <span class="number">1.2e-4</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#4420 id=4420 data-nosnippet>4420</a>        <span class="macro">assert!</span>((beam.position_angle_in(<span class="string">"deg"</span>).unwrap() + <span class="number">34.5</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#4421 id=4421 data-nosnippet>4421</a>
-<a href=#4422 id=4422 data-nosnippet>4422</a>        <span class="macro">assert_eq!</span>(
-<a href=#4423 id=4423 data-nosnippet>4423</a>            read_fits_pixels(<span class="kw-2">&amp;</span>first_fits),
-<a href=#4424 id=4424 data-nosnippet>4424</a>            read_fits_pixels(<span class="kw-2">&amp;</span>second_fits)
-<a href=#4425 id=4425 data-nosnippet>4425</a>        );
-<a href=#4426 id=4426 data-nosnippet>4426</a>        <span class="kw">for </span>key <span class="kw">in </span>[
-<a href=#4427 id=4427 data-nosnippet>4427</a>            <span class="string">"NAXIS"</span>, <span class="string">"NAXIS1"</span>, <span class="string">"NAXIS2"</span>, <span class="string">"NAXIS3"</span>, <span class="string">"NAXIS4"</span>, <span class="string">"BUNIT"</span>, <span class="string">"BMAJ"</span>, <span class="string">"BMIN"</span>, <span class="string">"BPA"</span>,
-<a href=#4428 id=4428 data-nosnippet>4428</a>            <span class="string">"OBJECT"</span>, <span class="string">"RADESYS"</span>, <span class="string">"CTYPE1"</span>, <span class="string">"CTYPE2"</span>, <span class="string">"CTYPE3"</span>, <span class="string">"CTYPE4"</span>, <span class="string">"CRVAL1"</span>, <span class="string">"CRVAL2"</span>,
-<a href=#4429 id=4429 data-nosnippet>4429</a>            <span class="string">"CRVAL3"</span>, <span class="string">"CRVAL4"</span>, <span class="string">"CRPIX1"</span>, <span class="string">"CRPIX2"</span>, <span class="string">"CRPIX3"</span>, <span class="string">"CRPIX4"</span>, <span class="string">"CDELT1"</span>, <span class="string">"CDELT2"</span>,
-<a href=#4430 id=4430 data-nosnippet>4430</a>            <span class="string">"CDELT3"</span>, <span class="string">"CDELT4"</span>, <span class="string">"CUNIT1"</span>, <span class="string">"CUNIT2"</span>, <span class="string">"CUNIT3"</span>, <span class="string">"CUNIT4"</span>, <span class="string">"RESTFRQ"</span>, <span class="string">"SPECSYS"</span>,
-<a href=#4431 id=4431 data-nosnippet>4431</a>        ] {
-<a href=#4432 id=4432 data-nosnippet>4432</a>            assert_fits_key_matches(<span class="kw-2">&amp;</span>first_fits, <span class="kw-2">&amp;</span>second_fits, key);
-<a href=#4433 id=4433 data-nosnippet>4433</a>        }
-<a href=#4434 id=4434 data-nosnippet>4434</a>    }
-<a href=#4435 id=4435 data-nosnippet>4435</a>
-<a href=#4436 id=4436 data-nosnippet>4436</a>    <span class="attr">#[test]
-<a href=#4437 id=4437 data-nosnippet>4437</a>    </span><span class="kw">fn </span>fits_import_export_overwrite_policy_preserves_double_images() {
-<a href=#4438 id=4438 data-nosnippet>4438</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#4439 id=4439 data-nosnippet>4439</a>        <span class="kw">let </span>source_path = temp.path().join(<span class="string">"source.image"</span>);
-<a href=#4440 id=4440 data-nosnippet>4440</a>        <span class="kw">let </span>fits_path = temp.path().join(<span class="string">"source.fits"</span>);
-<a href=#4441 id=4441 data-nosnippet>4441</a>        <span class="kw">let </span>imported_path = temp.path().join(<span class="string">"imported.image"</span>);
-<a href=#4442 id=4442 data-nosnippet>4442</a>        create_double_spectral_test_image(<span class="kw-2">&amp;</span>source_path);
-<a href=#4443 id=4443 data-nosnippet>4443</a>
-<a href=#4444 id=4444 data-nosnippet>4444</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
-<a href=#4445 id=4445 data-nosnippet>4445</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#4446 id=4446 data-nosnippet>4446</a>            export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">false</span>),
-<a href=#4447 id=4447 data-nosnippet>4447</a>            <span class="prelude-val">Err</span>(ImageError::Io(message)) <span class="kw">if </span>message.contains(<span class="string">"already exists"</span>)
-<a href=#4448 id=4448 data-nosnippet>4448</a>        ));
-<a href=#4449 id=4449 data-nosnippet>4449</a>        <span class="kw">let </span>export_summary = export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">true</span>).unwrap();
-<a href=#4450 id=4450 data-nosnippet>4450</a>        <span class="macro">assert_eq!</span>(export_summary.shape, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>]);
-<a href=#4451 id=4451 data-nosnippet>4451</a>
-<a href=#4452 id=4452 data-nosnippet>4452</a>        import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>).unwrap();
-<a href=#4453 id=4453 data-nosnippet>4453</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#4454 id=4454 data-nosnippet>4454</a>            import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>),
-<a href=#4455 id=4455 data-nosnippet>4455</a>            <span class="prelude-val">Err</span>(ImageError::Io(message)) <span class="kw">if </span>message.contains(<span class="string">"already exists"</span>)
-<a href=#4456 id=4456 data-nosnippet>4456</a>        ));
-<a href=#4457 id=4457 data-nosnippet>4457</a>        <span class="kw">let </span>import_summary = import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">true</span>).unwrap();
-<a href=#4458 id=4458 data-nosnippet>4458</a>        <span class="macro">assert_eq!</span>(import_summary.pixel_type, <span class="string">"Float64"</span>);
-<a href=#4459 id=4459 data-nosnippet>4459</a>        <span class="macro">assert_eq!</span>(import_summary.units, <span class="string">"K"</span>);
-<a href=#4460 id=4460 data-nosnippet>4460</a>        <span class="macro">assert_eq!</span>(import_summary.object_name, <span class="string">"Double Test"</span>);
-<a href=#4461 id=4461 data-nosnippet>4461</a>
-<a href=#4462 id=4462 data-nosnippet>4462</a>        <span class="kw">let </span>imported = PagedImage::&lt;f64&gt;::open(<span class="kw-2">&amp;</span>imported_path).unwrap();
-<a href=#4463 id=4463 data-nosnippet>4463</a>        <span class="macro">assert_eq!</span>(imported.shape(), <span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>]);
-<a href=#4464 id=4464 data-nosnippet>4464</a>        <span class="macro">assert_eq!</span>(imported.units(), <span class="string">"K"</span>);
-<a href=#4465 id=4465 data-nosnippet>4465</a>
-<a href=#4466 id=4466 data-nosnippet>4466</a>        <span class="kw">let </span>header = imhead(<span class="kw-2">&amp;</span>imported_path).unwrap();
-<a href=#4467 id=4467 data-nosnippet>4467</a>        <span class="macro">assert_eq!</span>(header.pixel_type, <span class="string">"Float64"</span>);
-<a href=#4468 id=4468 data-nosnippet>4468</a>        <span class="macro">assert_eq!</span>(header.object_name, <span class="string">"Double Test"</span>);
-<a href=#4469 id=4469 data-nosnippet>4469</a>        <span class="kw">let </span>stats = imstat(
-<a href=#4470 id=4470 data-nosnippet>4470</a>            <span class="kw-2">&amp;</span>imported_path,
-<a href=#4471 id=4471 data-nosnippet>4471</a>            <span class="prelude-val">Some</span>(<span class="string">"0,0,1,1"</span>),
-<a href=#4472 id=4472 data-nosnippet>4472</a>            <span class="prelude-val">None</span>,
-<a href=#4473 id=4473 data-nosnippet>4473</a>            <span class="prelude-val">Some</span>(<span class="string">"0~1"</span>),
-<a href=#4474 id=4474 data-nosnippet>4474</a>            <span class="prelude-val">Some</span>([<span class="number">1.0</span>, <span class="number">8.0</span>]),
-<a href=#4475 id=4475 data-nosnippet>4475</a>        )
-<a href=#4476 id=4476 data-nosnippet>4476</a>        .unwrap();
-<a href=#4477 id=4477 data-nosnippet>4477</a>        <span class="macro">assert_eq!</span>(stats.npts, <span class="number">7.0</span>);
-<a href=#4478 id=4478 data-nosnippet>4478</a>        <span class="macro">assert_eq!</span>(stats.units, <span class="string">"K"</span>);
-<a href=#4479 id=4479 data-nosnippet>4479</a>    }
-<a href=#4480 id=4480 data-nosnippet>4480</a>
-<a href=#4481 id=4481 data-nosnippet>4481</a>    <span class="attr">#[test]
-<a href=#4482 id=4482 data-nosnippet>4482</a>    </span><span class="kw">fn </span>exportfits_writes_default_mask_as_nan_and_velocity_wcs() {
-<a href=#4483 id=4483 data-nosnippet>4483</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#4484 id=4484 data-nosnippet>4484</a>        <span class="kw">let </span>source_path = temp.path().join(<span class="string">"masked.image"</span>);
-<a href=#4485 id=4485 data-nosnippet>4485</a>        <span class="kw">let </span>fits_path = temp.path().join(<span class="string">"masked.fits"</span>);
+<a href=#4383 id=4383 data-nosnippet>4383</a>        <span class="comment">// Observed at 2020-05-31 12:00 TAI: the date keeps its time scale
+<a href=#4384 id=4384 data-nosnippet>4384</a>        // (#1017).
+<a href=#4385 id=4385 data-nosnippet>4385</a>        </span>coordinates.obs_info_mut().date = <span class="prelude-val">Some</span>(casa_types::measures::epoch::MEpoch::from_mjd(
+<a href=#4386 id=4386 data-nosnippet>4386</a>            <span class="number">59_000.5</span>,
+<a href=#4387 id=4387 data-nosnippet>4387</a>            casa_types::measures::EpochRef::TAI,
+<a href=#4388 id=4388 data-nosnippet>4388</a>        ));
+<a href=#4389 id=4389 data-nosnippet>4389</a>
+<a href=#4390 id=4390 data-nosnippet>4390</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">2</span>, <span class="number">5</span>];
+<a href=#4391 id=4391 data-nosnippet>4391</a>        <span class="kw">let </span><span class="kw-2">mut </span>source =
+<a href=#4392 id=4392 data-nosnippet>4392</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, <span class="kw-2">&amp;</span>source_path).unwrap();
+<a href=#4393 id=4393 data-nosnippet>4393</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
+<a href=#4394 id=4394 data-nosnippet>4394</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4395 id=4395 data-nosnippet>4395</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
+<a href=#4396 id=4396 data-nosnippet>4396</a>                .map(|value| value <span class="kw">as </span>f32 + <span class="number">0.25</span>)
+<a href=#4397 id=4397 data-nosnippet>4397</a>                .collect(),
+<a href=#4398 id=4398 data-nosnippet>4398</a>        )
+<a href=#4399 id=4399 data-nosnippet>4399</a>        .unwrap();
+<a href=#4400 id=4400 data-nosnippet>4400</a>        source.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4401 id=4401 data-nosnippet>4401</a>        source.set_units(<span class="string">"Jy/beam"</span>).unwrap();
+<a href=#4402 id=4402 data-nosnippet>4402</a>        source
+<a href=#4403 id=4403 data-nosnippet>4403</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
+<a href=#4404 id=4404 data-nosnippet>4404</a>                beam_set: ImageBeamSet::new(GaussianBeam::new(
+<a href=#4405 id=4405 data-nosnippet>4405</a>                    <span class="number">1.7e-4_f64</span>.to_radians(),
+<a href=#4406 id=4406 data-nosnippet>4406</a>                    <span class="number">1.2e-4_f64</span>.to_radians(),
+<a href=#4407 id=4407 data-nosnippet>4407</a>                    (-<span class="number">34.5_f64</span>).to_radians(),
+<a href=#4408 id=4408 data-nosnippet>4408</a>                )),
+<a href=#4409 id=4409 data-nosnippet>4409</a>                image_type: ImageType::Intensity,
+<a href=#4410 id=4410 data-nosnippet>4410</a>                object_name: <span class="string">"TW Hya"</span>.to_string(),
+<a href=#4411 id=4411 data-nosnippet>4411</a>            })
+<a href=#4412 id=4412 data-nosnippet>4412</a>            .unwrap();
+<a href=#4413 id=4413 data-nosnippet>4413</a>        source.save().unwrap();
+<a href=#4414 id=4414 data-nosnippet>4414</a>
+<a href=#4415 id=4415 data-nosnippet>4415</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>first_fits, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
+<a href=#4416 id=4416 data-nosnippet>4416</a>        import_fits(<span class="kw-2">&amp;</span>first_fits, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>).unwrap();
+<a href=#4417 id=4417 data-nosnippet>4417</a>        export_fits(<span class="kw-2">&amp;</span>imported_path, <span class="kw-2">&amp;</span>second_fits, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
+<a href=#4418 id=4418 data-nosnippet>4418</a>
+<a href=#4419 id=4419 data-nosnippet>4419</a>        <span class="kw">let </span>imported = PagedImage::&lt;f32&gt;::open(<span class="kw-2">&amp;</span>imported_path).unwrap();
+<a href=#4420 id=4420 data-nosnippet>4420</a>        <span class="macro">assert_eq!</span>(imported.shape(), <span class="kw-2">&amp;</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">2</span>]);
+<a href=#4421 id=4421 data-nosnippet>4421</a>        <span class="macro">assert_eq!</span>(imported.units(), <span class="string">"Jy/beam"</span>);
+<a href=#4422 id=4422 data-nosnippet>4422</a>        <span class="kw">let </span>info = imported.image_info().unwrap();
+<a href=#4423 id=4423 data-nosnippet>4423</a>        <span class="macro">assert_eq!</span>(info.object_name, <span class="string">"TW Hya"</span>);
+<a href=#4424 id=4424 data-nosnippet>4424</a>        <span class="kw">let </span>beam = info.beam_set.single_beam().unwrap();
+<a href=#4425 id=4425 data-nosnippet>4425</a>        <span class="macro">assert!</span>((beam.major_in(<span class="string">"deg"</span>).unwrap() - <span class="number">1.7e-4</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#4426 id=4426 data-nosnippet>4426</a>        <span class="macro">assert!</span>((beam.minor_in(<span class="string">"deg"</span>).unwrap() - <span class="number">1.2e-4</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#4427 id=4427 data-nosnippet>4427</a>        <span class="macro">assert!</span>((beam.position_angle_in(<span class="string">"deg"</span>).unwrap() + <span class="number">34.5</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#4428 id=4428 data-nosnippet>4428</a>        <span class="kw">let </span>date = imported.coordinates().obs_info().date.as_ref().unwrap();
+<a href=#4429 id=4429 data-nosnippet>4429</a>        <span class="macro">assert_eq!</span>(date.refer(), casa_types::measures::EpochRef::TAI);
+<a href=#4430 id=4430 data-nosnippet>4430</a>        <span class="macro">assert_eq!</span>(date.value().as_mjd(), <span class="number">59_000.5</span>);
+<a href=#4431 id=4431 data-nosnippet>4431</a>        <span class="comment">// As CASA 6.7.6's exportfits writes the date: ISO, in its own scale.
+<a href=#4432 id=4432 data-nosnippet>4432</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#4433 id=4433 data-nosnippet>4433</a>            read_fits_key_as_string(<span class="kw-2">&amp;</span>first_fits, <span class="string">"DATE-OBS"</span>),
+<a href=#4434 id=4434 data-nosnippet>4434</a>            <span class="string">"2020-05-31T12:00:00.000000"
+<a href=#4435 id=4435 data-nosnippet>4435</a>        </span>);
+<a href=#4436 id=4436 data-nosnippet>4436</a>        <span class="macro">assert_eq!</span>(read_fits_key_as_string(<span class="kw-2">&amp;</span>first_fits, <span class="string">"TIMESYS"</span>), <span class="string">"TAI"</span>);
+<a href=#4437 id=4437 data-nosnippet>4437</a>
+<a href=#4438 id=4438 data-nosnippet>4438</a>        <span class="macro">assert_eq!</span>(
+<a href=#4439 id=4439 data-nosnippet>4439</a>            read_fits_pixels(<span class="kw-2">&amp;</span>first_fits),
+<a href=#4440 id=4440 data-nosnippet>4440</a>            read_fits_pixels(<span class="kw-2">&amp;</span>second_fits)
+<a href=#4441 id=4441 data-nosnippet>4441</a>        );
+<a href=#4442 id=4442 data-nosnippet>4442</a>        <span class="kw">for </span>key <span class="kw">in </span>[
+<a href=#4443 id=4443 data-nosnippet>4443</a>            <span class="string">"NAXIS"</span>, <span class="string">"NAXIS1"</span>, <span class="string">"NAXIS2"</span>, <span class="string">"NAXIS3"</span>, <span class="string">"NAXIS4"</span>, <span class="string">"BUNIT"</span>, <span class="string">"BMAJ"</span>, <span class="string">"BMIN"</span>, <span class="string">"BPA"</span>,
+<a href=#4444 id=4444 data-nosnippet>4444</a>            <span class="string">"OBJECT"</span>, <span class="string">"RADESYS"</span>, <span class="string">"CTYPE1"</span>, <span class="string">"CTYPE2"</span>, <span class="string">"CTYPE3"</span>, <span class="string">"CTYPE4"</span>, <span class="string">"CRVAL1"</span>, <span class="string">"CRVAL2"</span>,
+<a href=#4445 id=4445 data-nosnippet>4445</a>            <span class="string">"CRVAL3"</span>, <span class="string">"CRVAL4"</span>, <span class="string">"CRPIX1"</span>, <span class="string">"CRPIX2"</span>, <span class="string">"CRPIX3"</span>, <span class="string">"CRPIX4"</span>, <span class="string">"CDELT1"</span>, <span class="string">"CDELT2"</span>,
+<a href=#4446 id=4446 data-nosnippet>4446</a>            <span class="string">"CDELT3"</span>, <span class="string">"CDELT4"</span>, <span class="string">"CUNIT1"</span>, <span class="string">"CUNIT2"</span>, <span class="string">"CUNIT3"</span>, <span class="string">"CUNIT4"</span>, <span class="string">"RESTFRQ"</span>, <span class="string">"SPECSYS"</span>,
+<a href=#4447 id=4447 data-nosnippet>4447</a>            <span class="string">"DATE-OBS"</span>, <span class="string">"TIMESYS"</span>,
+<a href=#4448 id=4448 data-nosnippet>4448</a>        ] {
+<a href=#4449 id=4449 data-nosnippet>4449</a>            assert_fits_key_matches(<span class="kw-2">&amp;</span>first_fits, <span class="kw-2">&amp;</span>second_fits, key);
+<a href=#4450 id=4450 data-nosnippet>4450</a>        }
+<a href=#4451 id=4451 data-nosnippet>4451</a>    }
+<a href=#4452 id=4452 data-nosnippet>4452</a>
+<a href=#4453 id=4453 data-nosnippet>4453</a>    <span class="doccomment">/// A 2 by 2 FITS sky image of float pixels whose header holds `cards`,
+<a href=#4454 id=4454 data-nosnippet>4454</a>    /// each written as given, after the required ones and a SIN direction.
+<a href=#4455 id=4455 data-nosnippet>4455</a>    </span><span class="kw">fn </span>write_fits_with_cards(path: <span class="kw-2">&amp;</span>Path, cards: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) {
+<a href=#4456 id=4456 data-nosnippet>4456</a>        <span class="kw">let </span><span class="kw-2">mut </span>header = <span class="macro">vec!</span>[
+<a href=#4457 id=4457 data-nosnippet>4457</a>            <span class="string">"SIMPLE  =                    T"</span>,
+<a href=#4458 id=4458 data-nosnippet>4458</a>            <span class="string">"BITPIX  =                  -32"</span>,
+<a href=#4459 id=4459 data-nosnippet>4459</a>            <span class="string">"NAXIS   =                    2"</span>,
+<a href=#4460 id=4460 data-nosnippet>4460</a>            <span class="string">"NAXIS1  =                    2"</span>,
+<a href=#4461 id=4461 data-nosnippet>4461</a>            <span class="string">"NAXIS2  =                    2"</span>,
+<a href=#4462 id=4462 data-nosnippet>4462</a>            <span class="string">"CTYPE1  = 'RA---SIN'"</span>,
+<a href=#4463 id=4463 data-nosnippet>4463</a>            <span class="string">"CTYPE2  = 'DEC--SIN'"</span>,
+<a href=#4464 id=4464 data-nosnippet>4464</a>            <span class="string">"CRVAL1  =                 68.8"</span>,
+<a href=#4465 id=4465 data-nosnippet>4465</a>            <span class="string">"CRVAL2  =                -22.9"</span>,
+<a href=#4466 id=4466 data-nosnippet>4466</a>            <span class="string">"CDELT1  =           -0.0002778"</span>,
+<a href=#4467 id=4467 data-nosnippet>4467</a>            <span class="string">"CDELT2  =            0.0002778"</span>,
+<a href=#4468 id=4468 data-nosnippet>4468</a>            <span class="string">"CRPIX1  =                  1.0"</span>,
+<a href=#4469 id=4469 data-nosnippet>4469</a>            <span class="string">"CRPIX2  =                  1.0"</span>,
+<a href=#4470 id=4470 data-nosnippet>4470</a>            <span class="string">"CUNIT1  = 'deg'"</span>,
+<a href=#4471 id=4471 data-nosnippet>4471</a>            <span class="string">"CUNIT2  = 'deg'"</span>,
+<a href=#4472 id=4472 data-nosnippet>4472</a>        ];
+<a href=#4473 id=4473 data-nosnippet>4473</a>        header.extend_from_slice(cards);
+<a href=#4474 id=4474 data-nosnippet>4474</a>        header.push(<span class="string">"END"</span>);
+<a href=#4475 id=4475 data-nosnippet>4475</a>        <span class="kw">let </span><span class="kw-2">mut </span>bytes = header
+<a href=#4476 id=4476 data-nosnippet>4476</a>            .iter()
+<a href=#4477 id=4477 data-nosnippet>4477</a>            .flat_map(|card| <span class="macro">format!</span>(<span class="string">"{card:&lt;80}"</span>).into_bytes())
+<a href=#4478 id=4478 data-nosnippet>4478</a>            .collect::&lt;Vec&lt;u8&gt;&gt;();
+<a href=#4479 id=4479 data-nosnippet>4479</a>        bytes.resize(bytes.len().div_ceil(<span class="number">2880</span>) * <span class="number">2880</span>, <span class="string">b' '</span>);
+<a href=#4480 id=4480 data-nosnippet>4480</a>        <span class="kw">for </span>value <span class="kw">in </span>[<span class="number">1.0_f32</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>] {
+<a href=#4481 id=4481 data-nosnippet>4481</a>            bytes.extend(value.to_be_bytes());
+<a href=#4482 id=4482 data-nosnippet>4482</a>        }
+<a href=#4483 id=4483 data-nosnippet>4483</a>        bytes.resize(bytes.len().div_ceil(<span class="number">2880</span>) * <span class="number">2880</span>, <span class="number">0</span>);
+<a href=#4484 id=4484 data-nosnippet>4484</a>        fs::write(path, bytes).unwrap();
+<a href=#4485 id=4485 data-nosnippet>4485</a>    }
 <a href=#4486 id=4486 data-nosnippet>4486</a>
-<a href=#4487 id=4487 data-nosnippet>4487</a>        <span class="kw">let </span>rest_frequency = <span class="number">372.0e9</span>;
-<a href=#4488 id=4488 data-nosnippet>4488</a>        <span class="kw">let </span>frequency_increment = -<span class="number">620_000.0</span>;
-<a href=#4489 id=4489 data-nosnippet>4489</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#4490 id=4490 data-nosnippet>4490</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#4491 id=4491 data-nosnippet>4491</a>            DirectionRef::J2000,
-<a href=#4492 id=4492 data-nosnippet>4492</a>            Projection::new(ProjectionType::SIN),
-<a href=#4493 id=4493 data-nosnippet>4493</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
-<a href=#4494 id=4494 data-nosnippet>4494</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
-<a href=#4495 id=4495 data-nosnippet>4495</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4496 id=4496 data-nosnippet>4496</a>        ));
-<a href=#4497 id=4497 data-nosnippet>4497</a>        coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#4498 id=4498 data-nosnippet>4498</a>            FrequencyRef::LSRK,
-<a href=#4499 id=4499 data-nosnippet>4499</a>            rest_frequency,
-<a href=#4500 id=4500 data-nosnippet>4500</a>            frequency_increment,
-<a href=#4501 id=4501 data-nosnippet>4501</a>            <span class="number">0.0</span>,
-<a href=#4502 id=4502 data-nosnippet>4502</a>            rest_frequency,
-<a href=#4503 id=4503 data-nosnippet>4503</a>        ));
-<a href=#4504 id=4504 data-nosnippet>4504</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
-<a href=#4505 id=4505 data-nosnippet>4505</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
-<a href=#4506 id=4506 data-nosnippet>4506</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, <span class="kw-2">&amp;</span>source_path).unwrap();
-<a href=#4507 id=4507 data-nosnippet>4507</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
-<a href=#4508 id=4508 data-nosnippet>4508</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4509 id=4509 data-nosnippet>4509</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
-<a href=#4510 id=4510 data-nosnippet>4510</a>                .map(|value| value <span class="kw">as </span>f32)
-<a href=#4511 id=4511 data-nosnippet>4511</a>                .collect(),
-<a href=#4512 id=4512 data-nosnippet>4512</a>        )
-<a href=#4513 id=4513 data-nosnippet>4513</a>        .unwrap();
-<a href=#4514 id=4514 data-nosnippet>4514</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4515 id=4515 data-nosnippet>4515</a>        image.make_mask(<span class="string">"mask0"</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>).unwrap();
-<a href=#4516 id=4516 data-nosnippet>4516</a>        <span class="kw">let </span><span class="kw-2">mut </span>mask = ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>shape).f(), <span class="bool-val">true</span>);
-<a href=#4517 id=4517 data-nosnippet>4517</a>        mask[[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]] = <span class="bool-val">false</span>;
-<a href=#4518 id=4518 data-nosnippet>4518</a>        mask[[<span class="number">1</span>, <span class="number">1</span>, <span class="number">2</span>]] = <span class="bool-val">false</span>;
-<a href=#4519 id=4519 data-nosnippet>4519</a>        image.put_mask(<span class="string">"mask0"</span>, <span class="kw-2">&amp;</span>mask).unwrap();
-<a href=#4520 id=4520 data-nosnippet>4520</a>        image.save().unwrap();
-<a href=#4521 id=4521 data-nosnippet>4521</a>
-<a href=#4522 id=4522 data-nosnippet>4522</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">true</span>, <span class="bool-val">false</span>).unwrap();
-<a href=#4523 id=4523 data-nosnippet>4523</a>
-<a href=#4524 id=4524 data-nosnippet>4524</a>        <span class="kw">let </span>pixels = read_fits_pixels(<span class="kw-2">&amp;</span>fits_path);
-<a href=#4525 id=4525 data-nosnippet>4525</a>        <span class="macro">assert_eq!</span>(pixels.iter().filter(|value| value.is_nan()).count(), <span class="number">2</span>);
-<a href=#4526 id=4526 data-nosnippet>4526</a>        <span class="macro">assert_eq!</span>(read_fits_key_as_string(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CTYPE3"</span>), <span class="string">"VRAD"</span>);
-<a href=#4527 id=4527 data-nosnippet>4527</a>        <span class="macro">assert_eq!</span>(read_fits_key_as_string(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CUNIT3"</span>), <span class="string">"m"</span>);
-<a href=#4528 id=4528 data-nosnippet>4528</a>        <span class="kw">let </span>crval3 = read_fits_key_as_f64(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CRVAL3"</span>);
-<a href=#4529 id=4529 data-nosnippet>4529</a>        <span class="kw">let </span>cdelt3 = read_fits_key_as_f64(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CDELT3"</span>);
-<a href=#4530 id=4530 data-nosnippet>4530</a>        <span class="macro">assert!</span>(crval3.abs() &lt; <span class="number">1.0e-9</span>);
-<a href=#4531 id=4531 data-nosnippet>4531</a>        <span class="kw">let </span>expected_increment = -SPEED_OF_LIGHT_M_S * frequency_increment / rest_frequency;
-<a href=#4532 id=4532 data-nosnippet>4532</a>        <span class="macro">assert!</span>((cdelt3 - expected_increment).abs() &lt; <span class="number">1.0e-6</span>);
-<a href=#4533 id=4533 data-nosnippet>4533</a>    }
-<a href=#4534 id=4534 data-nosnippet>4534</a>
-<a href=#4535 id=4535 data-nosnippet>4535</a>    <span class="attr">#[test]
-<a href=#4536 id=4536 data-nosnippet>4536</a>    </span><span class="kw">fn </span>optimized_moment_collapse_matches_reference_for_masked_axis() {
-<a href=#4537 id=4537 data-nosnippet>4537</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">4</span>];
-<a href=#4538 id=4538 data-nosnippet>4538</a>        <span class="kw">let </span>input = ArrayD::from_shape_vec(
-<a href=#4539 id=4539 data-nosnippet>4539</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4540 id=4540 data-nosnippet>4540</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
-<a href=#4541 id=4541 data-nosnippet>4541</a>                .map(|value| value <span class="kw">as </span>f32 / <span class="number">10.0</span>)
-<a href=#4542 id=4542 data-nosnippet>4542</a>                .collect(),
-<a href=#4543 id=4543 data-nosnippet>4543</a>        )
-<a href=#4544 id=4544 data-nosnippet>4544</a>        .unwrap();
-<a href=#4545 id=4545 data-nosnippet>4545</a>        <span class="kw">let </span>mask = ArrayD::from_shape_vec(
-<a href=#4546 id=4546 data-nosnippet>4546</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4547 id=4547 data-nosnippet>4547</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
-<a href=#4548 id=4548 data-nosnippet>4548</a>                .map(|value| value % <span class="number">3 </span>!= <span class="number">0</span>)
-<a href=#4549 id=4549 data-nosnippet>4549</a>                .collect(),
-<a href=#4550 id=4550 data-nosnippet>4550</a>        )
-<a href=#4551 id=4551 data-nosnippet>4551</a>        .unwrap();
-<a href=#4552 id=4552 data-nosnippet>4552</a>        <span class="kw">let </span>coords = <span class="macro">vec!</span>[-<span class="number">2.0</span>, -<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>];
-<a href=#4553 id=4553 data-nosnippet>4553</a>        <span class="kw">for </span>moment <span class="kw">in </span>[-<span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>] {
-<a href=#4554 id=4554 data-nosnippet>4554</a>            <span class="kw">let </span>actual = collapse_moment(
-<a href=#4555 id=4555 data-nosnippet>4555</a>                <span class="kw-2">&amp;</span>input,
-<a href=#4556 id=4556 data-nosnippet>4556</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
-<a href=#4557 id=4557 data-nosnippet>4557</a>                <span class="number">2</span>,
-<a href=#4558 id=4558 data-nosnippet>4558</a>                <span class="kw-2">&amp;</span>coords,
-<a href=#4559 id=4559 data-nosnippet>4559</a>                <span class="number">0.25</span>,
-<a href=#4560 id=4560 data-nosnippet>4560</a>                <span class="prelude-val">Some</span>([<span class="number">0.4</span>, <span class="number">1.8</span>]),
-<a href=#4561 id=4561 data-nosnippet>4561</a>                moment,
-<a href=#4562 id=4562 data-nosnippet>4562</a>            )
-<a href=#4563 id=4563 data-nosnippet>4563</a>            .unwrap();
-<a href=#4564 id=4564 data-nosnippet>4564</a>            <span class="kw">let </span>expected = collapse_moment_reference(
-<a href=#4565 id=4565 data-nosnippet>4565</a>                <span class="kw-2">&amp;</span>input,
-<a href=#4566 id=4566 data-nosnippet>4566</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
-<a href=#4567 id=4567 data-nosnippet>4567</a>                <span class="number">2</span>,
-<a href=#4568 id=4568 data-nosnippet>4568</a>                <span class="kw-2">&amp;</span>coords,
-<a href=#4569 id=4569 data-nosnippet>4569</a>                <span class="number">0.25</span>,
-<a href=#4570 id=4570 data-nosnippet>4570</a>                <span class="prelude-val">Some</span>([<span class="number">0.4</span>, <span class="number">1.8</span>]),
-<a href=#4571 id=4571 data-nosnippet>4571</a>                moment,
-<a href=#4572 id=4572 data-nosnippet>4572</a>            )
-<a href=#4573 id=4573 data-nosnippet>4573</a>            .unwrap();
-<a href=#4574 id=4574 data-nosnippet>4574</a>            <span class="macro">assert_eq!</span>(actual, expected);
-<a href=#4575 id=4575 data-nosnippet>4575</a>        }
-<a href=#4576 id=4576 data-nosnippet>4576</a>    }
-<a href=#4577 id=4577 data-nosnippet>4577</a>
-<a href=#4578 id=4578 data-nosnippet>4578</a>    <span class="kw">fn </span>create_spectral_test_image(path: <span class="kw-2">&amp;</span>Path) {
-<a href=#4579 id=4579 data-nosnippet>4579</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#4580 id=4580 data-nosnippet>4580</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#4581 id=4581 data-nosnippet>4581</a>            DirectionRef::J2000,
-<a href=#4582 id=4582 data-nosnippet>4582</a>            Projection::new(ProjectionType::SIN),
-<a href=#4583 id=4583 data-nosnippet>4583</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
-<a href=#4584 id=4584 data-nosnippet>4584</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
-<a href=#4585 id=4585 data-nosnippet>4585</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4586 id=4586 data-nosnippet>4586</a>        ));
-<a href=#4587 id=4587 data-nosnippet>4587</a>        coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#4588 id=4588 data-nosnippet>4588</a>            FrequencyRef::LSRK,
-<a href=#4589 id=4589 data-nosnippet>4589</a>            <span class="number">372.0e9</span>,
-<a href=#4590 id=4590 data-nosnippet>4590</a>            <span class="number">2.0e6</span>,
-<a href=#4591 id=4591 data-nosnippet>4591</a>            <span class="number">0.0</span>,
-<a href=#4592 id=4592 data-nosnippet>4592</a>            <span class="number">372.0e9</span>,
-<a href=#4593 id=4593 data-nosnippet>4593</a>        ));
-<a href=#4594 id=4594 data-nosnippet>4594</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
-<a href=#4595 id=4595 data-nosnippet>4595</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path).unwrap();
-<a href=#4596 id=4596 data-nosnippet>4596</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
-<a href=#4597 id=4597 data-nosnippet>4597</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4598 id=4598 data-nosnippet>4598</a>            (<span class="number">1</span>..=shape.iter().product::&lt;usize&gt;())
-<a href=#4599 id=4599 data-nosnippet>4599</a>                .map(|value| value <span class="kw">as </span>f32)
-<a href=#4600 id=4600 data-nosnippet>4600</a>                .collect(),
-<a href=#4601 id=4601 data-nosnippet>4601</a>        )
-<a href=#4602 id=4602 data-nosnippet>4602</a>        .unwrap();
-<a href=#4603 id=4603 data-nosnippet>4603</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4604 id=4604 data-nosnippet>4604</a>        image.set_units(<span class="string">"Jy/beam"</span>).unwrap();
-<a href=#4605 id=4605 data-nosnippet>4605</a>        image
-<a href=#4606 id=4606 data-nosnippet>4606</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
-<a href=#4607 id=4607 data-nosnippet>4607</a>                beam_set: ImageBeamSet::new(GaussianBeam::new(
-<a href=#4608 id=4608 data-nosnippet>4608</a>                    <span class="number">1.7e-4_f64</span>.to_radians(),
-<a href=#4609 id=4609 data-nosnippet>4609</a>                    <span class="number">1.2e-4_f64</span>.to_radians(),
-<a href=#4610 id=4610 data-nosnippet>4610</a>                    (-<span class="number">34.5_f64</span>).to_radians(),
-<a href=#4611 id=4611 data-nosnippet>4611</a>                )),
-<a href=#4612 id=4612 data-nosnippet>4612</a>                image_type: ImageType::Intensity,
-<a href=#4613 id=4613 data-nosnippet>4613</a>                object_name: <span class="string">"NGC Test"</span>.to_string(),
-<a href=#4614 id=4614 data-nosnippet>4614</a>            })
-<a href=#4615 id=4615 data-nosnippet>4615</a>            .unwrap();
-<a href=#4616 id=4616 data-nosnippet>4616</a>        image.save().unwrap();
-<a href=#4617 id=4617 data-nosnippet>4617</a>    }
+<a href=#4487 id=4487 data-nosnippet>4487</a>    <span class="attr">#[test]
+<a href=#4488 id=4488 data-nosnippet>4488</a>    </span><span class="kw">fn </span>importfits_takes_the_date_past_unusable_date_cards() {
+<a href=#4489 id=4489 data-nosnippet>4489</a>        <span class="comment">// An MJD-OBS with no value (FITS's way to say it is unknown) or one
+<a href=#4490 id=4490 data-nosnippet>4490</a>        // CFITSIO cannot read as a number leaves DATE-OBS to give the date,
+<a href=#4491 id=4491 data-nosnippet>4491</a>        // as CASA 6.7.6 imports such headers; it once stopped the import
+<a href=#4492 id=4492 data-nosnippet>4492</a>        // (#1020 review). A TIMESYS with no value is UTC, and a DATE-OBS with
+<a href=#4493 id=4493 data-nosnippet>4493</a>        // none gives no date.
+<a href=#4494 id=4494 data-nosnippet>4494</a>        </span><span class="kw">use </span>casa_types::measures::EpochRef;
+<a href=#4495 id=4495 data-nosnippet>4495</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#4496 id=4496 data-nosnippet>4496</a>        <span class="kw">let </span>date = <span class="string">"DATE-OBS= '2000-01-01T02:57:46.666569'"</span>;
+<a href=#4497 id=4497 data-nosnippet>4497</a>        <span class="kw">let </span>no_mjd = <span class="string">"MJD-OBS =                      / date unavailable"</span>;
+<a href=#4498 id=4498 data-nosnippet>4498</a>        <span class="kw">let </span>cases: [(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str], <span class="prelude-ty">Option</span>&lt;EpochRef&gt;); <span class="number">5</span>] = [
+<a href=#4499 id=4499 data-nosnippet>4499</a>            (<span class="kw-2">&amp;</span>[date, <span class="string">"TIMESYS = 'UTC'"</span>, no_mjd], <span class="prelude-val">Some</span>(EpochRef::UTC)),
+<a href=#4500 id=4500 data-nosnippet>4500</a>            (
+<a href=#4501 id=4501 data-nosnippet>4501</a>                <span class="kw-2">&amp;</span>[date, <span class="string">"TIMESYS = 'TAI'"</span>, <span class="string">"MJD-OBS = 'garbage'"</span>],
+<a href=#4502 id=4502 data-nosnippet>4502</a>                <span class="prelude-val">Some</span>(EpochRef::TAI),
+<a href=#4503 id=4503 data-nosnippet>4503</a>            ),
+<a href=#4504 id=4504 data-nosnippet>4504</a>            (
+<a href=#4505 id=4505 data-nosnippet>4505</a>                <span class="kw-2">&amp;</span>[date, <span class="string">"TIMESYS =                      / unknown"</span>],
+<a href=#4506 id=4506 data-nosnippet>4506</a>                <span class="prelude-val">Some</span>(EpochRef::UTC),
+<a href=#4507 id=4507 data-nosnippet>4507</a>            ),
+<a href=#4508 id=4508 data-nosnippet>4508</a>            (<span class="kw-2">&amp;</span>[<span class="string">"DATE-OBS=                      / unknown"</span>], <span class="prelude-val">None</span>),
+<a href=#4509 id=4509 data-nosnippet>4509</a>            (<span class="kw-2">&amp;</span>[], <span class="prelude-val">None</span>),
+<a href=#4510 id=4510 data-nosnippet>4510</a>        ];
+<a href=#4511 id=4511 data-nosnippet>4511</a>        <span class="kw">for </span>(index, (cards, expected)) <span class="kw">in </span>cases.into_iter().enumerate() {
+<a href=#4512 id=4512 data-nosnippet>4512</a>            <span class="kw">let </span>fits = temp.path().join(<span class="macro">format!</span>(<span class="string">"{index}.fits"</span>));
+<a href=#4513 id=4513 data-nosnippet>4513</a>            <span class="kw">let </span>image_path = temp.path().join(<span class="macro">format!</span>(<span class="string">"{index}.image"</span>));
+<a href=#4514 id=4514 data-nosnippet>4514</a>            write_fits_with_cards(<span class="kw-2">&amp;</span>fits, cards);
+<a href=#4515 id=4515 data-nosnippet>4515</a>            import_fits(<span class="kw-2">&amp;</span>fits, <span class="kw-2">&amp;</span>image_path, <span class="bool-val">false</span>)
+<a href=#4516 id=4516 data-nosnippet>4516</a>                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"case {index}: {error}"</span>));
+<a href=#4517 id=4517 data-nosnippet>4517</a>            <span class="kw">let </span>image = PagedImage::&lt;f32&gt;::open(<span class="kw-2">&amp;</span>image_path).unwrap();
+<a href=#4518 id=4518 data-nosnippet>4518</a>            <span class="kw">let </span>date = image.coordinates().obs_info().date.as_ref();
+<a href=#4519 id=4519 data-nosnippet>4519</a>            <span class="kw">match </span>expected {
+<a href=#4520 id=4520 data-nosnippet>4520</a>                <span class="prelude-val">Some</span>(reference) =&gt; {
+<a href=#4521 id=4521 data-nosnippet>4521</a>                    <span class="kw">let </span>date = date.unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"case {index}: no date"</span>));
+<a href=#4522 id=4522 data-nosnippet>4522</a>                    <span class="macro">assert_eq!</span>(date.refer(), reference, <span class="string">"case {index}"</span>);
+<a href=#4523 id=4523 data-nosnippet>4523</a>                    <span class="kw">let </span>seconds = (date.value().as_mjd() - <span class="number">51_544.123_456_789</span>) * <span class="number">86_400.0</span>;
+<a href=#4524 id=4524 data-nosnippet>4524</a>                    <span class="macro">assert!</span>(seconds.abs() &lt; <span class="number">1e-5</span>, <span class="string">"case {index}: {seconds} s"</span>);
+<a href=#4525 id=4525 data-nosnippet>4525</a>                }
+<a href=#4526 id=4526 data-nosnippet>4526</a>                <span class="prelude-val">None </span>=&gt; <span class="macro">assert!</span>(date.is_none(), <span class="string">"case {index}"</span>),
+<a href=#4527 id=4527 data-nosnippet>4527</a>            }
+<a href=#4528 id=4528 data-nosnippet>4528</a>        }
+<a href=#4529 id=4529 data-nosnippet>4529</a>    }
+<a href=#4530 id=4530 data-nosnippet>4530</a>
+<a href=#4531 id=4531 data-nosnippet>4531</a>    <span class="attr">#[test]
+<a href=#4532 id=4532 data-nosnippet>4532</a>    </span><span class="kw">fn </span>fits_import_export_overwrite_policy_preserves_double_images() {
+<a href=#4533 id=4533 data-nosnippet>4533</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#4534 id=4534 data-nosnippet>4534</a>        <span class="kw">let </span>source_path = temp.path().join(<span class="string">"source.image"</span>);
+<a href=#4535 id=4535 data-nosnippet>4535</a>        <span class="kw">let </span>fits_path = temp.path().join(<span class="string">"source.fits"</span>);
+<a href=#4536 id=4536 data-nosnippet>4536</a>        <span class="kw">let </span>imported_path = temp.path().join(<span class="string">"imported.image"</span>);
+<a href=#4537 id=4537 data-nosnippet>4537</a>        create_double_spectral_test_image(<span class="kw-2">&amp;</span>source_path);
+<a href=#4538 id=4538 data-nosnippet>4538</a>
+<a href=#4539 id=4539 data-nosnippet>4539</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">false</span>).unwrap();
+<a href=#4540 id=4540 data-nosnippet>4540</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#4541 id=4541 data-nosnippet>4541</a>            export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">false</span>),
+<a href=#4542 id=4542 data-nosnippet>4542</a>            <span class="prelude-val">Err</span>(ImageError::Io(message)) <span class="kw">if </span>message.contains(<span class="string">"already exists"</span>)
+<a href=#4543 id=4543 data-nosnippet>4543</a>        ));
+<a href=#4544 id=4544 data-nosnippet>4544</a>        <span class="kw">let </span>export_summary = export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">false</span>, <span class="bool-val">true</span>).unwrap();
+<a href=#4545 id=4545 data-nosnippet>4545</a>        <span class="macro">assert_eq!</span>(export_summary.shape, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>]);
+<a href=#4546 id=4546 data-nosnippet>4546</a>
+<a href=#4547 id=4547 data-nosnippet>4547</a>        import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>).unwrap();
+<a href=#4548 id=4548 data-nosnippet>4548</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#4549 id=4549 data-nosnippet>4549</a>            import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">false</span>),
+<a href=#4550 id=4550 data-nosnippet>4550</a>            <span class="prelude-val">Err</span>(ImageError::Io(message)) <span class="kw">if </span>message.contains(<span class="string">"already exists"</span>)
+<a href=#4551 id=4551 data-nosnippet>4551</a>        ));
+<a href=#4552 id=4552 data-nosnippet>4552</a>        <span class="kw">let </span>import_summary = import_fits(<span class="kw-2">&amp;</span>fits_path, <span class="kw-2">&amp;</span>imported_path, <span class="bool-val">true</span>).unwrap();
+<a href=#4553 id=4553 data-nosnippet>4553</a>        <span class="macro">assert_eq!</span>(import_summary.pixel_type, <span class="string">"Float64"</span>);
+<a href=#4554 id=4554 data-nosnippet>4554</a>        <span class="macro">assert_eq!</span>(import_summary.units, <span class="string">"K"</span>);
+<a href=#4555 id=4555 data-nosnippet>4555</a>        <span class="macro">assert_eq!</span>(import_summary.object_name, <span class="string">"Double Test"</span>);
+<a href=#4556 id=4556 data-nosnippet>4556</a>
+<a href=#4557 id=4557 data-nosnippet>4557</a>        <span class="kw">let </span>imported = PagedImage::&lt;f64&gt;::open(<span class="kw-2">&amp;</span>imported_path).unwrap();
+<a href=#4558 id=4558 data-nosnippet>4558</a>        <span class="macro">assert_eq!</span>(imported.shape(), <span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>]);
+<a href=#4559 id=4559 data-nosnippet>4559</a>        <span class="macro">assert_eq!</span>(imported.units(), <span class="string">"K"</span>);
+<a href=#4560 id=4560 data-nosnippet>4560</a>
+<a href=#4561 id=4561 data-nosnippet>4561</a>        <span class="kw">let </span>header = imhead(<span class="kw-2">&amp;</span>imported_path).unwrap();
+<a href=#4562 id=4562 data-nosnippet>4562</a>        <span class="macro">assert_eq!</span>(header.pixel_type, <span class="string">"Float64"</span>);
+<a href=#4563 id=4563 data-nosnippet>4563</a>        <span class="macro">assert_eq!</span>(header.object_name, <span class="string">"Double Test"</span>);
+<a href=#4564 id=4564 data-nosnippet>4564</a>        <span class="kw">let </span>stats = imstat(
+<a href=#4565 id=4565 data-nosnippet>4565</a>            <span class="kw-2">&amp;</span>imported_path,
+<a href=#4566 id=4566 data-nosnippet>4566</a>            <span class="prelude-val">Some</span>(<span class="string">"0,0,1,1"</span>),
+<a href=#4567 id=4567 data-nosnippet>4567</a>            <span class="prelude-val">None</span>,
+<a href=#4568 id=4568 data-nosnippet>4568</a>            <span class="prelude-val">Some</span>(<span class="string">"0~1"</span>),
+<a href=#4569 id=4569 data-nosnippet>4569</a>            <span class="prelude-val">Some</span>([<span class="number">1.0</span>, <span class="number">8.0</span>]),
+<a href=#4570 id=4570 data-nosnippet>4570</a>        )
+<a href=#4571 id=4571 data-nosnippet>4571</a>        .unwrap();
+<a href=#4572 id=4572 data-nosnippet>4572</a>        <span class="macro">assert_eq!</span>(stats.npts, <span class="number">7.0</span>);
+<a href=#4573 id=4573 data-nosnippet>4573</a>        <span class="macro">assert_eq!</span>(stats.units, <span class="string">"K"</span>);
+<a href=#4574 id=4574 data-nosnippet>4574</a>    }
+<a href=#4575 id=4575 data-nosnippet>4575</a>
+<a href=#4576 id=4576 data-nosnippet>4576</a>    <span class="attr">#[test]
+<a href=#4577 id=4577 data-nosnippet>4577</a>    </span><span class="kw">fn </span>exportfits_writes_default_mask_as_nan_and_velocity_wcs() {
+<a href=#4578 id=4578 data-nosnippet>4578</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#4579 id=4579 data-nosnippet>4579</a>        <span class="kw">let </span>source_path = temp.path().join(<span class="string">"masked.image"</span>);
+<a href=#4580 id=4580 data-nosnippet>4580</a>        <span class="kw">let </span>fits_path = temp.path().join(<span class="string">"masked.fits"</span>);
+<a href=#4581 id=4581 data-nosnippet>4581</a>
+<a href=#4582 id=4582 data-nosnippet>4582</a>        <span class="kw">let </span>rest_frequency = <span class="number">372.0e9</span>;
+<a href=#4583 id=4583 data-nosnippet>4583</a>        <span class="kw">let </span>frequency_increment = -<span class="number">620_000.0</span>;
+<a href=#4584 id=4584 data-nosnippet>4584</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#4585 id=4585 data-nosnippet>4585</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#4586 id=4586 data-nosnippet>4586</a>            DirectionRef::J2000,
+<a href=#4587 id=4587 data-nosnippet>4587</a>            Projection::new(ProjectionType::SIN),
+<a href=#4588 id=4588 data-nosnippet>4588</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
+<a href=#4589 id=4589 data-nosnippet>4589</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
+<a href=#4590 id=4590 data-nosnippet>4590</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4591 id=4591 data-nosnippet>4591</a>        ));
+<a href=#4592 id=4592 data-nosnippet>4592</a>        coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#4593 id=4593 data-nosnippet>4593</a>            FrequencyRef::LSRK,
+<a href=#4594 id=4594 data-nosnippet>4594</a>            rest_frequency,
+<a href=#4595 id=4595 data-nosnippet>4595</a>            frequency_increment,
+<a href=#4596 id=4596 data-nosnippet>4596</a>            <span class="number">0.0</span>,
+<a href=#4597 id=4597 data-nosnippet>4597</a>            rest_frequency,
+<a href=#4598 id=4598 data-nosnippet>4598</a>        ));
+<a href=#4599 id=4599 data-nosnippet>4599</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
+<a href=#4600 id=4600 data-nosnippet>4600</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
+<a href=#4601 id=4601 data-nosnippet>4601</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, <span class="kw-2">&amp;</span>source_path).unwrap();
+<a href=#4602 id=4602 data-nosnippet>4602</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
+<a href=#4603 id=4603 data-nosnippet>4603</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4604 id=4604 data-nosnippet>4604</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
+<a href=#4605 id=4605 data-nosnippet>4605</a>                .map(|value| value <span class="kw">as </span>f32)
+<a href=#4606 id=4606 data-nosnippet>4606</a>                .collect(),
+<a href=#4607 id=4607 data-nosnippet>4607</a>        )
+<a href=#4608 id=4608 data-nosnippet>4608</a>        .unwrap();
+<a href=#4609 id=4609 data-nosnippet>4609</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4610 id=4610 data-nosnippet>4610</a>        image.make_mask(<span class="string">"mask0"</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>).unwrap();
+<a href=#4611 id=4611 data-nosnippet>4611</a>        <span class="kw">let </span><span class="kw-2">mut </span>mask = ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>shape).f(), <span class="bool-val">true</span>);
+<a href=#4612 id=4612 data-nosnippet>4612</a>        mask[[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]] = <span class="bool-val">false</span>;
+<a href=#4613 id=4613 data-nosnippet>4613</a>        mask[[<span class="number">1</span>, <span class="number">1</span>, <span class="number">2</span>]] = <span class="bool-val">false</span>;
+<a href=#4614 id=4614 data-nosnippet>4614</a>        image.put_mask(<span class="string">"mask0"</span>, <span class="kw-2">&amp;</span>mask).unwrap();
+<a href=#4615 id=4615 data-nosnippet>4615</a>        image.save().unwrap();
+<a href=#4616 id=4616 data-nosnippet>4616</a>
+<a href=#4617 id=4617 data-nosnippet>4617</a>        export_fits(<span class="kw-2">&amp;</span>source_path, <span class="kw-2">&amp;</span>fits_path, <span class="bool-val">true</span>, <span class="bool-val">false</span>).unwrap();
 <a href=#4618 id=4618 data-nosnippet>4618</a>
-<a href=#4619 id=4619 data-nosnippet>4619</a>    <span class="kw">fn </span>create_spectral_mask_image(path: <span class="kw-2">&amp;</span>Path) {
-<a href=#4620 id=4620 data-nosnippet>4620</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#4621 id=4621 data-nosnippet>4621</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#4622 id=4622 data-nosnippet>4622</a>            DirectionRef::J2000,
-<a href=#4623 id=4623 data-nosnippet>4623</a>            Projection::new(ProjectionType::SIN),
-<a href=#4624 id=4624 data-nosnippet>4624</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
-<a href=#4625 id=4625 data-nosnippet>4625</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
-<a href=#4626 id=4626 data-nosnippet>4626</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4627 id=4627 data-nosnippet>4627</a>        ));
-<a href=#4628 id=4628 data-nosnippet>4628</a>        coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#4629 id=4629 data-nosnippet>4629</a>            FrequencyRef::LSRK,
-<a href=#4630 id=4630 data-nosnippet>4630</a>            <span class="number">372.0e9</span>,
-<a href=#4631 id=4631 data-nosnippet>4631</a>            <span class="number">2.0e6</span>,
-<a href=#4632 id=4632 data-nosnippet>4632</a>            <span class="number">0.0</span>,
-<a href=#4633 id=4633 data-nosnippet>4633</a>            <span class="number">372.0e9</span>,
-<a href=#4634 id=4634 data-nosnippet>4634</a>        ));
-<a href=#4635 id=4635 data-nosnippet>4635</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
-<a href=#4636 id=4636 data-nosnippet>4636</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path).unwrap();
-<a href=#4637 id=4637 data-nosnippet>4637</a>        <span class="kw">let </span><span class="kw-2">mut </span>data = ArrayD::&lt;f32&gt;::ones(IxDyn(<span class="kw-2">&amp;</span>shape).f());
-<a href=#4638 id=4638 data-nosnippet>4638</a>        <span class="kw">for </span>chan <span class="kw">in </span><span class="number">0</span>..shape[<span class="number">2</span>] {
-<a href=#4639 id=4639 data-nosnippet>4639</a>            data[[<span class="number">0</span>, <span class="number">0</span>, chan]] = <span class="number">0.0</span>;
-<a href=#4640 id=4640 data-nosnippet>4640</a>        }
-<a href=#4641 id=4641 data-nosnippet>4641</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4642 id=4642 data-nosnippet>4642</a>        image.save().unwrap();
-<a href=#4643 id=4643 data-nosnippet>4643</a>    }
-<a href=#4644 id=4644 data-nosnippet>4644</a>
-<a href=#4645 id=4645 data-nosnippet>4645</a>    <span class="kw">fn </span>create_double_spectral_test_image(path: <span class="kw-2">&amp;</span>Path) {
-<a href=#4646 id=4646 data-nosnippet>4646</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#4647 id=4647 data-nosnippet>4647</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#4648 id=4648 data-nosnippet>4648</a>            DirectionRef::J2000,
-<a href=#4649 id=4649 data-nosnippet>4649</a>            Projection::new(ProjectionType::SIN),
-<a href=#4650 id=4650 data-nosnippet>4650</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4651 id=4651 data-nosnippet>4651</a>            [-<span class="number">1.0e-6</span>, <span class="number">1.0e-6</span>],
-<a href=#4652 id=4652 data-nosnippet>4652</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4653 id=4653 data-nosnippet>4653</a>        ));
-<a href=#4654 id=4654 data-nosnippet>4654</a>        coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#4655 id=4655 data-nosnippet>4655</a>            FrequencyRef::LSRK,
-<a href=#4656 id=4656 data-nosnippet>4656</a>            <span class="number">115.0e9</span>,
-<a href=#4657 id=4657 data-nosnippet>4657</a>            <span class="number">1.0e6</span>,
-<a href=#4658 id=4658 data-nosnippet>4658</a>            <span class="number">0.0</span>,
-<a href=#4659 id=4659 data-nosnippet>4659</a>            <span class="number">115.0e9</span>,
-<a href=#4660 id=4660 data-nosnippet>4660</a>        ));
-<a href=#4661 id=4661 data-nosnippet>4661</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>];
-<a href=#4662 id=4662 data-nosnippet>4662</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f64&gt;::create(shape.clone(), coordinates, path).unwrap();
-<a href=#4663 id=4663 data-nosnippet>4663</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
-<a href=#4664 id=4664 data-nosnippet>4664</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4665 id=4665 data-nosnippet>4665</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
-<a href=#4666 id=4666 data-nosnippet>4666</a>                .map(|value| value <span class="kw">as </span>f64 + <span class="number">0.125</span>)
-<a href=#4667 id=4667 data-nosnippet>4667</a>                .collect(),
-<a href=#4668 id=4668 data-nosnippet>4668</a>        )
-<a href=#4669 id=4669 data-nosnippet>4669</a>        .unwrap();
-<a href=#4670 id=4670 data-nosnippet>4670</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4671 id=4671 data-nosnippet>4671</a>        image.set_units(<span class="string">"K"</span>).unwrap();
-<a href=#4672 id=4672 data-nosnippet>4672</a>        image
-<a href=#4673 id=4673 data-nosnippet>4673</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
-<a href=#4674 id=4674 data-nosnippet>4674</a>                beam_set: ImageBeamSet::default(),
-<a href=#4675 id=4675 data-nosnippet>4675</a>                image_type: ImageType::Intensity,
-<a href=#4676 id=4676 data-nosnippet>4676</a>                object_name: <span class="string">"Double Test"</span>.to_string(),
-<a href=#4677 id=4677 data-nosnippet>4677</a>            })
-<a href=#4678 id=4678 data-nosnippet>4678</a>            .unwrap();
-<a href=#4679 id=4679 data-nosnippet>4679</a>        image.save().unwrap();
-<a href=#4680 id=4680 data-nosnippet>4680</a>    }
-<a href=#4681 id=4681 data-nosnippet>4681</a>
-<a href=#4682 id=4682 data-nosnippet>4682</a>    <span class="kw">fn </span>create_direction_only_test_image(path: <span class="kw-2">&amp;</span>Path) {
-<a href=#4683 id=4683 data-nosnippet>4683</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>];
-<a href=#4684 id=4684 data-nosnippet>4684</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
-<a href=#4685 id=4685 data-nosnippet>4685</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), direction_coordinates(), path).unwrap();
-<a href=#4686 id=4686 data-nosnippet>4686</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>shape).f(), <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>]).unwrap();
-<a href=#4687 id=4687 data-nosnippet>4687</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4688 id=4688 data-nosnippet>4688</a>        image.save().unwrap();
-<a href=#4689 id=4689 data-nosnippet>4689</a>    }
-<a href=#4690 id=4690 data-nosnippet>4690</a>
-<a href=#4691 id=4691 data-nosnippet>4691</a>    <span class="kw">fn </span>create_direction_grid_test_image(path: <span class="kw-2">&amp;</span>Path, shape: <span class="kw-2">&amp;</span>[usize]) {
-<a href=#4692 id=4692 data-nosnippet>4692</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
-<a href=#4693 id=4693 data-nosnippet>4693</a>            PagedImage::&lt;f32&gt;::create(shape.to_vec(), direction_coordinates(), path).unwrap();
-<a href=#4694 id=4694 data-nosnippet>4694</a>        <span class="kw">let </span>data = ArrayD::from_shape_fn(IxDyn(shape).f(), |idx| (idx[<span class="number">0</span>] + idx[<span class="number">1</span>] * <span class="number">10 </span>+ <span class="number">1</span>) <span class="kw">as </span>f32);
-<a href=#4695 id=4695 data-nosnippet>4695</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4696 id=4696 data-nosnippet>4696</a>        image.save().unwrap();
-<a href=#4697 id=4697 data-nosnippet>4697</a>    }
-<a href=#4698 id=4698 data-nosnippet>4698</a>
-<a href=#4699 id=4699 data-nosnippet>4699</a>    <span class="kw">fn </span>create_complex_test_image(path: <span class="kw-2">&amp;</span>Path) {
-<a href=#4700 id=4700 data-nosnippet>4700</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>];
-<a href=#4701 id=4701 data-nosnippet>4701</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
-<a href=#4702 id=4702 data-nosnippet>4702</a>            PagedImage::&lt;Complex32&gt;::create(shape.clone(), direction_coordinates(), path).unwrap();
-<a href=#4703 id=4703 data-nosnippet>4703</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
-<a href=#4704 id=4704 data-nosnippet>4704</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
-<a href=#4705 id=4705 data-nosnippet>4705</a>            <span class="macro">vec!</span>[
-<a href=#4706 id=4706 data-nosnippet>4706</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.5</span>),
-<a href=#4707 id=4707 data-nosnippet>4707</a>                Complex32::new(<span class="number">2.0</span>, -<span class="number">0.5</span>),
-<a href=#4708 id=4708 data-nosnippet>4708</a>                Complex32::new(<span class="number">3.0</span>, <span class="number">1.5</span>),
-<a href=#4709 id=4709 data-nosnippet>4709</a>                Complex32::new(<span class="number">4.0</span>, -<span class="number">1.5</span>),
-<a href=#4710 id=4710 data-nosnippet>4710</a>            ],
-<a href=#4711 id=4711 data-nosnippet>4711</a>        )
-<a href=#4712 id=4712 data-nosnippet>4712</a>        .unwrap();
-<a href=#4713 id=4713 data-nosnippet>4713</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#4714 id=4714 data-nosnippet>4714</a>        image.set_units(<span class="string">"Jy"</span>).unwrap();
-<a href=#4715 id=4715 data-nosnippet>4715</a>        image.save().unwrap();
-<a href=#4716 id=4716 data-nosnippet>4716</a>    }
-<a href=#4717 id=4717 data-nosnippet>4717</a>
-<a href=#4718 id=4718 data-nosnippet>4718</a>    <span class="kw">fn </span>direction_coordinates() -&gt; CoordinateSystem {
-<a href=#4719 id=4719 data-nosnippet>4719</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#4720 id=4720 data-nosnippet>4720</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#4721 id=4721 data-nosnippet>4721</a>            DirectionRef::J2000,
-<a href=#4722 id=4722 data-nosnippet>4722</a>            Projection::new(ProjectionType::SIN),
-<a href=#4723 id=4723 data-nosnippet>4723</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
-<a href=#4724 id=4724 data-nosnippet>4724</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
-<a href=#4725 id=4725 data-nosnippet>4725</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#4726 id=4726 data-nosnippet>4726</a>        ));
-<a href=#4727 id=4727 data-nosnippet>4727</a>        coordinates
-<a href=#4728 id=4728 data-nosnippet>4728</a>    }
-<a href=#4729 id=4729 data-nosnippet>4729</a>
-<a href=#4730 id=4730 data-nosnippet>4730</a>    <span class="kw">fn </span>read_fits_pixels(path: <span class="kw-2">&amp;</span>Path) -&gt; Vec&lt;f32&gt; {
-<a href=#4731 id=4731 data-nosnippet>4731</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
-<a href=#4732 id=4732 data-nosnippet>4732</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
-<a href=#4733 id=4733 data-nosnippet>4733</a>        hdu.read_image::&lt;Vec&lt;f32&gt;&gt;(<span class="kw-2">&amp;mut </span>fits).unwrap()
-<a href=#4734 id=4734 data-nosnippet>4734</a>    }
-<a href=#4735 id=4735 data-nosnippet>4735</a>
-<a href=#4736 id=4736 data-nosnippet>4736</a>    <span class="kw">fn </span>assert_fits_key_matches(lhs: <span class="kw-2">&amp;</span>Path, rhs: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) {
-<a href=#4737 id=4737 data-nosnippet>4737</a>        <span class="kw">let </span>lhs_value = read_fits_key_as_string(lhs, key);
-<a href=#4738 id=4738 data-nosnippet>4738</a>        <span class="kw">let </span>rhs_value = read_fits_key_as_string(rhs, key);
-<a href=#4739 id=4739 data-nosnippet>4739</a>        <span class="macro">assert_eq!</span>(lhs_value, rhs_value, <span class="string">"FITS key {key}"</span>);
-<a href=#4740 id=4740 data-nosnippet>4740</a>    }
-<a href=#4741 id=4741 data-nosnippet>4741</a>
-<a href=#4742 id=4742 data-nosnippet>4742</a>    <span class="kw">fn </span>read_fits_key_as_string(path: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#4743 id=4743 data-nosnippet>4743</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
-<a href=#4744 id=4744 data-nosnippet>4744</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
-<a href=#4745 id=4745 data-nosnippet>4745</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(value) = hdu.read_key::&lt;String&gt;(<span class="kw-2">&amp;mut </span>fits, key) {
-<a href=#4746 id=4746 data-nosnippet>4746</a>            <span class="kw">return </span>value.trim_end().to_string();
-<a href=#4747 id=4747 data-nosnippet>4747</a>        }
-<a href=#4748 id=4748 data-nosnippet>4748</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(value) = hdu.read_key::&lt;i64&gt;(<span class="kw-2">&amp;mut </span>fits, key) {
-<a href=#4749 id=4749 data-nosnippet>4749</a>            <span class="kw">return </span>value.to_string();
-<a href=#4750 id=4750 data-nosnippet>4750</a>        }
-<a href=#4751 id=4751 data-nosnippet>4751</a>        hdu.read_key::&lt;f64&gt;(<span class="kw-2">&amp;mut </span>fits, key).unwrap().to_string()
-<a href=#4752 id=4752 data-nosnippet>4752</a>    }
-<a href=#4753 id=4753 data-nosnippet>4753</a>
-<a href=#4754 id=4754 data-nosnippet>4754</a>    <span class="kw">fn </span>read_fits_key_as_f64(path: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) -&gt; f64 {
-<a href=#4755 id=4755 data-nosnippet>4755</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
-<a href=#4756 id=4756 data-nosnippet>4756</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
-<a href=#4757 id=4757 data-nosnippet>4757</a>        hdu.read_key::&lt;f64&gt;(<span class="kw-2">&amp;mut </span>fits, key).unwrap()
-<a href=#4758 id=4758 data-nosnippet>4758</a>    }
-<a href=#4759 id=4759 data-nosnippet>4759</a>}
+<a href=#4619 id=4619 data-nosnippet>4619</a>        <span class="kw">let </span>pixels = read_fits_pixels(<span class="kw-2">&amp;</span>fits_path);
+<a href=#4620 id=4620 data-nosnippet>4620</a>        <span class="macro">assert_eq!</span>(pixels.iter().filter(|value| value.is_nan()).count(), <span class="number">2</span>);
+<a href=#4621 id=4621 data-nosnippet>4621</a>        <span class="macro">assert_eq!</span>(read_fits_key_as_string(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CTYPE3"</span>), <span class="string">"VRAD"</span>);
+<a href=#4622 id=4622 data-nosnippet>4622</a>        <span class="macro">assert_eq!</span>(read_fits_key_as_string(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CUNIT3"</span>), <span class="string">"m"</span>);
+<a href=#4623 id=4623 data-nosnippet>4623</a>        <span class="kw">let </span>crval3 = read_fits_key_as_f64(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CRVAL3"</span>);
+<a href=#4624 id=4624 data-nosnippet>4624</a>        <span class="kw">let </span>cdelt3 = read_fits_key_as_f64(<span class="kw-2">&amp;</span>fits_path, <span class="string">"CDELT3"</span>);
+<a href=#4625 id=4625 data-nosnippet>4625</a>        <span class="macro">assert!</span>(crval3.abs() &lt; <span class="number">1.0e-9</span>);
+<a href=#4626 id=4626 data-nosnippet>4626</a>        <span class="kw">let </span>expected_increment = -SPEED_OF_LIGHT_M_S * frequency_increment / rest_frequency;
+<a href=#4627 id=4627 data-nosnippet>4627</a>        <span class="macro">assert!</span>((cdelt3 - expected_increment).abs() &lt; <span class="number">1.0e-6</span>);
+<a href=#4628 id=4628 data-nosnippet>4628</a>    }
+<a href=#4629 id=4629 data-nosnippet>4629</a>
+<a href=#4630 id=4630 data-nosnippet>4630</a>    <span class="attr">#[test]
+<a href=#4631 id=4631 data-nosnippet>4631</a>    </span><span class="kw">fn </span>optimized_moment_collapse_matches_reference_for_masked_axis() {
+<a href=#4632 id=4632 data-nosnippet>4632</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">2</span>, <span class="number">4</span>];
+<a href=#4633 id=4633 data-nosnippet>4633</a>        <span class="kw">let </span>input = ArrayD::from_shape_vec(
+<a href=#4634 id=4634 data-nosnippet>4634</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4635 id=4635 data-nosnippet>4635</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
+<a href=#4636 id=4636 data-nosnippet>4636</a>                .map(|value| value <span class="kw">as </span>f32 / <span class="number">10.0</span>)
+<a href=#4637 id=4637 data-nosnippet>4637</a>                .collect(),
+<a href=#4638 id=4638 data-nosnippet>4638</a>        )
+<a href=#4639 id=4639 data-nosnippet>4639</a>        .unwrap();
+<a href=#4640 id=4640 data-nosnippet>4640</a>        <span class="kw">let </span>mask = ArrayD::from_shape_vec(
+<a href=#4641 id=4641 data-nosnippet>4641</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4642 id=4642 data-nosnippet>4642</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
+<a href=#4643 id=4643 data-nosnippet>4643</a>                .map(|value| value % <span class="number">3 </span>!= <span class="number">0</span>)
+<a href=#4644 id=4644 data-nosnippet>4644</a>                .collect(),
+<a href=#4645 id=4645 data-nosnippet>4645</a>        )
+<a href=#4646 id=4646 data-nosnippet>4646</a>        .unwrap();
+<a href=#4647 id=4647 data-nosnippet>4647</a>        <span class="kw">let </span>coords = <span class="macro">vec!</span>[-<span class="number">2.0</span>, -<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">1.0</span>];
+<a href=#4648 id=4648 data-nosnippet>4648</a>        <span class="kw">for </span>moment <span class="kw">in </span>[-<span class="number">1</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>] {
+<a href=#4649 id=4649 data-nosnippet>4649</a>            <span class="kw">let </span>actual = collapse_moment(
+<a href=#4650 id=4650 data-nosnippet>4650</a>                <span class="kw-2">&amp;</span>input,
+<a href=#4651 id=4651 data-nosnippet>4651</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
+<a href=#4652 id=4652 data-nosnippet>4652</a>                <span class="number">2</span>,
+<a href=#4653 id=4653 data-nosnippet>4653</a>                <span class="kw-2">&amp;</span>coords,
+<a href=#4654 id=4654 data-nosnippet>4654</a>                <span class="number">0.25</span>,
+<a href=#4655 id=4655 data-nosnippet>4655</a>                <span class="prelude-val">Some</span>([<span class="number">0.4</span>, <span class="number">1.8</span>]),
+<a href=#4656 id=4656 data-nosnippet>4656</a>                moment,
+<a href=#4657 id=4657 data-nosnippet>4657</a>            )
+<a href=#4658 id=4658 data-nosnippet>4658</a>            .unwrap();
+<a href=#4659 id=4659 data-nosnippet>4659</a>            <span class="kw">let </span>expected = collapse_moment_reference(
+<a href=#4660 id=4660 data-nosnippet>4660</a>                <span class="kw-2">&amp;</span>input,
+<a href=#4661 id=4661 data-nosnippet>4661</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
+<a href=#4662 id=4662 data-nosnippet>4662</a>                <span class="number">2</span>,
+<a href=#4663 id=4663 data-nosnippet>4663</a>                <span class="kw-2">&amp;</span>coords,
+<a href=#4664 id=4664 data-nosnippet>4664</a>                <span class="number">0.25</span>,
+<a href=#4665 id=4665 data-nosnippet>4665</a>                <span class="prelude-val">Some</span>([<span class="number">0.4</span>, <span class="number">1.8</span>]),
+<a href=#4666 id=4666 data-nosnippet>4666</a>                moment,
+<a href=#4667 id=4667 data-nosnippet>4667</a>            )
+<a href=#4668 id=4668 data-nosnippet>4668</a>            .unwrap();
+<a href=#4669 id=4669 data-nosnippet>4669</a>            <span class="macro">assert_eq!</span>(actual, expected);
+<a href=#4670 id=4670 data-nosnippet>4670</a>        }
+<a href=#4671 id=4671 data-nosnippet>4671</a>    }
+<a href=#4672 id=4672 data-nosnippet>4672</a>
+<a href=#4673 id=4673 data-nosnippet>4673</a>    <span class="kw">fn </span>create_spectral_test_image(path: <span class="kw-2">&amp;</span>Path) {
+<a href=#4674 id=4674 data-nosnippet>4674</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#4675 id=4675 data-nosnippet>4675</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#4676 id=4676 data-nosnippet>4676</a>            DirectionRef::J2000,
+<a href=#4677 id=4677 data-nosnippet>4677</a>            Projection::new(ProjectionType::SIN),
+<a href=#4678 id=4678 data-nosnippet>4678</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
+<a href=#4679 id=4679 data-nosnippet>4679</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
+<a href=#4680 id=4680 data-nosnippet>4680</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4681 id=4681 data-nosnippet>4681</a>        ));
+<a href=#4682 id=4682 data-nosnippet>4682</a>        coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#4683 id=4683 data-nosnippet>4683</a>            FrequencyRef::LSRK,
+<a href=#4684 id=4684 data-nosnippet>4684</a>            <span class="number">372.0e9</span>,
+<a href=#4685 id=4685 data-nosnippet>4685</a>            <span class="number">2.0e6</span>,
+<a href=#4686 id=4686 data-nosnippet>4686</a>            <span class="number">0.0</span>,
+<a href=#4687 id=4687 data-nosnippet>4687</a>            <span class="number">372.0e9</span>,
+<a href=#4688 id=4688 data-nosnippet>4688</a>        ));
+<a href=#4689 id=4689 data-nosnippet>4689</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
+<a href=#4690 id=4690 data-nosnippet>4690</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path).unwrap();
+<a href=#4691 id=4691 data-nosnippet>4691</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
+<a href=#4692 id=4692 data-nosnippet>4692</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4693 id=4693 data-nosnippet>4693</a>            (<span class="number">1</span>..=shape.iter().product::&lt;usize&gt;())
+<a href=#4694 id=4694 data-nosnippet>4694</a>                .map(|value| value <span class="kw">as </span>f32)
+<a href=#4695 id=4695 data-nosnippet>4695</a>                .collect(),
+<a href=#4696 id=4696 data-nosnippet>4696</a>        )
+<a href=#4697 id=4697 data-nosnippet>4697</a>        .unwrap();
+<a href=#4698 id=4698 data-nosnippet>4698</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4699 id=4699 data-nosnippet>4699</a>        image.set_units(<span class="string">"Jy/beam"</span>).unwrap();
+<a href=#4700 id=4700 data-nosnippet>4700</a>        image
+<a href=#4701 id=4701 data-nosnippet>4701</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
+<a href=#4702 id=4702 data-nosnippet>4702</a>                beam_set: ImageBeamSet::new(GaussianBeam::new(
+<a href=#4703 id=4703 data-nosnippet>4703</a>                    <span class="number">1.7e-4_f64</span>.to_radians(),
+<a href=#4704 id=4704 data-nosnippet>4704</a>                    <span class="number">1.2e-4_f64</span>.to_radians(),
+<a href=#4705 id=4705 data-nosnippet>4705</a>                    (-<span class="number">34.5_f64</span>).to_radians(),
+<a href=#4706 id=4706 data-nosnippet>4706</a>                )),
+<a href=#4707 id=4707 data-nosnippet>4707</a>                image_type: ImageType::Intensity,
+<a href=#4708 id=4708 data-nosnippet>4708</a>                object_name: <span class="string">"NGC Test"</span>.to_string(),
+<a href=#4709 id=4709 data-nosnippet>4709</a>            })
+<a href=#4710 id=4710 data-nosnippet>4710</a>            .unwrap();
+<a href=#4711 id=4711 data-nosnippet>4711</a>        image.save().unwrap();
+<a href=#4712 id=4712 data-nosnippet>4712</a>    }
+<a href=#4713 id=4713 data-nosnippet>4713</a>
+<a href=#4714 id=4714 data-nosnippet>4714</a>    <span class="kw">fn </span>create_spectral_mask_image(path: <span class="kw-2">&amp;</span>Path) {
+<a href=#4715 id=4715 data-nosnippet>4715</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#4716 id=4716 data-nosnippet>4716</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#4717 id=4717 data-nosnippet>4717</a>            DirectionRef::J2000,
+<a href=#4718 id=4718 data-nosnippet>4718</a>            Projection::new(ProjectionType::SIN),
+<a href=#4719 id=4719 data-nosnippet>4719</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
+<a href=#4720 id=4720 data-nosnippet>4720</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
+<a href=#4721 id=4721 data-nosnippet>4721</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4722 id=4722 data-nosnippet>4722</a>        ));
+<a href=#4723 id=4723 data-nosnippet>4723</a>        coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#4724 id=4724 data-nosnippet>4724</a>            FrequencyRef::LSRK,
+<a href=#4725 id=4725 data-nosnippet>4725</a>            <span class="number">372.0e9</span>,
+<a href=#4726 id=4726 data-nosnippet>4726</a>            <span class="number">2.0e6</span>,
+<a href=#4727 id=4727 data-nosnippet>4727</a>            <span class="number">0.0</span>,
+<a href=#4728 id=4728 data-nosnippet>4728</a>            <span class="number">372.0e9</span>,
+<a href=#4729 id=4729 data-nosnippet>4729</a>        ));
+<a href=#4730 id=4730 data-nosnippet>4730</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">3</span>];
+<a href=#4731 id=4731 data-nosnippet>4731</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path).unwrap();
+<a href=#4732 id=4732 data-nosnippet>4732</a>        <span class="kw">let </span><span class="kw-2">mut </span>data = ArrayD::&lt;f32&gt;::ones(IxDyn(<span class="kw-2">&amp;</span>shape).f());
+<a href=#4733 id=4733 data-nosnippet>4733</a>        <span class="kw">for </span>chan <span class="kw">in </span><span class="number">0</span>..shape[<span class="number">2</span>] {
+<a href=#4734 id=4734 data-nosnippet>4734</a>            data[[<span class="number">0</span>, <span class="number">0</span>, chan]] = <span class="number">0.0</span>;
+<a href=#4735 id=4735 data-nosnippet>4735</a>        }
+<a href=#4736 id=4736 data-nosnippet>4736</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4737 id=4737 data-nosnippet>4737</a>        image.save().unwrap();
+<a href=#4738 id=4738 data-nosnippet>4738</a>    }
+<a href=#4739 id=4739 data-nosnippet>4739</a>
+<a href=#4740 id=4740 data-nosnippet>4740</a>    <span class="kw">fn </span>create_double_spectral_test_image(path: <span class="kw-2">&amp;</span>Path) {
+<a href=#4741 id=4741 data-nosnippet>4741</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#4742 id=4742 data-nosnippet>4742</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#4743 id=4743 data-nosnippet>4743</a>            DirectionRef::J2000,
+<a href=#4744 id=4744 data-nosnippet>4744</a>            Projection::new(ProjectionType::SIN),
+<a href=#4745 id=4745 data-nosnippet>4745</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4746 id=4746 data-nosnippet>4746</a>            [-<span class="number">1.0e-6</span>, <span class="number">1.0e-6</span>],
+<a href=#4747 id=4747 data-nosnippet>4747</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4748 id=4748 data-nosnippet>4748</a>        ));
+<a href=#4749 id=4749 data-nosnippet>4749</a>        coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#4750 id=4750 data-nosnippet>4750</a>            FrequencyRef::LSRK,
+<a href=#4751 id=4751 data-nosnippet>4751</a>            <span class="number">115.0e9</span>,
+<a href=#4752 id=4752 data-nosnippet>4752</a>            <span class="number">1.0e6</span>,
+<a href=#4753 id=4753 data-nosnippet>4753</a>            <span class="number">0.0</span>,
+<a href=#4754 id=4754 data-nosnippet>4754</a>            <span class="number">115.0e9</span>,
+<a href=#4755 id=4755 data-nosnippet>4755</a>        ));
+<a href=#4756 id=4756 data-nosnippet>4756</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>, <span class="number">2</span>];
+<a href=#4757 id=4757 data-nosnippet>4757</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f64&gt;::create(shape.clone(), coordinates, path).unwrap();
+<a href=#4758 id=4758 data-nosnippet>4758</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
+<a href=#4759 id=4759 data-nosnippet>4759</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4760 id=4760 data-nosnippet>4760</a>            (<span class="number">0</span>..shape.iter().product::&lt;usize&gt;())
+<a href=#4761 id=4761 data-nosnippet>4761</a>                .map(|value| value <span class="kw">as </span>f64 + <span class="number">0.125</span>)
+<a href=#4762 id=4762 data-nosnippet>4762</a>                .collect(),
+<a href=#4763 id=4763 data-nosnippet>4763</a>        )
+<a href=#4764 id=4764 data-nosnippet>4764</a>        .unwrap();
+<a href=#4765 id=4765 data-nosnippet>4765</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4766 id=4766 data-nosnippet>4766</a>        image.set_units(<span class="string">"K"</span>).unwrap();
+<a href=#4767 id=4767 data-nosnippet>4767</a>        image
+<a href=#4768 id=4768 data-nosnippet>4768</a>            .set_image_info(<span class="kw-2">&amp;</span>ImageInfo {
+<a href=#4769 id=4769 data-nosnippet>4769</a>                beam_set: ImageBeamSet::default(),
+<a href=#4770 id=4770 data-nosnippet>4770</a>                image_type: ImageType::Intensity,
+<a href=#4771 id=4771 data-nosnippet>4771</a>                object_name: <span class="string">"Double Test"</span>.to_string(),
+<a href=#4772 id=4772 data-nosnippet>4772</a>            })
+<a href=#4773 id=4773 data-nosnippet>4773</a>            .unwrap();
+<a href=#4774 id=4774 data-nosnippet>4774</a>        image.save().unwrap();
+<a href=#4775 id=4775 data-nosnippet>4775</a>    }
+<a href=#4776 id=4776 data-nosnippet>4776</a>
+<a href=#4777 id=4777 data-nosnippet>4777</a>    <span class="kw">fn </span>create_direction_only_test_image(path: <span class="kw-2">&amp;</span>Path) {
+<a href=#4778 id=4778 data-nosnippet>4778</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>];
+<a href=#4779 id=4779 data-nosnippet>4779</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
+<a href=#4780 id=4780 data-nosnippet>4780</a>            PagedImage::&lt;f32&gt;::create(shape.clone(), direction_coordinates(), path).unwrap();
+<a href=#4781 id=4781 data-nosnippet>4781</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>shape).f(), <span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>]).unwrap();
+<a href=#4782 id=4782 data-nosnippet>4782</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4783 id=4783 data-nosnippet>4783</a>        image.save().unwrap();
+<a href=#4784 id=4784 data-nosnippet>4784</a>    }
+<a href=#4785 id=4785 data-nosnippet>4785</a>
+<a href=#4786 id=4786 data-nosnippet>4786</a>    <span class="kw">fn </span>create_direction_grid_test_image(path: <span class="kw-2">&amp;</span>Path, shape: <span class="kw-2">&amp;</span>[usize]) {
+<a href=#4787 id=4787 data-nosnippet>4787</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
+<a href=#4788 id=4788 data-nosnippet>4788</a>            PagedImage::&lt;f32&gt;::create(shape.to_vec(), direction_coordinates(), path).unwrap();
+<a href=#4789 id=4789 data-nosnippet>4789</a>        <span class="kw">let </span>data = ArrayD::from_shape_fn(IxDyn(shape).f(), |idx| (idx[<span class="number">0</span>] + idx[<span class="number">1</span>] * <span class="number">10 </span>+ <span class="number">1</span>) <span class="kw">as </span>f32);
+<a href=#4790 id=4790 data-nosnippet>4790</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4791 id=4791 data-nosnippet>4791</a>        image.save().unwrap();
+<a href=#4792 id=4792 data-nosnippet>4792</a>    }
+<a href=#4793 id=4793 data-nosnippet>4793</a>
+<a href=#4794 id=4794 data-nosnippet>4794</a>    <span class="kw">fn </span>create_complex_test_image(path: <span class="kw-2">&amp;</span>Path) {
+<a href=#4795 id=4795 data-nosnippet>4795</a>        <span class="kw">let </span>shape = <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>];
+<a href=#4796 id=4796 data-nosnippet>4796</a>        <span class="kw">let </span><span class="kw-2">mut </span>image =
+<a href=#4797 id=4797 data-nosnippet>4797</a>            PagedImage::&lt;Complex32&gt;::create(shape.clone(), direction_coordinates(), path).unwrap();
+<a href=#4798 id=4798 data-nosnippet>4798</a>        <span class="kw">let </span>data = ArrayD::from_shape_vec(
+<a href=#4799 id=4799 data-nosnippet>4799</a>            IxDyn(<span class="kw-2">&amp;</span>shape).f(),
+<a href=#4800 id=4800 data-nosnippet>4800</a>            <span class="macro">vec!</span>[
+<a href=#4801 id=4801 data-nosnippet>4801</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.5</span>),
+<a href=#4802 id=4802 data-nosnippet>4802</a>                Complex32::new(<span class="number">2.0</span>, -<span class="number">0.5</span>),
+<a href=#4803 id=4803 data-nosnippet>4803</a>                Complex32::new(<span class="number">3.0</span>, <span class="number">1.5</span>),
+<a href=#4804 id=4804 data-nosnippet>4804</a>                Complex32::new(<span class="number">4.0</span>, -<span class="number">1.5</span>),
+<a href=#4805 id=4805 data-nosnippet>4805</a>            ],
+<a href=#4806 id=4806 data-nosnippet>4806</a>        )
+<a href=#4807 id=4807 data-nosnippet>4807</a>        .unwrap();
+<a href=#4808 id=4808 data-nosnippet>4808</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#4809 id=4809 data-nosnippet>4809</a>        image.set_units(<span class="string">"Jy"</span>).unwrap();
+<a href=#4810 id=4810 data-nosnippet>4810</a>        image.save().unwrap();
+<a href=#4811 id=4811 data-nosnippet>4811</a>    }
+<a href=#4812 id=4812 data-nosnippet>4812</a>
+<a href=#4813 id=4813 data-nosnippet>4813</a>    <span class="kw">fn </span>direction_coordinates() -&gt; CoordinateSystem {
+<a href=#4814 id=4814 data-nosnippet>4814</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#4815 id=4815 data-nosnippet>4815</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#4816 id=4816 data-nosnippet>4816</a>            DirectionRef::J2000,
+<a href=#4817 id=4817 data-nosnippet>4817</a>            Projection::new(ProjectionType::SIN),
+<a href=#4818 id=4818 data-nosnippet>4818</a>            [<span class="number">1.2</span>, -<span class="number">0.4</span>],
+<a href=#4819 id=4819 data-nosnippet>4819</a>            [-<span class="number">2.0e-6</span>, <span class="number">3.0e-6</span>],
+<a href=#4820 id=4820 data-nosnippet>4820</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#4821 id=4821 data-nosnippet>4821</a>        ));
+<a href=#4822 id=4822 data-nosnippet>4822</a>        coordinates
+<a href=#4823 id=4823 data-nosnippet>4823</a>    }
+<a href=#4824 id=4824 data-nosnippet>4824</a>
+<a href=#4825 id=4825 data-nosnippet>4825</a>    <span class="kw">fn </span>read_fits_pixels(path: <span class="kw-2">&amp;</span>Path) -&gt; Vec&lt;f32&gt; {
+<a href=#4826 id=4826 data-nosnippet>4826</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
+<a href=#4827 id=4827 data-nosnippet>4827</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
+<a href=#4828 id=4828 data-nosnippet>4828</a>        hdu.read_image::&lt;Vec&lt;f32&gt;&gt;(<span class="kw-2">&amp;mut </span>fits).unwrap()
+<a href=#4829 id=4829 data-nosnippet>4829</a>    }
+<a href=#4830 id=4830 data-nosnippet>4830</a>
+<a href=#4831 id=4831 data-nosnippet>4831</a>    <span class="kw">fn </span>assert_fits_key_matches(lhs: <span class="kw-2">&amp;</span>Path, rhs: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) {
+<a href=#4832 id=4832 data-nosnippet>4832</a>        <span class="kw">let </span>lhs_value = read_fits_key_as_string(lhs, key);
+<a href=#4833 id=4833 data-nosnippet>4833</a>        <span class="kw">let </span>rhs_value = read_fits_key_as_string(rhs, key);
+<a href=#4834 id=4834 data-nosnippet>4834</a>        <span class="macro">assert_eq!</span>(lhs_value, rhs_value, <span class="string">"FITS key {key}"</span>);
+<a href=#4835 id=4835 data-nosnippet>4835</a>    }
+<a href=#4836 id=4836 data-nosnippet>4836</a>
+<a href=#4837 id=4837 data-nosnippet>4837</a>    <span class="kw">fn </span>read_fits_key_as_string(path: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#4838 id=4838 data-nosnippet>4838</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
+<a href=#4839 id=4839 data-nosnippet>4839</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
+<a href=#4840 id=4840 data-nosnippet>4840</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(value) = hdu.read_key::&lt;String&gt;(<span class="kw-2">&amp;mut </span>fits, key) {
+<a href=#4841 id=4841 data-nosnippet>4841</a>            <span class="kw">return </span>value.trim_end().to_string();
+<a href=#4842 id=4842 data-nosnippet>4842</a>        }
+<a href=#4843 id=4843 data-nosnippet>4843</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(value) = hdu.read_key::&lt;i64&gt;(<span class="kw-2">&amp;mut </span>fits, key) {
+<a href=#4844 id=4844 data-nosnippet>4844</a>            <span class="kw">return </span>value.to_string();
+<a href=#4845 id=4845 data-nosnippet>4845</a>        }
+<a href=#4846 id=4846 data-nosnippet>4846</a>        hdu.read_key::&lt;f64&gt;(<span class="kw-2">&amp;mut </span>fits, key).unwrap().to_string()
+<a href=#4847 id=4847 data-nosnippet>4847</a>    }
+<a href=#4848 id=4848 data-nosnippet>4848</a>
+<a href=#4849 id=4849 data-nosnippet>4849</a>    <span class="kw">fn </span>read_fits_key_as_f64(path: <span class="kw-2">&amp;</span>Path, key: <span class="kw-2">&amp;</span>str) -&gt; f64 {
+<a href=#4850 id=4850 data-nosnippet>4850</a>        <span class="kw">let </span><span class="kw-2">mut </span>fits = FitsFile::open(path).unwrap();
+<a href=#4851 id=4851 data-nosnippet>4851</a>        <span class="kw">let </span>hdu = fits.primary_hdu().unwrap();
+<a href=#4852 id=4852 data-nosnippet>4852</a>        hdu.read_key::&lt;f64&gt;(<span class="kw-2">&amp;mut </span>fits, key).unwrap()
+<a href=#4853 id=4853 data-nosnippet>4853</a>    }
+<a href=#4854 id=4854 data-nosnippet>4854</a>}
 </code></pre></div></section></main></body></html>

@@ -2066,6 +2066,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#importfits-reads-every-fits-date-as-utc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importfits reads every FITS date as UTC
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2193,7 +2204,8 @@ Flagging behaviours casa-rs does not follow:
 <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
 <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.
 Coordinate behaviours casa-rs does not follow:
-<a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">a tabular coordinate's subimage</a>.</p>
+<a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">a tabular coordinate's subimage</a>,
+<a href="#importfits-reads-every-fits-date-as-utc">a FITS date's time scale</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -4488,6 +4500,24 @@ reads the input's world values at the pixels it was cut from. CASA's
 <code>imsubimage</code> ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.</p>
+<h2 id="importfits-reads-every-fits-date-as-utc"><code>importfits</code> reads every FITS date as UTC<a class="headerlink" href="#importfits-reads-every-fits-date-as-utc" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1017)</li>
+<li>Affected code: casacore <code>coordinates/Coordinates/FITSCoordinateUtil.cc</code>
+  (<code>getObsInfo</code>, which reads <code>TIMESYS</code> from the header record, and the WCS
+  date wcslib holds)</li>
+</ul>
+<p><code>exportfits</code> writes an image's observation date in the epoch's own time
+scale, <code>DATE-OBS</code> with <code>TIMESYS</code> naming the scale (<code>ObsInfo::toFITS</code>).
+<code>importfits</code> gives the date back with the same calendar value but labelled
+UTC, whatever <code>TIMESYS</code> says. An image observed at 2020-05-31 12:00 TAI
+exported by CASA 6.7.6 with <code>TIMESYS = 'TAI'</code> imports at 2020-05-31 12:00
+UTC, 37 seconds later. Where the scale is lost was not pinned down:
+<code>getObsInfo</code> reads <code>TIMESYS</code> from the header record and the date from
+wcslib's <code>mjdobs</code>, so the scale is gone by then. casa-rs reads <code>MJD-OBS</code> or <code>DATE-OBS</code> in the scale <code>TIMESYS</code> names, UTC
+when it names none (<code>casa_coordinates::fits::from_fits_header</code>), so the
+round trip keeps the date.</p>
 
 
 

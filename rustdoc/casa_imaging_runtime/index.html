@@ -50,7 +50,7 @@ and simulator session fills and which keep what they hold after it.</dd><dt><a c
 finishes (<a href="fn.run_minor_cycle.html" title="fn casa_imaging_runtime::run_minor_cycle"><code>run_minor_cycle</code></a>): for each of <code>terms</code> terms its record and
 its copy while the cycle merges every plane’s terms in model order,
 which also covers what the model holds per term while it queues them
-([<code>ModelLifecycle::QUEUED_TERM_BYTES</code>]); and the plane’s component
+(<a href="../casa_imaging_deconvolution/model_lifecycle/struct.ModelLifecycle.html#associatedconstant.QUEUED_TERM_BYTES" title="associated constant casa_imaging_deconvolution::model_lifecycle::ModelLifecycle::QUEUED_TERM_BYTES"><code>ModelLifecycle::QUEUED_TERM_BYTES</code></a>); and the plane’s component
 records.</dd><dt><a class="fn" href="fn.row_layout.html" title="fn casa_imaging_runtime::row_layout">row_<wbr>layout</a></dt><dd>One row of the blocks <code>problem</code>‘s source delivers: the most channels any
 selected spectral window gives a row and their frequencies’ extent, the
 most correlations any selection routes, and the image domains each row
@@ -58,7 +58,7 @@ is projected on; no rows.</dd><dt><a class="fn" href="fn.run_bytes.html" title="
 besides each plane’s terms (<a href="fn.result_bytes.html" title="fn casa_imaging_runtime::result_bytes"><code>super::result_bytes</code></a>): on each of the
 planes solved at once on <code>workers</code> (one when a single plane spreads over
 the team), the load and the solve
-([<code>casa_imaging_deconvolution::solve_bytes</code>]), and a record of every
+(<a href="../casa_imaging_deconvolution/driver/fn.solve_bytes.html" title="fn casa_imaging_deconvolution::driver::solve_bytes"><code>casa_imaging_deconvolution::solve_bytes</code></a>), and a record of every
 plane. A Clark refresh already in <code>cache</code> is charged with the cache, not
 here.</dd><dt><a class="fn" href="fn.run_bytes_for.html" title="fn casa_imaging_runtime::run_bytes_for">run_<wbr>bytes_<wbr>for</a></dt><dd><a href="fn.run_bytes.html" title="fn casa_imaging_runtime::run_bytes"><code>run_bytes</code></a> for a state of <code>layout</code>, cleaning at most <code>iterations</code> per
 plane beside a cached Clark refresh of <code>refresh</code> bytes. A lone plane’s

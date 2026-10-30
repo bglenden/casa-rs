@@ -1,0 +1,168 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-coordinates/src/fits/obs_date.rs`."><title>obs_date.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_coordinates" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_coordinates/fits/</div>obs_date.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The observation date in a FITS header: `DATE-OBS` and `TIMESYS`.
+<a href=#3 id=3 data-nosnippet>3</a>//!
+<a href=#4 id=4 data-nosnippet>4</a>//! casacore's `ObsInfo::toFITS` writes the date with `FITSDateUtil::toFITS`:
+<a href=#5 id=5 data-nosnippet>5</a>//! `MVTime::string(MVTime::FITS, 12)` of the epoch in its own time scale,
+<a href=#6 id=6 data-nosnippet>6</a>//! `yyyy-mm-ddThh:mm:ss.ssssss`, with that scale in `TIMESYS`.
+<a href=#7 id=7 data-nosnippet>7</a>//! `FITSCoordinateUtil::getObsInfo` reads it back: `MJD-OBS` when the header
+<a href=#8 id=8 data-nosnippet>8</a>//! has it, else `DATE-OBS` (`FITSDateUtil::fromFITS`, which also reads
+<a href=#9 id=9 data-nosnippet>9</a>//! FITS's old `dd/mm/yy`), in the scale `TIMESYS` names, UTC without one.
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>casa_types::measures::epoch::{EpochRef, MEpoch};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_types::quanta::Quantity;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_types::quanta::format::{FITS, format_time};
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="doccomment">/// `DATE-OBS` and `TIMESYS` for `epoch`.
+<a href=#16 id=16 data-nosnippet>16</a>///
+<a href=#17 id=17 data-nosnippet>17</a>/// casacore names Terrestrial Time `TDT` and UT1 `UT`; this writes the FITS
+<a href=#18 id=18 data-nosnippet>18</a>/// standard's `TT` and `UT1`, which casacore reads as the same scales.
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fits_date(epoch: <span class="kw-2">&amp;</span>MEpoch) -&gt; (String, String) {
+<a href=#20 id=20 data-nosnippet>20</a>    (
+<a href=#21 id=21 data-nosnippet>21</a>        format_time(epoch.value().as_mjd(), FITS, <span class="number">12</span>),
+<a href=#22 id=22 data-nosnippet>22</a>        epoch.refer().as_str().to_string(),
+<a href=#23 id=23 data-nosnippet>23</a>    )
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// The epoch of a header's `MJD-OBS`, or else its `DATE-OBS`, in the scale
+<a href=#27 id=27 data-nosnippet>27</a>/// of its `TIMESYS`; `None` when it has neither date, or the date or scale
+<a href=#28 id=28 data-nosnippet>28</a>/// does not decode. casa-rs then sets no date rather than guess a scale:
+<a href=#29 id=29 data-nosnippet>29</a>/// `FITSDateUtil::fromFITS` refuses an unknown one, though CASA 6.7.6's
+<a href=#30 id=30 data-nosnippet>30</a>/// `importfits`, which loses every `TIMESYS`, labels the date UTC.
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>obs_epoch(
+<a href=#32 id=32 data-nosnippet>32</a>    mjd_obs: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#33 id=33 data-nosnippet>33</a>    date_obs: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt;,
+<a href=#34 id=34 data-nosnippet>34</a>    timesys: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt;,
+<a href=#35 id=35 data-nosnippet>35</a>) -&gt; <span class="prelude-ty">Option</span>&lt;MEpoch&gt; {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">let </span>reference = <span class="kw">match </span>timesys.map(str::trim) {
+<a href=#37 id=37 data-nosnippet>37</a>        <span class="prelude-val">None </span>| <span class="prelude-val">Some</span>(<span class="string">""</span>) =&gt; EpochRef::UTC,
+<a href=#38 id=38 data-nosnippet>38</a>        <span class="prelude-val">Some</span>(name) =&gt; name.parse().ok()<span class="question-mark">?</span>,
+<a href=#39 id=39 data-nosnippet>39</a>    };
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="kw">let </span>mjd = <span class="kw">match </span>(mjd_obs, date_obs) {
+<a href=#41 id=41 data-nosnippet>41</a>        (<span class="prelude-val">Some</span>(mjd), <span class="kw">_</span>) =&gt; mjd,
+<a href=#42 id=42 data-nosnippet>42</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(date)) =&gt; date_mjd(date.trim())<span class="question-mark">?</span>,
+<a href=#43 id=43 data-nosnippet>43</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="kw">return </span><span class="prelude-val">None</span>,
+<a href=#44 id=44 data-nosnippet>44</a>    };
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="prelude-val">Some</span>(MEpoch::from_mjd(mjd, reference))
+<a href=#46 id=46 data-nosnippet>46</a>}
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a><span class="doccomment">/// `date` in MJD days: `yyyy-mm-dd[Thh:mm:ss[.s…]]`, or the old `dd/mm/yy`
+<a href=#49 id=49 data-nosnippet>49</a>/// of the twentieth century.
+<a href=#50 id=50 data-nosnippet>50</a></span><span class="kw">fn </span>date_mjd(date: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">if </span>date.contains(<span class="string">'/'</span>) {
+<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>parts = date.split(<span class="string">'/'</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">let </span>[day, month, year] = parts.as_slice() <span class="kw">else </span>{
+<a href=#54 id=54 data-nosnippet>54</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#55 id=55 data-nosnippet>55</a>        };
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>two_digits = |part: &amp;&amp;str| part.len() == <span class="number">2 </span>&amp;&amp; part.bytes().all(|b| b.is_ascii_digit());
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">if </span>![day, month, year].into_iter().all(two_digits) {
+<a href=#58 id=58 data-nosnippet>58</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#59 id=59 data-nosnippet>59</a>        }
+<a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">return </span>days(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"19{year}/{month}/{day}"</span>));
+<a href=#61 id=61 data-nosnippet>61</a>    }
+<a href=#62 id=62 data-nosnippet>62</a>    days(date)
+<a href=#63 id=63 data-nosnippet>63</a>}
+<a href=#64 id=64 data-nosnippet>64</a>
+<a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// `text` read as `MVTime::read` reads a date, in days.
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">fn </span>days(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>quantity = Quantity::read(text).ok()<span class="question-mark">?</span>;
+<a href=#68 id=68 data-nosnippet>68</a>    (quantity.unit().name() == <span class="string">"d"</span>).then(|| quantity.value())
+<a href=#69 id=69 data-nosnippet>69</a>}
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="attr">#[cfg(test)]
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">mod </span>tests {
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">fn </span>mjd(epoch: <span class="kw-2">&amp;</span>MEpoch) -&gt; f64 {
+<a href=#76 id=76 data-nosnippet>76</a>        epoch.value().as_mjd()
+<a href=#77 id=77 data-nosnippet>77</a>    }
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="attr">#[test]
+<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">fn </span>a_date_is_written_as_casa_writes_it() {
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="comment">// CASA 6.7.6's exportfits of an image observed at MJD
+<a href=#82 id=82 data-nosnippet>82</a>        // 51544.123456789 UTC, and of one at 59000.5 TAI.
+<a href=#83 id=83 data-nosnippet>83</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#84 id=84 data-nosnippet>84</a>            fits_date(<span class="kw-2">&amp;</span>MEpoch::from_mjd(<span class="number">51_544.123_456_789</span>, EpochRef::UTC)),
+<a href=#85 id=85 data-nosnippet>85</a>            (<span class="string">"2000-01-01T02:57:46.666569"</span>.to_string(), <span class="string">"UTC"</span>.to_string())
+<a href=#86 id=86 data-nosnippet>86</a>        );
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="macro">assert_eq!</span>(
+<a href=#88 id=88 data-nosnippet>88</a>            fits_date(<span class="kw-2">&amp;</span>MEpoch::from_mjd(<span class="number">59_000.5</span>, EpochRef::TAI)),
+<a href=#89 id=89 data-nosnippet>89</a>            (<span class="string">"2020-05-31T12:00:00.000000"</span>.to_string(), <span class="string">"TAI"</span>.to_string())
+<a href=#90 id=90 data-nosnippet>90</a>        );
+<a href=#91 id=91 data-nosnippet>91</a>    }
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="attr">#[test]
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">fn </span>dates_at_day_and_leap_day_boundaries_are_written_as_casa_writes_them() {
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="comment">// CASA 6.7.6's exportfits of each epoch (#1020 review): the last
+<a href=#96 id=96 data-nosnippet>96</a>        // microsecond of a day, the last of a leap day and the next day's
+<a href=#97 id=97 data-nosnippet>97</a>        // first, and an epoch whose rounding would carry over midnight.
+<a href=#98 id=98 data-nosnippet>98</a>        </span><span class="kw">for </span>(value, reference, date) <span class="kw">in </span>[
+<a href=#99 id=99 data-nosnippet>99</a>            (
+<a href=#100 id=100 data-nosnippet>100</a>                <span class="number">59_000.999_999_999_99</span>,
+<a href=#101 id=101 data-nosnippet>101</a>                EpochRef::UTC,
+<a href=#102 id=102 data-nosnippet>102</a>                <span class="string">"2020-05-31T23:59:59.999999"</span>,
+<a href=#103 id=103 data-nosnippet>103</a>            ),
+<a href=#104 id=104 data-nosnippet>104</a>            (
+<a href=#105 id=105 data-nosnippet>105</a>                <span class="number">59_001.0 </span>- <span class="number">5.0e-12</span>,
+<a href=#106 id=106 data-nosnippet>106</a>                EpochRef::UTC,
+<a href=#107 id=107 data-nosnippet>107</a>                <span class="string">"2020-05-31T23:59:59.999999"</span>,
+<a href=#108 id=108 data-nosnippet>108</a>            ),
+<a href=#109 id=109 data-nosnippet>109</a>            (<span class="number">58_908.5</span>, EpochRef::UTC, <span class="string">"2020-02-29T12:00:00.000000"</span>),
+<a href=#110 id=110 data-nosnippet>110</a>            (
+<a href=#111 id=111 data-nosnippet>111</a>                <span class="number">58_908.999_999_999_99</span>,
+<a href=#112 id=112 data-nosnippet>112</a>                EpochRef::UTC,
+<a href=#113 id=113 data-nosnippet>113</a>                <span class="string">"2020-02-29T23:59:59.999999"</span>,
+<a href=#114 id=114 data-nosnippet>114</a>            ),
+<a href=#115 id=115 data-nosnippet>115</a>            (<span class="number">58_909.0</span>, EpochRef::UTC, <span class="string">"2020-03-01T00:00:00.000000"</span>),
+<a href=#116 id=116 data-nosnippet>116</a>            <span class="comment">// CASA names these scales UT and TDT; casa-rs writes the FITS
+<a href=#117 id=117 data-nosnippet>117</a>            // standard's UT1 and TT, which casacore reads alike.
+<a href=#118 id=118 data-nosnippet>118</a>            </span>(<span class="number">59_000.25</span>, EpochRef::UT1, <span class="string">"2020-05-31T06:00:00.000000"</span>),
+<a href=#119 id=119 data-nosnippet>119</a>            (<span class="number">51_544.5</span>, EpochRef::TT, <span class="string">"2000-01-01T12:00:00.000000"</span>),
+<a href=#120 id=120 data-nosnippet>120</a>        ] {
+<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw">let </span>(written, timesys) = fits_date(<span class="kw-2">&amp;</span>MEpoch::from_mjd(value, reference));
+<a href=#122 id=122 data-nosnippet>122</a>            <span class="macro">assert_eq!</span>(written, date, <span class="string">"{value} {reference:?}"</span>);
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="macro">assert_eq!</span>(timesys, reference.as_str());
+<a href=#124 id=124 data-nosnippet>124</a>        }
+<a href=#125 id=125 data-nosnippet>125</a>    }
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="attr">#[test]
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">fn </span>a_written_date_reads_back_in_its_scale() {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">for </span>(value, reference) <span class="kw">in </span>[
+<a href=#130 id=130 data-nosnippet>130</a>            (<span class="number">51_544.123_456_789</span>, EpochRef::UTC),
+<a href=#131 id=131 data-nosnippet>131</a>            (<span class="number">59_000.5</span>, EpochRef::TAI),
+<a href=#132 id=132 data-nosnippet>132</a>            (<span class="number">60_000.25</span>, EpochRef::TT),
+<a href=#133 id=133 data-nosnippet>133</a>            (<span class="number">59_000.25</span>, EpochRef::UT1),
+<a href=#134 id=134 data-nosnippet>134</a>            (<span class="number">58_908.999_999_999_99</span>, EpochRef::UTC),
+<a href=#135 id=135 data-nosnippet>135</a>        ] {
+<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">let </span>(date, timesys) = fits_date(<span class="kw-2">&amp;</span>MEpoch::from_mjd(value, reference));
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>epoch = obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>date), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>timesys)).unwrap();
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="macro">assert_eq!</span>(epoch.refer(), reference);
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="comment">// To the microsecond the date is written to.
+<a href=#140 id=140 data-nosnippet>140</a>            </span><span class="macro">assert!</span>((mjd(<span class="kw-2">&amp;</span>epoch) - value).abs() * <span class="number">86_400.0 </span>&lt; <span class="number">1e-6</span>, <span class="string">"{date}"</span>);
+<a href=#141 id=141 data-nosnippet>141</a>        }
+<a href=#142 id=142 data-nosnippet>142</a>    }
+<a href=#143 id=143 data-nosnippet>143</a>
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="attr">#[test]
+<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">fn </span>headers_read_as_casacore_reads_them() {
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="comment">// No TIMESYS is UTC; casacore's aliases name their scales.
+<a href=#147 id=147 data-nosnippet>147</a>        </span><span class="kw">let </span>epoch = obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"2020-05-31T12:00:00"</span>), <span class="prelude-val">None</span>).unwrap();
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">assert_eq!</span>((mjd(<span class="kw-2">&amp;</span>epoch), epoch.refer()), (<span class="number">59_000.5</span>, EpochRef::UTC));
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>epoch = obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"2020-05-31"</span>), <span class="prelude-val">Some</span>(<span class="string">"TDT "</span>)).unwrap();
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="macro">assert_eq!</span>((mjd(<span class="kw-2">&amp;</span>epoch), epoch.refer()), (<span class="number">59_000.0</span>, EpochRef::TT));
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="comment">// MJD-OBS before DATE-OBS.
+<a href=#152 id=152 data-nosnippet>152</a>        </span><span class="kw">let </span>epoch = obs_epoch(<span class="prelude-val">Some</span>(<span class="number">51_544.5</span>), <span class="prelude-val">Some</span>(<span class="string">"2020-05-31"</span>), <span class="prelude-val">Some</span>(<span class="string">"IAT"</span>)).unwrap();
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="macro">assert_eq!</span>((mjd(<span class="kw-2">&amp;</span>epoch), epoch.refer()), (<span class="number">51_544.5</span>, EpochRef::TAI));
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="comment">// FITS's old form, of the twentieth century.
+<a href=#155 id=155 data-nosnippet>155</a>        </span><span class="kw">let </span>epoch = obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"31/12/99"</span>), <span class="prelude-val">None</span>).unwrap();
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="macro">assert_eq!</span>(mjd(<span class="kw-2">&amp;</span>epoch), <span class="number">51_543.0</span>);
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="attr">#[test]
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">fn </span>a_date_or_scale_that_does_not_decode_gives_no_date() {
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="comment">// casa-rs's old placeholder, an unknown scale, and no date at all.
+<a href=#162 id=162 data-nosnippet>162</a>        </span><span class="macro">assert!</span>(obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"MJD 51544.0000000000"</span>), <span class="prelude-val">None</span>).is_none());
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert!</span>(obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"2020-05-31"</span>), <span class="prelude-val">Some</span>(<span class="string">"GPS-ish"</span>)).is_none());
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="macro">assert!</span>(obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"1/2/3"</span>), <span class="prelude-val">None</span>).is_none());
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert!</span>(obs_epoch(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="string">"UTC"</span>)).is_none());
+<a href=#166 id=166 data-nosnippet>166</a>    }
+<a href=#167 id=167 data-nosnippet>167</a>}
+</code></pre></div></section></main></body></html>
