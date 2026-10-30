@@ -30,6 +30,7 @@ use super::metadata::{
     invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
     time_reference, visibility_units,
 };
+use super::opening;
 use crate::observation_io::OpenOptions;
 use crate::observation_io::msv2::{metres, radians};
 
@@ -131,6 +132,27 @@ impl Msv4Observation {
         path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
+        Self::open_granted(path, options, &mut |_| Ok(()))
+    }
+
+    /// [`Self::open_with`], asking `grant` for the bytes the opening will
+    /// hold before it decodes any dataset: what each dataset holds once
+    /// open and, beyond, the largest dataset's decoding, projected from the
+    /// arrays' shapes and element sizes (the `opening` module). The
+    /// processing set's metadata documents and the projection are read
+    /// first. An error from `grant` refuses the opening with nothing more
+    /// decoded. What the opened observation holds is
+    /// [`Self::held_bytes`], to which a caller that admitted the grant
+    /// trims or raises its charge.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], and whatever `grant` returns.
+    pub fn open_granted(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Self, ObservationError> {
         let store = Arc::new(FilesystemStore::new(path.as_ref()).map_err(storage)?);
         let root = Group::open(store.clone(), "/").map_err(storage)?;
         if text(root.attributes(), "type", "the processing set")? != "processing_set" {
@@ -143,6 +165,11 @@ impl Msv4Observation {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         names.sort();
+        let projections: Vec<opening::Projection> = names
+            .iter()
+            .map(|name| opening::project(&store, &format!("/{name}")))
+            .collect();
+        grant(opening::opening_bytes(&projections))?;
         let mut observation = Self {
             root: path.as_ref().to_path_buf(),
             store: store.clone(),
@@ -194,24 +221,28 @@ impl Msv4Observation {
         &self.root
     }
 
-    /// The bytes the opened processing set holds while it is open: the
-    /// catalogue's ephemerides and, for each dataset, its times and scans
-    /// and a kilobyte of array handles and metadata. What decoding a batch
-    /// holds is the cursor's, counted in its estimate.
+    /// The bytes the opened processing set holds while it is open, by
+    /// capacity: its catalogue ([`Catalogue::held_bytes`]) and, for each
+    /// dataset, its times, each time's scan and, for each data group, each
+    /// time's field, its names and its array handles with their metadata.
+    /// What decoding a batch holds is the cursor's, counted in its
+    /// estimate.
     #[must_use]
     pub fn held_bytes(&self) -> usize {
-        self.catalogue.ephemeris_bytes()
+        // The catalogue's shared allocation holds two reference counts
+        // beside it; the store's, its root.
+        self.root.capacity()
+            + 2 * size_of::<usize>()
+            + size_of::<Catalogue>()
+            + self.catalogue.held_bytes()
+            + 2 * size_of::<usize>()
+            + size_of::<FilesystemStore>()
+            + self.root.capacity()
+            + self.datasets.capacity() * size_of::<Dataset>()
             + self
                 .datasets
                 .iter()
-                .map(|dataset| {
-                    dataset.times.len() * size_of::<f64>()
-                        + dataset
-                            .scans
-                            .as_ref()
-                            .map_or(0, |scans| scans.len() * size_of::<ScanId>())
-                        + (dataset.groups.len() + 1) * 1024
-                })
+                .map(opening::dataset_bytes)
                 .sum::<usize>()
     }
 

@@ -614,8 +614,19 @@ for bit on the trial's fixed, ICRS-variable and moving fields (the law
 - **Write-back.** An MSv4 cannot add a data group: a run that saves the
   model into an MSv4 without a `model` group is refused when its update
   session opens, before it images.
-- **Admission.** An MSv4's opening is charged once it is open, on what it
-  holds (`Msv4Observation::held_bytes`); a MeasurementSet's as before.
+- **Admission.** Both stores open through one admitted opening
+  (`compile/opening.rs`): the opening asks for what it will hold before it
+  allocates it, each increase admitted, and the charge is then trimmed to
+  what the opened store holds. An MSv4 asks once, before it decodes any
+  dataset, for a projection from the arrays' shapes and element sizes: what
+  each dataset holds once open and the largest dataset's decoding beside
+  it (`msv4/opening.rs`). Open, it holds `Msv4Observation::held_bytes`, by
+  capacity: its catalogue (`Catalogue::held_bytes`), its times, each time's
+  scan and each data group's field per time, and its array handles with
+  their metadata. The counting law `msv4_opening_memory` holds the peak to
+  the grant and what stays to the count over XRADIO's fixtures and
+  conversions growing in times, baselines, channels and data groups, and
+  refuses a store beyond its budget before it decodes.
 
 ### 2.5 Weights, `WeightCache`, errors
 

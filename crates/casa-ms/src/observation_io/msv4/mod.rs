@@ -11,6 +11,7 @@
 mod cursor;
 mod ephemeris;
 mod metadata;
+mod opening;
 mod pointing;
 mod read;
 mod sources;

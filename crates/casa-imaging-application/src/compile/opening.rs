@@ -64,17 +64,17 @@ pub(crate) fn open_observation(
     (host, policy): (&HostResources, &ResourcePolicy),
 ) -> Result<Admitted<OpenedStore>, PrepareError> {
     if path.join("zarr.json").is_file() {
-        let opened = Msv4Observation::open(path).map_err(PrepareError::Opening)?;
-        let reservation = admit(
-            host,
-            policy,
-            &Demand {
-                phase: "observation opening",
-                memory: opened.held_bytes() as u64,
-            },
+        let Admitted { value, reservation } = admitted_opening(
+            (0, "the MSv4 opening"),
+            |grant| Msv4Observation::open_granted(path, &OpenOptions::default(), grant),
+            (
+                |opened: &Msv4Observation| opened.held_bytes() as u64,
+                "observation opening",
+            ),
+            (host, policy),
         )?;
         return Ok(Admitted {
-            value: OpenedStore::V4(opened),
+            value: OpenedStore::V4(value),
             reservation,
         });
     }
@@ -97,16 +97,48 @@ fn open_measurement_set(
     ms: MeasurementSet,
     (host, policy): (&HostResources, &ResourcePolicy),
 ) -> Result<Admitted<Msv2Observation>, PrepareError> {
+    admitted_opening(
+        (
+            Msv2Observation::opening_bytes(ms.row_count()) as u64,
+            "the MSv2 opening index",
+        ),
+        |grant| Msv2Observation::open_granted_on(ms, &OpenOptions::default(), grant),
+        // The catalogue's ephemerides are read with the subtables, before
+        // the index; they are charged with it.
+        (
+            |opened: &Msv2Observation| {
+                (opened.index_bytes() + opened.catalogue().ephemeris_bytes()) as u64
+            },
+            "observation index",
+        ),
+        (host, policy),
+    )
+}
+
+/// The store `open` opens, admitted on `host` under `policy`: `initial`
+/// before it opens, and each increase its opening asks the grant for beyond
+/// what is admitted before it is allocated, so that one that does not fit
+/// refuses the opening (`what`), as an admission. The charge is then
+/// trimmed to what the opened store holds (`held`), or raised to it
+/// (`held_phase`).
+fn admitted_opening<T>(
+    (initial, what): (u64, &'static str),
+    open: impl FnOnce(
+        &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<T, ObservationError>,
+    (held, held_phase): (impl FnOnce(&T) -> u64, &'static str),
+    (host, policy): (&HostResources, &ResourcePolicy),
+) -> Result<Admitted<T>, PrepareError> {
     let mut reservation = admit(
         host,
         policy,
         &Demand {
             phase: "observation opening",
-            memory: Msv2Observation::opening_bytes(ms.row_count()) as u64,
+            memory: initial,
         },
     )?;
     let mut refusal = None;
-    let opened = Msv2Observation::open_granted_on(ms, &OpenOptions::default(), &mut |total| {
+    let opened = open(&mut |total| {
         let total = total as u64;
         if total > reservation.memory() {
             let demand = Demand {
@@ -118,7 +150,7 @@ fn open_measurement_set(
                 Err(admission) => {
                     refusal = Some(admission);
                     return Err(ObservationError::OverBudget {
-                        what: "the MSv2 opening index",
+                        what,
                         required: total as usize,
                         budget: reservation.memory() as usize,
                     });
@@ -131,18 +163,16 @@ fn open_measurement_set(
         Some(admission) => PrepareError::Admission(admission),
         None => PrepareError::Opening(error),
     })?;
-    // The catalogue's ephemerides are read with the subtables, before
-    // the index; they are charged with it.
-    let index = (opened.index_bytes() + opened.catalogue().ephemeris_bytes()) as u64;
-    if index <= reservation.memory() {
-        reservation.retain(index);
+    let held = held(&opened);
+    if held <= reservation.memory() {
+        reservation.retain(held);
     } else {
         reservation.join(admit(
             host,
             policy,
             &Demand {
-                phase: "observation index",
-                memory: index - reservation.memory(),
+                phase: held_phase,
+                memory: held - reservation.memory(),
             },
         )?);
     }
