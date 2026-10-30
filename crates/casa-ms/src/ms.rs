@@ -1379,9 +1379,19 @@ pub(crate) fn measurement_set_main_data_manager_sequence(
     None
 }
 
+/// Merge the schema's MEASINFO `defaults` into a column's `existing` record.
+///
+/// Only a new record takes the default `Ref`. An existing record keeps its
+/// reference state: its `Ref` if it has one, and none if it has none.
+/// casacore reads a missing `Ref` as the measure's reference code 0 (J2000
+/// for UVW, which casa-rs wrote without a `Ref` before it defaulted to
+/// ITRF), so filling one in on a save would relabel the stored values.
 fn merge_measinfo_keywords(existing: Option<&RecordValue>, defaults: &RecordValue) -> RecordValue {
     let mut merged = defaults.clone();
     if let Some(existing) = existing {
+        if existing.get("Ref").is_none() {
+            merged.remove("Ref");
+        }
         for field in existing.fields() {
             let preserve_existing = field.name == "Ref" || merged.get(&field.name).is_none();
             if preserve_existing {
