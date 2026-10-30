@@ -18,7 +18,7 @@ record keeps, for every step, either the encoded value `tb` returned
 
 `crates/casars-python/python/tests/test_tools_table.py` replays the recorded
 steps on `casars.tools.table` and compares with `encode` below; keep
-`encode` in step with `_casa_tools.encode_value` there. The fixture's path is
+`encode` in step with `test_tools_table.encode_value`. The fixture's path is
 written as `<TABLE>` wherever it appears in a message or a string.
 """
 
@@ -139,6 +139,39 @@ SCENARIOS = {
         ["colfieldnames", ["spectrum", "unit"], {}],
         ["getcolkeywords", ["nosuchcolumn"], {}],
         ["close", [], {}],
+    ],
+    # Every read method with no table open.
+    "closed": [
+        ["ok", [], {}],
+        ["name", [], {}],
+        ["nrows", [], {}],
+        ["ncols", [], {}],
+        ["colnames", [], {}],
+        ["iswritable", [], {}],
+        ["info", [], {}],
+        ["lockoptions", [], {}],
+        ["haslock", [], {}],
+        ["keywordnames", [], {}],
+        ["getkeywords", [], {}],
+        ["getkeyword", ["observer"], {}],
+        ["fieldnames", [], {}],
+        ["isscalarcol", ["id"], {}],
+        ["isvarcol", ["id"], {}],
+        ["coldatatype", ["id"], {}],
+        ["colarraytype", ["spectrum"], {}],
+        ["getcell", ["id", 0], {}],
+        ["getcol", ["id"], {}],
+        ["getvarcol", ["vary"], {}],
+        ["getcolshapestring", ["spectrum"], {}],
+        ["iscelldefined", ["id", 0], {}],
+        ["colkeywordnames", ["spectrum"], {}],
+        ["getcolkeywords", ["spectrum"], {}],
+        ["getcolkeyword", ["spectrum", "unit"], {}],
+        ["colfieldnames", ["spectrum"], {}],
+        ["close", [], {}],
+        ["done", [], {}],
+        ["lock", [], {}],
+        ["unlock", [], {}],
     ],
     # open's own cases, and the lock calls.
     "open": [

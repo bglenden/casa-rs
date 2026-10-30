@@ -1896,6 +1896,304 @@
     }
    ]
   },
+  "closed": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "ok",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "name",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "str": ""
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "ncols",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "iswritable",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": []
+     }
+    },
+    {
+     "method": "lockoptions",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": []
+     }
+    },
+    {
+     "method": "haslock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "keywordnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "getkeywords",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": []
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      "observer"
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "fieldnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "isscalarcol",
+     "args": [
+      "id"
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "isvarcol",
+     "args": [
+      "id"
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "coldatatype",
+     "args": [
+      "id"
+     ],
+     "kwargs": {},
+     "value": {
+      "str": ""
+     }
+    },
+    {
+     "method": "colarraytype",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "str": ""
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      "id",
+      0
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "id"
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getvarcol",
+     "args": [
+      "vary"
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": []
+     }
+    },
+    {
+     "method": "getcolshapestring",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      "id",
+      0
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "colkeywordnames",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getcolkeyword",
+     "args": [
+      "spectrum",
+      "unit"
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "colfieldnames",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "done",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "lock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "unlock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    }
+   ]
+  },
   "open": {
    "fixture": "table",
    "steps": [
