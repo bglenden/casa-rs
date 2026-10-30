@@ -19,8 +19,8 @@ use casa_imaging_model::{CorrelationProduct, PartitionSelection, RowSelection, U
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{
-    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, PartitionEntry,
-    ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
+    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, ReadEvent,
+    Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use casa_types::measures::MjdHighPrec;
 
@@ -138,22 +138,15 @@ impl SurveyPlan<'_> {
         self.w_range || !matches!(self.row_selection.uv_distances(), UvSelection::All)
     }
 
-    /// The request surveying `candidate` (`entry` in the catalogue): its
-    /// selected fields' times of its first channel, with UVW when read and,
-    /// with `flags`, every channel's flags.
-    fn request(
-        &self,
-        candidate: &Candidate,
-        entry: &PartitionEntry,
-        flags: bool,
-        batch_bytes: usize,
-    ) -> AccessRequest {
+    /// The request surveying `candidate`: its selected fields' times of its
+    /// first channel, with UVW when read.
+    fn request(&self, candidate: &Candidate, batch_bytes: usize) -> AccessRequest {
         AccessRequest {
             partitions: vec![candidate.id],
             data_group: self.candidates.data_group.clone(),
             roles: Roles {
                 values: false,
-                flags,
+                flags: false,
                 weights: false,
                 uvw: self.reads_uvw(),
                 time_centroid: false,
@@ -162,11 +155,7 @@ impl SurveyPlan<'_> {
                 scan: false,
             },
             weights: WeightRequest::Stored,
-            channels: if flags {
-                0..entry.frequencies_hz.len()
-            } else {
-                0..1
-            },
+            channels: 0..1,
             times: TimeSelection::All,
             fields: field_selection(self.row_selection.fields()),
             correlations: CorrelationRequest {
@@ -179,12 +168,11 @@ impl SurveyPlan<'_> {
     }
 
     /// The bytes one time of `candidate`'s survey holds, with the cursor's
-    /// scratch: of its flags pass too when `flags`.
-    fn bytes_per_time(&self, candidate: &Candidate, flags: bool) -> Result<usize, PrepareError> {
-        let entry = self.observation.catalogue().partition(candidate.id);
-        let estimate =
-            self.observation
-                .estimate(&self.request(candidate, entry, flags, usize::MAX))?;
+    /// scratch.
+    fn bytes_per_time(&self, candidate: &Candidate) -> Result<usize, PrepareError> {
+        let estimate = self
+            .observation
+            .estimate(&self.request(candidate, usize::MAX))?;
         Ok(estimate
             .partitions
             .first()
@@ -193,7 +181,7 @@ impl SurveyPlan<'_> {
 }
 
 /// Survey `plan`'s partitions, admitted on `host` under `policy`: the
-/// largest batch of the traversal (and of native AW's flags pass) and each
+/// largest batch of the traversal (native AW's pass reads the same) and each
 /// window's epochs, one per selected time of each of its partitions at
 /// most. The charge is held until the problem compiles, since the epochs
 /// are read until then.
@@ -211,14 +199,10 @@ pub(super) fn survey(
     let mut batch_bytes = SURVEY_BATCH_BYTES;
     let mut epoch_bound = BTreeMap::<usize, usize>::new();
     for candidate in &plan.candidates.partitions {
-        batch_bytes = batch_bytes.max(plan.bytes_per_time(candidate, false)?);
-        if plan.first_cross {
-            batch_bytes = batch_bytes.max(plan.bytes_per_time(candidate, true)?);
-        }
-        let entry = catalogue.partition(candidate.id);
-        let estimate =
-            plan.observation
-                .estimate(&plan.request(candidate, entry, false, batch_bytes))?;
+        batch_bytes = batch_bytes.max(plan.bytes_per_time(candidate)?);
+        let estimate = plan
+            .observation
+            .estimate(&plan.request(candidate, batch_bytes))?;
         *epoch_bound.entry(candidate.spectral_window).or_default() += estimate
             .partitions
             .first()
@@ -251,19 +235,17 @@ pub(super) fn survey(
     let mut first_cross: Option<FirstCrossSample> = None;
     for candidate in &plan.candidates.partitions {
         let entry = catalogue.partition(candidate.id);
-        let request = plan.request(candidate, entry, false, batch_bytes);
+        let request = plan.request(candidate, batch_bytes);
         let selected = survey_partition(&plan, candidate, &request, &mut buffers, &mut facts)?;
         if selected == 0 {
             continue;
         }
         samples += selected;
-        if plan.first_cross {
-            let request = plan.request(candidate, entry, true, batch_bytes);
-            if let Some(sample) = first_cross_sample(&plan, candidate, &request, &mut buffers)?
-                && first_cross.is_none_or(|first| sample.time_mjd_seconds < first.time_mjd_seconds)
-            {
-                first_cross = Some(sample);
-            }
+        if plan.first_cross
+            && let Some(sample) = first_cross_sample(&plan, candidate, &request, &mut buffers)?
+            && first_cross.is_none_or(|first| sample.time_mjd_seconds < first.time_mjd_seconds)
+        {
+            first_cross = Some(sample);
         }
         partitions.push(PartitionSelection::new(
             candidate.id,
@@ -421,11 +403,11 @@ fn traversal_samples(estimate: &casa_observation::Estimate) -> u64 {
 }
 
 /// The first sample of `candidate`'s selected times, in time order, that
-/// correlates two antennas, is selected by UV distance and holds a value
-/// not flagged: CASA's AW projection evaluates its parallactic angle at
-/// the first row of the first buffer that is a cross-correlation and not
-/// row-flagged (`getPA`), and a row-flagged MSv2 row is flagged in every
-/// channel and correlation, as is padding. The traversal stops there.
+/// correlates two antennas, is selected by UV distance and whose MAIN row
+/// is not row-flagged: CASA's AW projection evaluates its parallactic angle
+/// at the first row of the first buffer that is a cross-correlation and not
+/// row-flagged (`getPA`), whatever its cell flags. Padding has no row. The
+/// traversal, `request`, is the survey's own; it stops there.
 fn first_cross_sample(
     plan: &SurveyPlan<'_>,
     candidate: &Candidate,
@@ -444,9 +426,9 @@ fn first_cross_sample(
         let ReadEvent::Batch(batch) = event else {
             continue;
         };
-        let flags = batch.group.flags.expect("the pass reads flags");
         for sample in 0..batch.samples() {
-            if batch.baselines[sample % batch.samples_per_time()].is_auto() {
+            let baseline = batch.baselines[sample % batch.samples_per_time()];
+            if baseline.is_auto() {
                 continue;
             }
             if let Some(uvw) = batch.group.uvw
@@ -454,16 +436,18 @@ fn first_cross_sample(
             {
                 continue;
             }
-            if flags
-                .slice(ndarray::s![sample, .., ..])
-                .iter()
-                .all(|flag| *flag)
+            let time = sample / batch.samples_per_time();
+            let time_mjd_seconds = batch.time.seconds_since(time, origin);
+            if plan
+                .observation
+                .row_flagged(candidate.id, time_mjd_seconds, baseline)
+                .map_err(PrepareError::Opening)?
+                != Some(false)
             {
                 continue;
             }
-            let time = sample / batch.samples_per_time();
             return Ok(Some(FirstCrossSample {
-                time_mjd_seconds: batch.time.seconds_since(time, origin),
+                time_mjd_seconds,
                 field_id: i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id"),
                 observation_id: i32::try_from(observation.0)
                     .expect("an OBSERVATION row is an i32 id"),
@@ -471,4 +455,134 @@ fn first_cross_sample(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_imaging_model::{IdSelection, IntentSelection};
+    use casa_ms::MeasurementSet;
+    use casa_types::{ArrayValue, ScalarValue, Value};
+
+    use super::*;
+
+    const T0: f64 = 5_000_000_000.0;
+
+    /// Native AW's reference time on `ms_trial.ms` cut to two
+    /// cross-correlation rows of one baseline an hour apart, each row's
+    /// (`FLAG_ROW`, every `FLAG` set) as `rows` gives them.
+    fn first_cross_time(rows: [(bool, bool); 2]) -> Option<f64> {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("ms_trial.ms");
+        let mut ms = MeasurementSet::open(&path).expect("an editable MeasurementSet");
+        let remove: Vec<usize> = (2..ms.main_table().row_count()).collect();
+        ms.main_table_mut()
+            .remove_rows(&remove)
+            .expect("rows removed");
+        for column in [
+            "DATA_DESC_ID",
+            "FIELD_ID",
+            "OBSERVATION_ID",
+            "ARRAY_ID",
+            "STATE_ID",
+            "PROCESSOR_ID",
+            "FEED1",
+            "FEED2",
+            "SCAN_NUMBER",
+            "INTERVAL",
+        ] {
+            let value = ms
+                .main_table()
+                .column_accessor(column)
+                .expect("a key column")
+                .get(0)
+                .expect("row 0")
+                .expect("a value")
+                .clone();
+            ms.main_table_mut()
+                .cell_accessor_mut(1, column)
+                .expect("row 1")
+                .set(value)
+                .expect("set");
+        }
+        for (row, (row_flag, all_flagged)) in rows.into_iter().enumerate() {
+            let Value::Array(ArrayValue::Bool(mut flags)) = ms
+                .main_table()
+                .column_accessor("FLAG")
+                .expect("FLAG")
+                .get(row)
+                .expect("a row")
+                .expect("a cell")
+                .clone()
+            else {
+                panic!("FLAG is a Bool array");
+            };
+            flags.fill(all_flagged);
+            for (column, value) in [
+                ("FLAG", Value::Array(ArrayValue::Bool(flags))),
+                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag))),
+                ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
+                ("ANTENNA2", Value::Scalar(ScalarValue::Int32(1))),
+                (
+                    "TIME",
+                    Value::Scalar(ScalarValue::Float64(T0 + row as f64 * 3600.0)),
+                ),
+            ] {
+                ms.main_table_mut()
+                    .cell_accessor_mut(row, column)
+                    .expect("a cell")
+                    .set(value)
+                    .expect("set");
+            }
+        }
+        ms.save().expect("saved");
+        drop(ms);
+        let observation = Msv2Observation::open(&path).expect("the cut MeasurementSet opens");
+        let id = observation.catalogue().partition_ids()[0];
+        let entry = observation.catalogue().partition(id);
+        let candidate = Candidate {
+            id,
+            spectral_window: entry.window.0 as usize,
+            wavelength_m: None,
+        };
+        let plan = SurveyPlan {
+            observation: &observation,
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection: RowSelection::new(
+                IdSelection::All,
+                UvSelection::All,
+                IntentSelection::All,
+            ),
+            w_range: false,
+            first_cross: true,
+        };
+        let request = plan.request(&candidate, 1 << 20);
+        first_cross_sample(&plan, &candidate, &request, &mut BatchBuffers::default())
+            .expect("the pass reads")
+            .map(|sample| sample.time_mjd_seconds)
+    }
+
+    #[test]
+    fn a_row_not_row_flagged_counts_however_its_cells_are_flagged() {
+        assert_eq!(first_cross_time([(false, true), (false, false)]), Some(T0));
+        assert_eq!(first_cross_time([(false, true), (false, true)]), Some(T0));
+    }
+
+    #[test]
+    fn a_row_flagged_row_does_not_count_however_its_cells_are_flagged() {
+        assert_eq!(
+            first_cross_time([(true, false), (false, false)]),
+            Some(T0 + 3600.0)
+        );
+        assert_eq!(first_cross_time([(true, false), (true, false)]), None);
+    }
 }

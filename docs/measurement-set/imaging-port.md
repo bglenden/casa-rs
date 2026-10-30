@@ -522,8 +522,9 @@ counts the selected samples: times × baselines less the padding
 gridder's W range, it reads UVW and tests each sample. A partition holding
 no selected sample is dropped. The survey's batches and the epochs it keeps
 are admitted before it reads (`observation survey`). Native AW's first
-cross-correlation sample comes from a second traversal of flags over every
-channel, which stops at the first sample found.
+cross-correlation sample comes from a second traversal, the same reads,
+which asks the MSv2 adapter for each cross-correlation sample's `FLAG_ROW`
+(`Msv2Observation::row_flagged`) and stops at the first sample found.
 
 The model's `ObservationSelection` is partition-shaped: the selected sample
 count, the per-sample predicates, the partitions (`PartitionSelection`: the
@@ -535,8 +536,9 @@ window and the correlation products of each) and the windows' channels.
 What the survey keeps per window is its epochs: the distinct (time, field)
 pairs of its selected samples, ascending in time. The continuum envelope and
 the cube's density padding convert at them (`compile/envelope.rs`), with
-CASA's algorithms carried over from the deleted layer. Three things differ
-from the MAIN walk, each by a rounding or a reordering of what CASA reads:
+CASA's algorithms carried over from the deleted layer. Two things differ
+from the MAIN walk, each by a rounding or a reordering of what CASA reads,
+and a third reads what CASA reads by another path:
 - **The anchor.** The spectral frame's anchor and the image's observation
   date are the earliest selected time, not the first selected MAIN row's.
   The two agree for a MeasurementSet in time order.
@@ -548,9 +550,12 @@ from the MAIN walk, each by a rounding or a reordering of what CASA reads:
   their order are CASA's.
 - **The first cross-correlation sample.** CASA's AW projection takes the
   first row of the first buffer that is a cross-correlation and not
-  row-flagged (`getPA`). The survey takes the earliest selected
-  cross-correlation sample holding an unflagged value; a row-flagged MSv2
-  row is flagged on every channel and product, as padding is.
+  row-flagged (`getPA`), whatever its cell flags. The survey takes the
+  earliest selected cross-correlation sample whose MAIN row's `FLAG_ROW` is
+  false, padding having no row: the same row's time, field and
+  observation. The batches fold `FLAG_ROW` into every value's flag, so the
+  survey asks the adapter for the row flag itself; a row whose every flag
+  is set but whose `FLAG_ROW` is not still counts, as in CASA.
 
 PR 6b keeps compile reading the MeasurementSet's subtables beside the
 catalogue (`SPECTRAL_WINDOW`, `FIELD`, `OBSERVATION`, `STATE`,
