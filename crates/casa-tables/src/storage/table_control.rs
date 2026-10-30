@@ -1351,11 +1351,13 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
             // while keeping the wire layout aligned with casacore.
             io.put_string("")?;
         } else if is_array_data_type(dt) {
-            // Array field: write IPosition shape.
-            if let Value::Array(av) = &field.value {
-                let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
-                write_iposition(io, &shape)?;
-            }
+            // A keyword array is of variable shape, as `RecordDesc::addField`
+            // without a shape makes it: `IPosition(1, -1)`. The array's own
+            // shape is written with its data (`write_array_record_field`).
+            // Writing the current shape here would fix the field to it, and
+            // `TableRecordRep::defineDataField` then refuses a later update of
+            // another shape (`Record::define - fixed array conformance error`).
+            write_iposition(io, &[-1])?;
         }
 
         io.put_string("")?; // comment
@@ -2355,6 +2357,39 @@ mod tests {
             };
             assert_eq!(cells.iter().copied().collect::<Vec<_>>(), flags);
         }
+    }
+
+    /// An array keyword is of variable shape in its `RecordDesc`
+    /// (`IPosition(1, -1)`, as `RecordDesc::addField` without a shape makes
+    /// it), whatever shape its data has: a fixed shape would make casacore
+    /// refuse a later update of another shape
+    /// (`Record::define - fixed array conformance error`, observed with CASA
+    /// 6.7.6.14 on a table whose descriptor had been changed to a fixed one).
+    #[test]
+    fn an_array_keyword_is_of_variable_shape_in_its_record_desc() {
+        let variable_shape = [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff];
+        let mut record = RecordValue::default();
+        record.upsert(
+            "vector",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.0, 2.0]).unwrap(),
+            )),
+        );
+        record.upsert(
+            "matrix",
+            Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), vec![1, 2, 3, 4, 5, 6]).unwrap(),
+            )),
+        );
+        let bytes = serialize_record_to_uchar(&record).unwrap();
+        let described = bytes
+            .windows(variable_shape.len())
+            .filter(|window| *window == variable_shape)
+            .count();
+        assert_eq!(described, 2, "one variable shape per array field: {bytes:?}");
+
+        let read = deserialize_record_from_uchar(&bytes).unwrap();
+        assert_eq!(read, record, "the data keeps its own shape");
     }
 
     #[test]
