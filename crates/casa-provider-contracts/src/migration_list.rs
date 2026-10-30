@@ -22,6 +22,9 @@ pub enum ListElement {
     /// The item as text, trimmed; an empty item stays, since a per-table
     /// list is positional (`gainfield="0;;2"`).
     String,
+    /// The item as a path, trimmed; an empty item is dropped, as the old
+    /// surfaces split a path list given as text (`gaintables="a.cal,b.cal"`).
+    Path,
     /// The item as an integer.
     Integer,
     /// The item as a number.
@@ -44,7 +47,9 @@ impl ListElement {
             return Ok(ParameterValue::Array(Vec::new()));
         }
         text.split(separator)
-            .map(|item| self.parse_item(item.trim()))
+            .map(str::trim)
+            .filter(|item| self != Self::Path || !item.is_empty())
+            .map(|item| self.parse_item(item))
             .collect::<Result<Vec<_>, _>>()
             .map(ParameterValue::Array)
     }
@@ -55,7 +60,7 @@ impl ListElement {
                 .map_err(|error| format!("{item:?} is not a number: {error}"))
         };
         match self {
-            Self::String => Ok(ParameterValue::String(item.to_string())),
+            Self::String | Self::Path => Ok(ParameterValue::String(item.to_string())),
             Self::Integer => item
                 .parse::<i64>()
                 .map(ParameterValue::Integer)
@@ -117,6 +122,11 @@ mod tests {
         assert_eq!(
             list(ListElement::String, "0;;nearest", ";").unwrap(),
             strings(&["0", "", "nearest"])
+        );
+        // A path list drops it, as the old surfaces split one.
+        assert_eq!(
+            list(ListElement::Path, "a.cal, ,b.cal", ",").unwrap(),
+            strings(&["a.cal", "b.cal"])
         );
         assert_eq!(
             list(ListElement::Float, "1,0,0,0", ",").unwrap(),

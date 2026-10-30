@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use casa_ms::MsSelection;
 use casa_provider_contracts::{ParameterValue, TaskFailureKind, builtin_surface_bundle};
 use casa_task_runtime::{
-    OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
+    BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
 };
 use serde_json::{Value, json};
 
 use super::read;
 use crate::{
-    ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassType,
+    ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassSolveCuts, BandpassType,
     CalibrationTaskRequest, ExecuteApplyTaskRequest, FluxScaleRequest, GainFieldSelector,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
     GencalTaskRequest, GencalType, RefAntSelector,
@@ -41,6 +41,23 @@ fn casa(surface: &str, values: Value) -> Result<CalibrationTaskRequest, TaskFail
         .open_session(request)
         .expect("session");
     read::task_request(&TaskInvocation::new(&session, Path::new(".")))
+}
+
+/// The request `parameters`, a contract-5 profile of `surface`, makes once
+/// it loads as a saved profile loads.
+fn from_old_profile(surface: &str, parameters: &str) -> CalibrationTaskRequest {
+    let bundle = builtin_surface_bundle(surface).expect("calibration surface");
+    let mut request = OpenSessionRequest::defaults(bundle, ".");
+    request.source = BaseSource::File(PathBuf::from("old.toml"));
+    request.profile_text = Some(format!(
+        "[casars]\nformat = 1\nsurface = \"{surface}\"\nkind = \"task\"\ncontract = 5\n\n\
+         [parameters]\n{parameters}"
+    ));
+    request.managed_save = false;
+    let session = ParameterRuntime::default()
+        .open_session(request)
+        .expect("session");
+    read::task_request(&TaskInvocation::new(&session, Path::new("."))).expect("request")
 }
 
 fn refused(result: Result<CalibrationTaskRequest, TaskFailure>, parameter: &str) -> String {
@@ -87,6 +104,34 @@ fn applycal_lists_are_positional_and_short_lists_take_casas_defaults() {
     );
     assert_eq!(request.apply_mode, ApplyMode::CalFlag);
     assert!(request.flagbackup);
+}
+
+/// A contract-5 chain held one gainfield, interp and spwmap for every
+/// table, and its tables could be text; its explicit absence of calwt
+/// applied without calibrating the weights. Each loads as the run it was.
+#[test]
+fn an_old_profile_chain_applies_to_every_table_it_named() {
+    for gaintables in ["\"a.cal, b.cal\"", "[\"a.cal\", \"b.cal\"]"] {
+        for calwt in ["none", ""] {
+            let CalibrationTaskRequest::ExecuteApply(request) = from_old_profile(
+                "applycal",
+                &format!(
+                    "vis = \"in.ms\"\ngaintables = {gaintables}\ngainfield = \"0\"\n\
+                     interp = \"nearest\"\nspwmap = \"0,0\"\ncalwt = \"{calwt}\"\n"
+                ),
+            ) else {
+                panic!("an applycal request");
+            };
+            let tables = ["a.cal", "b.cal"].map(|path| {
+                let mut table = table(path, false);
+                table.gainfield = Some(GainFieldSelector::FieldId(0));
+                table.interp = ApplyInterpolationMode::Nearest;
+                table.spwmap = vec![0, 0];
+                table
+            });
+            assert_eq!(request.calibration_tables, tables, "{gaintables} {calwt:?}");
+        }
+    }
 }
 
 #[test]
@@ -306,7 +351,12 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         let message = refused(with("solint", json!(solint)), "solint");
         assert!(message.contains("not valid"), "{solint}: {message}");
     }
-    assert!(refused(with("smodel", json!([1, 0])), "smodel").contains("[I, Q, U, V]"));
+    // CASA 6.7.6.14's gaincal aborts on more than four Stokes values.
+    assert!(refused(with("smodel", json!([1, 0, 0, 0, 0])), "smodel").contains("[I, Q, U, V]"));
+    // A shorter model's missing Stokes are zero; a polarized one is not
+    // implemented yet.
+    let message = refused(with("smodel", json!([1, 0.1])), "smodel");
+    assert!(message.contains("#979"), "{message}");
     // CASA's numeric solint and observation are refused as the wrong type,
     // naming the issue.
     for (name, value) in [("solint", json!(30)), ("observation", json!(0))] {
@@ -331,9 +381,9 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
 
 #[test]
 fn gaincal_reads_solint_and_combine_as_casa_does() {
-    // SolvableVisCal::setSolve: text containing inf or int, in any case;
-    // otherwise a time, in seconds without a unit; zero is inf and a
-    // negative time int.
+    // SolvableVisCal::setSolve: empty text, or text containing inf or int,
+    // in any case; otherwise a time, in seconds without a unit; zero is inf
+    // and a negative time int.
     let base = json!({"vis": "d.ms", "caltable": "g.gcal", "refant": "0", "smodel": [1, 0, 0, 0]});
     let read = |name: &str, value: &str| {
         let mut values = base.clone();
@@ -341,6 +391,7 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
         gain(values)
     };
     for (solint, interval) in [
+        ("", GainSolveInterval::Infinite),
         ("INF", GainSolveInterval::Infinite),
         ("Int", GainSolveInterval::Integration),
         ("1min", GainSolveInterval::Seconds(60.0)),
@@ -364,6 +415,22 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
             GainSolveCombine { scans, fields },
             "{combine}"
         );
+    }
+}
+
+#[test]
+fn a_short_smodel_is_a_point_source_with_the_missing_stokes_zero() {
+    // As CASA 6.7.6.14 solves them (probed): [2], [2, 0] and [2, 0, 0]
+    // give gaincal's and bandpass's [2, 0, 0, 0] solutions.
+    for smodel in [json!([2]), json!([2, 0]), json!([2, 0, 0])] {
+        let values = json!({"vis": "d.ms", "caltable": "g.gcal", "refant": "0", "smodel": smodel});
+        let solve = gain(values.clone());
+        assert_eq!(solve.model_source, GainSolveModelSource::PointSource);
+        assert_eq!(solve.smodel, [2.0, 0.0, 0.0, 0.0], "{smodel}");
+        let Ok(CalibrationTaskRequest::SolveBandpass(solve)) = casa("bandpass", values) else {
+            panic!("a bandpass solve");
+        };
+        assert_eq!(solve.smodel, [2.0, 0.0, 0.0, 0.0], "{smodel}");
     }
 }
 
@@ -396,6 +463,9 @@ fn bandpass_reads_casas_values() {
             "solnorm": true,
             "smodel": [3, 0, 0, 0],
             "gaintable": "prior.gcal",
+            "minblperant": 2,
+            "minsnr": 1.5,
+            "maskedge": 10,
         }),
     )
     .expect("bandpass") else {
@@ -407,16 +477,31 @@ fn bandpass_reads_casas_values() {
     assert_eq!((solve.amplitude_degree, solve.phase_degree), (5, 4));
     assert_eq!(solve.smodel, [3.0, 0.0, 0.0, 0.0]);
     assert_eq!(solve.prior_calibration_tables, [table("prior.gcal", true)]);
-    // CASA's bandpass combines scans by default.
-    let CalibrationTaskRequest::SolveBandpass(defaults) = casa(
-        "bandpass",
-        json!({"vis": "d.ms", "caltable": "b.bcal", "refant": "0", "smodel": [1, 0, 0, 0]}),
-    )
-    .expect("bandpass") else {
+    assert_eq!(
+        solve.cuts,
+        Some(BandpassSolveCuts {
+            min_baselines_per_antenna: 2,
+            min_snr: 1.5,
+            mask_edge_percent: 10.0,
+        })
+    );
+    // CASA's bandpass combines scans by default, and cuts as CASA does.
+    let defaults = json!({"vis": "d.ms", "caltable": "b.bcal", "refant": "0",
+                          "smodel": [1, 0, 0, 0]});
+    let CalibrationTaskRequest::SolveBandpass(solve) =
+        casa("bandpass", defaults.clone()).expect("bandpass")
+    else {
         panic!("a bandpass solve");
     };
-    assert!(defaults.combine.scans && !defaults.combine.fields);
-    assert_eq!(defaults.band_type, BandpassType::B);
+    assert!(solve.combine.scans && !solve.combine.fields);
+    assert_eq!(solve.band_type, BandpassType::B);
+    assert_eq!(solve.cuts, Some(BandpassSolveCuts::CASA_DEFAULTS));
+    // A BPOLY edge mask of half the channels leaves none to fit.
+    let mut values = defaults;
+    values["bandtype"] = json!("BPOLY");
+    values["maskedge"] = json!(50);
+    let message = refused(casa("bandpass", values), "maskedge");
+    assert!(message.contains("below 50"), "{message}");
 }
 
 #[test]

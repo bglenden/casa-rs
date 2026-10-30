@@ -17745,10 +17745,13 @@
           "steps": [
             {"kind": "rename", "from": "gaintables", "to": "gaintable"},
             {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
+            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
             {"kind": "rename", "from": "apply_mode", "to": "applymode"},
             {"kind": "transform", "parameter": "gainfield", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
             {"kind": "transform", "parameter": "interp", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
             {"kind": "transform", "parameter": "spwmap", "transform": {"kind": "text_list", "separator": ";", "element": "integer_list"}},
+            {"kind": "replace_value", "parameter": "calwt", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": [{"kind": "bool", "value": false}]}},
+            {"kind": "replace_value", "parameter": "calwt", "from": {"kind": "string", "value": ""}, "to": {"kind": "array", "value": [{"kind": "bool", "value": false}]}},
             {"kind": "transform", "parameter": "calwt", "transform": {"kind": "text_list", "separator": ",", "element": "bool"}},
             {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
             {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
@@ -18445,6 +18448,7 @@
           "steps": [
             {"kind": "rename", "from": "gaintables", "to": "gaintable"},
             {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
+            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
             {"kind": "rename", "from": "out_table", "to": "caltable"},
             {"kind": "rename", "from": "gain_type", "to": "gaintype"},
             {"kind": "replace_value", "parameter": "gaintype", "from": {"kind": "string", "value": "g"}, "to": {"kind": "string", "value": "G"}},
@@ -18454,7 +18458,8 @@
             {"kind": "replace_value", "parameter": "combine", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
             {"kind": "rename", "from": "min_snr", "to": "minsnr"},
             {"kind": "transform", "parameter": "smodel", "transform": {"kind": "text_list", "separator": ",", "element": "float"}},
-            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": []}, "when": {"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "model-column"}}},
+            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": []}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "model-column"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "smodel"}}]}},
+            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": []}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "model-column"}}, {"kind": "is_set", "parameter": "smodel"}]}},
             {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": [{"kind": "float", "value": 1.0}, {"kind": "float", "value": 0.0}, {"kind": "float", "value": 0.0}, {"kind": "float", "value": 0.0}]}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "point"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "smodel"}}]}},
             {"kind": "remove", "parameter": "gain_model_source"},
             {"kind": "transform", "parameter": "gainfield", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
@@ -18742,8 +18747,7 @@
             "provider": {"field": "minblperant"},
             "python": {"name": "minblperant"},
             "presentation": {"label": "Minimum Baselines per Antenna", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "minsnr",
@@ -18757,8 +18761,7 @@
             "provider": {"field": "minsnr", "adapter": "identity"},
             "python": {"name": "minsnr"},
             "presentation": {"label": "Min SNR", "group": "Solve"}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "solnorm",
@@ -18918,8 +18921,7 @@
             "provider": {"field": "maskedge"},
             "python": {"name": "maskedge"},
             "presentation": {"label": "Mask Edge", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "docallib",
@@ -19108,6 +19110,7 @@
           "steps": [
             {"kind": "rename", "from": "gaintables", "to": "gaintable"},
             {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
+            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
             {"kind": "rename", "from": "out_table", "to": "caltable"},
             {"kind": "rename", "from": "bandpass_combine", "to": "combine"},
             {"kind": "replace_value", "parameter": "combine", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},

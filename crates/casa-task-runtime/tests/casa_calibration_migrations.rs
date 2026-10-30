@@ -111,20 +111,36 @@ fn applycal_chain_text_lists_become_casas_positional_lists() {
 #[test]
 fn one_chain_value_held_for_every_table_is_repeated_for_each() {
     // casa-rs's one value applied to every table; CASA's lists are
-    // positional, so it is repeated.
-    let resolved = load(
-        "applycal",
-        "vis = \"in.ms\"\ngaintables = [\"a.gcal\", \"b.gcal\", \"c.gcal\"]\n\
-         gainfield = \"nearest\"\ninterp = \"nearest\"\nspwmap = \"0,0\"\n",
-    );
-    assert_eq!(
-        values(&resolved, &["gainfield", "interp", "spwmap"]),
-        expected(&[
-            ("gainfield", texts(&["nearest"; 3])),
-            ("interp", texts(&["nearest"; 3])),
-            ("spwmap", lists(&[&[0, 0], &[0, 0], &[0, 0]])),
-        ])
-    );
+    // positional, so it is repeated. The old tables could be text, split as
+    // the old surfaces split them.
+    for (surface, solve) in [
+        ("applycal", ""),
+        ("gaincal", "out_table = \"o.cal\"\nrefant = \"0\"\n"),
+        ("bandpass", "out_table = \"o.cal\"\nrefant = \"0\"\n"),
+    ] {
+        for gaintables in [
+            "[\"a.gcal\", \"b.gcal\", \"c.gcal\"]",
+            "\"a.gcal, b.gcal,,c.gcal\"",
+        ] {
+            let resolved = load(
+                surface,
+                &format!(
+                    "vis = \"in.ms\"\ngaintables = {gaintables}\ngainfield = \"nearest\"\n\
+                     interp = \"nearest\"\nspwmap = \"0,0\"\n{solve}"
+                ),
+            );
+            assert_eq!(
+                values(&resolved, &["gaintable", "gainfield", "interp", "spwmap"]),
+                expected(&[
+                    ("gaintable", texts(&["a.gcal", "b.gcal", "c.gcal"])),
+                    ("gainfield", texts(&["nearest"; 3])),
+                    ("interp", texts(&["nearest"; 3])),
+                    ("spwmap", lists(&[&[0, 0], &[0, 0], &[0, 0]])),
+                ]),
+                "{surface} {gaintables}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -134,6 +150,15 @@ fn applycal_without_calwt_adopts_casas_default_with_a_warning() {
     let resolved = load("applycal", "vis = \"in.ms\"\ngaintables = [\"g.gcal\"]\n");
     assert_eq!(resolved.values["calwt"], flags(&[true]));
     assert_eq!(changed_defaults(&resolved), ["calwt"]);
+    // Its explicit absence, "none" or empty, kept the weights, as False.
+    for calwt in ["none", ""] {
+        let resolved = load(
+            "applycal",
+            &format!("vis = \"in.ms\"\ngaintables = [\"g.gcal\"]\ncalwt = \"{calwt}\"\n"),
+        );
+        assert_eq!(resolved.values["calwt"], flags(&[false]), "{calwt:?}");
+        assert!(changed_defaults(&resolved).is_empty(), "{calwt:?}");
+    }
 }
 
 #[test]
@@ -206,6 +231,15 @@ fn gaincal_model_source_becomes_casas_smodel() {
          gain_model_source = \"model-column\"\nsmodel = \"3,0,0,0\"\n",
     );
     assert_eq!(resolved.values["smodel"], floats(&[]));
+    // With smodel omitted the migration gives it the column's meaning too,
+    // so only the omitted calmode adopts a changed default.
+    let resolved = load(
+        "gaincal",
+        "vis = \"in.ms\"\nout_table = \"g.gcal\"\nrefant = \"0\"\n\
+         gain_model_source = \"model-column\"\n",
+    );
+    assert_eq!(resolved.values["smodel"], floats(&[]));
+    assert_eq!(changed_defaults(&resolved), ["calmode"]);
     // casa-rs's point source with its default smodel was 1 Jy; CASA's
     // default smodel=[] would use MODEL_DATA, so the 1 Jy is kept.
     let resolved = load(

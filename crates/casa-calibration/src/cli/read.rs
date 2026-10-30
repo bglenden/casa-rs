@@ -153,6 +153,9 @@ fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest,
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,
+        // The native bandpass solves every antenna with a baseline and
+        // keeps every solution, as it always has.
+        cuts: None,
     })
 }
 

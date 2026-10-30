@@ -45,8 +45,8 @@ mod task_contract;
 mod writer;
 
 pub use bandpass::{
-    BandpassSolveCombine, BandpassSolveError, BandpassSolveReport, BandpassSolveRequest,
-    BandpassType,
+    BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError, BandpassSolveReport,
+    BandpassSolveRequest, BandpassType,
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
 pub use casa_return::{fluxscale_record, solve_record};

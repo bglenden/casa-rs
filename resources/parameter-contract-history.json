@@ -3351,7 +3351,7 @@
     {
       "id": "applycal",
       "contract_version": 6,
-      "fingerprint": "ba594eaa5a714611153e646ed4df97b5b903ce48b6a65ab0364c1a0499c2de2e"
+      "fingerprint": "7efe161705d8b97c66db12e7f16aaaaf489e48ecd9b05741f4a32581071ed861"
     },
     {
       "id": "bandpass",
@@ -3381,7 +3381,7 @@
     {
       "id": "bandpass",
       "contract_version": 6,
-      "fingerprint": "81c459c3db62e1229e607075a127f36050f4247ba02a79b9eae870883782fc39"
+      "fingerprint": "84d3f2e6dfc538ca4f639340d9a3de6bdf543026b0f1c755a3811ac9055a21a9"
     },
     {
       "id": "calibrate",
@@ -3631,7 +3631,7 @@
     {
       "id": "gaincal",
       "contract_version": 6,
-      "fingerprint": "da257e4d4d8666dcdf4be7b5ac6b64df73106fb2e26843e4858fe203fc961d7b"
+      "fingerprint": "23800628ced6cf0876a43c4bde77b0e23f9bc750fdab033e4b8327a3c5122b27"
     },
     {
       "id": "gencal",
