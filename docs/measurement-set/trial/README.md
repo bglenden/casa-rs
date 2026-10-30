@@ -1687,6 +1687,7 @@ equal.
 | `a_weight_write_refuses_sigma_derived_weights` | An update session refuses a weight updater bound to a sigma-weighted traversal and binds a flag updater to it; a weight updater bound to the stored weights still refuses a patch from a sigma-weighted batch, which states its rule. |
 | `a_weight_write_binds_beside_an_msv4_fallback` | Beside an MSv4's `StoredWeights` fallback a weight updater binds; its batches state the stored rule and write back. |
 | `spectral_columns_without_content_are_read_past` | `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` added and never filled hold no content (casacore's `hasContent`): the stored weights are `WEIGHT` and the sigmas `SIGMA`, and with only `SIGMA_SPECTRUM` filled still `SIGMA`. |
+| `each_partition_reads_weight_spectrum_by_its_first_row` | With `WEIGHT_SPECTRUM` filled for one of two partitions (two sessions of one window), that partition's stored weights are its cells and the other's its `WEIGHT`, whether or not it holds MAIN's first row. CASA asks again at each new spectral window (`weightSpectrumExists`), so it answers once for these two. |
 | `sigma_weighted_batch_solves_equal_the_production_gaincal` | Example B with `SIGMA` not 1/√`WEIGHT` (casa-calibration): the batch-fed solve reading 1/σ² equals production to 1.3e-7 in weight; the one reading `WEIGHT` differs by 2,500×. |
 | `an_msv4_converts_to_an_msv2_of_every_acquisition` | 1/σ² of the converter's derived `SIGMA` gives the MSv4's weights back to 1e-6. |
 

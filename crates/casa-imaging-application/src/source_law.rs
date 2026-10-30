@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Imaging port step 4's source counting law (#932): the observation-batch
-//! route's source holds at most what its admission charges it. A whole
-//! run's counting law (`tests/admission_memory.rs`) cannot see the source's
-//! charge beside the rest of the run's, so this reads the source alone,
-//! through the traversals a run makes, on a route opened and admitted as a
-//! run admits it. A request that writes visibilities back also drives its
-//! write (step 5): the source and the sink of a writing pass hold at most
-//! the route's charge and the write's. Evidence for the port only: the
-//! cutover makes the batch route the run's, and its law moves with it.
+//! The source's counting law (#932, step 4): the observation's batches, as
+//! the passes read them, hold at most what their admission charges them. A
+//! whole run's counting law (`tests/admission_memory.rs`) cannot see the
+//! source's charge beside the rest of the run's, so this reads the source
+//! alone, through the traversals a run makes, on a route opened and
+//! admitted as a run admits it. A request that writes visibilities back
+//! also drives its write (step 5): the source and the sink of a writing
+//! pass hold at most the route's charge and the write's.
 
 use casa_imaging_model::{CompiledProblem, ReconstructionBasis};
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{BoundedSource, NativeBlock, SampleContent, source_block_bytes};
 use num_complex::Complex32;
 
-use crate::imaging::{self, ObservationSource, VisibilityWriteTarget, VisibilityWriter};
-use crate::{ApplicationDispatchError, ImagingRequest, RunContext, SourceRoute};
+use crate::imaging::{self, ObservationSource, VisibilityWriteTarget};
+use crate::{ApplicationDispatchError, ImagingRequest, RunContext};
 
 /// What [`drive_batch_source`] admitted and read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,8 +29,8 @@ pub struct SourceDrive {
     pub blocks: usize,
 }
 
-/// Compile `request` on the observation-batch route, admit the route as a
-/// run does, read its source once, then call `mark` and read it again with
+/// Compile `request`, admit its batch route as a run does, read its source
+/// once, then call `mark` and read it again with
 /// a fresh source: flags and weights over every plane, visibilities over
 /// every plane and, for a cube, visibilities in restricted waves of
 /// `planes_per_wave` planes. The first reading leaves the opened store's
@@ -52,17 +51,10 @@ pub fn drive_batch_source(
     planes_per_wave: u32,
     mark: &mut dyn FnMut(),
 ) -> Result<SourceDrive, ApplicationDispatchError> {
-    let mut request = request.clone();
-    request.source_route = SourceRoute::ObservationBatches;
     let resolved = std::cell::Cell::new(None);
-    let (problem, input, native, _resident) = crate::compile_run(&request, context, &resolved)?;
-    drop(input.initial_access);
-    let admitted = crate::native::batch_route(
-        &problem,
-        &input.observation,
-        (false, false),
-        &native.runtime,
-    )?;
+    let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
+    let admitted =
+        crate::native::batch_route(&problem, input.observation, (false, false), &native.runtime)?;
     let planes = planes(&problem);
     let source = || {
         ObservationSource::new(
@@ -86,8 +78,8 @@ pub fn drive_batch_source(
     })
 }
 
-/// Compile `request`, which writes visibilities back, on the
-/// observation-batch route, admit the route as a run does, read its source
+/// Compile `request`, which writes visibilities back, admit its batch
+/// route as a run does, read its source
 /// once, then call `mark` and drive a writing pass: a sink begun for the
 /// next traversal, every block of a fresh source's traversal of every
 /// plane handed to it with a zero prediction for each sample, and the
@@ -105,14 +97,11 @@ pub fn drive_batch_write(
     context: &RunContext,
     mark: &mut dyn FnMut(),
 ) -> Result<SourceDrive, ApplicationDispatchError> {
-    let mut request = request.clone();
-    request.source_route = SourceRoute::ObservationBatches;
     let resolved = std::cell::Cell::new(None);
-    let (problem, input, native, _resident) = crate::compile_run(&request, context, &resolved)?;
-    drop(input.initial_access);
+    let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
     let admitted = crate::native::batch_route(
         &problem,
-        &input.observation,
+        input.observation,
         (input.write_model_column, input.write_corrected_data),
         &native.runtime,
     )?;
@@ -130,7 +119,7 @@ pub fn drive_batch_write(
         )
     };
     read(source(), planes, planes)?;
-    let target = VisibilityWriteTarget::Batches(&admitted.value);
+    let target = VisibilityWriteTarget(&admitted.value);
     let write = target.retained_bytes().map_err(failed)?;
     let mut source = source();
     let maximum = source.maximum_block();
@@ -138,8 +127,9 @@ pub fn drive_batch_write(
     let predictions =
         vec![Complex32::default(); maximum.rows * maximum.channels() * maximum.correlations];
     mark();
-    let mut writer =
-        VisibilityWriter::begin(&target, problem.visibility_transform()).map_err(failed)?;
+    let mut writer = target
+        .begin(problem.visibility_transform())
+        .map_err(failed)?;
     source
         .begin(
             PlaneRange::new(0, planes),

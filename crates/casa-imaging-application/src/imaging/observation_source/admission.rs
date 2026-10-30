@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The batch route's memory: how many times each partition's batches hold,
-//! sized as the selected-observation route sizes its blocks
-//! ([`casa_imaging_runtime::finalize_source_access`]), and the charge of
-//! everything the source and the passes' blocks hold, admitted before the
-//! run opens the source.
+//! and the charge of everything the source and the passes' blocks hold,
+//! admitted before the run opens the source.
 
 use casa_imaging_model::{CompiledProblem, GeometryPlan};
 use casa_imaging_runtime::pass::{
@@ -90,11 +88,11 @@ fn estimate(
 /// The batches of `selection` for `problem`, and the admitted charge of
 /// what the source holds for them beside the passes' blocks.
 ///
-/// As the selected-observation route does for its rows, the batches hold
-/// at least one time of each partition, and grow beyond one time by at most
-/// the bootstrap budget ([`bootstrap_source_budget`]) or the source's share
-/// of a quarter of what `policy` leaves free on `host`, shared with the
-/// passes' per-row storage in proportion to their bytes per sample. They
+/// The batches hold at least one time of each partition, and grow beyond
+/// one time by at most the bootstrap budget ([`bootstrap_source_budget`])
+/// or the source's share of a quarter of what `policy` leaves free on
+/// `host`, shared with the passes' per-row storage in proportion to their
+/// bytes per sample. They
 /// hold at most one part in [`OVERLAPPED_BLOCKS`] of a partition's selected
 /// times, so a pass streams in several batches and reads the next while it
 /// grids one. A row of [`row_layout`] produces at most `row` samples. The charge holds the largest batch's

@@ -491,8 +491,8 @@ fn a_misshapen_patch_is_refused_before_its_padding_is_checked() {
 }
 
 /// An MSv2 column the session cannot write in place in bounded memory is
-/// refused when the session opens, before anything is cleared or written,
-/// as today's route refuses it: an existing `MODEL_DATA` or
+/// refused when the session opens, before anything is cleared or written:
+/// an existing `MODEL_DATA` or
 /// `CORRECTED_DATA` in `StandardStMan` or `StManAipsIO`, and a `MODEL_DATA`
 /// to create when `DATA` is in `StandardStMan`. MAIN's description is
 /// unchanged after each refusal.

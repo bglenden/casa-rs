@@ -70,40 +70,17 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     ms.save().unwrap();
     drop(ms);
 
-    let image_on = |name: &str, selection: &serde_json::Value, route: SourceRoute| {
+    // The run reads its partitions by data description and intent, and
+    // tests the UV distance per sample (#932 step 4).
+    let image = |name: &str, selection: serde_json::Value| {
         let image_name = root.path().join(name);
         let mut overrides = json!({ "niter": 0, "ddid": null });
         overrides
             .as_object_mut()
             .unwrap()
             .extend(selection.as_object().unwrap().clone());
-        let mut imaging = request(&path, &image_name, overrides);
-        imaging.source_route = route;
+        let imaging = request(&path, &image_name, overrides);
         execute(&imaging).map(|outcome| (image_name, outcome))
-    };
-    // Each selection imaged on the observation-batch route too (#932 step
-    // 4), which reads its partitions by data description and intent and
-    // tests the UV distance per sample, gives the same products.
-    let image = |name: &str, selection: serde_json::Value| {
-        let imaged = image_on(name, &selection, SourceRoute::SelectedRows)?;
-        let (batches, _) = image_on(
-            &format!("{name}-batches"),
-            &selection,
-            SourceRoute::ObservationBatches,
-        )
-        .unwrap_or_else(|error| panic!("{name} on batches: {error}"));
-        for suffix in [".psf", ".residual", ".sumwt"] {
-            let nrms = route_law::image_nrms(
-                &PathBuf::from(format!("{}{suffix}", imaged.0.display())),
-                &PathBuf::from(format!("{}{suffix}", batches.display())),
-            )
-            .expect("both routes' products");
-            assert!(
-                nrms <= route_law::TOLERANCE,
-                "{name}{suffix}: the routes differ by NRMS {nrms:.3e}"
-            );
-        }
-        Ok(imaged)
     };
     let plane = |image_name: &Path, suffix: &str| {
         product_plane(image_name, suffix)
@@ -155,7 +132,7 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
 
     // The MSv2 adapter partitions rows by their state's OBS_MODE. A second
     // state of state 0's mode that no row holds leaves state 0's partition
-    // its own: `intent='0'` images alike on both routes.
+    // its own: `intent='0'` images.
     let mut ms = MeasurementSet::open(&path).unwrap();
     ms.subtable_mut(SubtableId::State)
         .unwrap()
@@ -167,8 +144,9 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     ms.save().unwrap();
     drop(ms);
     image("unused-state", json!({ "intent": "0" })).expect("state 0 alone");
-    // Once rows hold it, the two states' rows share the partition, and the
-    // batch route refuses a selection of one of them.
+    // Once rows hold it, the two states' rows share the partition, and a
+    // selection of one of them is refused (contracts, section 4: no
+    // selection by STATE_ID).
     let mut ms = MeasurementSet::open(&path).unwrap();
     for row in (0..ms.row_count()).step_by(8) {
         ms.main_table_mut()
@@ -178,20 +156,16 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     }
     ms.save().unwrap();
     drop(ms);
-    let error = image_on(
-        "shared-mode",
-        &json!({ "intent": "0" }),
-        SourceRoute::ObservationBatches,
-    )
-    .err()
-    .expect("a state sharing its OBS_MODE with an unselected one");
+    let error = image("shared-mode", json!({ "intent": "0" }))
+        .err()
+        .expect("a state sharing its OBS_MODE with an unselected one");
     assert!(error.to_string().contains("sharing an OBS_MODE"), "{error}");
 }
 
 /// `datacolumn='corrected'` on a MeasurementSet holding only `DATA` images
-/// `DATA`, as CASA's `tclean` does (simulation plan §3, decision 6): on
-/// both observation routes the compiled problem reads `DATA` and its
-/// products are those of `datacolumn='DATA'`.
+/// `DATA`, as CASA's `tclean` does (simulation plan §3, decision 6): the
+/// compiled problem reads `DATA` and its products are those of
+/// `datacolumn='DATA'`.
 #[test]
 fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -204,14 +178,13 @@ fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
             .is_err(),
         "the fixture holds DATA only"
     );
-    let image = |name: &str, datacolumn: &str, route: SourceRoute| {
+    let image = |name: &str, datacolumn: &str| {
         let image_name = root.path().join(name);
-        let mut imaging = request(
+        let imaging = request(
             &path,
             &image_name,
             json!({ "niter": 0, "datacolumn": datacolumn }),
         );
-        imaging.source_route = route;
         let outcome = execute(&imaging).unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             outcome.problem.observation().sources()[0]
@@ -222,20 +195,15 @@ fn corrected_on_a_measurement_set_without_corrected_data_images_data() {
         );
         image_name
     };
-    let data = image("data", "DATA", SourceRoute::SelectedRows);
-    for (name, route) in [
-        ("corrected", SourceRoute::SelectedRows),
-        ("corrected-batches", SourceRoute::ObservationBatches),
-    ] {
-        let corrected = image(name, "corrected", route);
-        for suffix in [".psf", ".residual", ".sumwt"] {
-            let plane = |image_name: &Path| {
-                product_plane(image_name, suffix)
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>()
-            };
-            assert_real_agreement(&plane(&data), &plane(&corrected));
-        }
+    let data = image("data", "DATA");
+    let corrected = image("corrected", "corrected");
+    for suffix in [".psf", ".residual", ".sumwt"] {
+        let plane = |image_name: &Path| {
+            product_plane(image_name, suffix)
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_real_agreement(&plane(&data), &plane(&corrected));
     }
 }

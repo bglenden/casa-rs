@@ -5,7 +5,10 @@
 use std::mem::size_of;
 
 use casa_imaging_deconvolution::NormalBasis;
-use casa_imaging_model::{ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy};
+use casa_imaging_model::{
+    CompiledProblem, ProductBeamRule, ProductRole, ProductValidityRule, ReconstructionBasis,
+    RestoringBeamPolicy,
+};
 use num_complex::Complex64;
 
 use crate::{
@@ -98,6 +101,81 @@ impl ContinuumGenerationDemand {
     }
 }
 
+/// The shapes a generation's demand depends on, as the run's final normal
+/// state and model have them: the compiled problem fixes them before the
+/// run ([`Self::of_problem`]), and the completion carries them after it
+/// ([`Self::of_inputs`]).
+struct Shapes<'a> {
+    problem: &'a CompiledProblem,
+    basis: NormalBasis,
+    /// Image domains.
+    domains: usize,
+    /// The normal state's channel planes.
+    channels: usize,
+    polarizations: usize,
+    /// The normal state's plane: its primary domain's.
+    plane: [usize; 2],
+    /// Reconstruction-coefficient terms and normal moments.
+    terms: usize,
+    moments: usize,
+    /// Each model domain's plane, in canonical order.
+    model_planes: Vec<[usize; 2]>,
+}
+
+impl<'a> Shapes<'a> {
+    fn of_inputs(inputs: &'a ContinuumProductInputs<'_>) -> Self {
+        let state = inputs.normal_state();
+        Self {
+            problem: inputs.problem(),
+            basis: state.basis(),
+            domains: state.domain_count(),
+            channels: state.channel_count(),
+            polarizations: state.polarization_count(),
+            plane: state.shape(),
+            terms: state.coefficient_term_count(),
+            moments: state.normal_moment_count(),
+            model_planes: inputs
+                .final_model()
+                .shape()
+                .domains()
+                .iter()
+                .map(|domain| domain.pixels())
+                .collect(),
+        }
+    }
+
+    /// The shapes a run of `problem` completes with: the model it compiled
+    /// (`ModelLifecycleContract::target`), and a normal state of one channel
+    /// plane per model coefficient (one for a Taylor basis, whose terms and
+    /// `2·terms − 1` moments are its own) on the primary domain's plane.
+    fn of_problem(problem: &'a CompiledProblem) -> Self {
+        let model = problem.model_lifecycle().target();
+        let model_planes: Vec<[usize; 2]> = model
+            .domains()
+            .iter()
+            .map(|domain| domain.pixels())
+            .collect();
+        let (basis, channels, terms, moments) = match problem.reconstruction().basis() {
+            ReconstructionBasis::Taylor { terms } => (NormalBasis::Taylor, 1, terms, 2 * terms - 1),
+            ReconstructionBasis::ChannelLocal { .. } => {
+                (NormalBasis::ChannelLocal, model.coefficients(), 1, 1)
+            }
+            _ => (NormalBasis::Constant, model.coefficients(), 1, 1),
+        };
+        Self {
+            problem,
+            basis,
+            domains: model_planes.len(),
+            channels,
+            polarizations: model.polarizations(),
+            plane: model_planes[0],
+            terms,
+            moments,
+            model_planes,
+        }
+    }
+}
+
 /// The largest arrays one member and one window hold.
 #[derive(Default)]
 struct MemberBounds {
@@ -122,21 +200,47 @@ impl PlannedContinuumGeneration {
         storage_plan: ProductStoragePlan,
         writer: &CasaImageWriter,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
+        self.demand_of(&Shapes::of_inputs(inputs), storage_plan, writer)
+    }
+
+    /// [`Self::demand`] before the run: from the shapes its problem fixes,
+    /// which its completion then has, so that a run can tell before its
+    /// passes whether its products fit. A plan of `problem`
+    /// ([`Self::for_problem`]) gives the demand [`Self::demand`] gives once
+    /// the run completes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::demand`].
+    pub fn planned_demand(
+        &self,
+        problem: &CompiledProblem,
+        storage_plan: ProductStoragePlan,
+        writer: &CasaImageWriter,
+    ) -> Result<ContinuumGenerationDemand, ProductsError> {
+        self.demand_of(&Shapes::of_problem(problem), storage_plan, writer)
+    }
+
+    fn demand_of(
+        &self,
+        shapes: &Shapes<'_>,
+        storage_plan: ProductStoragePlan,
+        writer: &CasaImageWriter,
+    ) -> Result<ContinuumGenerationDemand, ProductsError> {
         let bounds = self.member_bounds(storage_plan)?;
         let maximum_windows = bounds.windows;
         let beam_jobs = if self.requires_beam() {
-            inputs
-                .normal_state()
-                .domain_count()
-                .checked_mul(inputs.normal_state().channel_count())
-                .and_then(|count| count.checked_mul(inputs.normal_state().polarization_count()))
+            shapes
+                .domains
+                .checked_mul(shapes.channels)
+                .and_then(|count| count.checked_mul(shapes.polarizations))
                 .ok_or(ProductsError::ResourceDemandOverflow(
                     "generation beam count",
                 ))?
         } else {
             0
         };
-        let workers = match inputs.normal_state().basis() {
+        let workers = match shapes.basis {
             NormalBasis::Taylor => 1,
             _ if cfg!(unix)
                 && maximum_windows == 1
@@ -155,15 +259,15 @@ impl PlannedContinuumGeneration {
         };
         let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
         let algorithm_scratch_bytes =
-            self.algorithm_scratch_bytes(inputs, &bounds, workers.min(maximum_windows))?;
+            self.algorithm_scratch_bytes(shapes, &bounds, workers.min(maximum_windows))?;
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
-            self.metadata_demand(inputs, workers.min(beam_jobs))?;
+            self.metadata_demand(shapes, workers.min(beam_jobs))?;
         let writer_bytes =
             writer.residency_bytes(self, bounds.window_payload, bounds.window_validity)?;
-        let peak_residency_bytes = if matches!(inputs.normal_state().basis(), NormalBasis::Taylor) {
+        let peak_residency_bytes = if matches!(shapes.basis, NormalBasis::Taylor) {
             // The coupled family is built whole, then published member by
             // member: it peaks at the larger stage, not at their sum (#738).
-            let stages = taylor_stages(inputs, beam_scratch_bytes)?;
+            let stages = taylor_stages(shapes, beam_scratch_bytes)?;
             let publishing = [
                 bounds.member_payload,
                 bounds.member_validity,
@@ -248,14 +352,14 @@ impl PlannedContinuumGeneration {
     /// window per lane.
     fn algorithm_scratch_bytes(
         &self,
-        inputs: &ContinuumProductInputs<'_>,
+        shapes: &Shapes<'_>,
         bounds: &MemberBounds,
         window_workers: usize,
     ) -> Result<u64, ProductsError> {
-        let taylor = matches!(inputs.normal_state().basis(), NormalBasis::Taylor);
+        let taylor = matches!(shapes.basis, NormalBasis::Taylor);
         let mut bytes = if taylor {
             checked_add(
-                taylor_scratch_bytes(inputs)?,
+                taylor_scratch_bytes(shapes)?,
                 checked_add(
                     bounds.member_payload,
                     bounds.member_validity,
@@ -264,7 +368,7 @@ impl PlannedContinuumGeneration {
                 "coupled member production scratch",
             )?
         } else {
-            generic_scratch_bytes(self, inputs)?
+            generic_scratch_bytes(self, shapes)?
         };
         bytes = checked_add(
             bytes,
@@ -290,26 +394,25 @@ impl PlannedContinuumGeneration {
 
     fn metadata_demand(
         &self,
-        inputs: &ContinuumProductInputs<'_>,
+        shapes: &Shapes<'_>,
         workers: usize,
     ) -> Result<(u64, u64, u64), ProductsError> {
-        let state = inputs.normal_state();
-        let domains = state.domain_count();
+        let domains = shapes.domains;
         let fitted = if !self.requires_beam() {
             0
         } else {
-            match state.basis() {
+            match shapes.basis {
                 NormalBasis::Taylor => 1,
                 _ => domains
-                    .checked_mul(state.channel_count())
-                    .and_then(|count| count.checked_mul(state.polarization_count()))
+                    .checked_mul(shapes.channels)
+                    .and_then(|count| count.checked_mul(shapes.polarizations))
                     .ok_or(ProductsError::ResourceDemandOverflow(
                         "generation beam count",
                     ))?,
             }
         };
-        let restoring_policy = inputs.problem().products().restoring_beam();
-        let restoring = match (restoring_policy, state.basis()) {
+        let restoring_policy = shapes.problem.products().restoring_beam();
+        let restoring = match (restoring_policy, shapes.basis) {
             (RestoringBeamPolicy::None, _) => 0,
             (_, NormalBasis::Taylor) => 1,
             _ => fitted,
@@ -348,7 +451,7 @@ impl PlannedContinuumGeneration {
         }
         let common_scratch = if restoring_policy == RestoringBeamPolicy::Common
             && matches!(
-                state.basis(),
+                shapes.basis,
                 NormalBasis::Constant | NormalBasis::ChannelLocal
             ) {
             checked_add(
@@ -368,8 +471,7 @@ impl PlannedContinuumGeneration {
         };
         let mut fitting_scratch = 0;
         if self.requires_beam() {
-            for shape in inputs.final_model().shape().domains() {
-                let shape = shape.pixels();
+            for &shape in &shapes.model_planes {
                 let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
                 let input = bytes_for::<f32>(cells, "beam real PSF")?;
                 // Paged PSFs own the decoded complex plane while converting to
@@ -400,7 +502,7 @@ impl PlannedContinuumGeneration {
 
 fn generic_scratch_bytes(
     planned: &PlannedContinuumGeneration,
-    inputs: &ContinuumProductInputs<'_>,
+    shapes: &Shapes<'_>,
 ) -> Result<u64, ProductsError> {
     let requires_validity = planned
         .members()
@@ -412,8 +514,7 @@ fn generic_scratch_bytes(
         .any(|member| matches!(member.role(), ProductRole::RestoredImage(_)));
     let mut maximum = 0;
     let mut normal_window = 0;
-    for shape in inputs.final_model().shape().domains() {
-        let shape = shape.pixels();
+    for &shape in &shapes.model_planes {
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
         let plane = bytes_for::<f32>(cells, "generic plane")?;
         let validity = bytes_for::<bool>(cells, "generic validity plane")?;
@@ -423,7 +524,7 @@ fn generic_scratch_bytes(
             normal_window,
             casa_imaging_deconvolution::normal_state_window_residency_bytes(
                 shape,
-                inputs.normal_state().polarization_count(),
+                shapes.polarizations,
                 1,
             )?,
             "generic normal-state input window",
@@ -454,8 +555,8 @@ fn generic_scratch_bytes(
     )
 }
 
-fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, ProductsError> {
-    let parts = TaylorParts::of(inputs)?;
+fn taylor_scratch_bytes(shapes: &Shapes<'_>) -> Result<u64, ProductsError> {
+    let parts = TaylorParts::of(shapes)?;
     checked_add(
         checked_add(parts.retained, parts.transient, "Taylor algorithm scratch")?,
         parts.restoration.unwrap_or(0),
@@ -480,11 +581,8 @@ struct TaylorStages {
 /// (`beam_scratch`) or beside restoration (its kernel, the restored terms
 /// and one FFT convolution's workspace); or every retained plane beside
 /// the principal residuals, the PB0 source and the normal solve.
-fn taylor_stages(
-    inputs: &ContinuumProductInputs<'_>,
-    beam_scratch: u64,
-) -> Result<TaylorStages, ProductsError> {
-    let parts = TaylorParts::of(inputs)?;
+fn taylor_stages(shapes: &Shapes<'_>, beam_scratch: u64) -> Result<TaylorStages, ProductsError> {
+    let parts = TaylorParts::of(shapes)?;
     let planes = |count: u64| checked_mul(count, parts.plane, "Taylor stage planes");
     // PSF and weight moments, residual and model terms, the sensitivity.
     let read = checked_add(
@@ -527,13 +625,12 @@ struct TaylorParts {
 }
 
 impl TaylorParts {
-    fn of(inputs: &ContinuumProductInputs<'_>) -> Result<Self, ProductsError> {
-        let state = inputs.normal_state();
-        let shape = state.shape();
+    fn of(shapes: &Shapes<'_>) -> Result<Self, ProductsError> {
+        let shape = shapes.plane;
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
-        let terms = u64::try_from(state.coefficient_term_count())
+        let terms = u64::try_from(shapes.terms)
             .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor term count"))?;
-        let moments = u64::try_from(state.normal_moment_count())
+        let moments = u64::try_from(shapes.moments)
             .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor moment count"))?;
         let cells = u64::try_from(cells)
             .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;
@@ -593,16 +690,16 @@ impl TaylorParts {
             size_of::<f64>() as u64,
             "Taylor solve bytes",
         )?;
-        let restoration =
-            if inputs.problem().products().restoring_beam() != RestoringBeamPolicy::None {
-                Some(checked_add(
-                    checked_mul(cells, size_of::<f32>() as u64, "Taylor restoring kernel")?,
-                    fft_convolution_workspace_bytes(shape)?,
-                    "Taylor convolution scratch",
-                )?)
-            } else {
-                None
-            };
+        let restoration = if shapes.problem.products().restoring_beam() != RestoringBeamPolicy::None
+        {
+            Some(checked_add(
+                checked_mul(cells, size_of::<f32>() as u64, "Taylor restoring kernel")?,
+                fft_convolution_workspace_bytes(shape)?,
+                "Taylor convolution scratch",
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             plane: checked_mul(cells, size_of::<f32>() as u64, "Taylor plane bytes")?,
             terms,

@@ -1,92 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Imaging port step 4's route law (#932): a request imaged on the
-//! observation-batch route ([`SourceRoute::ObservationBatches`]) gives the
-//! products the selected-observation route gives, each to a normalized RMS
-//! of [`TOLERANCE`] (owner decision 4 of `imaging-port.md` §3). The two
-//! routes image the same samples with the same geometry, so they differ
-//! only by summation order. A request that writes visibilities back writes
-//! them, on the batch route, to a copy of the MeasurementSet taken before
-//! either route wrote ([`batch_copy`]); each column written then agrees
-//! to the same bound ([`column_nrms`]), over every cell. Evidence for the
-//! port only: it goes with the selected-observation route at the cutover.
+//! Products of two runs compared by normalized RMS: images pixel for pixel
+//! and a MeasurementSet column cell for cell, for the laws that hold two
+//! runs of one request equal (waves against a resident cube, one store
+//! against its conversion) to [`TOLERANCE`], owner decision 4 of
+//! `imaging-port.md` §3. Runs that image the same samples differ only by
+//! summation order.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_images::PagedImage;
 use casa_ms::MeasurementSet;
 use casa_types::ArrayValue;
 
-use crate::{ImagingRequest, SourceRoute};
-
-/// The law's bound on each product's normalized RMS difference.
+/// The laws' bound on each product's normalized RMS difference.
 pub const TOLERANCE: f64 = 1.0e-6;
-
-/// `request` on the observation-batch route, its products named
-/// `<imagename>.batches*` beside the request's own; one that writes
-/// visibilities back reads and writes [`batch_copy`] of its MeasurementSet.
-#[must_use]
-pub fn on_batches(request: &ImagingRequest) -> ImagingRequest {
-    let mut batches = request.clone();
-    batches.source_route = SourceRoute::ObservationBatches;
-    batches.imagename = batch_prefix(&request.imagename);
-    if !written_columns(request).is_empty() {
-        batches.vis = batch_copy(&request.vis);
-    }
-    batches
-}
-
-/// The columns `request` writes back: `MODEL_DATA` for `savemodel`,
-/// `CORRECTED_DATA` for the continuum residual.
-#[must_use]
-pub fn written_columns(request: &ImagingRequest) -> Vec<&'static str> {
-    let mut columns = Vec::new();
-    if request.savemodel {
-        columns.push("MODEL_DATA");
-    }
-    if request.save_continuum_residual {
-        columns.push("CORRECTED_DATA");
-    }
-    columns
-}
-
-/// The copy of `measurement_set` a writing request's batch-route run
-/// writes: `<measurement_set>.batches`, beside it.
-#[must_use]
-pub fn batch_copy(measurement_set: &Path) -> PathBuf {
-    let mut copy = measurement_set.as_os_str().to_owned();
-    copy.push(".batches");
-    PathBuf::from(copy)
-}
-
-/// Copy `measurement_set` to [`batch_copy`], replacing an earlier copy:
-/// what a writing request's batch-route run writes, taken before either
-/// route writes.
-///
-/// # Errors
-///
-/// When the directory cannot be copied.
-pub fn copy_for_batches(measurement_set: &Path) -> std::io::Result<PathBuf> {
-    let copy = batch_copy(measurement_set);
-    if copy.exists() {
-        std::fs::remove_dir_all(&copy)?;
-    }
-    copy_directory(measurement_set, &copy)?;
-    Ok(copy)
-}
-
-fn copy_directory(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_directory(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
-}
 
 /// MAIN rows [`column_nrms`] reads at a time, so a column is never held
 /// whole.
@@ -167,14 +94,6 @@ fn accumulate(
         }
     }
     Ok(true)
-}
-
-/// The product prefix [`on_batches`] gives `imagename`.
-#[must_use]
-pub fn batch_prefix(imagename: &Path) -> PathBuf {
-    let mut prefix = imagename.as_os_str().to_owned();
-    prefix.push(".batches");
-    PathBuf::from(prefix)
 }
 
 /// The normalized RMS difference of the image at `other` from the one at

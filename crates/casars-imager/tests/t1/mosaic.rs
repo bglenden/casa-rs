@@ -190,14 +190,12 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
-/// Imaging port step 3b (#932): under `usepointing` each row's pointing
-/// comes from the POINTING table; the batch geometry equals the selected
-/// rows', and so do the products of the batch route (step 4).
+/// Under `usepointing` each row's pointing comes from the POINTING table
+/// (#932 step 3b).
 #[test]
-fn mosaic_pointing_geometry_of_batches_is_the_selected_rows() {
+fn a_mosaic_images_on_its_pointing_table() {
     let (observation, mut controls) = mosaic_run(false);
     controls["usepointing"] = json!(true);
-    observation.assert_geometry("mosaic-pointing", controls.clone());
     observation.image("mosaic-pointing-image", controls);
 }
 
@@ -559,12 +557,15 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
         let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("reopen");
         let pointing = Setup::pointing([0.0, 0.0]);
         // [2, NUM_POLY + 1] in Fortran order: the constant pointing, then
-        // a right-ascension rate of 1e-9 rad/s.
-        let polynomial = ndarray::ArrayD::from_shape_vec(
-            ndarray::IxDyn(&[2, 2]).f(),
-            vec![pointing[0], pointing[1], 1.0e-9, 0.0],
-        )
-        .expect("PHASE_DIR shape");
+        // a right-ascension rate. `NUM_POLY` orders every direction column,
+        // so the delay and reference centres take the shape too, at rest.
+        let polynomial = |rate: f64| {
+            ndarray::ArrayD::from_shape_vec(
+                ndarray::IxDyn(&[2, 2]).f(),
+                vec![pointing[0], pointing[1], rate, 0.0],
+            )
+            .expect("direction polynomial shape")
+        };
         let mut field = ms
             .subtable_mut(casa_ms::SubtableId::Field)
             .expect("FIELD")
@@ -576,13 +577,19 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
                 casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)),
             )
             .expect("NUM_POLY");
-        field
-            .set_cell(
-                1,
-                "PHASE_DIR",
-                casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial)),
-            )
-            .expect("PHASE_DIR");
+        for (column, rate) in [
+            ("DELAY_DIR", 0.0),
+            ("PHASE_DIR", 1.0e-9),
+            ("REFERENCE_DIR", 0.0),
+        ] {
+            field
+                .set_cell(
+                    1,
+                    column,
+                    casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial(rate))),
+                )
+                .expect(column);
+        }
         ms.save().expect("save");
     }
     let Err(error) = observation.try_image(

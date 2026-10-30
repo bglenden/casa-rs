@@ -208,9 +208,16 @@ impl MeasurementSet {
     /// Tables are opened in canonical MAIN-then-subtable order. Row payloads
     /// remain lazy, so callers can combine this retained consistency capability
     /// with bounded selected-column reads. Dropping the returned MeasurementSet
-    /// releases the locks.
+    /// releases the locks. An observation opened on it
+    /// ([`Msv2Observation::open_granted_on`]) keeps them.
+    ///
+    /// # Errors
+    ///
+    /// When MAIN or a present subtable cannot be opened or locked.
+    ///
+    /// [`Msv2Observation::open_granted_on`]: crate::observation_io::Msv2Observation::open_granted_on
     #[cfg(unix)]
-    pub(crate) fn open_retained_read(path: impl AsRef<Path>) -> MsResult<Self> {
+    pub fn open_retained_read(path: impl AsRef<Path>) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
         let lock_options = LockOptions::new(LockMode::AutoLocking);
         Self::open_tables(path, |table_path| {

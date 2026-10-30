@@ -434,13 +434,10 @@ The imaging foundation (#648, plan section 7) tests in four tiers:
 - **T1, end to end** (under ten minutes each; CI):
   `cargo test -p casars-imager --test t1` through the production route, one
   module per capability (standard MFS and masks, cube, mosaic, W and AW
-  projection, MT-MFS, model column, Metal, routes, interrupt). Until the
-  imaging port's cutover (#932), the fixture also checks the step-3b
-  geometry law after every run: the batch geometry of the run's rows equals
-  today's selected-observation geometry to 1e-12
-  (`casa_imaging_application::geometry_law`). On T1.5 inputs,
-  `casars-imager`'s `imager_geometry_law` example is a drop-in imager that
-  writes the same comparison to `<imagename>.geometry-law.json`.
+  projection, MT-MFS, model column, Metal, routes, interrupt). The store
+  law holds a run's batch geometry in its MeasurementSet equal to its batch
+  geometry in the MSv4 conversion, every sample on every channel, to 1e-12
+  (`casa_imaging_application::store_law`, #932, #942).
 - **T1.5, CASA-paired small fixtures** (local, before an imaging review):
   the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
   references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5
