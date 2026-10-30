@@ -11,7 +11,7 @@ use casa_test_support::table_interop::{
     ManagerKind, TableFixture, read_and_verify, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
 };
-use casa_test_support::{CppTableFixture, SsmStatistics, TableOracle};
+use casa_test_support::{CppTableFixture, TableOracle};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -850,9 +850,9 @@ fn assert_same_string_buckets(ours: &Path, theirs: &Path, last_string_bucket: us
 /// placement, links, used and deleted counts. casacore then shrinks a
 /// scalar and a fixed array that span several buckets, grows a variable
 /// array into the buckets that frees and appends a long scalar, in each
-/// table. Its account of the buckets (total, free, first free and the last
-/// string bucket) then differs only by the index bucket it moves, and both
-/// libraries read every cell of both.
+/// table. Its account of the buckets (total, free, first free, the last
+/// string bucket and where the index lies) is the same for both, as written
+/// and as updated, and both libraries read every cell of both.
 #[test]
 fn ssm_long_strings_update_in_casacore_as_casacores_own() {
     if !casa_test_support::casacore_oracle_available() {
@@ -887,33 +887,32 @@ fn ssm_long_strings_update_in_casacore_as_casacores_own() {
         println!("{endian:?} as written: {written:?}");
         assert_eq!(written, statistics(&theirs), "{endian:?}: as written");
         assert_eq!(written.free_buckets, 0, "{endian:?}: as written");
+        // The small index starts after its chain header, which names no
+        // next bucket twice.
+        assert_eq!(written.index_bucket_offset, 8, "{endian:?}: as written");
         assert_same_string_buckets(
             &ours,
             &theirs,
             written.last_string_bucket as usize,
             &format!("{endian:?}"),
         );
+        let chain = |path: &Path| {
+            let file = std::fs::read(path.join("table.f0")).expect("the SSM file");
+            let start = SSM_HEADER_BYTES + written.first_index_bucket as usize * SSM_BUCKET_BYTES;
+            file[start..start + 8].to_vec()
+        };
+        assert_eq!(chain(&ours), chain(&theirs), "{endian:?}: index chain");
 
         for path in [&ours, &theirs] {
             TableOracle::update_ssm_long_strings(path).expect("casacore updates and reads");
         }
-        let rewritten = statistics(&theirs);
+        let rewritten = statistics(&ours);
         println!("{endian:?} as updated: {rewritten:?}");
-        // casacore writes an index that fits half a bucket into one half of
-        // its bucket, and rewrites it into the other half. casa-rs writes
-        // its index from the start of its bucket, so casacore's first
-        // rewrite moves it to a new bucket and frees the old one, the one
-        // after the string buckets as written. The strings' account is the
-        // same.
+        assert_eq!(rewritten, statistics(&theirs), "{endian:?}: as updated");
+        // casacore rewrote the index into the other half of its bucket.
         assert_eq!(
-            statistics(&ours),
-            SsmStatistics {
-                buckets: rewritten.buckets + 1,
-                free_buckets: rewritten.free_buckets + 1,
-                first_free_bucket: written.last_string_bucket + 1,
-                ..rewritten
-            },
-            "{endian:?}: as updated"
+            rewritten.first_index_bucket, written.first_index_bucket,
+            "{endian:?}: the index moved"
         );
         // The new strings, over 300,000 bytes, need at least nine buckets
         // beyond the room the last one had; the file grew by fewer, so

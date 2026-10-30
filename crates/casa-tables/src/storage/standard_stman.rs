@@ -2353,7 +2353,7 @@ fn write_ssm_file_in_memory(
         -1, // first_free_bucket
         nr_idx_buckets as u32,
         first_idx_bucket,
-        0, // idx_bucket_offset
+        index::index_bucket_offset(index_data.len(), bucket_size as usize),
         last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_data.len() as u32,
         1, // nr_indices (single index for all columns)
@@ -2378,15 +2378,12 @@ fn write_ssm_file_in_memory(
     let mut idx_remaining = &index_data[..];
     for i in 0..nr_idx_buckets {
         let mut idx_bucket = vec![0u8; bucket_size as usize];
-        // Check number at offset 0 (canonical/big-endian)
-        idx_bucket[0..4].copy_from_slice(&0i32.to_be_bytes());
-        // Next bucket pointer at offset 4 (canonical/big-endian)
         let next = if i + 1 < nr_idx_buckets {
             (first_idx_bucket as usize + i + 1) as i32
         } else {
             -1i32
         };
-        idx_bucket[4..8].copy_from_slice(&next.to_be_bytes());
+        index::write_chain_header(&mut idx_bucket, next);
         // Copy index data
         let chunk = idx_remaining.len().min(data_per_index_bucket);
         idx_bucket[chain_overhead..chain_overhead + chunk].copy_from_slice(&idx_remaining[..chunk]);
