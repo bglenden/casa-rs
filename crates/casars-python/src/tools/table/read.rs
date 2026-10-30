@@ -67,8 +67,9 @@ fn data_type_name(column: &ColumnSchema) -> &'static str {
 }
 
 /// The rows `start`, `start + incr`, ... for `count` rows (`-1`, or more
-/// than there are: to the end), or `refusal` when `start` is not a row. A
-/// step below one is refused as casacore's `getColumn` refuses it.
+/// than there are: to the end), or `refusal` when `start` is beyond the row
+/// after the last (a start at that row selects no rows). A step below one is
+/// refused as casacore's `getColumn` refuses it.
 pub(super) fn rows(
     nrows: usize,
     start: i64,
@@ -76,14 +77,30 @@ pub(super) fn rows(
     incr: i64,
     refusal: &str,
 ) -> Result<Vec<usize>, Fail> {
-    if incr < 1 {
-        return runtime("getColumn: rowincr<=0".into());
-    }
+    rows_stepping(nrows, start, count, incr, refusal, "getColumn: rowincr<=0")
+}
+
+/// As [`rows`], with the refusal of a step below one that a method words in
+/// its own way (`TableProxy::getColumnShapeString: rowincr<=0`).
+pub(super) fn rows_stepping(
+    nrows: usize,
+    start: i64,
+    count: i64,
+    incr: i64,
+    refusal: &str,
+    step_refusal: &str,
+) -> Result<Vec<usize>, Fail> {
+    // casacore's `TableProxy::checkRowColumn`: the start is a row or the row
+    // after the last when no rows are asked for (a count of `-1` asks for
+    // all that follow, so for none here), and only then is the step checked.
     let Ok(start) = usize::try_from(start) else {
         return runtime(refusal.into());
     };
-    if start >= nrows && !(start == 0 && nrows == 0) {
+    if start > nrows || (start == nrows && count > 0) {
         return runtime(refusal.into());
+    }
+    if incr < 1 {
+        return runtime(step_refusal.into());
     }
     let incr = usize::try_from(incr).unwrap_or(usize::MAX);
     let available = nrows.saturating_sub(start).div_ceil(incr);
@@ -267,17 +284,19 @@ impl Open {
                 ));
             }
         };
-        // A column of one shape has one answer, whatever the rows asked for.
-        if let casa_tables::ArrayShapeContract::Fixed { shape } = contract {
-            return Ok(texts([shape_text(shape)]));
-        }
-        let rows = rows(
+        let rows = rows_stepping(
             self.table.row_count(),
             start,
             count,
             incr,
             "TableProxy::getColumnShapeString: no such row",
+            "TableProxy::getColumnShapeString: rowincr<=0",
         )?;
+        // A column of one shape has one answer, whatever the rows asked for
+        // (once the rows asked for are known to exist).
+        if let casa_tables::ArrayShapeContract::Fixed { shape } = contract {
+            return Ok(texts([shape_text(shape)]));
+        }
         let mut shapes = Vec::with_capacity(rows.len());
         for row in rows {
             let shape = self

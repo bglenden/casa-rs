@@ -1968,6 +1968,239 @@ fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_cohere
     }
 }
 
+/// A cell written to a table whose rows are not loaded stays written when
+/// the rows are later loaded for reading or for a full save, whether it was
+/// written before or after another cell of its column was read, and a cell
+/// of a later write is not undone by the one before it. The table's other
+/// rows stay on disk while only cells are written and read.
+#[test]
+fn cells_written_to_a_lazy_table_survive_the_loading_of_its_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
+        for row in 0..4 {
+            table
+                .add_row(row_with_fixed_arrays(
+                    row,
+                    &[row, row + 1],
+                    &[100 + row, 200 + row],
+                ))
+                .expect("push row");
+        }
+        let root = unique_test_dir(&format!("lazy_cell_writes_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        // An array cell is written and its shape asked, and the scalar column
+        // read before one of its cells is written: no row is loaded.
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["id", "data"])
+                .expect("prepare");
+            writer.seek(1).expect("seek");
+            writer
+                .set_value_at(1, Value::Array(ArrayValue::from_i32_vec(vec![70, 90])))
+                .expect("array write");
+        }
+        assert!(!reopened.inner.has_loaded_rows(), "after the array write {dm:?}");
+        assert_eq!(
+            reopened.array_shape(1, "data").expect("shape"),
+            Some(vec![2])
+        );
+        assert!(!reopened.inner.has_loaded_rows(), "after array_shape {dm:?}");
+        assert_eq!(
+            table_scalar(&reopened, 2, "id").expect("read caches the column"),
+            &ScalarValue::Int32(2)
+        );
+        assert!(!reopened.inner.has_loaded_rows(), "after the scalar read {dm:?}");
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["id"])
+                .expect("prepare");
+            writer.seek(3).expect("seek");
+            writer
+                .set_value_at(0, Value::Scalar(ScalarValue::Int32(33)))
+                .expect("scalar write");
+        }
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "cell writes and reads load no rows for {dm:?}"
+        );
+
+        // The rows loaded for reading carry both writes.
+        assert_eq!(
+            reopened.row(1).expect("row 1").get("data"),
+            Some(&Value::Array(ArrayValue::from_i32_vec(vec![70, 90]))),
+            "{dm:?}"
+        );
+        assert_eq!(
+            reopened.row(3).expect("row 3").get("id"),
+            Some(&Value::Scalar(ScalarValue::Int32(33))),
+            "{dm:?}"
+        );
+
+        // A later write is not undone by the earlier one, and a full save
+        // writes them all.
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["data"])
+                .expect("prepare");
+            writer.seek(1).expect("seek");
+            writer
+                .set_value_at(0, Value::Array(ArrayValue::from_i32_vec(vec![71, 91])))
+                .expect("later write");
+        }
+        let copy = unique_test_dir(&format!("lazy_cell_writes_copy_{dm:?}"));
+        reopened
+            .save(TableOptions::new(&copy).with_data_manager(dm))
+            .expect("full save");
+        let verify = Table::open(TableOptions::new(&copy)).expect("reopen the copy");
+        assert_eq!(
+            table_array(&verify, 1, "data").expect("data row 1"),
+            &ArrayValue::from_i32_vec(vec![71, 91]),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_scalar(&verify, 3, "id").expect("id row 3"),
+            &ScalarValue::Int32(33),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_array(&verify, 2, "data").expect("data row 2"),
+            &ArrayValue::from_i32_vec(vec![2, 3]),
+            "{dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+        std::fs::remove_dir_all(&copy).expect("cleanup copy");
+    }
+}
+
+/// A slice of an array cell is read and written without loading the rows of
+/// a table read lazily (a MeasurementSet's visibilities would not fit in
+/// memory for one cell's slice), and the written slice is what the disk has
+/// after an in-place save of the row.
+#[test]
+fn cell_slices_of_a_lazy_table_load_no_rows() {
+    use super::Slicer;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
+        for row in 0..3 {
+            table
+                .add_row(row_with_fixed_arrays(row, &[10 * row, 10 * row + 1], &[0, 0]))
+                .expect("push row");
+        }
+        let root = unique_test_dir(&format!("lazy_cell_slices_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let second = Slicer::contiguous(vec![1], vec![2]).expect("slicer");
+        assert_eq!(
+            reopened.get_cell_slice("data", 1, &second).expect("read"),
+            Value::Array(ArrayValue::from_i32_vec(vec![11])),
+            "{dm:?}"
+        );
+        reopened
+            .put_cell_slice("data", 1, &second, &ArrayValue::from_i32_vec(vec![99]))
+            .expect("write");
+        assert_eq!(
+            reopened.get_cell_slice("data", 1, &second).expect("reread"),
+            Value::Array(ArrayValue::from_i32_vec(vec![99])),
+            "{dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "a slice read and written loads no rows for {dm:?}"
+        );
+        reopened
+            .persist_selected_rows_in_place(&["data"], &[1])
+            .expect("save the row");
+
+        let verify = Table::open(TableOptions::new(&root)).expect("reopen");
+        assert_eq!(
+            table_array(&verify, 1, "data").expect("row 1"),
+            &ArrayValue::from_i32_vec(vec![10, 99]),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_array(&verify, 2, "data").expect("row 2"),
+            &ArrayValue::from_i32_vec(vec![20, 21]),
+            "{dm:?}"
+        );
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+/// A cell that was undefined on disk is defined once it is written, whether
+/// or not the table's rows are loaded.
+#[test]
+fn a_written_cell_of_a_lazy_table_is_defined() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_variable("data", PrimitiveType::Int32, Some(1)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema_for_manager(&schema, DataManagerKind::StManAipsIO));
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]))
+        .expect("a row whose array cell is undefined");
+    let root = unique_test_dir("lazy_undefined_cell");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table.save(TableOptions::new(&root)).expect("save");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    assert!(!reopened.is_cell_defined(0, "data").expect("before"));
+    {
+        let mut writer = reopened
+            .row_accessor_mut()
+            .prepare(&["data"])
+            .expect("prepare");
+        writer.seek(0).expect("seek");
+        writer
+            .set_value_at(0, Value::Array(ArrayValue::from_i32_vec(vec![5, 6])))
+            .expect("write");
+    }
+    assert!(reopened.is_cell_defined(0, "data").expect("after"));
+    assert_eq!(
+        reopened.array_shape(0, "data").expect("shape"),
+        Some(vec![2])
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
 #[test]
 fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
     let schema = TableSchema::new(vec![

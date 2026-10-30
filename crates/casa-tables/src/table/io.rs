@@ -1638,6 +1638,7 @@ impl Table {
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
+        self.dm_info = std::mem::take(&mut reloaded.dm_info);
         // Preserve source_path, kind, marked_for_delete, and lock_state. The
         // reloaded state is what is on disk, so a lock has nothing to flush;
         // a write already persisted under it stays to be published.
@@ -1646,6 +1647,62 @@ impl Table {
             state.flushed_generation = self.inner.generation();
         }
         Ok(())
+    }
+
+    /// The options that write this table in full as it is laid out on disk,
+    /// when that layout is a single `StManAipsIO` group holding every column:
+    /// the group's name and the byte order of its files are kept. `None` for
+    /// any other layout (several groups, another manager, a table that is
+    /// not on disk), which a full [`save`](Table::save) would change.
+    ///
+    /// `StManAipsIO` keeps its columns in one file written in full, as
+    /// casacore writes it, so such a table can be saved in full where a
+    /// partial in-place save is not supported (for example with a record
+    /// column) without changing its layout.
+    pub fn single_stman_aipsio_options(&self) -> Result<Option<TableOptions>, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+        let crate::storage::table_control::TableDatResult::Plain(table_dat) =
+            crate::storage::table_control::read_table_dat_dispatch(&control_path)?
+        else {
+            return Ok(None);
+        };
+        let managers = &table_dat.column_set.data_managers;
+        let groups: std::collections::HashSet<&str> = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .map(|column| column.data_manager_group.as_str())
+            .collect();
+        let [manager] = managers.as_slice() else {
+            return Ok(None);
+        };
+        let (Some(group), 1) = (groups.iter().next(), groups.len()) else {
+            return Ok(None);
+        };
+        if manager.type_name != "StManAipsIO"
+            || manager.seq_nr != 0
+            || table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|column| column.data_manager_type != "StManAipsIO")
+        {
+            return Ok(None);
+        }
+        let format = if table_dat.big_endian {
+            EndianFormat::BigEndian
+        } else {
+            EndianFormat::LittleEndian
+        };
+        Ok(Some(
+            TableOptions::new(path)
+                .with_data_manager(DataManagerKind::StManAipsIO)
+                .with_data_manager_group(*group)
+                .with_endian_format(format),
+        ))
     }
 
     /// Marks this table for deletion when it is dropped.

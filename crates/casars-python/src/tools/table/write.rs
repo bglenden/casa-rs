@@ -40,6 +40,8 @@ pub(super) enum Persist {
     /// The cells of `rows` in `column`, in place in the column's storage
     /// manager.
     Rows { column: String, rows: Vec<usize> },
+    /// Nothing: the call selected no cell.
+    Nothing,
 }
 
 /// What `putinfo` changes: the fields its record has.
@@ -233,6 +235,7 @@ impl State {
             ));
         }
         let saved = change(&mut open.table).and_then(|persist| match persist {
+            Persist::Nothing => Ok(()),
             Persist::Metadata => open
                 .table
                 .save_metadata_only(TableOptions::new(&open.name))
@@ -244,21 +247,18 @@ impl State {
                     .save_selected_rows(&[column.as_str()], &rows);
                 match partial {
                     // StManAipsIO keeps its table in one file and writes it
-                    // in full, as casacore does: for a table all of whose
-                    // managers are StManAipsIO that is the same layout. Any
+                    // in full, as casacore does. A table that is one such
+                    // group is written in full with the group's name and
+                    // byte order kept, which is the layout it has. Any
                     // other table must not be rewritten (it would lose its
                     // managers), so the refusal stands.
                     Err(TableError::Storage(message))
-                        if message.starts_with("partial in-place save does not support")
-                            && open
-                                .table
-                                .data_manager_info()
-                                .iter()
-                                .all(|manager| manager.dm_type == "StManAipsIO") =>
+                        if message.starts_with("partial in-place save does not support") =>
                     {
-                        open.table
-                            .save(TableOptions::new(&open.name))
-                            .map_err(Fail::from)
+                        match open.table.single_stman_aipsio_options()? {
+                            Some(options) => open.table.save(options).map_err(Fail::from),
+                            None => Err(Fail::from(TableError::Storage(message))),
+                        }
                     }
                     other => other.map_err(Fail::from),
                 }
@@ -268,24 +268,29 @@ impl State {
         // flushed is written in full, as StManAipsIO, when it is closed or
         // dropped: a `user` table closed without an unlock, a `permanent`
         // one always (a `casa-tables` defect, #1035; this reload is the
-        // workaround and goes with its fix). The change is on disk (or, if it failed, must not be),
-        // so reload the table: it then matches the disk, with nothing left
-        // to flush, and the write is still published when the lock is
-        // released. An automatic table releases through
-        // `unlock_metadata_only`, which does the same.
-        if saved.is_err() || !automatic {
-            let reloaded = open.table.resync().map_err(Fail::from);
-            if saved.is_ok() {
-                reloaded?;
-            }
-        }
-        if automatic {
-            let released = open.table.unlock_metadata_only();
-            saved?;
-            released?;
+        // workaround and goes with its fix). The change is on disk, or part
+        // of it is if the save failed part way; either way the table is
+        // reloaded as the disk has it, so that nothing is left to flush, and
+        // what reached the disk is still published when the lock is
+        // released. A reload that fails marks the table clean all the same
+        // (`resync_or_discard`): the full write must never be left to a
+        // drop. An automatic table releases through
+        // `unlock_metadata_only_or_discard`, which does the same when the
+        // release fails. The release comes last whatever else went wrong,
+        // so an error never leaves the write lock held with changes.
+        let reloaded = if saved.is_err() || !automatic {
+            open.table.resync_or_discard().map_err(Fail::from)
         } else {
-            saved?;
-        }
+            Ok(())
+        };
+        let released = if automatic {
+            open.table.unlock_metadata_only_or_discard().map_err(Fail::from)
+        } else {
+            Ok(())
+        };
+        saved?;
+        reloaded?;
+        released?;
         Ok(CasaValue::Bool(true))
     }
 

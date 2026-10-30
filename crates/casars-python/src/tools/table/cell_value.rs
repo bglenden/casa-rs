@@ -64,7 +64,7 @@ fn out_of_range(ty: PrimitiveType) -> Fail {
 fn integers<T: TryFrom<i64>>(data: &Data, ty: PrimitiveType) -> Result<Vec<T>, Fail> {
     let wide: Vec<i64> = match data {
         Data::Ints(values) => values.clone(),
-        Data::Floats(values, _) => values.iter().map(|value| *value as i64).collect(),
+        Data::Floats(values) => values.iter().map(|value| *value as i64).collect(),
         Data::Bools(values) => values.iter().map(|flag| i64::from(*flag)).collect(),
         _ => return Err(refusal(Some(ty), data)),
     };
@@ -77,7 +77,7 @@ fn integers<T: TryFrom<i64>>(data: &Data, ty: PrimitiveType) -> Result<Vec<T>, F
 fn reals(data: &Data, ty: PrimitiveType) -> Result<Vec<f64>, Fail> {
     match data {
         Data::Ints(values) => Ok(values.iter().map(|value| *value as f64).collect()),
-        Data::Floats(values, _) => Ok(values.clone()),
+        Data::Floats(values) => Ok(values.clone()),
         Data::Bools(values) => Ok(values
             .iter()
             .map(|flag| f64::from(u8::from(*flag)))
@@ -89,7 +89,7 @@ fn reals(data: &Data, ty: PrimitiveType) -> Result<Vec<f64>, Fail> {
 /// The values as complex numbers.
 fn complexes(data: &Data, ty: PrimitiveType) -> Result<Vec<Complex64>, Fail> {
     match data {
-        Data::Complexes(values, _) => Ok(values.clone()),
+        Data::Complexes(values) => Ok(values.clone()),
         _ => Ok(reals(data, ty)?
             .into_iter()
             .map(|value| Complex64::new(value, 0.0))
@@ -132,6 +132,12 @@ impl Wide {
                 }
                 Data::Ints(values) => {
                     let flags = values.iter().map(|value| *value != 0).collect();
+                    build(shape, flags, ScalarValue::Bool, ArrayValue::Bool)
+                }
+                // A real value is true when it is not zero (`ValueHolderRep`
+                // converts Float and Double so; a complex value is refused).
+                Data::Floats(values) => {
+                    let flags = values.iter().map(|value| *value != 0.0).collect();
                     build(shape, flags, ScalarValue::Bool, ArrayValue::Bool)
                 }
                 _ => Err(refusal(Some(ty), data)),

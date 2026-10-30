@@ -80,6 +80,15 @@ impl LockSettings {
         )
     }
 
+    /// Whether a read takes the read lock (all but the NoRead modes), as
+    /// casacore's `TableLock::readLocking` says.
+    pub(super) fn reads_lock(&self) -> bool {
+        !matches!(
+            self.mode,
+            LockMode::AutoNoReadLocking | LockMode::UserNoReadLocking
+        )
+    }
+
     /// The attempts at a lock `maxwait` allows; `0` waits for it.
     pub(super) fn attempts(&self) -> u32 {
         u32::try_from(self.maxwait.max(0)).unwrap_or(u32::MAX)
@@ -154,7 +163,11 @@ impl State {
         if !path.exists() {
             return Err(Fail::Runtime(format!("Table {name} does not exist")));
         }
-        let options = LockOptions::new(lock.mode).with_inspection_interval(lock.interval);
+        // A table opened `nomodify` holds no write lock, in the permanent
+        // modes too.
+        let options = LockOptions::new(lock.mode)
+            .with_inspection_interval(lock.interval)
+            .read_only(!writable);
         let table = Table::open_with_lock(TableOptions::new(path), options)?;
         let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         self.open = Some(Open {
@@ -169,6 +182,19 @@ impl State {
     /// CASA's `close` and `done`: releases the table and its locks.
     pub(super) fn close(&mut self) {
         self.open = None;
+    }
+
+    /// What every read starts with, as casacore's `TableProxy::syncTable`:
+    /// the read lock, when the lock options read-lock, taken again if it was
+    /// released, which also reloads what another process has written since
+    /// (a write lock already held is kept).
+    pub(super) fn synchronize(&mut self) -> Result<(), Fail> {
+        if let Some(open) = self.open.as_mut()
+            && open.lock.reads_lock()
+        {
+            open.table.lock(LockType::Read, 0)?;
+        }
+        Ok(())
     }
 
     /// `lockoptions()`: the settings the table was opened with.

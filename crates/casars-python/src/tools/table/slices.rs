@@ -154,6 +154,14 @@ impl Open {
             selection.2,
             "TableProxy::getColumnSlice: no such row",
         )?;
+        if selected.is_empty() {
+            let data_type = self
+                .table
+                .schema()
+                .and_then(|schema| schema.column(column))
+                .and_then(|schema| schema.data_type());
+            return Ok(values::empty_column(data_type));
+        }
         let cells = selected
             .iter()
             .map(|row| Ok(self.cell_slice(column, *row, corners, true)?.0))
@@ -314,6 +322,9 @@ impl State {
                     return Err(conformance_slice(*row, &column, data.shape(), &expected));
                 }
                 table.put_cell_slice(&column, *row, &slicer, &data)?;
+            }
+            if selected.is_empty() {
+                return Ok(Persist::Nothing);
             }
             Ok(Persist::Rows {
                 column,

@@ -675,6 +675,242 @@ MS_CELL_WRITES = [
 ]
 
 
+#: What Astra's review of #1034 asked to pin down, each its own scenario so
+#: that one which aborts CASA costs only itself (record with `--only`).
+#: `fixture` is the table the scenario starts from.
+REVIEW_SCENARIOS = {
+    # putvarcol writes the record's fields, in order, to the selected rows;
+    # the field names are labels, not row numbers.
+    "varcol_selection": ("table", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["getvarcol", ["vary"], {}],
+        ["putvarcol", ["vary", {"r1": np.array([[99.0]])}], {"startrow": 2, "nrow": 1}],
+        ["getvarcol", ["vary"], {}],
+        ["putvarcol", ["vary", {"z": np.array([[88.0]])}], {"startrow": 1, "nrow": 1}],
+        ["getvarcol", ["vary"], {}],
+        ["putvarcol", ["vary", {"a": np.array([[1.0], [2.0]]), "b": np.array([[3.0]])}],
+         {"startrow": 0, "nrow": 2, "rowincr": 2}],
+        ["getvarcol", ["vary"], {}],
+        ["putvarcol", ["vary", {"only": np.array([[7.0]])}], {}],
+        ["putvarcol", ["vary", {"a": np.array([[1.0]]), "b": np.array([[2.0]]),
+                               "c": np.array([[3.0]]), "d": np.array([[4.0]])}], {}],
+        ["putvarcol", ["vary", {"x": np.array([[5.0]])}], {"startrow": 3, "nrow": 1}],
+        ["putvarcol", ["vary", {"x": np.array([[5.0]]), "y": np.array([[6.0]])}],
+         {"startrow": 1, "nrow": -1}],
+        ["getvarcol", ["vary"], {}],
+        ["putvarcol", ["vary", {"x": np.array([[5.0]])}], {"startrow": 0, "nrow": 1, "rowincr": 0}],
+        ["putvarcol", ["vary", {}], {"startrow": 0, "nrow": 0}],
+        ["getvarcol", ["vary"], {}],
+        ["close", [], {}],
+        ["open", [PLACEHOLDER], {}],
+        ["getvarcol", ["vary"], {}],
+        ["close", [], {}],
+    ]),
+    # putcell takes one row number or a vector of them.
+    # (`id` is read cell by cell: CASA's getcol refuses its int64 column.)
+    "rows_vector": ("table", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["putcell", ["id", [1, 2], 77], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        ["putcell", ["id", np.array([0, 2]), 55], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        ["putcell", ["id", [], 33], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        # CASA writes the rows before the missing one and then fails; casa-rs
+        # writes none, so row 0 is put back to what it was before reading.
+        ["putcell", ["id", [0, 3], 22], {}],
+        ["putcell", ["id", [0], 55], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        ["putcell", ["id", [2, 0], 11], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        ["putcell", ["label", [0, 2], "same"], {}],
+        ["getcol", ["label"], {}],
+        ["putcell", ["spectrum", [0, 2], np.ones((2, 2))], {}],
+        ["getcol", ["spectrum"], {}],
+        ["putcell", ["spectrum", [0, 1], np.ones((2, 3))], {}],
+        ["getcol", ["spectrum"], {}],
+        ["close", [], {}],
+        ["open", [PLACEHOLDER], {}],
+        *[["getcell", ["id", row], {}] for row in range(3)],
+        ["getcol", ["label"], {}],
+        ["close", [], {}],
+    ]),
+    # A floating value written to a Bool column is true when it is not zero;
+    # an integer beyond 32 bits written to an int32 cell wraps.
+    "bool_coercion": ("ms", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["putcell", ["FLAG_ROW", 0, 1.5], {}],
+        ["putcell", ["FLAG_ROW", 1, 0.0], {}],
+        ["putcell", ["FLAG_ROW", 2, np.float32(2.0)], {}],
+        ["getcol", ["FLAG_ROW"], {"nrow": 3}],
+        ["putcell", ["FLAG_ROW", 0, -0.5], {}],
+        ["putcell", ["FLAG_ROW", 1, 1 + 1j], {}],
+        ["putcell", ["FLAG_ROW", 2, "text"], {}],
+        ["getcol", ["FLAG_ROW"], {"nrow": 3}],
+        ["putcell", ["FLAG", 0, np.full((4, 64), 0.5)], {}],
+        ["putcell", ["FLAG", 1, np.zeros((4, 64))], {}],
+        ["getcell", ["FLAG", 0], {}],
+        ["getcell", ["FLAG", 1], {}],
+        ["putcol", ["FLAG_ROW", np.array([1.5, 0.0, -1.0])], {"startrow": 0, "nrow": 3}],
+        ["getcol", ["FLAG_ROW"], {"nrow": 3}],
+        ["putcol", ["FLAG_ROW", [0.0, 2.5, 0.0]], {"startrow": 0, "nrow": 3}],
+        ["getcol", ["FLAG_ROW"], {"nrow": 3}],
+        ["close", [], {}],
+    ]),
+    # CASA's own fault, which casa-rs does not follow (docs/CASA (C++)
+    # bugs.md): an integer beyond 32 bits written to an int32 cell wraps.
+    "int_overflow": ("ms", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["putcell", ["ANTENNA1", 0, 2147483648], {}],
+        ["putcell", ["ANTENNA1", 1, -2147483649], {}],
+        ["putcell", ["ANTENNA1", 2, 4294967297], {}],
+        ["getcol", ["ANTENNA1"], {"nrow": 3}],
+        ["putcol", ["ANTENNA1", np.array([2**31, 1, 2])], {"startrow": 0, "nrow": 3}],
+        ["getcol", ["ANTENNA1"], {"nrow": 3}],
+        ["close", [], {}],
+    ]),
+    # A selection with no rows, and a selection checked before the fixed
+    # shape answers.
+    "empty_selection": ("table", [
+        ["open", [PLACEHOLDER], {}],
+        ["getcol", ["label"], {"startrow": 3, "nrow": 0}],
+        ["getcol", ["label"], {"startrow": 3}],
+        ["getcol", ["label"], {"startrow": 2, "nrow": 0}],
+        ["getcol", ["label"], {"startrow": 4}],
+        ["getcol", ["label"], {"startrow": 5, "nrow": 0}],
+        ["getcol", ["label"], {"startrow": 1, "nrow": 0}],
+        ["getcol", ["spectrum"], {"startrow": 3, "nrow": 0}],
+        ["getcol", ["spectrum"], {"startrow": 3}],
+        ["getcol", ["spectrum"], {"startrow": 4}],
+        ["getcol", ["gain"], {"startrow": 3, "nrow": 0}],
+        ["getcol", ["gain"], {"startrow": 3}],
+        ["getcolslice", ["spectrum", [0, 0], [0, 0], [1, 1]], {"nrow": 0}],
+        ["getcolslice", ["spectrum", [0, 0], [0, 0], [1, 1]], {"startrow": 3}],
+        ["getcolslice", ["spectrum", [0, 0], [0, 0], [1, 1]], {"startrow": 3, "nrow": 0}],
+        ["getcolshapestring", ["spectrum"], {"rowincr": 0}],
+        ["getcolshapestring", ["spectrum"], {"startrow": 3}],
+        ["getcolshapestring", ["spectrum"], {"startrow": 7, "nrow": 2}],
+        ["getcolshapestring", ["vary"], {"startrow": 3}],
+        ["getcolshapestring", ["vary"], {"rowincr": 0}],
+        ["getcol", ["label"], {"rowincr": -1}],
+        ["getvarcol", ["vary"], {"startrow": 3}],
+        ["getvarcol", ["vary"], {"startrow": 3, "nrow": 0}],
+        ["close", [], {}],
+    ]),
+    # What a keyword takes as its type from the NumPy value given: CASA
+    # promotes a 32-bit float to double and a 64-bit complex to double
+    # complex, so a later update by a 64-bit value is of the same type.
+    "keyword_types": ("table", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["putkeyword", ["f32", np.float32(1.25)], {}],
+        ["getkeyword", ["f32"], {}],
+        ["putkeyword", ["f32", np.float32(2.5)], {}],
+        ["putkeyword", ["f32", 4.5], {}],
+        ["getkeyword", ["f32"], {}],
+        ["putkeyword", ["f32arr", np.array([1, 2], dtype=np.float32)], {}],
+        ["getkeyword", ["f32arr"], {}],
+        ["putkeyword", ["f32arr", np.array([3.0, 4.0, 5.0])], {}],
+        ["getkeyword", ["f32arr"], {}],
+        ["putkeyword", ["c64arr", np.array([1 + 1j], dtype=np.complex64)], {}],
+        ["getkeyword", ["c64arr"], {}],
+        ["putkeyword", ["c64arr", np.array([2 + 2j, 3 + 3j])], {}],
+        ["getkeyword", ["c64arr"], {}],
+        ["putkeyword", ["i16", np.int16(5)], {}],
+        ["getkeyword", ["i16"], {}],
+        ["putkeyword", ["i64", np.int64(7)], {}],
+        ["getkeyword", ["i64"], {}],
+        ["putkeyword", ["i64", 8], {}],
+        ["putkeyword", ["i64", 8.5], {}],
+        ["putkeyword", ["f32", 3], {}],
+        ["putkeyword", ["version", np.float64(2.0)], {}],
+        ["getkeywords", [], {}],
+        ["close", [], {}],
+        ["open", [PLACEHOLDER], {}],
+        ["getkeywords", [], {}],
+        ["close", [], {}],
+    ]),
+    # A string that names a readable table is stored as a table reference.
+    "table_keywords": ("ms", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["getkeyword", ["ANTENNA"], {}],
+        ["putkeyword", ["ANTENNA", "Table: <TABLE>/ANTENNA"], {}],
+        ["putkeyword", ["ANTENNA", "Table: <TABLE>/FIELD"], {}],
+        ["getkeyword", ["ANTENNA"], {}],
+        ["putkeyword", ["NEWREF", "Table: <TABLE>/FIELD"], {}],
+        ["getkeyword", ["NEWREF"], {}],
+        ["putkeyword", ["NEWSTR", "Table: /no/such/table"], {}],
+        ["getkeyword", ["NEWSTR"], {}],
+        ["putkeyword", ["NEWSTR", "Table: <TABLE>/FIELD"], {}],
+        ["putkeyword", ["ANTENNA", "plain text"], {}],
+        ["putkeyword", ["FIELD", 5], {}],
+        ["putkeywords", [{"REC": {"INNER": "Table: <TABLE>/SPECTRAL_WINDOW", "TXT": "t"}}], {}],
+        ["getkeyword", ["REC"], {}],
+        ["putkeyword", ["REC.INNER", "Table: <TABLE>/ANTENNA"], {}],
+        ["getkeyword", ["REC.INNER"], {}],
+        ["close", [], {}],
+        ["open", [PLACEHOLDER], {}],
+        ["getkeyword", ["ANTENNA"], {}],
+        ["getkeyword", ["NEWREF"], {}],
+        ["getkeyword", ["NEWSTR"], {}],
+        ["getkeyword", ["REC"], {}],
+        ["close", [], {}],
+    ]),
+    # What a read leaves held, under each locking mode, and what a read-only
+    # open takes however it locks.
+    "read_locks": ("table", [
+        *[
+            step
+            for option in ["default", "auto", "autonoread", "user", "usernoread", "permanent"]
+            for step in [
+                ["open", [PLACEHOLDER], {"lockoptions": {"option": option}}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["nrows", [], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["getkeyword", ["observer"], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["getcell", ["id", 0], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["unlock", [], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["getcell", ["id", 1], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["close", [], {}],
+            ]
+        ],
+        *[
+            step
+            for option in ["permanent", "permanentwait", "user", "auto"]
+            for step in [
+                ["open", [PLACEHOLDER], {"lockoptions": {"option": option}, "nomodify": True}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["getcell", ["id", 0], {}],
+                ["haslock", [], {}],
+                ["haslock", [], {"write": False}],
+                ["close", [], {}],
+            ]
+        ],
+    ]),
+}
+
+
+def realise(value, path):
+    """`value` with the placeholder replaced by `path` in every string in it."""
+    if isinstance(value, str):
+        return value.replace(PLACEHOLDER, path)
+    if isinstance(value, dict):
+        return {key: realise(item, path) for key, item in value.items()}
+    if isinstance(value, list):
+        return [realise(item, path) for item in value]
+    return value
+
+
 def run_scenario(steps, source):
     work = Path(tempfile.mkdtemp(prefix="tb_oracle_"))
     path = str(work / Path(source).name)
@@ -684,7 +920,7 @@ def run_scenario(steps, source):
     tool = table()
     record = []
     for method, args, keywords in steps:
-        real_args = [path if isinstance(arg, str) and arg == PLACEHOLDER else arg for arg in args]
+        real_args = [realise(arg, path) for arg in args]
         outcome = {
             "method": method,
             "args": [encode(arg, path) for arg in args],
@@ -751,6 +987,9 @@ def main():
     scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
     scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}
     scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}
+    for name, (fixture, steps) in REVIEW_SCENARIOS.items():
+        source = arguments.ms if fixture == "ms" else arguments.fixture
+        scenarios[name] = {"fixture": fixture, "steps": steps, "source": source}
     names = arguments.only.split(",") if arguments.only else list(scenarios)
     if arguments.only and arguments.json.exists():
         record = json.loads(arguments.json.read_text(encoding="utf-8"))

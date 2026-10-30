@@ -78,6 +78,21 @@ impl PyTableTool {
         result?.into_python(py)
     }
 
+    /// As [`call`](Self::call), for a call that reads the table: the table
+    /// first takes the read lock its lock options call for and synchronizes
+    /// with what another process has written since (casacore's
+    /// `TableProxy::syncTable`).
+    fn read(
+        &self,
+        py: Python<'_>,
+        work: impl FnOnce(&mut State, &mut Vec<LogLine>) -> Result<CasaValue, Fail> + Send,
+    ) -> PyResult<Py<PyAny>> {
+        self.call(py, move |state, log| {
+            state.synchronize()?;
+            work(state, log)
+        })
+    }
+
     /// The state lock, taken without the GIL (inside `Python::detach`).
     fn guard(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -98,6 +113,18 @@ fn integer(value: Option<&Bound<'_, PyAny>>, argument: &str, default: i64) -> Py
         value
             .extract()
             .map_err(|_| PyTypeError::new_err(format!("argument _{argument} must be an integer")))
+    })
+}
+
+/// A row number argument that may also be a list of them (`putcell`).
+fn row_numbers(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<Vec<i64>> {
+    if let Ok(row) = value.extract::<i64>() {
+        return Ok(vec![row]);
+    }
+    value.extract::<Vec<i64>>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "argument _{argument} must be an integer or a list of integers"
+        ))
     })
 }
 
@@ -284,19 +311,19 @@ impl PyTableTool {
     /// The number of rows.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn nrows(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.nrows(log)))
+        self.read(py, |state, log| Ok(state.nrows(log)))
     }
 
     /// The number of columns.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn ncols(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.ncols(log)))
+        self.read(py, |state, log| Ok(state.ncols(log)))
     }
 
     /// The column names, in table order.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn colnames(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.colnames(log)))
+        self.read(py, |state, log| Ok(state.colnames(log)))
     }
 
     /// Whether the table was opened for update.
@@ -308,7 +335,7 @@ impl PyTableTool {
     /// The table's type, subtype and readme.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn info(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.info(log)))
+        self.read(py, |state, log| Ok(state.info(log)))
     }
 
     /// The lock options the table was opened with.
@@ -358,28 +385,28 @@ impl PyTableTool {
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn isscalarcol(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.isscalarcol(&column, log))
+        self.read(py, move |state, log| state.isscalarcol(&column, log))
     }
 
     /// Whether a column's arrays vary in shape.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn isvarcol(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.isvarcol(&column, log))
+        self.read(py, move |state, log| state.isvarcol(&column, log))
     }
 
     /// A column's data type, in casacore's names.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn coldatatype(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.coldatatype(&column, log))
+        self.read(py, move |state, log| state.coldatatype(&column, log))
     }
 
     /// How an array column stores its cells.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn colarraytype(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.colarraytype(&column, log))
+        self.read(py, move |state, log| state.colarraytype(&column, log))
     }
 
     /// One cell.
@@ -392,7 +419,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let row = integer(rownr, "rownr", 0)?;
-        self.call(py, move |state, log| state.getcell(&column, row, log))
+        self.read(py, move |state, log| state.getcell(&column, row, log))
     }
 
     /// A column, its rows last.
@@ -407,7 +434,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
-        self.call(py, move |state, log| state.getcol(&column, rows, log))
+        self.read(py, move |state, log| state.getcol(&column, rows, log))
     }
 
     /// A column of arrays of different shapes, as a `dict` of rows.
@@ -422,7 +449,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
-        self.call(py, move |state, log| state.getvarcol(&column, rows, log))
+        self.read(py, move |state, log| state.getvarcol(&column, rows, log))
     }
 
     /// The shapes of a column's arrays, as text.
@@ -437,7 +464,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
-        self.call(py, move |state, log| {
+        self.read(py, move |state, log| {
             state.getcolshapestring(&column, rows, log)
         })
     }
@@ -452,19 +479,19 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let row = integer(rownr, "rownr", 0)?;
-        self.call(py, move |state, log| state.iscelldefined(&column, row, log))
+        self.read(py, move |state, log| state.iscelldefined(&column, row, log))
     }
 
     /// The table keywords' names, in table order.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn keywordnames(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.keywordnames(log)))
+        self.read(py, |state, log| Ok(state.keywordnames(log)))
     }
 
     /// All table keywords.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn getkeywords(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, log| Ok(state.getkeywords(log)))
+        self.read(py, |state, log| Ok(state.getkeywords(log)))
     }
 
     /// One table keyword, by name or position.
@@ -475,7 +502,7 @@ impl PyTableTool {
         keyword: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let key = keyword_ref(keyword)?;
-        self.call(py, move |state, log| state.getkeyword(&key, log))
+        self.read(py, move |state, log| state.getkeyword(&key, log))
     }
 
     /// The field names of a table keyword that is a record (all keywords for
@@ -487,7 +514,7 @@ impl PyTableTool {
         keyword: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let key = keyword_ref(keyword)?;
-        self.call(py, move |state, log| state.fieldnames(&key, log))
+        self.read(py, move |state, log| state.fieldnames(&key, log))
     }
 
     /// A column's keyword names.
@@ -498,14 +525,14 @@ impl PyTableTool {
         columnname: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.colkeywordnames(&column, log))
+        self.read(py, move |state, log| state.colkeywordnames(&column, log))
     }
 
     /// All of a column's keywords.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn getcolkeywords(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        self.call(py, move |state, log| state.getcolkeywords(&column, log))
+        self.read(py, move |state, log| state.getcolkeywords(&column, log))
     }
 
     /// One keyword of a column, by name or position.
@@ -518,7 +545,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let key = keyword_ref(keyword)?;
-        self.call(py, move |state, log| {
+        self.read(py, move |state, log| {
             state.getcolkeyword(&column, &key, log)
         })
     }
@@ -534,7 +561,7 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let key = keyword_ref(keyword)?;
-        self.call(py, move |state, log| {
+        self.read(py, move |state, log| {
             state.colfieldnames(&column, &key, log)
         })
     }
@@ -647,9 +674,9 @@ impl PyTableTool {
         thevalue: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        let row = integer(Some(rownr), "rownr", 0)?;
+        let rows = row_numbers(rownr, "rownr")?;
         let value = keyword_value(py, thevalue)?;
-        self.call(py, move |state, log| state.putcell(column, row, value, log))
+        self.call(py, move |state, log| state.putcell(column, rows, value, log))
     }
 
     /// Write rows of a column, the rows last in an array column's values.
@@ -683,7 +710,7 @@ impl PyTableTool {
         let column = text(columnname, "columnname")?;
         let row = integer(Some(rownr), "rownr", 0)?;
         let corners = corners(Some(blc), Some(trc), incr)?;
-        self.call(py, move |state, log| {
+        self.read(py, move |state, log| {
             state.getcellslice(&column, row, &corners, log)
         })
     }
@@ -704,7 +731,7 @@ impl PyTableTool {
         let column = text(columnname, "columnname")?;
         let corners = corners(Some(blc), Some(trc), Some(incr))?;
         let rows = row_selection(startrow, nrow, rowincr)?;
-        self.call(py, move |state, log| {
+        self.read(py, move |state, log| {
             state.getcolslice(&column, &corners, rows, log)
         })
     }
@@ -753,7 +780,8 @@ impl PyTableTool {
         })
     }
 
-    /// Write the rows of a column given as a record of `r1`, `r2`, ....
+    /// Write the selected rows of a column from the fields of a record, in
+    /// the order they have.
     #[pyo3(signature = (columnname, value, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value, startrow=0, nrow=-1, rowincr=1)")]
     fn putvarcol(
         &self,
@@ -766,7 +794,9 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let fields = record_fields(value)?;
-        row_selection(startrow, nrow, rowincr)?;
-        self.call(py, move |state, log| state.putvarcol(column, fields, log))
+        let rows = row_selection(startrow, nrow, rowincr)?;
+        self.call(py, move |state, log| {
+            state.putvarcol(column, fields, rows, log)
+        })
     }
 }

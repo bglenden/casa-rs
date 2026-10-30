@@ -14,7 +14,7 @@ use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
 use casa_types::{PrimitiveType, Value};
 
 use super::keyword_value::{Data, Incoming, Wide};
-use super::read::rows;
+use super::read::{rows, rows_stepping};
 use super::state::{Fail, State};
 use super::write::{Persist, Target};
 use crate::convert::value::CasaValue;
@@ -66,39 +66,96 @@ fn keeps_cell_shapes(table: &Table, column: &str) -> bool {
     })
 }
 
-/// Checks an array cell's shape against its column's.
-fn check_shape(table: &Table, column: &str, row: usize, cell: &Value) -> Result<(), Fail> {
-    let Value::Array(array) = cell else {
+/// What a column asks of the shape of the arrays written to it, worked out
+/// once for all the cells of a call.
+struct ShapeRule {
+    /// The one shape every cell has.
+    fixed: Option<Vec<usize>>,
+    /// Whether a cell keeps the shape it has once set (a tiled manager).
+    kept: bool,
+}
+
+impl ShapeRule {
+    fn of(table: &Table, column: &str) -> Self {
+        let contract = table
+            .schema()
+            .and_then(|schema| schema.column(column))
+            .map(ColumnSchema::column_type);
+        Self {
+            fixed: match contract {
+                Some(ColumnType::Array(ArrayShapeContract::Fixed { shape })) => Some(shape.clone()),
+                _ => None,
+            },
+            kept: keeps_cell_shapes(table, column),
+        }
+    }
+
+    /// Checks an array cell's shape against its column's.
+    fn check(&self, table: &Table, column: &str, row: usize, cell: &Value) -> Result<(), Fail> {
+        let Value::Array(array) = cell else {
+            return Ok(());
+        };
+        let shape = array.shape();
+        if let Some(fixed) = &self.fixed
+            && shape != fixed.as_slice()
+        {
+            return Err(conformance(row, column, shape, fixed));
+        }
+        if self.kept
+            && let Some(existing) = table.array_shape(row, column)?
+            && existing != shape
+        {
+            return Err(conformance(row, column, shape, &existing));
+        }
+        Ok(())
+    }
+}
+
+/// Sets cells of one column in memory: each cell is checked, and none is
+/// set before every one has been (a refused call changes nothing). A cell
+/// of a scalar or array column is set where it is, without loading the
+/// rest of the table (a table is read lazily, and a MeasurementSet's visibilities
+/// would not fit in memory); a record cell goes through the row store.
+fn set_cells(
+    table: &mut Table,
+    column: &str,
+    cells: Vec<(usize, Value)>,
+) -> Result<(), Fail> {
+    let record_column = matches!(
+        table
+            .schema()
+            .and_then(|schema| schema.column(column))
+            .map(ColumnSchema::column_type),
+        Some(ColumnType::Record)
+    );
+    let rule = ShapeRule::of(table, column);
+    for (row, cell) in &cells {
+        rule.check(table, column, *row, cell)?;
+    }
+    if record_column || cells.iter().any(|(_, cell)| matches!(cell, Value::Record(_))) {
+        let mut accessor = table.column_accessor_mut(column)?;
+        for (row, cell) in cells {
+            match cell {
+                Value::Record(record) => accessor.set_record(row, record)?,
+                other => accessor.set(row, other)?,
+            }
+        }
         return Ok(());
-    };
-    let shape = array.shape();
-    let contract = table
-        .schema()
-        .and_then(|schema| schema.column(column))
-        .map(ColumnSchema::column_type);
-    if let Some(ColumnType::Array(ArrayShapeContract::Fixed { shape: fixed })) = contract
-        && shape != fixed.as_slice()
-    {
-        return Err(conformance(row, column, shape, fixed));
     }
-    if keeps_cell_shapes(table, column)
-        && let Some(existing) = table.array_shape(row, column)?
-        && existing != shape
-    {
-        return Err(conformance(row, column, shape, &existing));
+    let mut writer = table.row_accessor_mut().prepare(&[column])?;
+    for (row, cell) in cells {
+        writer.seek(row)?;
+        writer.set_value_at(0, cell)?;
     }
+    writer.flush()?;
     Ok(())
 }
 
-/// Sets one cell in memory.
-fn set_cell(table: &mut Table, column: &str, row: usize, cell: Value) -> Result<(), Fail> {
-    check_shape(table, column, row, &cell)?;
-    let mut accessor = table.column_accessor_mut(column)?;
-    match cell {
-        Value::Record(record) => accessor.set_record(row, record)?,
-        other => accessor.set(row, other)?,
-    }
-    Ok(())
+/// The distinct rows of `rows`, in order, as a save of selected rows wants
+/// them.
+fn distinct(rows: &[usize]) -> Vec<usize> {
+    let mut seen = std::collections::HashSet::with_capacity(rows.len());
+    rows.iter().copied().filter(|row| seen.insert(*row)).collect()
 }
 
 /// The elements of `data` at `indices`.
@@ -106,12 +163,8 @@ fn take(data: &Data, indices: &[usize]) -> Data {
     match data {
         Data::Bools(values) => Data::Bools(indices.iter().map(|i| values[*i]).collect()),
         Data::Ints(values) => Data::Ints(indices.iter().map(|i| values[*i]).collect()),
-        Data::Floats(values, single) => {
-            Data::Floats(indices.iter().map(|i| values[*i]).collect(), *single)
-        }
-        Data::Complexes(values, single) => {
-            Data::Complexes(indices.iter().map(|i| values[*i]).collect(), *single)
-        }
+        Data::Floats(values) => Data::Floats(indices.iter().map(|i| values[*i]).collect()),
+        Data::Complexes(values) => Data::Complexes(indices.iter().map(|i| values[*i]).collect()),
         Data::Texts(values) => Data::Texts(indices.iter().map(|i| values[*i].clone()).collect()),
     }
 }
@@ -165,26 +218,39 @@ pub(super) fn split_rows(
 }
 
 impl State {
-    /// `putcell(columnname, rownr, thevalue)`.
+    /// `putcell(columnname, rownr, thevalue)`: one row number, or several,
+    /// each given the value. A row that does not exist refuses the call
+    /// whole (CASA writes the rows before it, then fails).
     pub(super) fn putcell(
         &mut self,
         column: String,
-        row: i64,
+        rows: Vec<i64>,
         value: Incoming,
         log: &mut Vec<LogLine>,
     ) -> Reply {
         self.write_with(Target::Cells, log, move |table| {
             let (ty, array) = describe(table, &column)?;
-            let row = usize::try_from(row)
-                .ok()
-                .filter(|row| *row < table.row_count())
-                .ok_or_else(|| put_column_error("no such row"))?;
+            let nrows = table.row_count();
+            let rows = rows
+                .into_iter()
+                .map(|row| {
+                    usize::try_from(row)
+                        .ok()
+                        .filter(|row| *row < nrows)
+                        .ok_or_else(|| put_column_error("no such row"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if rows.is_empty() {
+                return Ok(Persist::Nothing);
+            }
             let cell = value.into_cell(ty, array)?;
-            set_cell(table, &column, row, cell)?;
-            Ok(Persist::Rows {
-                column,
-                rows: vec![row],
-            })
+            let rows = distinct(&rows);
+            set_cells(
+                table,
+                &column,
+                rows.iter().map(|row| (*row, cell.clone())).collect(),
+            )?;
+            Ok(Persist::Rows { column, rows })
         })
     }
 
@@ -218,10 +284,15 @@ impl State {
                     );
                 }
             };
-            for (row, cell) in selected.iter().zip(cells) {
-                let cell = cell.into_cell(ty.expect("typed column"), array)?;
-                set_cell(table, &column, *row, cell)?;
+            let cells = selected
+                .iter()
+                .zip(cells)
+                .map(|(row, cell)| Ok((*row, cell.into_cell(ty.expect("typed column"), array)?)))
+                .collect::<Result<Vec<_>, Fail>>()?;
+            if cells.is_empty() {
+                return Ok(Persist::Nothing);
             }
+            set_cells(table, &column, cells)?;
             Ok(Persist::Rows {
                 column,
                 rows: selected,
@@ -229,33 +300,41 @@ impl State {
         })
     }
 
-    /// `putvarcol(columnname, value, startrow, nrow, rowincr)`: a record of
-    /// `r1`, `r2`, ... holding each row's value with a trailing axis of one,
-    /// as `getvarcol` returns them.
+    /// `putvarcol(columnname, value, startrow, nrow, rowincr)`: a record
+    /// whose fields, in the order they have, are the values of the selected
+    /// rows, each with a trailing axis of one, as `getvarcol` returns them.
+    /// The field names are labels (`getvarcol` names them `r1`, `r2`, ...),
+    /// not row numbers.
     pub(super) fn putvarcol(
         &mut self,
         column: String,
         fields: Vec<(String, Incoming)>,
+        selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
         self.write_with(Target::Cells, log, move |table| {
             let (ty, array) = describe(table, &column)?;
+            let selected = rows_stepping(
+                table.row_count(),
+                selection.0,
+                selection.1,
+                selection.2,
+                "TableProxy::TableProxy::putVarColumn: no such row",
+                "TableProxy::putVarColumn: rowincr<=0",
+            )?;
+            if fields.len() != selected.len() {
+                return runtime("TableProxy::putVarColumn: #rows mismatches #elem in value".into());
+            }
             let Some(ty) = ty else {
                 return runtime(
                     "TableProxy::putVarColumn not possible for a column containing records".into(),
                 );
             };
-            let mut written = Vec::with_capacity(fields.len());
-            for (key, value) in fields {
+            let mut cells = Vec::with_capacity(fields.len());
+            for ((key, value), row) in fields.into_iter().zip(&selected) {
                 let Incoming::Wide(wide) = value else {
                     return runtime(format!("a value of {key} is not an array"));
                 };
-                let row = key
-                    .strip_prefix('r')
-                    .and_then(|number| number.parse::<usize>().ok())
-                    .and_then(|number| number.checked_sub(1))
-                    .filter(|row| *row < table.row_count())
-                    .ok_or_else(|| put_column_error("no such row"))?;
                 let mut shape = wide.shape.clone().unwrap_or_else(|| vec![1]);
                 if array && shape.len() < 2 || shape.pop() != Some(1) {
                     return runtime(format!(
@@ -266,12 +345,15 @@ impl State {
                     shape: array.then_some(shape),
                     data: wide.data,
                 };
-                set_cell(table, &column, row, cell.into_cell(ty, array)?)?;
-                written.push(row);
+                cells.push((*row, cell.into_cell(ty, array)?));
             }
+            if cells.is_empty() {
+                return Ok(Persist::Nothing);
+            }
+            set_cells(table, &column, cells)?;
             Ok(Persist::Rows {
                 column,
-                rows: written,
+                rows: selected,
             })
         })
     }

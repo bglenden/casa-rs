@@ -177,7 +177,11 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
 #: leaves this set as its methods land.
 PENDING: set[str] = {"rows_columns"}
 
-REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
+#: Recorded from CASA but not followed: its own faults
+#: (`docs/CASA (C++) bugs.md`), each with a test of its own below.
+CASA_BUGS: set[str] = {"casa_bugs", "int_overflow"}
+
+REPLAYED = sorted(set(RECORD["scenarios"]) - CASA_BUGS - PENDING)
 
 
 @pytest.mark.parametrize("scenario", REPLAYED)

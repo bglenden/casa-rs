@@ -5,20 +5,24 @@
 //! A value arrives in its widest form ([`Incoming`]): a `bool`, `int`,
 //! `float`, `complex` or `str`, a NumPy array or scalar, a list (read as the
 //! NumPy array it makes), or a `dict` for a sub-record. A new keyword takes
-//! the natural type: an integer is a 32-bit `Int` (a 64-bit one only when a
-//! value does not fit, where CASA truncates it to 0), a float a `Double`
-//! (`Float` for a NumPy `float32`), a complex a `DComplex`.
+//! the natural type, casatools': an integer is a 32-bit `Int` (a 64-bit one
+//! only when a value does not fit, where CASA truncates it to 0), a float a
+//! `Double` (also a NumPy `float32`, scalar or array), a complex a `DComplex`
+//! (also a `complex64`), a string a `String`, or a table reference when it
+//! is `Table: ` and the path of a readable table.
 //!
 //! An existing keyword keeps its type, as casacore's `defineDataField` does:
-//! the new value must be of the same kind (boolean, integer, real, complex,
-//! string, record), scalar or array, and is stored in the keyword's own
-//! width (a `float32` into a `Double` is fine; an integer that does not fit
-//! an `Int` is refused, where CASA truncates it). A one-element array is
-//! accepted for a scalar keyword.
+//! the new value must be of exactly the type the keyword has (casatools gives
+//! a value one of `Bool`, `Int`, `Double`, `DComplex`, `String` or a table,
+//! so a keyword of another width takes none), scalar or array. An integer
+//! that does not fit an `Int` is refused, where CASA truncates it. A
+//! one-element array is accepted for a scalar keyword.
+
+use std::path::Path;
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
-use num_complex::{Complex32, Complex64};
+use num_complex::Complex64;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -30,10 +34,10 @@ use super::state::Fail;
 pub(super) enum Data {
     Bools(Vec<bool>),
     Ints(Vec<i64>),
-    /// Reals, and whether they came as single precision.
-    Floats(Vec<f64>, bool),
-    /// Complex numbers, and whether they came as single precision.
-    Complexes(Vec<Complex64>, bool),
+    /// Reals; casatools takes single precision ones as double.
+    Floats(Vec<f64>),
+    /// Complex numbers; casatools takes single precision ones as double.
+    Complexes(Vec<Complex64>),
     Texts(Vec<String>),
 }
 
@@ -95,7 +99,7 @@ impl Incoming {
     /// The value as the existing keyword `old` holds one.
     pub(super) fn like(self, old: &Value, name: &str) -> Result<Value, Fail> {
         match (&self, old) {
-            (Self::Wide(_), Value::Scalar(_) | Value::Array(_)) => match self {
+            (Self::Wide(_), Value::Scalar(_) | Value::Array(_) | Value::TableRef(_)) => match self {
                 Self::Wide(wide) => wide.like(old, name),
                 Self::Record(_) => Err(mismatch(name)),
             },
@@ -115,11 +119,11 @@ impl Wide {
             return Ok(scalar(Data::Ints(vec![obj.extract()?])));
         }
         if obj.is_instance_of::<PyFloat>() {
-            return Ok(scalar(Data::Floats(vec![obj.extract()?], false)));
+            return Ok(scalar(Data::Floats(vec![obj.extract()?])));
         }
         if let Ok(number) = obj.cast::<PyComplex>() {
             let value = Complex64::new(number.real(), number.imag());
-            return Ok(scalar(Data::Complexes(vec![value], false)));
+            return Ok(scalar(Data::Complexes(vec![value])));
         }
         if obj.is_instance_of::<PyString>() {
             return Ok(scalar(Data::Texts(vec![obj.extract()?])));
@@ -140,7 +144,6 @@ impl Wide {
         let is_array = obj.is_instance(&numpy.getattr("ndarray")?)?;
         let dtype = obj.getattr("dtype")?;
         let kind: String = dtype.getattr("kind")?.extract()?;
-        let single: bool = dtype.getattr("itemsize")?.extract::<usize>()? <= 4;
         let (shape, flat) = if is_array {
             let shape: Vec<usize> = obj.getattr("shape")?.extract()?;
             let flat = obj.call_method1("ravel", ("C",))?.call_method0("tolist")?;
@@ -154,14 +157,14 @@ impl Wide {
         let data = match kind.as_str() {
             "b" => Data::Bools(flat.extract()?),
             "i" | "u" => Data::Ints(flat.extract()?),
-            "f" => Data::Floats(flat.extract()?, single),
+            "f" => Data::Floats(flat.extract()?),
             "c" => {
                 let mut values = Vec::new();
                 for item in flat.try_iter()? {
                     let number = item?.cast_into::<PyComplex>()?;
                     values.push(Complex64::new(number.real(), number.imag()));
                 }
-                Data::Complexes(values, dtype.getattr("itemsize")?.extract::<usize>()? <= 8)
+                Data::Complexes(values)
             }
             "U" | "S" => Data::Texts(flat.extract()?),
             _ => return Err(unsupported(obj)),
@@ -178,36 +181,40 @@ impl Wide {
                 build(shape, narrowed, ScalarValue::Int32, ArrayValue::Int32)
             }
             Data::Ints(values) => build(shape, values, ScalarValue::Int64, ArrayValue::Int64),
-            Data::Floats(values, true) => {
-                let narrowed = values.iter().map(|v| *v as f32).collect();
-                build(shape, narrowed, ScalarValue::Float32, ArrayValue::Float32)
-            }
-            Data::Floats(values, false) => {
-                build(shape, values, ScalarValue::Float64, ArrayValue::Float64)
-            }
-            Data::Complexes(values, true) => {
-                let narrowed = values
-                    .iter()
-                    .map(|v| Complex32::new(v.re as f32, v.im as f32))
-                    .collect();
-                build(
-                    shape,
-                    narrowed,
-                    ScalarValue::Complex32,
-                    ArrayValue::Complex32,
-                )
-            }
-            Data::Complexes(values, false) => {
+            Data::Floats(values) => build(shape, values, ScalarValue::Float64, ArrayValue::Float64),
+            Data::Complexes(values) => {
                 build(shape, values, ScalarValue::Complex64, ArrayValue::Complex64)
+            }
+            // A string that names a readable table is a reference to it
+            // (`TableRecord::defineFromValueHolder`); any other is a string.
+            Data::Texts(mut values) if shape.is_none() => {
+                let text = values.swap_remove(0);
+                Ok(match table_reference(&text) {
+                    Some(path) => Value::TableRef(path.to_string()),
+                    None => Value::Scalar(ScalarValue::String(text)),
+                })
             }
             Data::Texts(values) => build(shape, values, ScalarValue::String, ArrayValue::String),
         }
     }
 
-    /// The value in the type and width of `old`, or the refusal casacore
-    /// gives a value of another type.
+    /// The value as the keyword `old` holds it, or the refusal casacore
+    /// gives a value of another type. `defineDataField` takes a value of
+    /// exactly the type the field has, and casatools gives every value one
+    /// of five (`Bool`, `Int`, `Double`, `DComplex`, `String`, or a table),
+    /// so a field of another width (`Float`, `Short`, ...) takes none. The
+    /// exception is an integer beyond 32 bits, which casa-rs keeps (casatools
+    /// truncates it to 0) in a field of 64 bits.
     fn like(self, old: &Value, name: &str) -> Result<Value, Fail> {
         let Self { shape, data } = self;
+        if let Value::TableRef(_) = old {
+            return match (&shape, &data) {
+                (None, Data::Texts(values)) => table_reference(&values[0])
+                    .map(|path| Value::TableRef(path.to_string()))
+                    .ok_or_else(|| mismatch(name)),
+                _ => Err(mismatch(name)),
+            };
+        }
         let scalar_old = matches!(old, Value::Scalar(_));
         let single_element = matches!(&shape, Some(shape) if shape.iter().product::<usize>() == 1);
         let shape = match (scalar_old, shape) {
@@ -230,42 +237,25 @@ impl Wide {
                 build(shape, narrowed, ScalarValue::$scalar, ArrayValue::$array)
             }};
         }
-        let kind = element_kind(old);
-        match (kind, data) {
+        match (element_kind(old), data) {
             (Kind::Bool, Data::Bools(values)) => {
                 build(shape, values, ScalarValue::Bool, ArrayValue::Bool)
             }
-            (Kind::UInt8, Data::Ints(values)) => ints!(values, u8, UInt8, UInt8),
-            (Kind::UInt16, Data::Ints(values)) => ints!(values, u16, UInt16, UInt16),
-            (Kind::UInt32, Data::Ints(values)) => ints!(values, u32, UInt32, UInt32),
-            (Kind::Int16, Data::Ints(values)) => ints!(values, i16, Int16, Int16),
             (Kind::Int32, Data::Ints(values)) => ints!(values, i32, Int32, Int32),
-            (Kind::Int64, Data::Ints(values)) => {
+            (Kind::Int64, Data::Ints(values)) if values.iter().any(|v| i32::try_from(*v).is_err()) => {
                 build(shape, values, ScalarValue::Int64, ArrayValue::Int64)
             }
-            (Kind::Float32, Data::Floats(values, _)) => {
-                let narrowed = values.iter().map(|v| *v as f32).collect();
-                build(shape, narrowed, ScalarValue::Float32, ArrayValue::Float32)
-            }
-            (Kind::Float64, Data::Floats(values, _)) => {
+            (Kind::Float64, Data::Floats(values)) => {
                 build(shape, values, ScalarValue::Float64, ArrayValue::Float64)
             }
-            (Kind::Complex32, Data::Complexes(values, _)) => {
-                let narrowed = values
-                    .iter()
-                    .map(|v| Complex32::new(v.re as f32, v.im as f32))
-                    .collect();
-                build(
-                    shape,
-                    narrowed,
-                    ScalarValue::Complex32,
-                    ArrayValue::Complex32,
-                )
-            }
-            (Kind::Complex64, Data::Complexes(values, _)) => {
+            (Kind::Complex64, Data::Complexes(values)) => {
                 build(shape, values, ScalarValue::Complex64, ArrayValue::Complex64)
             }
-            (Kind::Text, Data::Texts(values)) => {
+            // A string that names a readable table is a table to casacore, and
+            // a table takes no string field's place.
+            (Kind::Text, Data::Texts(values))
+                if shape.is_some() || table_reference(&values[0]).is_none() =>
+            {
                 build(shape, values, ScalarValue::String, ArrayValue::String)
             }
             _ => Err(mismatch(name)),
@@ -273,54 +263,52 @@ impl Wide {
     }
 }
 
-/// An existing keyword's element type.
+/// The path of the table a string names as casacore reads it
+/// (`TableRecord::defineFromValueHolder`): `Table: ` and the path of a
+/// readable table.
+fn table_reference(text: &str) -> Option<&str> {
+    let path = text.strip_prefix("Table: ")?;
+    std::fs::File::open(Path::new(path).join("table.dat"))
+        .ok()
+        .map(|_| path)
+}
+
+/// The type of an existing keyword, as far as a Python value can take its
+/// place.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
     Bool,
-    UInt8,
-    UInt16,
-    UInt32,
-    Int16,
     Int32,
     Int64,
-    Float32,
     Float64,
-    Complex32,
     Complex64,
     Text,
+    /// Any other width (`Float`, `Short`, ...): casatools gives no value
+    /// that type.
+    Other,
 }
 
 fn element_kind(old: &Value) -> Kind {
     match old {
         Value::Scalar(scalar) => match scalar {
             ScalarValue::Bool(_) => Kind::Bool,
-            ScalarValue::UInt8(_) => Kind::UInt8,
-            ScalarValue::UInt16(_) => Kind::UInt16,
-            ScalarValue::UInt32(_) => Kind::UInt32,
-            ScalarValue::Int16(_) => Kind::Int16,
             ScalarValue::Int32(_) => Kind::Int32,
             ScalarValue::Int64(_) => Kind::Int64,
-            ScalarValue::Float32(_) => Kind::Float32,
             ScalarValue::Float64(_) => Kind::Float64,
-            ScalarValue::Complex32(_) => Kind::Complex32,
             ScalarValue::Complex64(_) => Kind::Complex64,
             ScalarValue::String(_) => Kind::Text,
+            _ => Kind::Other,
         },
         Value::Array(array) => match array {
             ArrayValue::Bool(_) => Kind::Bool,
-            ArrayValue::UInt8(_) => Kind::UInt8,
-            ArrayValue::UInt16(_) => Kind::UInt16,
-            ArrayValue::UInt32(_) => Kind::UInt32,
-            ArrayValue::Int16(_) => Kind::Int16,
             ArrayValue::Int32(_) => Kind::Int32,
             ArrayValue::Int64(_) => Kind::Int64,
-            ArrayValue::Float32(_) => Kind::Float32,
             ArrayValue::Float64(_) => Kind::Float64,
-            ArrayValue::Complex32(_) => Kind::Complex32,
             ArrayValue::Complex64(_) => Kind::Complex64,
             ArrayValue::String(_) => Kind::Text,
+            _ => Kind::Other,
         },
-        _ => Kind::Text,
+        _ => Kind::Other,
     }
 }
 
