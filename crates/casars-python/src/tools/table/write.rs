@@ -267,7 +267,8 @@ impl State {
         // A table that holds the write lock and has changes it has not
         // flushed is written in full, as StManAipsIO, when it is closed or
         // dropped: a `user` table closed without an unlock, a `permanent`
-        // one always. The change is on disk (or, if it failed, must not be),
+        // one always (a `casa-tables` defect, #1035; this reload is the
+        // workaround and goes with its fix). The change is on disk (or, if it failed, must not be),
         // so reload the table: it then matches the disk, with nothing left
         // to flush, and the write is still published when the lock is
         // released. An automatic table releases through

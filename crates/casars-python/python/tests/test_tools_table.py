@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -127,7 +128,9 @@ def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     with tarfile.open(
         REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
     ) as archive:
-        archive.extractall(root / "ms", filter="data")
+        # `filter` is missing from Python 3.10 before 3.10.12 and 3.11 before 3.11.4.
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(root / "ms", **extract)
     return {
         "table": root / "fixtures" / "python_fixture.table",
         "ms": root / "ms" / "mssel_test_small.ms",
