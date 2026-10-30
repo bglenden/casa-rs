@@ -793,7 +793,7 @@ pub(crate) fn cpp_update_ssm_long_strings(path: &std::path::Path) -> Result<(), 
 pub(crate) fn cpp_ssm_statistics(path: &std::path::Path) -> Result<SsmStatistics, String> {
     let c_path =
         CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
-    let mut statistics = [0i64; 4];
+    let mut statistics = [0i64; 7];
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
     let rc =
         unsafe { cpp_table_ssm_statistics(c_path.as_ptr(), statistics.as_mut_ptr(), &mut error) };
@@ -801,12 +801,23 @@ pub(crate) fn cpp_ssm_statistics(path: &std::path::Path) -> Result<SsmStatistics
         CasacoreOracleRuntime::cpp_status("table.ssm_statistics", rc, error, cpp_table_free_error)
     }
     .map_err(|error| error.to_string())?;
-    let [buckets, free_buckets, first_free_bucket, last_string_bucket] = statistics;
+    let [
+        buckets,
+        free_buckets,
+        first_free_bucket,
+        last_string_bucket,
+        index_buckets,
+        first_index_bucket,
+        index_bucket_offset,
+    ] = statistics;
     Ok(SsmStatistics {
         buckets,
         free_buckets,
         first_free_bucket,
         last_string_bucket,
+        index_buckets,
+        first_index_bucket,
+        index_bucket_offset,
     })
 }
 
@@ -1183,6 +1194,13 @@ pub struct SsmStatistics {
     pub first_free_bucket: i64,
     /// The string bucket casacore appends the next string to, or -1.
     pub last_string_bucket: i64,
+    /// Buckets holding the index.
+    pub index_buckets: i64,
+    /// The first of them.
+    pub first_index_bucket: i64,
+    /// Where the index starts in its one bucket when it fits half of one,
+    /// or 0 when it spans whole buckets.
+    pub index_bucket_offset: i64,
 }
 
 #[cfg(has_casacore_cpp)]

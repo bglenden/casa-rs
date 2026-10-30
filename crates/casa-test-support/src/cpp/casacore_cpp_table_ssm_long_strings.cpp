@@ -176,7 +176,8 @@ void update_ssm_long_strings_impl(const std::string& path) {
 
 // casacore's account of the StandardStMan holding column NAME, as
 // `showBaseStatistics` prints it: total buckets, free buckets, the first
-// free bucket and the last string bucket in use.
+// free bucket, the last string bucket in use, the index buckets, the first
+// index bucket and the index's offset in it.
 void ssm_statistics_impl(const std::string& path, int64_t* out) {
     casacore::Table table(path, casacore::Table::Old);
     // SSMBase reads its header when a cell is first read.
@@ -184,23 +185,25 @@ void ssm_statistics_impl(const std::string& path, int64_t* out) {
     casacore::ROStandardStManAccessor accessor(table, "NAME", casacore::True);
     std::ostringstream shown;
     accessor.showBaseStatistics(shown);
-    const char* const labels[] = {"Total buckets", "Total free buckets", "1st free bucket",
-                                  "last String bucket used"};
+    constexpr int count = 7;
+    const char* const labels[count] = {"Total buckets", "Total free buckets", "1st free bucket",
+                                       "last String bucket used", "Total Index buckets",
+                                       "1st Index bucket", "Index bucket offset"};
     std::istringstream lines(shown.str());
-    bool found[4] = {false, false, false, false};
+    bool found[count] = {};
     for (std::string line; std::getline(lines, line);) {
         const size_t colon = line.find(':');
         if (colon == std::string::npos) continue;
         std::string label = line.substr(0, colon);
         label.erase(label.find_last_not_of(' ') + 1);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < count; ++i) {
             if (label == labels[i]) {
                 out[i] = std::stoll(line.substr(colon + 1));
                 found[i] = true;
             }
         }
     }
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < count; ++i) {
         if (!found[i]) throw std::runtime_error(std::string("no '") + labels[i] + "' statistic");
     }
 }
