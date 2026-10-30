@@ -676,7 +676,9 @@ impl PyTableTool {
         let column = text(columnname, "columnname")?;
         let rows = row_numbers(rownr, "rownr")?;
         let value = keyword_value(py, thevalue)?;
-        self.call(py, move |state, log| state.putcell(column, rows, value, log))
+        self.call(py, move |state, log| {
+            state.putcell(column, rows, value, log)
+        })
     }
 
     /// Write rows of a column, the rows last in an array column's values.

@@ -8,7 +8,7 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
-use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_tables::{ColumnSchema, EndianFormat, Table, TableOptions, TableSchema};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{
@@ -251,6 +251,15 @@ fn create_table_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     ]);
     table.set_column_keywords("spectrum", spectrum_keywords);
     table.save(TableOptions::new(path))?;
+    // The same table in big-endian files, the byte order the host's is not
+    // (a write through the table tool must keep a table's byte order).
+    let mut big_path = path.as_os_str().to_os_string();
+    big_path.push(".big");
+    let big_path = PathBuf::from(big_path);
+    if big_path.exists() {
+        fs::remove_dir_all(&big_path)?;
+    }
+    table.save(TableOptions::new(&big_path).with_endian_format(EndianFormat::BigEndian))?;
     Ok(())
 }
 

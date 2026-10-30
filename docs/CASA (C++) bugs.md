@@ -23,7 +23,9 @@ CASA behaviours casa-rs does not follow:
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
-[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process).
+[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
+[`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
+[`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2651,3 +2653,32 @@ one-element `incr` as the step of every axis. The recording
 about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
 than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
 follows both.
+
+## `tb.putcell` and `putcol` wrap an int beyond 32 bits in an int cell
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion to a column's type
+
+`tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
+`-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
+(CASA 6.7.6.14; the `int_overflow` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
+to the 32-bit column type without a range check, as for `putkeyword` above.
+casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
+leaves the cell, rather than store a wrong number. Astra's review of #1034
+noted the departure.
+
+## `tb.putcell` with several rows writes those before a missing one
+
+- Date noted: 2026-10-30
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::putCell`
+
+`tb.putcell('id', [0, 3], 22)` on a table of three rows writes row 0, then
+fails on row 3 with `no such row`: `TableProxy::putCell` checks and writes one
+row at a time, so a call that raises has still changed the table
+(`rows_vector` scenario). casa-rs checks every row first and raises with the
+table as it was. The recording follows the failed call with a write that puts
+row 0 back, so that its later reads agree.

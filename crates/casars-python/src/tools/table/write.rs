@@ -284,7 +284,9 @@ impl State {
             Ok(())
         };
         let released = if automatic {
-            open.table.unlock_metadata_only_or_discard().map_err(Fail::from)
+            open.table
+                .unlock_metadata_only_or_discard()
+                .map_err(Fail::from)
         } else {
             Ok(())
         };

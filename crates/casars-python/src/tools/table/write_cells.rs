@@ -116,11 +116,7 @@ impl ShapeRule {
 /// of a scalar or array column is set where it is, without loading the
 /// rest of the table (a table is read lazily, and a MeasurementSet's visibilities
 /// would not fit in memory); a record cell goes through the row store.
-fn set_cells(
-    table: &mut Table,
-    column: &str,
-    cells: Vec<(usize, Value)>,
-) -> Result<(), Fail> {
+fn set_cells(table: &mut Table, column: &str, cells: Vec<(usize, Value)>) -> Result<(), Fail> {
     let record_column = matches!(
         table
             .schema()
@@ -132,7 +128,11 @@ fn set_cells(
     for (row, cell) in &cells {
         rule.check(table, column, *row, cell)?;
     }
-    if record_column || cells.iter().any(|(_, cell)| matches!(cell, Value::Record(_))) {
+    if record_column
+        || cells
+            .iter()
+            .any(|(_, cell)| matches!(cell, Value::Record(_)))
+    {
         let mut accessor = table.column_accessor_mut(column)?;
         for (row, cell) in cells {
             match cell {
@@ -155,7 +155,10 @@ fn set_cells(
 /// them.
 fn distinct(rows: &[usize]) -> Vec<usize> {
     let mut seen = std::collections::HashSet::with_capacity(rows.len());
-    rows.iter().copied().filter(|row| seen.insert(*row)).collect()
+    rows.iter()
+        .copied()
+        .filter(|row| seen.insert(*row))
+        .collect()
 }
 
 /// The elements of `data` at `indices`.

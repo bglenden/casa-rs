@@ -2386,7 +2386,10 @@ mod tests {
             .windows(variable_shape.len())
             .filter(|window| *window == variable_shape)
             .count();
-        assert_eq!(described, 2, "one variable shape per array field: {bytes:?}");
+        assert_eq!(
+            described, 2,
+            "one variable shape per array field: {bytes:?}"
+        );
 
         let read = deserialize_record_from_uchar(&bytes).unwrap();
         assert_eq!(read, record, "the data keeps its own shape");

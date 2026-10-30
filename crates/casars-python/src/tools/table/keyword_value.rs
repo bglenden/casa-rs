@@ -23,11 +23,24 @@ use std::path::Path;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
+use numpy::PyReadonlyArrayDyn;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 use super::state::Fail;
+
+/// The elements of the NumPy array `array`, in C order, cast to `dtype` (the
+/// widest of their kind; a cast that could lose a value, such as `uint64` to
+/// `int64`, is refused) and copied in one pass.
+fn bulk<T: numpy::Element + Clone>(array: &Bound<'_, PyAny>, dtype: &str) -> PyResult<Vec<T>> {
+    let options = PyDict::new(array.py());
+    options.set_item("casting", "safe")?;
+    options.set_item("copy", false)?;
+    let cast = array.call_method("astype", (dtype,), Some(&options))?;
+    let typed = cast.extract::<PyReadonlyArrayDyn<'_, T>>()?;
+    Ok(typed.as_array().iter().cloned().collect())
+}
 
 /// The elements of a value, in the widest type of their kind.
 #[derive(Debug, Clone)]
@@ -99,10 +112,12 @@ impl Incoming {
     /// The value as the existing keyword `old` holds one.
     pub(super) fn like(self, old: &Value, name: &str) -> Result<Value, Fail> {
         match (&self, old) {
-            (Self::Wide(_), Value::Scalar(_) | Value::Array(_) | Value::TableRef(_)) => match self {
-                Self::Wide(wide) => wide.like(old, name),
-                Self::Record(_) => Err(mismatch(name)),
-            },
+            (Self::Wide(_), Value::Scalar(_) | Value::Array(_) | Value::TableRef(_)) => {
+                match self {
+                    Self::Wide(wide) => wide.like(old, name),
+                    Self::Record(_) => Err(mismatch(name)),
+                }
+            }
             (Self::Record(_), Value::Record(_)) => self.natural(),
             _ => Err(mismatch(name)),
         }
@@ -139,11 +154,31 @@ impl Wide {
     }
 
     /// A NumPy array, or a NumPy scalar, by its dtype's kind and size.
+    ///
+    /// An array of numbers is copied once, in bulk, in the widest type of
+    /// its kind (`bulk`): a large complex `DATA` array is not expanded into
+    /// a Python object per element.
     fn from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         let numpy = obj.py().import("numpy")?;
         let is_array = obj.is_instance(&numpy.getattr("ndarray")?)?;
         let dtype = obj.getattr("dtype")?;
         let kind: String = dtype.getattr("kind")?.extract()?;
+        if is_array {
+            let shape: Vec<usize> = obj.getattr("shape")?.extract()?;
+            let data = match kind.as_str() {
+                "b" => Some(Data::Bools(bulk::<bool>(obj, "bool")?)),
+                "i" | "u" => Some(Data::Ints(bulk::<i64>(obj, "int64")?)),
+                "f" => Some(Data::Floats(bulk::<f64>(obj, "float64")?)),
+                "c" => Some(Data::Complexes(bulk::<Complex64>(obj, "complex128")?)),
+                _ => None,
+            };
+            if let Some(data) = data {
+                return Ok(Self {
+                    shape: Some(shape),
+                    data,
+                });
+            }
+        }
         let (shape, flat) = if is_array {
             let shape: Vec<usize> = obj.getattr("shape")?.extract()?;
             let flat = obj.call_method1("ravel", ("C",))?.call_method0("tolist")?;
@@ -242,7 +277,9 @@ impl Wide {
                 build(shape, values, ScalarValue::Bool, ArrayValue::Bool)
             }
             (Kind::Int32, Data::Ints(values)) => ints!(values, i32, Int32, Int32),
-            (Kind::Int64, Data::Ints(values)) if values.iter().any(|v| i32::try_from(*v).is_err()) => {
+            (Kind::Int64, Data::Ints(values))
+                if values.iter().any(|v| i32::try_from(*v).is_err()) =>
+            {
                 build(shape, values, ScalarValue::Int64, ArrayValue::Int64)
             }
             (Kind::Float64, Data::Floats(values)) => {
@@ -326,5 +363,147 @@ pub(super) fn build<T>(
         Some(shape) => ArrayD::from_shape_vec(IxDyn(&shape), values)
             .map(|cells| Value::Array(array(cells)))
             .map_err(|error| Fail::Runtime(format!("array of shape {shape:?}: {error}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The types a keyword is stored with (Astra's review of #1034, findings
+    //! 7 and 8). A reader that compares only the values a Python call returns
+    //! cannot see them: casatools promotes `float32` to `Double` on the way
+    //! back too.
+
+    use super::*;
+    use num_complex::Complex32;
+
+    fn scalar(data: Data) -> Wide {
+        Wide { shape: None, data }
+    }
+
+    fn array(shape: &[usize], data: Data) -> Wide {
+        Wide {
+            shape: Some(shape.to_vec()),
+            data,
+        }
+    }
+
+    fn text(value: &str) -> Wide {
+        scalar(Data::Texts(vec![value.to_string()]))
+    }
+
+    /// A directory that is a readable table: it has a `table.dat`.
+    fn readable_table() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("table.dat"), b"").expect("table.dat");
+        dir
+    }
+
+    #[test]
+    fn a_new_keyword_takes_casatools_type_not_the_width_of_the_numpy_value() {
+        // np.float32(1.25) arrives as a real, a float32 array as an array of
+        // reals: CASA 6.7.6.14 stores TpDouble and TpArrayDouble.
+        assert_eq!(
+            scalar(Data::Floats(vec![1.25])).natural().unwrap(),
+            Value::Scalar(ScalarValue::Float64(1.25))
+        );
+        let reals = array(&[2], Data::Floats(vec![1.0, 2.0])).natural().unwrap();
+        assert!(
+            matches!(reals, Value::Array(ArrayValue::Float64(_))),
+            "{reals:?}"
+        );
+        let complexes = array(&[1], Data::Complexes(vec![Complex64::new(1.0, 2.0)]))
+            .natural()
+            .unwrap();
+        assert!(
+            matches!(complexes, Value::Array(ArrayValue::Complex64(_))),
+            "{complexes:?}"
+        );
+        // An integer is an Int unless it does not fit.
+        assert_eq!(
+            scalar(Data::Ints(vec![7])).natural().unwrap(),
+            Value::Scalar(ScalarValue::Int32(7))
+        );
+        assert_eq!(
+            scalar(Data::Ints(vec![1 << 40])).natural().unwrap(),
+            Value::Scalar(ScalarValue::Int64(1 << 40))
+        );
+    }
+
+    #[test]
+    fn a_keyword_takes_a_value_of_exactly_its_type() {
+        let double = Value::Scalar(ScalarValue::Float64(1.0));
+        assert_eq!(
+            scalar(Data::Floats(vec![2.5])).like(&double, "k").unwrap(),
+            Value::Scalar(ScalarValue::Float64(2.5))
+        );
+        // casatools gives no value the type Float (or Short, ...), so a
+        // keyword of that type takes none, as defineDataField refuses.
+        for old in [
+            Value::Scalar(ScalarValue::Float32(1.0)),
+            Value::Scalar(ScalarValue::Int16(1)),
+            Value::Scalar(ScalarValue::UInt8(1)),
+            Value::Scalar(ScalarValue::Complex32(Complex32::new(1.0, 0.0))),
+        ] {
+            let value = match old {
+                Value::Scalar(ScalarValue::Float32(_)) => Data::Floats(vec![2.5]),
+                Value::Scalar(ScalarValue::Complex32(_)) => {
+                    Data::Complexes(vec![Complex64::new(1.0, 1.0)])
+                }
+                _ => Data::Ints(vec![2]),
+            };
+            let refused = scalar(value).like(&old, "k").unwrap_err();
+            assert!(
+                matches!(&refused, Fail::Runtime(m) if m.contains("incorrect data type")),
+                "{old:?}: {refused:?}"
+            );
+        }
+        // A 64-bit keyword takes only an integer beyond 32 bits, the
+        // exception to the rule; a small one is an Int to casacore.
+        let wide = Value::Scalar(ScalarValue::Int64(1));
+        assert!(scalar(Data::Ints(vec![7])).like(&wide, "k").is_err());
+        assert_eq!(
+            scalar(Data::Ints(vec![1 << 40])).like(&wide, "k").unwrap(),
+            Value::Scalar(ScalarValue::Int64(1 << 40))
+        );
+        // A 32-bit keyword refuses one that does not fit, where CASA wraps.
+        let int = Value::Scalar(ScalarValue::Int32(1));
+        assert!(scalar(Data::Ints(vec![1 << 40])).like(&int, "k").is_err());
+    }
+
+    #[test]
+    fn a_string_naming_a_readable_table_is_a_table_reference() {
+        let table = readable_table();
+        let named = format!("Table: {}", table.path().display());
+        assert_eq!(
+            text(&named).natural().unwrap(),
+            Value::TableRef(table.path().display().to_string())
+        );
+        // Not readable, or not so named: an ordinary string.
+        for plain in ["Table: /no/such/table", "plain", "table: x"] {
+            assert_eq!(
+                text(plain).natural().unwrap(),
+                Value::Scalar(ScalarValue::String(plain.to_string()))
+            );
+        }
+        // A string array is never a table.
+        assert!(matches!(
+            array(&[1], Data::Texts(vec![named.clone()]))
+                .natural()
+                .unwrap(),
+            Value::Array(ArrayValue::String(_))
+        ));
+
+        // An existing reference takes another readable one and nothing else.
+        let old = Value::TableRef("././ANTENNA".to_string());
+        assert_eq!(
+            text(&named).like(&old, "k").unwrap(),
+            Value::TableRef(table.path().display().to_string())
+        );
+        assert!(text("plain text").like(&old, "k").is_err());
+        assert!(scalar(Data::Ints(vec![5])).like(&old, "k").is_err());
+        // And an existing string takes a string, not a table.
+        let string = Value::Scalar(ScalarValue::String("x".into()));
+        assert!(text(&named).like(&string, "k").is_err());
+        assert!(text("other").like(&string, "k").is_ok());
     }
 }

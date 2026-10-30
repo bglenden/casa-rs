@@ -2016,17 +2016,26 @@ fn cells_written_to_a_lazy_table_survive_the_loading_of_its_rows() {
                 .set_value_at(1, Value::Array(ArrayValue::from_i32_vec(vec![70, 90])))
                 .expect("array write");
         }
-        assert!(!reopened.inner.has_loaded_rows(), "after the array write {dm:?}");
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after the array write {dm:?}"
+        );
         assert_eq!(
             reopened.array_shape(1, "data").expect("shape"),
             Some(vec![2])
         );
-        assert!(!reopened.inner.has_loaded_rows(), "after array_shape {dm:?}");
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after array_shape {dm:?}"
+        );
         assert_eq!(
             table_scalar(&reopened, 2, "id").expect("read caches the column"),
             &ScalarValue::Int32(2)
         );
-        assert!(!reopened.inner.has_loaded_rows(), "after the scalar read {dm:?}");
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after the scalar read {dm:?}"
+        );
         {
             let mut writer = reopened
                 .row_accessor_mut()
@@ -2114,7 +2123,11 @@ fn cell_slices_of_a_lazy_table_load_no_rows() {
         let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         for row in 0..3 {
             table
-                .add_row(row_with_fixed_arrays(row, &[10 * row, 10 * row + 1], &[0, 0]))
+                .add_row(row_with_fixed_arrays(
+                    row,
+                    &[10 * row, 10 * row + 1],
+                    &[0, 0],
+                ))
                 .expect("push row");
         }
         let root = unique_test_dir(&format!("lazy_cell_slices_{dm:?}"));
@@ -2159,6 +2172,87 @@ fn cell_slices_of_a_lazy_table_load_no_rows() {
         );
         std::fs::remove_dir_all(&root).expect("cleanup test dir");
     }
+}
+
+/// A table that is one `StManAipsIO` group says how to write it in full as it
+/// is laid out (group name and byte order kept); any other layout says
+/// nothing, because a full save would change it.
+#[test]
+fn a_single_stman_aipsio_group_is_written_in_full_as_it_is_laid_out() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2]),
+    ])
+    .expect("schema");
+    let build = || {
+        let mut table =
+            Table::with_schema(schema_for_manager(&schema, DataManagerKind::StManAipsIO));
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+                ),
+            ]))
+            .expect("push row");
+        table
+    };
+
+    for format in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        let root = unique_test_dir(&format!("single_group_{format:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        build()
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StManAipsIO)
+                    .with_data_manager_group("MyGroup")
+                    .with_endian_format(format),
+            )
+            .expect("save");
+        let table = Table::open(TableOptions::new(&root)).expect("open");
+        let options = table
+            .single_stman_aipsio_options()
+            .expect("options")
+            .expect("one StManAipsIO group");
+        assert_eq!(options.endian_format(), format);
+
+        // Written in full with those options, the table is laid out the same.
+        table.save(options).expect("full save");
+        let again = Table::open(TableOptions::new(&root)).expect("reopen");
+        let options = again
+            .single_stman_aipsio_options()
+            .expect("options")
+            .expect("still one StManAipsIO group");
+        assert_eq!(options.endian_format(), format);
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+
+    // Two managers: nothing to write it with.
+    let root = unique_test_dir("two_managers");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    let bindings = HashMap::from([(
+        "data".to_string(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StandardStMan,
+            tile_shape: None,
+        },
+    )]);
+    build()
+        .save_with_bindings(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StManAipsIO),
+            &bindings,
+        )
+        .expect("save with a binding");
+    let table = Table::open(TableOptions::new(&root)).expect("open");
+    assert!(
+        table
+            .single_stman_aipsio_options()
+            .expect("options")
+            .is_none(),
+        "a table of two managers must not be rewritten as one"
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
 }
 
 /// A cell that was undefined on disk is defined once it is written, whether
@@ -6110,6 +6204,53 @@ mod lock_tests {
         writer.resync().unwrap();
         drop(writer);
         assert_eq!(published_counter(&opts), before.wrapping_add(1));
+    }
+
+    /// A writer that persists its own changes reloads the table after a
+    /// failure so that nothing is left to flush. When the reload fails too,
+    /// `resync_or_discard` still leaves nothing for the drop to write: the
+    /// table is not written in full with the change a failed write left in
+    /// memory.
+    #[test]
+    fn a_failed_reload_leaves_nothing_for_a_drop_to_write() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+
+        // The control file cannot be read, so the reload fails.
+        let control = opts.path().join("table.dat");
+        let hidden = opts.path().join("hidden-control");
+        std::fs::rename(&control, &hidden).unwrap();
+        assert!(writer.resync_or_discard().is_err(), "the reload succeeded");
+        std::fs::rename(&hidden, &control).unwrap();
+
+        let files = |dir: &std::path::Path| -> Vec<(String, Vec<u8>)> {
+            let mut files: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.file_name().is_some_and(|name| name != "table.lock"))
+                .map(|path| {
+                    (
+                        path.file_name().unwrap().to_string_lossy().into_owned(),
+                        std::fs::read(&path).unwrap(),
+                    )
+                })
+                .collect();
+            files.sort();
+            files
+        };
+        let before = files(opts.path());
+        drop(writer);
+        assert_eq!(files(opts.path()), before, "the drop wrote the table");
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(1),
+            "the change a failed write left in memory reached the disk"
+        );
     }
 
     /// An unlock whose flush fails returns the error and keeps the write

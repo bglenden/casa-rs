@@ -328,17 +328,47 @@ def test_a_write_leaves_the_storage_managers_alone_however_the_table_ends(
 
 @pytest.mark.parametrize("option", ["auto", "permanent", "user"])
 @pytest.mark.parametrize(
-    ("column", "write"),
+    ("column", "write", "manager_file", "written"),
     [
-        ("ANTENNA1", lambda tool: tool.putcell("ANTENNA1", 0, 5)),
-        ("TIME", lambda tool: tool.putcell("TIME", 1, 1.5e9)),
-        ("DATA", lambda tool: tool.putcell("DATA", 0, np.ones((4, 64), dtype=np.complex128))),
-        ("FLAG", lambda tool: tool.putcell("FLAG", 0, np.zeros((4, 64), dtype=bool))),
-        ("WEIGHT", lambda tool: tool.putcol("WEIGHT", np.ones((4, 3)), 0, 3)),
+        (
+            "ANTENNA1",
+            lambda tool: tool.putcell("ANTENNA1", 0, 5),
+            "table.f14",
+            lambda tool: (tool.getcell("ANTENNA1", 0), tool.getcell("ANTENNA1", 1)),
+        ),
+        (
+            "TIME",
+            lambda tool: tool.putcell("TIME", 1, 1.5e9),
+            "table.f12",
+            lambda tool: (tool.getcell("TIME", 1), tool.getcell("TIME", 0)),
+        ),
+        (
+            "DATA",
+            lambda tool: tool.putcell("DATA", 0, np.ones((4, 64), dtype=np.complex128)),
+            "table.f17_TSM1",
+            lambda tool: (tool.getcell("DATA", 0).sum(), tool.getcell("DATA", 1).sum()),
+        ),
+        (
+            "FLAG",
+            lambda tool: tool.putcell("FLAG", 0, np.zeros((4, 64), dtype=bool)),
+            "table.f22_TSM1",
+            lambda tool: (tool.getcell("FLAG", 0).sum(), tool.getcell("FLAG", 1).sum()),
+        ),
+        (
+            "WEIGHT",
+            lambda tool: tool.putcol("WEIGHT", np.ones((4, 3)), 0, 3),
+            "table.f23_TSM1",
+            lambda tool: (tool.getcell("WEIGHT", 2).sum(), tool.getcell("WEIGHT", 3).sum()),
+        ),
         (
             "DATA slice",
             lambda tool: tool.putcellslice(
                 "DATA", 1, np.ones((2, 4), dtype=np.complex128), [2, 10], [3, 13], [1, 1]
+            ),
+            "table.f17_TSM1",
+            lambda tool: (
+                tool.getcellslice("DATA", 1, [2, 10], [3, 13], [1, 1]).sum(),
+                tool.getcellslice("DATA", 0, [2, 10], [3, 13], [1, 1]).sum(),
             ),
         ),
         (
@@ -346,18 +376,35 @@ def test_a_write_leaves_the_storage_managers_alone_however_the_table_ends(
             lambda tool: tool.putcolslice(
                 "FLAG", np.zeros((4, 1, 2), dtype=bool), [0, 5], [3, 5], [1, 1], 0, 2
             ),
+            "table.f22_TSM1",
+            lambda tool: (
+                tool.getcolslice("FLAG", [0, 5], [3, 5], [1, 1], 0, 2).sum(),
+                tool.getcellslice("FLAG", 2, [0, 5], [3, 5], [1, 1]).sum(),
+            ),
         ),
     ],
 )
 def test_a_cell_write_changes_only_its_columns_storage_manager_file(
-    option: str, column: str, write: Any, fixtures: dict[str, Path], tmp_path: Path
+    option: str,
+    column: str,
+    write: Any,
+    manager_file: str,
+    written: Any,
+    fixtures: dict[str, Path],
+    tmp_path: Path,
 ) -> None:
-    """A MeasurementSet's cell write is made in place: `table.dat` and the one
-    file of the storage manager that holds the column change, and nothing is
-    added or removed, in every lock mode (#1025)."""
+    """A MeasurementSet's cell write is made in place: `table.dat` and the
+    file of the storage manager that holds the column change, that one and no
+    other, nothing is added or removed, in every lock mode; and what a reader
+    then sees is the value written and the neighbouring cell untouched
+    (#1025)."""
     path = tmp_path.resolve() / "mssel_test_small.ms"
     shutil.copytree(fixtures["ms"], path)
     before = table_files(path)
+    untouched = tools.table()
+    assert untouched.open(str(path))
+    neighbours_before = written(untouched)
+    untouched.done()
     tool = tools.table()
     assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
     if option == "user":
@@ -367,8 +414,13 @@ def test_a_cell_write_changes_only_its_columns_storage_manager_file(
     after = table_files(path)
     assert set(after) == set(before), column
     changed = {name for name in before if before[name] != after[name]}
-    assert "table.dat" in changed
-    assert len(changed - {"table.dat"}) == 1, (column, sorted(changed))
+    assert changed == {"table.dat", manager_file}, (column, sorted(changed))
+    reader = tools.table()
+    assert reader.open(str(path))
+    now = written(reader)
+    reader.done()
+    assert now[0] != neighbours_before[0], f"{column}: the value written is not there"
+    assert now[1] == neighbours_before[1], f"{column}: the neighbouring cell changed"
 
 
 def test_an_int_beyond_32_bits_is_kept_where_casa_truncates_it(
@@ -389,3 +441,214 @@ def test_an_int_beyond_32_bits_is_kept_where_casa_truncates_it(
         tool.putkeyword("version", 2**40)
     assert tool.getkeyword("version") == 1
     tool.done()
+
+
+def test_an_int_beyond_32_bits_is_refused_in_a_cell_where_casa_wraps_it(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA 6.7.6.14 writes 2147483648 to an int32 cell as -2147483648
+    (`docs/CASA (C++) bugs.md`); casa-rs refuses it and leaves the cell."""
+    steps = RECORD["scenarios"]["int_overflow"]["steps"]
+    wrapped = [step["value"]["data"] for step in steps if step["method"] == "getcol"]
+    assert wrapped == [[-2147483648, 2147483647, 1], [-2147483648, 1, 2]]
+
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    before = tool.getcol("ANTENNA1", nrow=3).tolist()
+    for row, value in [(0, 2**31), (1, -(2**31) - 1), (2, 2**32 + 1)]:
+        with pytest.raises(RuntimeError, match="out of range for a column of Int"):
+            tool.putcell("ANTENNA1", row, value)
+    with pytest.raises(RuntimeError, match="out of range for a column of Int"):
+        tool.putcol("ANTENNA1", np.array([2**31, 1, 2]), 0, 3)
+    assert tool.getcol("ANTENNA1", nrow=3).tolist() == before
+    tool.done()
+
+
+def test_putcell_with_a_missing_row_among_several_writes_none_of_them(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA writes the rows before the missing one and then fails; casa-rs
+    refuses the call whole, in memory and on disk."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    before = [tool.getcell("id", row) for row in range(3)]
+    with pytest.raises(RuntimeError, match="no such row"):
+        tool.putcell("id", [0, 3], 22)
+    assert [tool.getcell("id", row) for row in range(3)] == before
+    assert tool.putcell("id", [], 1)
+    assert [tool.getcell("id", row) for row in range(3)] == before
+    assert tool.close()
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert [reader.getcell("id", row) for row in range(3)] == before
+    reader.done()
+
+
+def stored_big_endian(table: Path) -> bool:
+    """Whether `table.dat` says the table's files are big-endian."""
+    data = (table / "table.dat").read_bytes()
+    assert data[:4] == b"\xbe\xbe\xbe\xbe"
+    offset = 12 + int.from_bytes(data[8:12], "big")
+    version = int.from_bytes(data[offset : offset + 4], "big")
+    offset += 4 + (8 if version >= 3 else 4)
+    return int.from_bytes(data[offset : offset + 4], "big") == 0
+
+
+@pytest.mark.parametrize("name", ["python_fixture.table", "python_fixture.table.big"])
+def test_a_write_keeps_the_byte_order_of_a_table_it_must_save_in_full(
+    name: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A table with a record column cannot be saved in part, so a cell write
+    saves its one StManAipsIO group in full: the byte order is kept (the
+    `.big` fixture's is not the host's), and a second write through the same
+    handle then works (#1034, the review's finding 6)."""
+    path = tmp_path.resolve() / name
+    shutil.copytree(fixtures["table"].parent / name, path)
+    big_endian = stored_big_endian(path)
+    # The `.big` fixture is big-endian; the other is the host's.
+    assert big_endian == (name.endswith(".big") or sys.byteorder == "big")
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    assert tool.putcell("label", 1, "new")
+    assert tool.putcell("id", 2, 77)
+    assert tool.putcol("gain", np.array([1 + 1j, 2 + 2j, 3 + 3j]))
+    assert tool.putkeyword("added", 7)
+    assert tool.close()
+    assert stored_big_endian(path) == big_endian
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.getcol("label").tolist() == ["alpha", "new", "gamma"]
+    assert reader.getcell("id", 2) == 77
+    assert reader.getcol("gain").tolist() == [1 + 1j, 2 + 2j, 3 + 3j]
+    assert reader.getkeyword("added") == 7
+    reader.done()
+
+
+WRITER = """
+import sys
+from casars import tools
+
+tool = tools.table()
+assert tool.open(sys.argv[1], nomodify=False)
+assert tool.putkeyword("counter", 2)
+assert tool.putcell("id", 0, 41)
+assert tool.close()
+"""
+
+
+@pytest.mark.parametrize("option", ["default", "auto", "user"])
+def test_a_read_sees_what_another_process_wrote_since_the_lock_was_released(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A read takes the read lock again and synchronizes, as casacore's
+    `TableProxy::syncTable` does: after an unlock another process writes the
+    keywords and a cell, and the first handle, which had both loaded, reads
+    the new values (#1034, the review's finding 2)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert tool.putkeyword("counter", 1)
+    original = tool.getcell("id", 0)
+    assert tool.getkeyword("counter") == 1
+    assert tool.unlock()
+    assert not tool.haslock(write=False)
+
+    subprocess.run([sys.executable, "-c", WRITER, str(path)], check=True, timeout=120)
+
+    assert tool.getkeyword("counter") == 2
+    assert tool.getcell("id", 0) == 41 != original
+    assert tool.haslock(write=False)
+    assert tool.close()
+
+
+def test_readers_of_a_table_opened_nomodify_coexist_in_the_permanent_modes(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A read-only open holds a read lock, not the write lock, even with
+    permanent locking, as CASA's does (#1034, the review's finding 9)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    readers = [tools.table(), tools.table()]
+    for reader in readers:
+        assert reader.open(str(path), lockoptions={"option": "permanent"}, nomodify=True)
+        assert reader.haslock(write=False)
+        assert not reader.haslock(write=True)
+    assert [reader.getcell("id", 0) for reader in readers] == [1, 1]
+    for reader in readers:
+        reader.done()
+    writer = tools.table()
+    assert writer.open(str(path), lockoptions={"option": "permanent"}, nomodify=False)
+    assert writer.haslock(write=True)
+    writer.done()
+
+
+def test_a_failed_write_leaves_the_table_as_it_was_however_it_ends(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A write refused part way, in a mode where the table keeps its write
+    lock, discards what it changed in memory and leaves no full rewrite for
+    the close to make: on a MeasurementSet only `table.dat` may change."""
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": "permanent"}, nomodify=False)
+    assert tool.putcol("ANTENNA1", np.array([1, 2, 3]), 0, 3)
+    with pytest.raises(RuntimeError, match="no such row"):
+        tool.putcell("ANTENNA1", [0, 99999], 4)
+    assert tool.getcol("ANTENNA1", nrow=3).tolist() == [1, 2, 3]
+    assert tool.close()
+    after = table_files(path)
+    assert set(after) == set(before)
+    assert {name for name in before if before[name] != after[name]} <= {"table.dat", "table.f14"}
+
+
+CONVERSION_PROBE = """
+import resource
+import sys
+
+import numpy as np
+from casars import tools
+
+tool = tools.table()
+assert tool.open(sys.argv[1], nomodify=False)
+assert tool.putkeyword("warm", 1)
+data = np.ones((4, 64, 4000), dtype=np.complex128) * (1 + 2j)
+unit = 1 if sys.platform == "darwin" else 1024  # ru_maxrss: bytes on macOS, else KiB
+base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+assert tool.putkeyword("big", data)
+peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+print(data.nbytes, peak - base)
+"""
+
+
+def test_a_large_array_is_copied_in_bulk_not_as_a_python_object_per_element(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Giving the tool a 16 MB complex array, and saving it as a keyword,
+    grows the process by 5 times the array (the copy, the encoded keyword
+    record and the file's buffer). Expanding it into a Python object per
+    element, with `tolist()` as the first version did, added 11 times the
+    array more (#1034, the review's finding 13)."""
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    done = subprocess.run(
+        [sys.executable, "-c", CONVERSION_PROBE, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    size, growth = (int(word) for word in done.stdout.split())
+    assert growth < 8 * size, f"peak memory grew {growth / size:.1f} times the array"
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.getkeyword("big").shape == (4, 64, 4000)
+    reader.done()
