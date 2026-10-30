@@ -172,7 +172,7 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
 #: Recorded from CASA but not implemented yet (slice 3 of #1028: `putcell`,
 #: `putcol`, `putvarcol` and the other cell writes); they leave this set as
 #: the methods land.
-PENDING: set[str] = {"slices", "ms_slices"}
+PENDING: set[str] = set()
 
 REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
 
@@ -328,6 +328,18 @@ def test_a_write_leaves_the_storage_managers_alone_however_the_table_ends(
         ("DATA", lambda tool: tool.putcell("DATA", 0, np.ones((4, 64), dtype=np.complex128))),
         ("FLAG", lambda tool: tool.putcell("FLAG", 0, np.zeros((4, 64), dtype=bool))),
         ("WEIGHT", lambda tool: tool.putcol("WEIGHT", np.ones((4, 3)), 0, 3)),
+        (
+            "DATA slice",
+            lambda tool: tool.putcellslice(
+                "DATA", 1, np.ones((2, 4), dtype=np.complex128), [2, 10], [3, 13], [1, 1]
+            ),
+        ),
+        (
+            "FLAG column slice",
+            lambda tool: tool.putcolslice(
+                "FLAG", np.zeros((4, 1, 2), dtype=bool), [0, 5], [3, 5], [1, 1], 0, 2
+            ),
+        ),
     ],
 )
 def test_a_cell_write_changes_only_its_columns_storage_manager_file(

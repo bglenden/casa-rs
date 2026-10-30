@@ -39,6 +39,7 @@ IMPLEMENTED["table"] = {
     "getcolkeywords", "getcolkeyword", "colfieldnames",
     "putkeyword", "putkeywords", "removekeyword", "putcolkeyword", "putcolkeywords",
     "removecolkeyword", "putinfo", "addreadmeline", "putcell", "putcol", "putvarcol",
+    "getcellslice", "getcolslice", "putcellslice", "putcolslice",
 }  # fmt: skip
 
 

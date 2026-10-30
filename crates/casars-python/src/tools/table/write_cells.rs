@@ -26,7 +26,7 @@ fn runtime<T>(message: String) -> Result<T, Fail> {
     Err(Fail::Runtime(message))
 }
 
-fn put_column_error(what: &str) -> Fail {
+pub(super) fn put_column_error(what: &str) -> Fail {
     Fail::Runtime(format!("TableProxy::TableProxy::putColumn: {what}"))
 }
 
@@ -49,7 +49,7 @@ fn shape_text(shape: &[usize]) -> String {
 }
 
 /// The refusal of an array whose shape the column's cell cannot take.
-fn conformance(row: usize, column: &str, shape: &[usize], expected: &[usize]) -> Fail {
+pub(super) fn conformance(row: usize, column: &str, shape: &[usize], expected: &[usize]) -> Fail {
     Fail::Runtime(format!(
         "ArrayColumn::put for row {row} in column {column}: Table array conformance error \
          (shape={}, expected {})",
@@ -119,7 +119,12 @@ fn take(data: &Data, indices: &[usize]) -> Data {
 /// A column's values split into one value per row: the rows are the last
 /// axis of an array column's values (NumPy's, in C order), the only axis of
 /// a scalar column's.
-fn split_rows(wide: Wide, array: bool, column: &str, wanted: usize) -> Result<Vec<Wide>, Fail> {
+pub(super) fn split_rows(
+    wide: Wide,
+    array: bool,
+    column: &str,
+    wanted: usize,
+) -> Result<Vec<Wide>, Fail> {
     let shape = wide.shape.clone().unwrap_or_else(|| vec![1]);
     let (cell_shape, nrows) = if array {
         match shape.split_last() {

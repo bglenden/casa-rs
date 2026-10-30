@@ -171,19 +171,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, blc, trc, incr = None), text_signature = "($self, columnname, rownr, blc, trc, incr=[1])")]
-    fn getcellslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        blc: &Bound<'_, PyAny>,
-        trc: &Bound<'_, PyAny>,
-        incr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcellslice")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn getcoldesc(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("getcoldesc")
@@ -200,21 +187,6 @@ impl PyTableTool {
         torecord: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("getcoliter")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, blc, trc, incr, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, blc, trc, incr, startrow=0, nrow=-1, rowincr=1)")]
-    fn getcolslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        blc: &Bound<'_, PyAny>,
-        trc: &Bound<'_, PyAny>,
-        incr: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcolslice")
     }
 
     /// Not yet implemented in casa-rs.
@@ -245,36 +217,6 @@ impl PyTableTool {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn listlocks(&self) -> PyResult<Py<PyAny>> {
         stub("listlocks")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, value = None, blc = None, trc = None, incr = None), text_signature = "($self, columnname, rownr, value=[], blc=[], trc=[], incr=[1])")]
-    fn putcellslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        blc: Option<&Bound<'_, PyAny>>,
-        trc: Option<&Bound<'_, PyAny>>,
-        incr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcellslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value = None, blc = None, trc = None, incr = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], blc=[], trc=[], incr=[1], startrow=0, nrow=-1, rowincr=1)")]
-    fn putcolslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        blc: Option<&Bound<'_, PyAny>>,
-        trc: Option<&Bound<'_, PyAny>>,
-        incr: Option<&Bound<'_, PyAny>>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcolslice")
     }
 
     /// Not yet implemented in casa-rs.

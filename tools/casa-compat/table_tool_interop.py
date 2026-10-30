@@ -23,7 +23,7 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
 `cells-write KIND SOURCE OUT_TABLE OUT_JSON`
     KIND is `table` (the python fixture) or `ms` (the small MeasurementSet).
     Copies SOURCE to OUT_TABLE, replays on it the recorded cell writes
-    (`cells_write` or `ms_cells_write`) through `casars.tools.table`, and
+    (`cells_write` and `slices`, or `ms_cells_write` and `ms_slices`) through `casars.tools.table`, and
     writes what casa-rs reads of the cells (`cells-dump` form) to OUT_JSON.
 
 `rsread TABLE OUT_JSON`
@@ -151,11 +151,12 @@ def command_cells_write(kind, source, out_table, out_json):
     shutil.copytree(source, out_table)
     path = str(out_table.resolve())
     tool = tools.table()
-    name = "cells_write" if kind == "table" else "ms_cells_write"
-    for step in replay.RECORD["scenarios"][name]["steps"]:
-        if step["method"] == "close":
-            break
-        replay.run_step(tool, step, path)
+    names = ["cells_write", "slices"] if kind == "table" else ["ms_cells_write", "ms_slices"]
+    for name in names:
+        for step in replay.RECORD["scenarios"][name]["steps"]:
+            if step["method"] == "close":
+                break
+            replay.run_step(tool, step, path)
     tool.done()
     reader = tools.table()
     reader.open(path)

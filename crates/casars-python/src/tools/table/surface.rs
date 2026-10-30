@@ -205,7 +205,7 @@ const METHODS: &[Method] = &[
             param("incr", K::Ints, Ints(&[1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcol",
@@ -274,7 +274,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getdesc",
@@ -389,7 +389,7 @@ const METHODS: &[Method] = &[
             param("incr", K::Ints, Ints(&[1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcol",
@@ -435,7 +435,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("putinfo", &[param("value", K::Any, Required)], R::Any, Yes),
     method(

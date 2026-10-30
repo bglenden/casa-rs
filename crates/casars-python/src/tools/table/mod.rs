@@ -18,6 +18,7 @@
 mod cell_value;
 mod keyword_value;
 mod read;
+mod slices;
 mod state;
 mod stubs;
 pub(crate) mod surface;
@@ -35,6 +36,7 @@ use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 use keyword_value::Incoming;
 use read::KeywordRef;
+use slices::Corners;
 use state::{Fail, LockRequest, State};
 use write::InfoUpdate;
 
@@ -132,6 +134,31 @@ fn keyword_ref(value: Option<&Bound<'_, PyAny>>) -> PyResult<KeywordRef> {
         return Ok(KeywordRef::Whole);
     }
     Ok(KeywordRef::Index(value.extract()?))
+}
+
+/// A list of integers argument (`blc`, `trc`, `incr`); absent is `[]`, and
+/// `incr` defaults to `[1]`.
+fn integers(value: Option<&Bound<'_, PyAny>>, argument: &str) -> PyResult<Option<Vec<i64>>> {
+    value
+        .map(|value| {
+            value.extract::<Vec<i64>>().map_err(|_| {
+                PyTypeError::new_err(format!("argument _{argument} must be a list of integers"))
+            })
+        })
+        .transpose()
+}
+
+/// The corners and step of a slice.
+fn corners(
+    blc: Option<&Bound<'_, PyAny>>,
+    trc: Option<&Bound<'_, PyAny>>,
+    incr: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Corners> {
+    Ok(Corners {
+        blc: integers(blc, "blc")?.unwrap_or_default(),
+        trc: integers(trc, "trc")?.unwrap_or_default(),
+        incr: integers(incr, "incr")?.unwrap_or_else(|| vec![1]),
+    })
 }
 
 /// A keyword's value; absent is `[]`, an empty array.
@@ -640,6 +667,90 @@ impl PyTableTool {
         let value = keyword_value(py, value)?;
         let rows = row_selection(startrow, nrow, rowincr)?;
         self.call(py, move |state, log| state.putcol(column, value, rows, log))
+    }
+
+    /// Read a slice of an array cell: corners `blc` and `trc` are inclusive.
+    #[pyo3(signature = (columnname, rownr, blc, trc, incr = None), text_signature = "($self, columnname, rownr, blc, trc, incr=[1])")]
+    fn getcellslice(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        rownr: &Bound<'_, PyAny>,
+        blc: &Bound<'_, PyAny>,
+        trc: &Bound<'_, PyAny>,
+        incr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let row = integer(Some(rownr), "rownr", 0)?;
+        let corners = corners(Some(blc), Some(trc), incr)?;
+        self.call(py, move |state, log| {
+            state.getcellslice(&column, row, &corners, log)
+        })
+    }
+
+    /// Read a slice of an array column, the rows last; `trc` may be `-1`.
+    #[pyo3(signature = (columnname, blc, trc, incr, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, blc, trc, incr, startrow=0, nrow=-1, rowincr=1)")]
+    fn getcolslice(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        blc: &Bound<'_, PyAny>,
+        trc: &Bound<'_, PyAny>,
+        incr: &Bound<'_, PyAny>,
+        startrow: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+        rowincr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let corners = corners(Some(blc), Some(trc), Some(incr))?;
+        let rows = row_selection(startrow, nrow, rowincr)?;
+        self.call(py, move |state, log| {
+            state.getcolslice(&column, &corners, rows, log)
+        })
+    }
+
+    /// Write a slice of an array cell.
+    #[pyo3(signature = (columnname, rownr, value = None, blc = None, trc = None, incr = None), text_signature = "($self, columnname, rownr, value=[], blc=[], trc=[], incr=[1])")]
+    fn putcellslice(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        rownr: &Bound<'_, PyAny>,
+        value: Option<&Bound<'_, PyAny>>,
+        blc: Option<&Bound<'_, PyAny>>,
+        trc: Option<&Bound<'_, PyAny>>,
+        incr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let row = integer(Some(rownr), "rownr", 0)?;
+        let value = keyword_value(py, value)?;
+        let corners = corners(blc, trc, incr)?;
+        self.call(py, move |state, log| {
+            state.putcellslice(column, row, value, corners, log)
+        })
+    }
+
+    /// Write a slice of an array column, the rows last.
+    #[pyo3(signature = (columnname, value = None, blc = None, trc = None, incr = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], blc=[], trc=[], incr=[1], startrow=0, nrow=-1, rowincr=1)")]
+    fn putcolslice(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        value: Option<&Bound<'_, PyAny>>,
+        blc: Option<&Bound<'_, PyAny>>,
+        trc: Option<&Bound<'_, PyAny>>,
+        incr: Option<&Bound<'_, PyAny>>,
+        startrow: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+        rowincr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let value = keyword_value(py, value)?;
+        let corners = corners(blc, trc, incr)?;
+        let rows = row_selection(startrow, nrow, rowincr)?;
+        self.call(py, move |state, log| {
+            state.putcolslice(column, value, corners, rows, log)
+        })
     }
 
     /// Write the rows of a column given as a record of `r1`, `r2`, ....

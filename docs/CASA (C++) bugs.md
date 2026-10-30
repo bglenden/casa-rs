@@ -22,7 +22,8 @@ CASA behaviours casa-rs does not follow:
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
-[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0).
+[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
+[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2629,3 +2630,24 @@ stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
 refuses such a value for an existing 32-bit keyword with
 `RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
 bits`, rather than store a wrong number.
+
+## `tb` slices with a wrong rank or a start outside the array abort the process
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `table::getcellslice`, `getcolslice`, `putcellslice`
+  and `putcolslice`, over casacore's `Slicer`
+
+In CASA 6.7.6.14 a slice whose `blc`, `trc` or `incr` has the wrong number of
+elements for the array, or whose `blc` lies outside the array, throws an
+`ArraySlicerError` that nothing catches, and the Python process ends
+(`libc++abi: terminating due to uncaught exception of type
+casacore::ArraySlicerError`, exit status 134). The default `incr=[1]` is such a
+slice for an array of more than one axis, so `tb.getcellslice('DATA', 0, [0, 0],
+[1, 3])` aborts. casa-rs raises a `RuntimeError` for each of them and takes a
+one-element `incr` as the step of every axis. The recording
+(`crates/casars-python/python/tests/data/casa_table_tool.json`, `slices` and
+`ms_slices`) holds only the cases CASA survives. CASA is also inconsistent
+about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
+than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
+follows both.
