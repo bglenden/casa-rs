@@ -20,7 +20,8 @@ CASA behaviours casa-rs does not follow:
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
-[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
+[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2594,3 +2595,20 @@ reads the input's world values at the pixels it was cut from. CASA's
 `imsubimage` ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
+
+## `tb.getcol` refuses a column of `int64`
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `src/code/stdcasa/StdCasa/CasacSupport.cc`
+  (`fromValueHolder`)
+
+`tb.getcol` of a scalar column of `Int64` raises `RuntimeError: Unknown casa
+DataType!` in CASA 6.7.6.14, while `tb.getcell` of the same column returns the
+value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
+`int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
+the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
+(the converter for records in the same file has both). The recording is
+`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
+`int64` array, as it does for every other integer column.
