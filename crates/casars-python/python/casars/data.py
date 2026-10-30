@@ -272,6 +272,12 @@ class Image:
 
         return self._inner.coordinate_system
 
+    def _direction_wcs(self) -> tuple[int, int, dict[str, Any]] | None:
+        """The pixel axes of the image's direction and the FITS WCS keywords
+        `exportfits` writes for the image, or None; for `casars.imexplore`."""
+
+        return self._inner._direction_wcs()
+
     @property
     def mask_names(self) -> list[str]:
         """Names of persisted masks attached to the image."""
