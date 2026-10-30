@@ -599,13 +599,18 @@ for bit on the trial's fixed, ICRS-variable and moving fields (the law
   agree: MSv2 `SOURCE::REST_FREQUENCY`, MSv4 `LINE_REST_FREQUENCY` (#976).
 - **Instrument.** Telescope names, observers and dish diameters come from
   the catalogue's observations and antennas.
-- **Native AW's feed angle** is antenna 0's first receptor angle as the
-  selected partitions of its window state it, which must agree. An MSv2
-  partition's receptors are its window's `FEED` rows, the last of rows that
-  vary in time, as casacore's `MSIter::setFeedInfo` (which CASA's AW
-  projection reads) takes them; today's compile took the row valid at the
-  first cross-correlation sample's time. The two differ only for a `FEED`
-  stating receptors per time, which the MSv2 adapter warns of.
+- **Native AW's feed angle** is antenna 0's first receptor angle in the
+  window. CASA's AW projection reads it as casacore's `MSIter::setFeedInfo`
+  states feed 0's (`feed_pa`: `receptorAngles().xyPlane(0)`): whatever
+  feeds MAIN's rows name, whether or not antenna 0 has a selected
+  baseline, and the last of `FEED` rows that vary in time. On an MSv2 the
+  adapter states that row (`Msv2Observation::feed_receptors`); today's
+  compile took the row valid at the first cross-correlation sample's time,
+  which differs only for a `FEED` stating receptors per time, which the
+  MSv2 adapter warns of. An MSv4 numbers no feeds: each partition's
+  `antenna_xds` states its antennas' receptors, so there the angle is
+  antenna 0's as the window's partitions, selected or not, state it, which
+  must agree.
 - **Write-back.** An MSv4 cannot add a data group: a run that saves the
   model into an MSv4 without a `model` group is refused when its update
   session opens, before it images.

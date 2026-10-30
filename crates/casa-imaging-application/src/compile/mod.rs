@@ -49,6 +49,7 @@ use casa_imaging_products::{
 use casa_imaging_runtime::Admitted;
 use casa_ms::PhaseCentreEphemeris;
 use casa_ms::derived::engine::MsCalEngine;
+use casa_ms::observation_io::Msv2Observation;
 use casa_observation::Catalogue;
 use casa_types::measures::frame::MeasFrame;
 
@@ -96,6 +97,8 @@ pub(crate) struct Prepared {
 /// engine, the selection survey and the spectral axis.
 struct Surveyed<'a> {
     catalogue: &'a Catalogue,
+    /// The MeasurementSet, when the store is one.
+    msv2: Option<&'a Msv2Observation>,
     engine: &'a MsCalEngine,
     survey: &'a Survey,
     spectral: &'a PreparedSpectralAxis,
@@ -155,6 +158,7 @@ pub(crate) fn prepare(
     )?;
     let surveyed_observation = Surveyed {
         catalogue,
+        msv2: store.msv2(),
         engine: &engine,
         survey: &survey,
         spectral: &spectral,

@@ -99,6 +99,8 @@ pub struct Msv2Observation {
     /// Whether MAIN's first row has `SIGMA_SPECTRUM` content: CASA's
     /// iterator asks once per MeasurementSet.
     spectral_sigmas: bool,
+    /// Every `FEED` row's receptors.
+    feeds: catalogue::Feeds,
     /// Each data group's visibility column and its tile shape, read when
     /// the observation opened: an estimate does not read `table.dat` again,
     /// which an update session over the same MeasurementSet rewrites as it
@@ -304,6 +306,7 @@ impl Msv2Observation {
             state_modes: modes,
             main_states: index.states,
             spectral_sigmas,
+            feeds,
             tile_shapes,
             options: options.clone(),
             ms,
@@ -470,6 +473,24 @@ impl Msv2Observation {
             )
             .map_err(table_error)?;
         Ok(flagged.first().copied())
+    }
+
+    /// Antenna `antenna`'s receptors through feed `feed` in spectral window
+    /// `window`, as casacore's `MSIter::setFeedInfo` gives them to its
+    /// iterator (`receptorAngles`; the last row where `FEED` varies in
+    /// time), whatever feeds MAIN's rows name; `None` without a row. CASA's
+    /// AW projection reads feed 0's (`feed_pa`: `receptorAngles().xyPlane(0)`),
+    /// where a partition's receptors are those of the feeds its rows name.
+    #[must_use]
+    pub fn feed_receptors(
+        &self,
+        antenna: AntennaId,
+        feed: i32,
+        window: WindowId,
+    ) -> Option<&Receptors> {
+        let antenna = i32::try_from(antenna.0).ok()?;
+        let window = i32::try_from(window.0).ok()?;
+        self.feeds.receptors(antenna, feed, window)
     }
 
     /// The first MAIN row of partition `id`, `None` when it holds none:

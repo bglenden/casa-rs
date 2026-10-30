@@ -8,7 +8,8 @@ use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
 };
-use casa_observation::{AntennaId, Catalogue};
+use casa_ms::observation_io::Msv2Observation;
+use casa_observation::{AntennaId, Catalogue, Receptors, WindowId};
 use casa_types::quanta::Unit;
 
 use super::spectral::PreparedSpectralAxis;
@@ -53,7 +54,7 @@ pub(super) fn resolve(
     )? as f32;
     let feed_angle = receptor_zero_angle(
         surveyed.catalogue,
-        surveyed.survey,
+        surveyed.msv2,
         frequencies[0].spectral_window,
     )? as f32;
     Ok(NativeAwRequestInput {
@@ -182,36 +183,195 @@ fn mueller_elements(stokes: &[PolarizationCoordinate]) -> Result<Vec<usize>, Pre
     }
 }
 
-/// Antenna 0's first receptor angle, radians, in the selected partitions
-/// of window `spw`: the feed angle CASA's AW projection adds to the
-/// parallactic angle. The partitions state their receptors as the store
-/// gives them (MSv2 `FEED`, the row applying to the partition's window and
-/// feed), and must agree.
+/// Antenna 0's first receptor angle in window `spw`, radians: the feed
+/// angle CASA's AW projection adds to the parallactic angle. CASA reads it
+/// as casacore's `MSIter` states feed 0's (`feed_pa`:
+/// `receptorAngles().xyPlane(0)`), whatever feeds MAIN's rows name and
+/// whether or not antenna 0 has a selected baseline; on an MSv2 the adapter
+/// states that `FEED` row ([`Msv2Observation::feed_receptors`]). An MSv4
+/// numbers no feeds: each partition's `antenna_xds` states the receptors of
+/// its antennas, so there the angle is antenna 0's as the window's
+/// partitions, selected or not, state it, which must agree.
 fn receptor_zero_angle(
     catalogue: &Catalogue,
-    survey: &Survey,
+    msv2: Option<&Msv2Observation>,
     spw: u32,
 ) -> Result<f64, PrepareError> {
     let radians = Unit::new("rad").expect("radians are a unit");
-    let mut angle = None;
-    for selected in &survey.partitions {
-        if selected.spectral_window_id() != spw {
-            continue;
-        }
-        let entry = catalogue.partition(selected.partition());
-        let Some(receptors) = entry.receptors.get(&AntennaId(0)) else {
-            continue;
-        };
-        let value = receptors
+    let first_angle = |receptors: &Receptors| {
+        receptors
             .angles
             .first()
             .and_then(|angle| angle.get_value_in(&radians).ok())
             .filter(|value| value.is_finite())
-            .ok_or(PrepareError::FeedAngleNotFinite)?;
+            .ok_or(PrepareError::FeedAngleNotFinite)
+    };
+    if let Some(ms) = msv2 {
+        return ms
+            .feed_receptors(AntennaId(0), 0, WindowId(spw))
+            .ok_or(PrepareError::NoApplicableFeed)
+            .and_then(first_angle);
+    }
+    let mut angle = None;
+    for entry in catalogue
+        .partitions
+        .iter()
+        .filter(|entry| entry.window == WindowId(spw))
+    {
+        let Some(receptors) = entry.receptors.get(&AntennaId(0)) else {
+            continue;
+        };
+        let value = first_angle(receptors)?;
         if angle.is_some_and(|previous: f64| previous.to_bits() != value.to_bits()) {
             return Err(PrepareError::FeedAngleAmbiguous);
         }
         angle = Some(value);
     }
     angle.ok_or(PrepareError::NoApplicableFeed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use casa_ms::observation_io::Msv4Observation;
+    use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+    use casa_ms::{MeasurementSet, SubtableId};
+    use casa_types::{ArrayValue, ScalarValue, Value};
+
+    use super::*;
+
+    /// `ms_trial.ms`, unpacked into `root`, with antenna 0's feed 0 at
+    /// `angle` on both receptors.
+    fn trial(root: &Path, angle: f64) -> (PathBuf, MeasurementSet) {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root)
+        .expect("unpacked");
+        let path = root.join("ms_trial.ms");
+        let mut ms = MeasurementSet::open(&path).expect("an editable MeasurementSet");
+        let rows: Vec<usize> = {
+            let feed = ms.feed().expect("FEED");
+            (0..feed.row_count())
+                .filter(|row| {
+                    feed.i32(*row, "ANTENNA_ID").expect("ANTENNA_ID") == 0
+                        && feed.i32(*row, "FEED_ID").expect("FEED_ID") == 0
+                })
+                .collect()
+        };
+        assert!(!rows.is_empty(), "antenna 0 has a feed 0");
+        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+        for row in rows {
+            feed.cell_accessor_mut(row, "RECEPTOR_ANGLE")
+                .expect("RECEPTOR_ANGLE")
+                .set(Value::Array(ArrayValue::Float64(
+                    ndarray::arr1(&[angle, angle]).into_dyn(),
+                )))
+                .expect("set");
+        }
+        (path, ms)
+    }
+
+    fn msv2_angle(path: &Path) -> Result<f64, PrepareError> {
+        let observation = Msv2Observation::open(path).expect("the MeasurementSet opens");
+        let window = observation.catalogue().partitions[0].window;
+        receptor_zero_angle(observation.catalogue(), Some(&observation), window.0)
+    }
+
+    /// CASA reads feed 0's angle whatever feeds MAIN's rows name (Astra's
+    /// review of #1013): with MAIN on feed 1 at 0.2 rad, the angle is
+    /// still feed 0's.
+    #[test]
+    fn native_aw_reads_feed_zero_whatever_feeds_main_names() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.0);
+        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+        for row in 0..feed.row_count() {
+            let mut copy = feed.row_accessor().row(row).expect("a FEED row").clone();
+            copy.upsert("FEED_ID", Value::Scalar(ScalarValue::Int32(1)));
+            copy.upsert(
+                "RECEPTOR_ANGLE",
+                Value::Array(ArrayValue::Float64(ndarray::arr1(&[0.2, 0.2]).into_dyn())),
+            );
+            feed.add_row(copy).expect("feed 1");
+        }
+        let rows = ms.row_count();
+        for column in ["FEED1", "FEED2"] {
+            ms.main_table_mut()
+                .fill_column_range(
+                    column,
+                    casa_tables::RowRange::new(0, rows),
+                    Value::Scalar(ScalarValue::Int32(1)),
+                )
+                .expect("MAIN on feed 1");
+        }
+        ms.save().expect("saved");
+        drop(ms);
+        assert_eq!(msv2_angle(&path).expect("an angle"), 0.0);
+    }
+
+    /// CASA reads antenna 0's feed whether or not antenna 0 has a selected
+    /// baseline (Astra's review of #1013).
+    #[test]
+    fn native_aw_reads_antenna_zero_without_its_baselines() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.3);
+        let antenna = |ms: &MeasurementSet, column: &str, row: usize| match ms
+            .main_table()
+            .column_accessor(column)
+            .expect("an antenna column")
+            .get(row)
+            .expect("a row")
+        {
+            Some(Value::Scalar(ScalarValue::Int32(id))) => *id,
+            other => panic!("{column} is {other:?}"),
+        };
+        let rows: Vec<usize> = (0..ms.row_count())
+            .filter(|row| {
+                antenna(&ms, "ANTENNA1", *row) == 0 || antenna(&ms, "ANTENNA2", *row) == 0
+            })
+            .collect();
+        assert!(rows.len() < ms.row_count(), "other baselines remain");
+        ms.main_table_mut()
+            .remove_rows(&rows)
+            .expect("antenna 0's rows removed");
+        ms.save().expect("saved");
+        drop(ms);
+        assert_eq!(msv2_angle(&path).expect("an angle"), 0.3);
+    }
+
+    /// An MSv4 states the angle its MeasurementSet's feed 0 does.
+    #[test]
+    fn an_msv4_states_the_feed_angle_of_its_measurement_set() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.3);
+        ms.save().expect("saved");
+        drop(ms);
+        let v4 = root.path().join("ms_trial.ps.zarr");
+        to_msv4(
+            &path,
+            &v4,
+            &ConversionOptions {
+                data_groups: None,
+                accept: vec![LossKind::Sigma, LossKind::Tables],
+                batch_bytes: 1 << 20,
+                workers: 1,
+                chunks: [0, 0, 0, 0],
+                codec: casa_ms::observation_io::Msv4Codec::BloscLz4,
+                padding: PaddingRows::Flagged,
+                creator: "feed angle law".into(),
+                creation_date: "2026-10-30T00:00:00+00:00".into(),
+            },
+        )
+        .expect("converted");
+        let converted = Msv4Observation::open(&v4).expect("the processing set opens");
+        let window = converted.catalogue().partitions[0].window;
+        assert_eq!(
+            receptor_zero_angle(converted.catalogue(), None, window.0).expect("an angle"),
+            msv2_angle(&path).expect("an angle")
+        );
+    }
 }
