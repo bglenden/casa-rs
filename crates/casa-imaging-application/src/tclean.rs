@@ -386,6 +386,46 @@ impl<'a> Tclean<'a> {
         self.ignore(&["projection", "psfphasecenter", "vptable"])
     }
 
+    /// Refuse the cube axes CASA derives from the channels `spw` selects,
+    /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
+    /// `nchan=-1` and its `start` and `width` to
+    /// `MSTransformRegridder::calcChanFreqs`, which starts the axis at
+    /// `start` or the first selected channel and counts the selected
+    /// channels from there in steps of `width`; casa-rs's axis takes as
+    /// many channels as the window has, wherever it starts.
+    fn refuse_derived_extent(
+        &mut self,
+        nchan: i64,
+        counted: bool,
+        start: &str,
+        width: &str,
+    ) -> Result<(), TcleanRefusal> {
+        let channels_selected = self.text("spw")?.contains(':');
+        let first_given = !start.is_empty()
+            || self
+                .value("channel_start")?
+                .as_str()
+                .is_none_or(|text| text.trim() != "none");
+        let wide = !matches!(width, "" | "1");
+        if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
+            return Err(TcleanRefusal::not_yet(
+                "nchan",
+                "-1 with a channel selection in spw, a start or a width, whose extent CASA \
+                 derives from the selected channels; give nchan",
+                980,
+            ));
+        }
+        if channels_selected && !first_given {
+            return Err(TcleanRefusal::not_yet(
+                "start",
+                "'' with a channel selection in spw, where CASA starts the cube at the first \
+                 selected channel; give start",
+                980,
+            ));
+        }
+        Ok(())
+    }
+
     fn spectral(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.ignore(&["reffreq"])?;
         self.copy(&["channel_start", "perchanweightdensity"])?;
@@ -448,6 +488,7 @@ impl<'a> Tclean<'a> {
             }
             return Ok(());
         }
+        self.refuse_derived_extent(nchan, counted, start, width)?;
         self.set("start", start);
         self.set("width", width);
         self.set("outframe", output_frame(outframe)?);

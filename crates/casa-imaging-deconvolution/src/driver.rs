@@ -32,6 +32,9 @@ pub struct PlaneOutcome {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
+    /// Sum of the components' signed first-term fluxes: what the cycle adds
+    /// to the model's flux (CASA's `modelFlux`).
+    pub model_flux: f64,
     /// The peak residual on entry.
     pub start_peak: f64,
     /// The peak residual the last step reported.
@@ -112,6 +115,7 @@ pub fn run_plane<S: Solver>(
         iterations: 0,
         components: 0,
         absolute_flux: 0.0,
+        model_flux: 0.0,
         start_peak,
         peak: start_peak,
         stop: PlaneStop::ZeroMask,
@@ -189,6 +193,7 @@ fn run_step<S: Solver>(
                 solver.accept(&mut state, view, residual, candidate, gain, &mut delta)?;
                 let Candidate::Pixel { index, scale, .. } = candidate;
                 outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::<f64>();
+                outcome.model_flux += fluxes.first().copied().unwrap_or(0.0);
                 for (term, &flux) in fluxes.iter().enumerate() {
                     if outcome.trace.len() < trace {
                         outcome.trace.push(Component {

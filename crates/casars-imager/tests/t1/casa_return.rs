@@ -169,11 +169,11 @@ fn tclean_returns_casas_summary_record() {
     assert_eq!(entry(&dirty, "stopcode"), &CasaValue::Int { value: 3 });
     assert_eq!(entry(&dirty, "nmajordone"), &CasaValue::Int { value: 1 });
     // Sub-parameters CASA's tclean reads only under other values (its task
-    // XML), set where it does not read them: no iterations, natural
-    // weighting, a user mask, the standard gridder's AW controls.
+    // XML), set where it does not read them: natural weighting, a user mask,
+    // the standard gridder's AW controls.
     let ignored = run(
         "ignored",
-        json!({ "interactive": true, "npixels": 3, "noise": "2Jy", "smoothfactor": 2.0,
+        json!({ "npixels": 3, "noise": "2Jy", "smoothfactor": 2.0,
                 "computepastep": 10.0, "psfphasecenter": "J2000 0deg 0deg" }),
     );
     assert_eq!(describe(&ignored), casa("tclean niter0"));
@@ -198,15 +198,28 @@ fn tclean_returns_casas_summary_record() {
     let full = run("full", json!({ "niter": 40, "fullsummary": true }));
     assert_eq!(describe(&full), casa("tclean fullsummary"));
 
+    // A cube has an entry for each channel, as CASA's has (Astra's #1015
+    // F3); each holds nan where the report sums the planes.
+    let cube = run(
+        "cube",
+        json!({ "niter": 30, "specmode": "cube", "nchan": 3 }),
+    );
+    assert_eq!(describe(&cube), casa("tclean cube"));
+
     // As CASA 6.7.6.14 returns them (probed on `make_cal_ms`'s MS):
-    // - a dirty run reports nsigma 0 and threshold as it was given;
+    // - a dirty run reports nsigma 0 and threshold as it was given, a
+    //   number as a float and text as its text;
     let given = run("given", json!({ "threshold": "1mJy", "nsigma": 2.0 }));
     assert_eq!(entry(&given, "nsigma"), &CasaValue::float(0.0));
-    assert!(
-        matches!(entry(&given, "threshold"), CasaValue::String { .. }),
-        "{:?}",
-        entry(&given, "threshold")
-    );
+    assert_eq!(entry(&given, "threshold"), &CasaValue::string("1mJy"));
+    for (name, threshold, echoed) in [
+        ("number", json!(0.001), CasaValue::float(0.001)),
+        ("zero", json!("0Jy"), CasaValue::string("0Jy")),
+    ] {
+        let value = run(name, json!({ "threshold": threshold }));
+        assert_eq!(entry(&value, "threshold"), &echoed, "{name}");
+    }
+    assert_eq!(entry(&dirty, "threshold"), &CasaValue::float(0.0));
     // - a run that iterates but cleans nothing, its threshold above the
     //   peak, keeps its controls, cycleniter at most niter, and has an
     //   empty summaryminor, {0: {}};
@@ -240,12 +253,14 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     for (values, parameter, issue) in [
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
         (json!({ "restart": false }), "restart", "#944"),
-        // tclean reads interactive only when it iterates.
+        // tclean reads interactive whether it iterates or not: it checks for
+        // its viewer first (Astra's #1015 F8).
         (
             json!({ "interactive": true, "niter": 10 }),
             "interactive",
             "#980",
         ),
+        (json!({ "interactive": true }), "interactive", "#980"),
     ] {
         let mut request = json!({ "vis": "input.ms", "imagename": "out", "cell": "1arcsec" });
         for (key, value) in values.as_object().expect("values") {

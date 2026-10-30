@@ -7,7 +7,9 @@
 //! [`TaskRunRequest`] of the values the caller set. The binary resolves them
 //! against the same contract, so defaults are not repeated.
 
-use casa_provider_contracts::{ParameterValue, ProviderInvocation, TaskRunRequest, ValueAdapter};
+use casa_provider_contracts::{
+    ParameterType, ParameterValue, ProviderInvocation, TaskRunRequest, ValueAdapter,
+};
 use thiserror::Error;
 
 use crate::ParameterSession;
@@ -15,7 +17,9 @@ use crate::ParameterSession;
 /// The invocation of `session`'s task binary: the surface's fixed
 /// arguments, then `--json-run -` with a [`TaskRunRequest`] holding the
 /// values the caller set, from the base profile and the overrides, that are
-/// active.
+/// active. A quantity goes as it was given, `0.001` or `'1mJy'`: the binary
+/// normalizes it as the session did, and a task that echoes it returns the
+/// caller's form, as CASA's tclean echoes `threshold`.
 pub fn project_provider_invocation(
     session: &ParameterSession,
 ) -> Result<ProviderInvocation, ProviderInvocationError> {
@@ -23,7 +27,14 @@ pub fn project_provider_invocation(
         .states()
         .iter()
         .filter(|(_, state)| state.explicit && state.active)
-        .filter_map(|(name, state)| Some((name.clone(), state.value.as_ref()?.to_plain_json())))
+        .filter_map(|(name, state)| {
+            let value = state.value.as_ref()?;
+            let sent = session
+                .given(name)
+                .filter(|_| is_quantity(session, name))
+                .unwrap_or(value);
+            Some((name.clone(), sent.to_plain_json()))
+        })
         .collect();
     let request = TaskRunRequest {
         surface: session.bundle().surface.id().to_string(),
@@ -37,6 +48,18 @@ pub fn project_provider_invocation(
         args,
         stdin: Some(stdin),
     })
+}
+
+/// Whether `name`'s concept on `session`'s surface takes one quantity.
+fn is_quantity(session: &ParameterSession, name: &str) -> bool {
+    let bundle = session.bundle();
+    bundle
+        .surface
+        .bindings()
+        .iter()
+        .find(|binding| binding.name == name)
+        .and_then(|binding| bundle.catalog.concept(&binding.concept))
+        .is_some_and(|concept| matches!(concept.value_domain, ParameterType::Quantity { .. }))
 }
 
 /// Failure to project a resolved parameter session into a task process.
@@ -118,6 +141,40 @@ mod tests {
         let invocation = project_provider_invocation(&gaincal).unwrap();
         assert_eq!(invocation.args, ["gaincal", "--json-run", "-"]);
         assert_eq!(request(&gaincal).surface, "gaincal");
+    }
+
+    /// Astra's #1015 F5: the binary normalizes a quantity again, and tclean's
+    /// record echoes the caller's form, so the caller's form is sent.
+    #[test]
+    fn a_quantity_is_sent_as_it_was_given() {
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
+        session
+            .set("vis", ParameterValue::String("in.ms".into()))
+            .unwrap();
+        session
+            .set("threshold", ParameterValue::Float(0.001))
+            .unwrap();
+        assert!(matches!(
+            session.values()["threshold"],
+            ParameterValue::String(_)
+        ));
+        assert_eq!(
+            session.given("threshold"),
+            Some(&ParameterValue::Float(0.001))
+        );
+        assert_eq!(
+            request(&session).values["threshold"],
+            serde_json::json!(0.001)
+        );
+        session
+            .set("threshold", ParameterValue::String("1mJy".into()))
+            .unwrap();
+        assert_eq!(
+            request(&session).values["threshold"],
+            serde_json::json!("1mJy")
+        );
+        assert_eq!(session.given("niter"), None);
     }
 
     #[test]

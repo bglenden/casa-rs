@@ -312,6 +312,30 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "facets",
             "#980",
         ),
+        // Astra's #1015 F1: CASA derives a cube's extent from the selected
+        // channels, the start and the width (probed: spw='0:2~4' gives three
+        // channels from the third; width=2 four of 2 MHz from the first
+        // pair's centre); casa-rs's takes the window's channel count.
+        (
+            json!({ "specmode": "cubedata", "spw": "0:2~4" }),
+            "nchan",
+            "#980",
+        ),
+        (
+            json!({ "specmode": "cubedata", "width": "2" }),
+            "nchan",
+            "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "start": "1.4GHz" }),
+            "nchan",
+            "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "spw": "0:2~4", "nchan": 3 }),
+            "start",
+            "#980",
+        ),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");

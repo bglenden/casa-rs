@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import functools
+import json
 from pathlib import Path
 from typing import Any
 
 from ..model import Operation, RuntimeResources, SectionManifest, Surface
 from ..resources import binary
 from .base import AdapterPlan, execute_plan
+
+SURFACES = Path(__file__).resolve().parents[3] / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
 
 
 BINARY_BY_TASK = {
@@ -73,6 +77,37 @@ def task_request(operation: Operation) -> dict[str, Any]:
     return {"surface": operation.task, "values": values}
 
 
+@functools.cache
+def surface_bindings(task: str) -> dict[str, dict[str, Any]]:
+    """`task`'s surface bindings by name, from the provider-contract
+    catalog; none when the catalog has no surface of that name."""
+
+    for surface in json.loads(SURFACES.read_text(encoding="utf-8"))["surfaces"]:
+        if surface["id"] == task:
+            return {binding["name"]: binding for binding in surface["bindings"]}
+    return {}
+
+
+def boolean_argv(task: str, key: str, flag: str, value: bool) -> list[str]:
+    """`key=value` on the command line, as `task`'s surface spells it: its
+    flag for True, its false flag for False, and nothing for a False the
+    surface defaults to. A False the surface cannot spell is refused rather
+    than dropped, since the run would take the default instead."""
+
+    binding = surface_bindings(task).get(key)
+    if binding is None:
+        return [flag] if value else []
+    cli = binding["projections"].get("cli") or {}
+    if value:
+        return [(cli.get("flags") or [flag])[0]]
+    if cli.get("false_flags"):
+        return [cli["false_flags"][0]]
+    default = binding.get("default", {})
+    if default.get("kind") == "literal" and default["value"] == {"kind": "bool", "value": False}:
+        return []
+    raise ValueError(f"{task}: {key}=False has no command-line spelling")
+
+
 def build_operation_argv(
     operation: Operation, resources: RuntimeResources, request: Path | None = None
 ) -> list[str]:
@@ -101,10 +136,7 @@ def build_operation_argv(
         )
         flag = "--" + flag_name
         if isinstance(value, bool):
-            if value:
-                argv.append(flag)
-            elif key in {"write_pb", "keepflags", "overwrite", "pbcor"}:
-                argv.append("--no-" + flag[2:])
+            argv.extend(boolean_argv(task, key, flag, value))
             continue
         if isinstance(value, list):
             value = ",".join(str(item) for item in value)

@@ -121,6 +121,20 @@ impl ParameterSession {
         &self.states
     }
 
+    /// The value `name` was set to as it was given, before normalization:
+    /// by the overrides, the context or the base profile, whichever its
+    /// state comes from; `None` where it holds its default. A task that
+    /// echoes a parameter, as tclean's record echoes `threshold`, reads the
+    /// caller's form here (`0.001` rather than `'0.001Jy'`).
+    pub fn given(&self, name: &str) -> Option<&ParameterValue> {
+        match self.states.get(name)?.origin {
+            ParameterOrigin::Override => self.override_patch.values.get(name),
+            ParameterOrigin::Context => self.context_patch.values.get(name),
+            ParameterOrigin::BaseProfile => self.base_overrides.get(name),
+            ParameterOrigin::Default => None,
+        }
+    }
+
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }

@@ -21,7 +21,7 @@ mod task_contract;
 use std::{path::PathBuf, time::Instant};
 
 use casa_imaging_application::{HostResources, ImagingRequest, RunContext, SummaryTarget, execute};
-use casa_provider_contracts::SurfaceContractBundle;
+use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
 use casa_task_runtime::{
     TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values,
 };
@@ -121,8 +121,16 @@ pub fn task_request(
 /// it was interrupted.
 pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (parameters, request) = task_request(task)?;
-    // The record echoes some of tclean's values as they were given.
-    let values = parameters.0.clone();
+    // The record echoes some of tclean's values: a dirty run's threshold as
+    // the caller gave it, a number as a number and text as text, and
+    // tclean's default 0.0 where it was not given.
+    let mut values = parameters.0.clone();
+    values.insert(
+        "threshold".to_string(),
+        task.session()
+            .given("threshold")
+            .map_or(Value::from(0.0), ParameterValue::to_plain_json),
+    );
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;

@@ -5,11 +5,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tutorial_parity.adapters.base import AdapterPlan, execute_plan
-from tutorial_parity.adapters.cli import CliAdapter, build_operation_argv
+from tutorial_parity.adapters.cli import CliAdapter, boolean_argv, build_operation_argv
 from tutorial_parity.model import Operation, RuntimeResources
 from tutorial_parity.schema import load_section
 from tutorial_parity.workers.native_tasks import json_safe, python_parameters
@@ -82,13 +83,37 @@ class CliPlanningTests(unittest.TestCase):
             {"vis": "in.ms", "imagename": "img", "imsize": [250, 250], "cell": ["0.1arcsec"], "pbcor": False, "write_pb": True},
             ("img.image",),
         )
+        # pbcor=False is tclean's default, which has no false flag.
         self.assertEqual(
             build_operation_argv(operation, self.resources),
             [
                 "/bin/casars-imager", "--ms", "in.ms", "--imagename", "img", "--imsize", "250,250",
-                "--cell", "0.1arcsec", "--no-pbcor", "--write-pb",
+                "--cell", "0.1arcsec", "--write-pb",
             ],
         )
+
+    def test_an_explicit_false_takes_the_surfaces_false_flag(self) -> None:
+        # Astra's #1015 F7: mosweight and perchanweightdensity default to
+        # True, so dropping an explicit False changes the run.
+        operation = Operation(
+            "tclean",
+            {"vis": "in.ms", "imagename": "img", "gridder": "mosaic", "weighting": "briggs",
+             "mosweight": False, "perchanweightdensity": False},
+            ("img.image",),
+        )
+        self.assertEqual(
+            build_operation_argv(operation, self.resources)[-2:],
+            ["--no-mosweight", "--no-perchanweightdensity"],
+        )
+        self.assertEqual(boolean_argv("tclean", "mosweight", "--mosweight", True), ["--mosweight"])
+
+    def test_a_false_the_surface_cannot_spell_is_refused(self) -> None:
+        # An undeclared false flag on a True default would run the default.
+        binding = {"projections": {"cli": {"flags": ["--keep"]}},
+                   "default": {"kind": "literal", "value": {"kind": "bool", "value": True}}}
+        with mock.patch("tutorial_parity.adapters.cli.surface_bindings", return_value={"keep": binding}):
+            with self.assertRaisesRegex(ValueError, "keep=False has no command-line spelling"):
+                boolean_argv("tclean", "keep", "--keep", False)
 
     def test_python_projection_passes_casas_tclean_values_through(self) -> None:
         # tclean has CASA's signature (#931 PR 4e).

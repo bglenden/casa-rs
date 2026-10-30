@@ -9131,7 +9131,7 @@
             "python": {"name": "interactive"},
             "presentation": {"label": "Interactive", "group": "Stages", "advanced": true}
           },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "niter", "value": {"kind": "integer", "value": 0}}}}
+          "unimplemented": {"issue": 980}
         },
         {
           "name": "nmajor",
