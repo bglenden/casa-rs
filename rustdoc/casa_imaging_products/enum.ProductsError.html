@@ -26,10 +26,10 @@
         frequency_hz: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     },
     UnsupportedProductRole {
-        role: <a class="enum" href="../casa_imaging_model/product_list/enum.ProductRole.html" title="enum casa_imaging_model::product_list::ProductRole">ProductRole</a>,
+        role: ProductRole,
     },
     UnsupportedTaylorTerm {
-        term: <a class="enum" href="../casa_imaging_model/product_list/enum.ProductTerm.html" title="enum casa_imaging_model::product_list::ProductTerm">ProductTerm</a>,
+        term: ProductTerm,
     },
     PrincipalSumWeight {
         sum_weight: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
@@ -69,9 +69,9 @@ model in the controls.</p>
 </div></div><div class="sub-variant-field"><span id="variant.UnsupportedPrimaryBeamFrequency.field.output_channel" class="section-header"><a href="#variant.UnsupportedPrimaryBeamFrequency.field.output_channel" class="anchor field">§</a><code>output_channel: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a></code></span><div class="docblock"><p>Zero-based output channel, after spectral coordinate conversion.</p>
 </div></div><div class="sub-variant-field"><span id="variant.UnsupportedPrimaryBeamFrequency.field.frequency_hz" class="section-header"><a href="#variant.UnsupportedPrimaryBeamFrequency.field.frequency_hz" class="anchor field">§</a><code>frequency_hz: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></code></span><div class="docblock"><p>Output channel centre, in Hz.</p>
 </div></div></div><section id="variant.UnsupportedProductRole" class="variant"><a href="#variant.UnsupportedProductRole" class="anchor">§</a><h3 class="code-header">UnsupportedProductRole</h3></section><div class="docblock"><p>The product list publishes a role the products cannot produce.</p>
-</div><div class="sub-variant" id="variant.UnsupportedProductRole.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.UnsupportedProductRole.field.role" class="section-header"><a href="#variant.UnsupportedProductRole.field.role" class="anchor field">§</a><code>role: <a class="enum" href="../casa_imaging_model/product_list/enum.ProductRole.html" title="enum casa_imaging_model::product_list::ProductRole">ProductRole</a></code></span><div class="docblock"><p>The first unsupported role encountered.</p>
+</div><div class="sub-variant" id="variant.UnsupportedProductRole.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.UnsupportedProductRole.field.role" class="section-header"><a href="#variant.UnsupportedProductRole.field.role" class="anchor field">§</a><code>role: ProductRole</code></span><div class="docblock"><p>The first unsupported role encountered.</p>
 </div></div></div><section id="variant.UnsupportedTaylorTerm" class="variant"><a href="#variant.UnsupportedTaylorTerm" class="anchor">§</a><h3 class="code-header">UnsupportedTaylorTerm</h3></section><div class="docblock"><p>A Taylor term other than the zeroth coefficient was requested.</p>
-</div><div class="sub-variant" id="variant.UnsupportedTaylorTerm.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.UnsupportedTaylorTerm.field.term" class="section-header"><a href="#variant.UnsupportedTaylorTerm.field.term" class="anchor field">§</a><code>term: <a class="enum" href="../casa_imaging_model/product_list/enum.ProductTerm.html" title="enum casa_imaging_model::product_list::ProductTerm">ProductTerm</a></code></span><div class="docblock"><p>The offending Taylor term.</p>
+</div><div class="sub-variant" id="variant.UnsupportedTaylorTerm.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.UnsupportedTaylorTerm.field.term" class="section-header"><a href="#variant.UnsupportedTaylorTerm.field.term" class="anchor field">§</a><code>term: ProductTerm</code></span><div class="docblock"><p>The offending Taylor term.</p>
 </div></div></div><section id="variant.PrincipalSumWeight" class="variant"><a href="#variant.PrincipalSumWeight" class="anchor">§</a><h3 class="code-header">PrincipalSumWeight</h3></section><div class="docblock"><p>A Taylor run’s principal sum of weights, normal or published, is not
 positive and finite: no weighted sample reached the image.</p>
 </div><div class="sub-variant" id="variant.PrincipalSumWeight.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.PrincipalSumWeight.field.sum_weight" class="section-header"><a href="#variant.PrincipalSumWeight.field.sum_weight" class="anchor field">§</a><code>sum_weight: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a></code></span><div class="docblock"><p>The principal sum of weights.</p>
