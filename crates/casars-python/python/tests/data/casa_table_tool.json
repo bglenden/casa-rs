@@ -7,7 +7,9 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -95,7 +97,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -160,7 +164,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -170,7 +176,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -180,7 +188,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -190,7 +200,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -200,7 +212,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -210,7 +224,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -220,7 +236,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -230,7 +248,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -240,7 +260,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -250,7 +272,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -260,7 +284,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -270,7 +296,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -280,7 +308,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -290,7 +320,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -300,7 +332,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -310,7 +344,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -320,7 +356,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -330,7 +368,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -340,7 +380,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -351,7 +393,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -362,7 +406,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -373,7 +419,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -383,7 +431,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -393,7 +443,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -404,7 +456,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -436,7 +490,9 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -446,8 +502,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      0
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -458,8 +519,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      1
+      {
+       "str": "id"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -470,8 +536,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      2
+      {
+       "str": "id"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -482,8 +553,13 @@
     {
      "method": "getcell",
      "args": [
-      "label",
-      0
+      {
+       "str": "label"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -493,8 +569,13 @@
     {
      "method": "getcell",
      "args": [
-      "label",
-      1
+      {
+       "str": "label"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -504,8 +585,13 @@
     {
      "method": "getcell",
      "args": [
-      "label",
-      2
+      {
+       "str": "label"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -515,8 +601,13 @@
     {
      "method": "getcell",
      "args": [
-      "gain",
-      0
+      {
+       "str": "gain"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -530,8 +621,13 @@
     {
      "method": "getcell",
      "args": [
-      "gain",
-      1
+      {
+       "str": "gain"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -545,8 +641,13 @@
     {
      "method": "getcell",
      "args": [
-      "gain",
-      2
+      {
+       "str": "gain"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -560,8 +661,13 @@
     {
      "method": "getcell",
      "args": [
-      "spectrum",
-      0
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -581,8 +687,13 @@
     {
      "method": "getcell",
      "args": [
-      "spectrum",
-      1
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -602,8 +713,13 @@
     {
      "method": "getcell",
      "args": [
-      "spectrum",
-      2
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -623,8 +739,13 @@
     {
      "method": "getcell",
      "args": [
-      "vary",
-      0
+      {
+       "str": "vary"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -641,8 +762,13 @@
     {
      "method": "getcell",
      "args": [
-      "vary",
-      1
+      {
+       "str": "vary"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -660,8 +786,13 @@
     {
      "method": "getcell",
      "args": [
-      "vary",
-      2
+      {
+       "str": "vary"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -677,8 +808,13 @@
     {
      "method": "getcell",
      "args": [
-      "meta",
-      0
+      {
+       "str": "meta"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -702,8 +838,13 @@
     {
      "method": "getcell",
      "args": [
-      "meta",
-      1
+      {
+       "str": "meta"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -727,8 +868,13 @@
     {
      "method": "getcell",
      "args": [
-      "meta",
-      2
+      {
+       "str": "meta"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -752,7 +898,9 @@
     {
      "method": "getcell",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -763,7 +911,9 @@
     {
      "method": "getcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -774,7 +924,9 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -792,7 +944,9 @@
     {
      "method": "getcol",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -819,7 +973,9 @@
     {
      "method": "getcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -848,7 +1004,9 @@
     {
      "method": "getcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -859,7 +1017,9 @@
     {
      "method": "getcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -870,11 +1030,19 @@
     {
      "method": "getcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -884,11 +1052,19 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "<U5",
@@ -904,11 +1080,19 @@
     {
      "method": "getcol",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "complex128",
@@ -930,11 +1114,19 @@
     {
      "method": "getcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -958,11 +1150,19 @@
     {
      "method": "getcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -972,11 +1172,19 @@
     {
      "method": "getcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -986,12 +1194,23 @@
     {
      "method": "getcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -1001,12 +1220,23 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "<U5",
@@ -1022,12 +1252,23 @@
     {
      "method": "getcol",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "complex128",
@@ -1049,12 +1290,23 @@
     {
      "method": "getcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -1078,12 +1330,23 @@
     {
      "method": "getcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -1093,12 +1356,23 @@
     {
      "method": "getcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": -1,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": -1,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -1108,7 +1382,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1119,7 +1395,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1130,7 +1408,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1141,7 +1421,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1155,7 +1437,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1175,7 +1459,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1186,8 +1472,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      0
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1197,8 +1488,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      1
+      {
+       "str": "id"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1208,8 +1504,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      2
+      {
+       "str": "id"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1219,8 +1520,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "label",
-      0
+      {
+       "str": "label"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1230,8 +1536,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "label",
-      1
+      {
+       "str": "label"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1241,8 +1552,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "label",
-      2
+      {
+       "str": "label"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1252,8 +1568,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "gain",
-      0
+      {
+       "str": "gain"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1263,8 +1584,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "gain",
-      1
+      {
+       "str": "gain"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1274,8 +1600,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "gain",
-      2
+      {
+       "str": "gain"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1285,8 +1616,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "spectrum",
-      0
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1296,8 +1632,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "spectrum",
-      1
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1307,8 +1648,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "spectrum",
-      2
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1318,8 +1664,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "vary",
-      0
+      {
+       "str": "vary"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1329,8 +1680,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "vary",
-      1
+      {
+       "str": "vary"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1340,8 +1696,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "vary",
-      2
+      {
+       "str": "vary"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1351,8 +1712,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "meta",
-      0
+      {
+       "str": "meta"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1362,8 +1728,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "meta",
-      1
+      {
+       "str": "meta"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1373,8 +1744,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "meta",
-      2
+      {
+       "str": "meta"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1384,8 +1760,13 @@
     {
      "method": "getcell",
      "args": [
-      "nosuchcolumn",
-      0
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1396,8 +1777,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      3
+      {
+       "str": "id"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1408,8 +1794,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      -1
+      {
+       "str": "id"
+      },
+      {
+       "int": -1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1420,8 +1811,13 @@
     {
      "method": "getcol",
      "args": [
-      "id",
-      5
+      {
+       "str": "id"
+      },
+      {
+       "int": 5,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1432,7 +1828,9 @@
     {
      "method": "getvarcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1485,7 +1883,9 @@
     {
      "method": "getvarcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1540,8 +1940,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      0
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1560,7 +1965,9 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1607,7 +2014,9 @@
     {
      "method": "getkeyword",
      "args": [
-      "observer"
+      {
+       "str": "observer"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1617,7 +2026,9 @@
     {
      "method": "getkeyword",
      "args": [
-      "version"
+      {
+       "str": "version"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1628,7 +2039,10 @@
     {
      "method": "getkeyword",
      "args": [
-      0
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1638,7 +2052,9 @@
     {
      "method": "getkeyword",
      "args": [
-      "nosuchkeyword"
+      {
+       "str": "nosuchkeyword"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1664,7 +2080,9 @@
     {
      "method": "fieldnames",
      "args": [
-      "observer"
+      {
+       "str": "observer"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1675,7 +2093,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1685,7 +2105,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1695,7 +2117,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1705,7 +2129,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1722,7 +2148,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1732,7 +2160,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1742,7 +2172,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1752,7 +2184,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1762,7 +2196,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "gain"
+      {
+       "str": "gain"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1772,7 +2208,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1795,7 +2233,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1805,7 +2245,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1815,8 +2257,12 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "spectrum",
-      "unit"
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "unit"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1826,8 +2272,13 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "spectrum",
-      0
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1837,8 +2288,12 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "spectrum",
-      "nosuchkeyword"
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "nosuchkeyword"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1849,7 +2304,9 @@
     {
      "method": "colfieldnames",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1866,8 +2323,12 @@
     {
      "method": "colfieldnames",
      "args": [
-      "spectrum",
-      "unit"
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "unit"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1878,7 +2339,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1896,13 +2359,2494 @@
     }
    ]
   },
+  "keywords_write": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "version"
+      },
+      {
+       "int": 2,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newint"
+      },
+      {
+       "int": 7,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newbig"
+      },
+      {
+       "int": 1099511627776,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newfloat"
+      },
+      {
+       "float": "1.5",
+       "type": "float"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newbool"
+      },
+      {
+       "bool": true
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newstr"
+      },
+      {
+       "str": "text"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newcomplex"
+      },
+      {
+       "complex": [
+        "1.0",
+        "2.0"
+       ],
+       "type": "complex"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_int"
+      },
+      {
+       "ndarray": "int64",
+       "shape": [
+        3
+       ],
+       "data": [
+        1,
+        2,
+        3
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_float"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        2,
+        3
+       ],
+       "data": [
+        "0.0",
+        "1.0",
+        "2.0",
+        "3.0",
+        "4.0",
+        "5.0"
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_str"
+      },
+      {
+       "ndarray": "<U2",
+       "shape": [
+        2
+       ],
+       "data": [
+        "a",
+        "bc"
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_bool"
+      },
+      {
+       "ndarray": "bool",
+       "shape": [
+        2
+       ],
+       "data": [
+        true,
+        false
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_complex"
+      },
+      {
+       "ndarray": "complex128",
+       "shape": [
+        2
+       ],
+       "data": [
+        [
+         "1.0",
+         "1.0"
+        ],
+        [
+         "2.0",
+         "-2.0"
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "list_int"
+      },
+      {
+       "list": [
+        {
+         "int": 1,
+         "type": "int"
+        },
+        {
+         "int": 2,
+         "type": "int"
+        },
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "list_float"
+      },
+      {
+       "list": [
+        {
+         "float": "1.5",
+         "type": "float"
+        },
+        {
+         "float": "2.5",
+         "type": "float"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "list_str"
+      },
+      {
+       "list": [
+        {
+         "str": "x"
+        },
+        {
+         "str": "y"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "rec"
+      },
+      {
+       "dict": [
+        [
+         "a",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ],
+        [
+         "b",
+         {
+          "str": "two"
+         }
+        ],
+        [
+         "c",
+         {
+          "dict": [
+           [
+            "d",
+            {
+             "float": "3.5",
+             "type": "float"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      {
+       "str": "rec.c.d"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "float": "3.5",
+      "type": "float"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "rec.c.d"
+      },
+      {
+       "float": "9.5",
+       "type": "float"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "rec.added"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "norec.x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "RecordInterface: field norec is unknown"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "norec.x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {
+      "makesubrecord": {
+       "bool": true
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "observer"
+      },
+      {
+       "int": 5,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field observer"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newint"
+      },
+      {
+       "float": "8.5",
+       "type": "float"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field newint"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newfloat"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field newfloat"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newstr"
+      },
+      {
+       "int": 5,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field newstr"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newbool"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field newbool"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newint"
+      },
+      {
+       "int": 9,
+       "type": "int32"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newfloat"
+      },
+      {
+       "float": "2.5",
+       "type": "float32"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newint"
+      },
+      {
+       "dict": [
+        [
+         "a",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field newint"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "rec"
+      },
+      {
+       "int": 5,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field rec"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_int"
+      },
+      {
+       "ndarray": "int64",
+       "shape": [
+        2
+       ],
+       "data": [
+        4,
+        5
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_int"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        1
+       ],
+       "data": [
+        "1.5"
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field arr_int"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "arr_int"
+      },
+      {
+       "int": 7,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field arr_int"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newint"
+      },
+      {
+       "ndarray": "int64",
+       "shape": [
+        1
+       ],
+       "data": [
+        7
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "version"
+      },
+      {
+       "int": 1099511627776,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      {
+       "str": "version"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "int": 1,
+       "type": "int"
+      },
+      {
+       "str": "by index"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "int": 99,
+       "type": "int"
+      },
+      {
+       "str": "by index"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "RecordInterface::define - new fieldNumber exceeds #fields"
+     }
+    },
+    {
+     "method": "getkeywords",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "arr_bool",
+        {
+         "ndarray": "bool",
+         "shape": [
+          2
+         ],
+         "data": [
+          true,
+          false
+         ]
+        }
+       ],
+       [
+        "arr_complex",
+        {
+         "ndarray": "complex128",
+         "shape": [
+          2
+         ],
+         "data": [
+          [
+           "1.0",
+           "1.0"
+          ],
+          [
+           "2.0",
+           "-2.0"
+          ]
+         ]
+        }
+       ],
+       [
+        "arr_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2,
+          3
+         ],
+         "data": [
+          "0.0",
+          "1.0",
+          "2.0",
+          "3.0",
+          "4.0",
+          "5.0"
+         ]
+        }
+       ],
+       [
+        "arr_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          2
+         ],
+         "data": [
+          4,
+          5
+         ]
+        }
+       ],
+       [
+        "arr_str",
+        {
+         "ndarray": "<U2",
+         "shape": [
+          2
+         ],
+         "data": [
+          "a",
+          "bc"
+         ]
+        }
+       ],
+       [
+        "list_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ],
+       [
+        "list_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          3
+         ],
+         "data": [
+          1,
+          2,
+          3
+         ]
+        }
+       ],
+       [
+        "list_str",
+        {
+         "ndarray": "<U1",
+         "shape": [
+          2
+         ],
+         "data": [
+          "x",
+          "y"
+         ]
+        }
+       ],
+       [
+        "newbig",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "newbool",
+        {
+         "bool": true
+        }
+       ],
+       [
+        "newcomplex",
+        {
+         "complex": [
+          "1.0",
+          "2.0"
+         ],
+         "type": "complex"
+        }
+       ],
+       [
+        "newfloat",
+        {
+         "float": "2.5",
+         "type": "float"
+        }
+       ],
+       [
+        "newint",
+        {
+         "int": 7,
+         "type": "int"
+        }
+       ],
+       [
+        "newstr",
+        {
+         "str": "text"
+        }
+       ],
+       [
+        "norec",
+        {
+         "dict": [
+          [
+           "x",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "observer",
+        {
+         "str": "by index"
+        }
+       ],
+       [
+        "rec",
+        {
+         "dict": [
+          [
+           "a",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "added",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "b",
+           {
+            "str": "two"
+           }
+          ],
+          [
+           "c",
+           {
+            "dict": [
+             [
+              "d",
+              {
+               "float": "9.5",
+               "type": "float"
+              }
+             ]
+            ]
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "version",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putkeywords",
+     "args": [
+      {
+       "dict": [
+        [
+         "k1",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ],
+        [
+         "k2",
+         {
+          "str": "v"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "keywordnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "observer"
+       },
+       {
+        "str": "version"
+       },
+       {
+        "str": "newint"
+       },
+       {
+        "str": "newbig"
+       },
+       {
+        "str": "newfloat"
+       },
+       {
+        "str": "newbool"
+       },
+       {
+        "str": "newstr"
+       },
+       {
+        "str": "newcomplex"
+       },
+       {
+        "str": "arr_int"
+       },
+       {
+        "str": "arr_float"
+       },
+       {
+        "str": "arr_str"
+       },
+       {
+        "str": "arr_bool"
+       },
+       {
+        "str": "arr_complex"
+       },
+       {
+        "str": "list_int"
+       },
+       {
+        "str": "list_float"
+       },
+       {
+        "str": "list_str"
+       },
+       {
+        "str": "rec"
+       },
+       {
+        "str": "norec"
+       },
+       {
+        "str": "k1"
+       },
+       {
+        "str": "k2"
+       }
+      ]
+     }
+    },
+    {
+     "method": "removekeyword",
+     "args": [
+      {
+       "str": "k1"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "removekeyword",
+     "args": [
+      {
+       "str": "nosuchkeyword"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table keyword nosuchkeyword does not exist"
+     }
+    },
+    {
+     "method": "removekeyword",
+     "args": [
+      {
+       "str": "rec.c"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "removekeyword",
+     "args": [
+      {
+       "int": 99,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/casa/Containers/RecordDescRep.cc : 318) Failed AlwaysAssert whichField>=0 && whichField < Int(n_p)"
+     }
+    },
+    {
+     "method": "keywordnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "observer"
+       },
+       {
+        "str": "version"
+       },
+       {
+        "str": "newint"
+       },
+       {
+        "str": "newbig"
+       },
+       {
+        "str": "newfloat"
+       },
+       {
+        "str": "newbool"
+       },
+       {
+        "str": "newstr"
+       },
+       {
+        "str": "newcomplex"
+       },
+       {
+        "str": "arr_int"
+       },
+       {
+        "str": "arr_float"
+       },
+       {
+        "str": "arr_str"
+       },
+       {
+        "str": "arr_bool"
+       },
+       {
+        "str": "arr_complex"
+       },
+       {
+        "str": "list_int"
+       },
+       {
+        "str": "list_float"
+       },
+       {
+        "str": "list_str"
+       },
+       {
+        "str": "rec"
+       },
+       {
+        "str": "norec"
+       },
+       {
+        "str": "k2"
+       }
+      ]
+     }
+    },
+    {
+     "method": "getkeywords",
+     "args": [],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/tables/Tables/TableRecordRep.cc : 266) Failed AlwaysAssert whichField >= 0 && whichField < Int(nused_p)"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "AipsIO: read beyond end of object"
+     }
+    },
+    {
+     "method": "keywordnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": []
+     }
+    },
+    {
+     "method": "getkeywords",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": []
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
+  "column_keywords_write": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "unit"
+      },
+      {
+       "str": "mJy"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "str": "newkw"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "str": "arr"
+      },
+      {
+       "ndarray": "float64",
+       "shape": [
+        2
+       ],
+       "data": [
+        "1.5",
+        "2.5"
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "str": "sub"
+      },
+      {
+       "dict": [
+        [
+         "p",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ],
+        [
+         "q",
+         {
+          "str": "r"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeywords",
+     "args": [
+      {
+       "str": "label"
+      },
+      {
+       "dict": [
+        [
+         "a",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ],
+        [
+         "b",
+         {
+          "list": [
+           {
+            "float": "1.5",
+            "type": "float"
+           },
+           {
+            "float": "2.5",
+            "type": "float"
+           }
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "frame",
+        {
+         "str": "LSRK"
+        }
+       ],
+       [
+        "unit",
+        {
+         "str": "mJy"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "id"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "arr",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ],
+       [
+        "newkw",
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ],
+       [
+        "sub",
+        {
+         "dict": [
+          [
+           "p",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "q",
+           {
+            "str": "r"
+           }
+          ]
+         ]
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "label"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "a",
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ],
+       [
+        "b",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "removecolkeyword",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "frame"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "removecolkeyword",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "nosuchkeyword"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Keyword nosuchkeyword in column spectrum does not exist"
+     }
+    },
+    {
+     "method": "removecolkeyword",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "str": "sub"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "putcolkeywords",
+     "args": [
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "dict": [
+        [
+         "x",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "removecolkeyword",
+     "args": [
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "str": "x"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "colkeywordnames",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "unit"
+       }
+      ]
+     }
+    },
+    {
+     "method": "colkeywordnames",
+     "args": [
+      {
+       "str": "id"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "newkw"
+       },
+       {
+        "str": "arr"
+       }
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "unit",
+        {
+         "str": "mJy"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "id"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "arr",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ],
+       [
+        "newkw",
+        {
+         "int": 3,
+         "type": "int"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcolkeywords",
+     "args": [
+      {
+       "str": "label"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "a",
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ],
+       [
+        "b",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
+  "info_write": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "type",
+        {
+         "str": ""
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "dict": [
+        [
+         "type",
+         {
+          "str": "MyType"
+         }
+        ],
+        [
+         "subType",
+         {
+          "str": "sub"
+         }
+        ],
+        [
+         "readme",
+         {
+          "str": "line1\nline2\n"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "line1\nline2\n\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "MyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "addreadmeline",
+     "args": [
+      {
+       "str": "line3"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "line1\nline2\n\nline3\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "MyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "addreadmeline",
+     "args": [
+      {
+       "str": "line4\n"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "line1\nline2\n\nline3\nline4\n\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "MyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "dict": [
+        [
+         "type",
+         {
+          "str": "OnlyType"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "line1\nline2\n\nline3\nline4\n\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "OnlyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "dict": [
+        [
+         "readme",
+         {
+          "str": "r"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "r\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "OnlyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "str": "not a record"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "TypeError",
+      "message": "_value is not a dictionary"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "info",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "readme",
+        {
+         "str": "r\n"
+        }
+       ],
+       [
+        "subType",
+        {
+         "str": "sub"
+        }
+       ],
+       [
+        "type",
+        {
+         "str": "OnlyType"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
+  "write_refusals": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "putkeywords",
+     "args": [
+      {
+       "dict": [
+        [
+         "x",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "removekeyword",
+     "args": [
+      {
+       "str": "observer"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "putcolkeyword",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "putcolkeywords",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "dict": [
+        [
+         "x",
+         {
+          "int": 1,
+          "type": "int"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "removecolkeyword",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "unit"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn::rwKeywordSet cannot be used: table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "dict": [
+        [
+         "type",
+         {
+          "str": "T"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "addreadmeline",
+     "args": [
+      {
+       "str": "r"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "getkeywords",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "observer",
+        {
+         "str": "python-fixture"
+        }
+       ],
+       [
+        "version",
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "lockoptions": {
+       "dict": [
+        [
+         "option",
+         {
+          "str": "user"
+         }
+        ]
+       ]
+      },
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "ColumnSet::doLock: table <TABLE> should be locked when using UserLocking"
+     }
+    },
+    {
+     "method": "haslock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "lock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "haslock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "unlock",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      {
+       "str": "x"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 1,
+      "type": "int"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "putinfo",
+     "args": [
+      {
+       "dict": [
+        [
+         "type",
+         {
+          "str": "T"
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    }
+   ]
+  },
   "errors": {
    "fixture": "table",
    "steps": [
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -1912,8 +4856,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "nosuchcolumn",
-      0
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1924,8 +4873,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      3
+      {
+       "str": "id"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1936,8 +4890,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      -1
+      {
+       "str": "id"
+      },
+      {
+       "int": -1,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1948,7 +4907,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1959,7 +4920,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1970,7 +4933,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1981,7 +4946,9 @@
     {
      "method": "getcol",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -1992,7 +4959,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2003,7 +4972,9 @@
     {
      "method": "getvarcol",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2014,10 +4985,15 @@
     {
      "method": "getvarcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {
-      "startrow": 5
+      "startrow": {
+       "int": 5,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -2027,7 +5003,9 @@
     {
      "method": "getvarcol",
      "args": [
-      "meta"
+      {
+       "str": "meta"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2038,7 +5016,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2049,8 +5029,12 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "nosuchcolumn",
-      "unit"
+      {
+       "str": "nosuchcolumn"
+      },
+      {
+       "str": "unit"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2061,7 +5045,9 @@
     {
      "method": "colfieldnames",
      "args": [
-      "nosuchcolumn"
+      {
+       "str": "nosuchcolumn"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2084,7 +5070,9 @@
     {
      "method": "getkeyword",
      "args": [
-      ""
+      {
+       "str": ""
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2095,7 +5083,9 @@
     {
      "method": "getkeyword",
      "args": [
-      []
+      {
+       "list": []
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2109,7 +5099,10 @@
     {
      "method": "getkeyword",
      "args": [
-      5
+      {
+       "int": 5,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2120,7 +5113,9 @@
     {
      "method": "fieldnames",
      "args": [
-      "nosuchkeyword"
+      {
+       "str": "nosuchkeyword"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2131,7 +5126,9 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2145,10 +5142,15 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": -1
+      "startrow": {
+       "int": -1,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -2158,11 +5160,19 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 5
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 5,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "<U5",
@@ -2178,12 +5188,23 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 2,
-      "rowincr": 0
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 0,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -2193,12 +5214,23 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 2,
-      "rowincr": 2
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 2,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "<U5",
@@ -2214,11 +5246,19 @@
     {
      "method": "getcol",
      "args": [
-      "label"
+      {
+       "str": "label"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 0
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 0,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "<U5",
@@ -2231,11 +5271,19 @@
     {
      "method": "getcol",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 0
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 0,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -2248,8 +5296,13 @@
     {
      "method": "getcell",
      "args": [
-      "label",
-      1.5
+      {
+       "str": "label"
+      },
+      {
+       "float": "1.5",
+       "type": "float"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2260,8 +5313,14 @@
     {
      "method": "getcell",
      "args": [
-      5,
-      0
+      {
+       "int": 5,
+       "type": "int"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2375,7 +5434,9 @@
     {
      "method": "getkeyword",
      "args": [
-      "observer"
+      {
+       "str": "observer"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2397,7 +5458,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2407,7 +5470,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2417,7 +5482,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2427,7 +5494,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2437,8 +5506,13 @@
     {
      "method": "getcell",
      "args": [
-      "id",
-      0
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2452,7 +5526,9 @@
     {
      "method": "getcol",
      "args": [
-      "id"
+      {
+       "str": "id"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2466,7 +5542,9 @@
     {
      "method": "getvarcol",
      "args": [
-      "vary"
+      {
+       "str": "vary"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2476,7 +5554,9 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2486,8 +5566,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "id",
-      0
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2497,7 +5582,9 @@
     {
      "method": "colkeywordnames",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2507,7 +5594,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2521,8 +5610,12 @@
     {
      "method": "getcolkeyword",
      "args": [
-      "spectrum",
-      "unit"
+      {
+       "str": "spectrum"
+      },
+      {
+       "str": "unit"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2536,7 +5629,9 @@
     {
      "method": "colfieldnames",
      "args": [
-      "spectrum"
+      {
+       "str": "spectrum"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -2583,7 +5678,9 @@
     {
      "method": "open",
      "args": [
-      "/no/such/table"
+      {
+       "str": "/no/such/table"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -2602,10 +5699,14 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2631,7 +5732,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2685,10 +5788,14 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
-      "lockoptions": "user"
+      "lockoptions": {
+       "str": "user"
+      }
      },
      "error": {
       "type": "TypeError",
@@ -2722,11 +5829,20 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "usernoread"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "usernoread"
+         }
+        ]
+       ]
       }
      },
      "value": {
@@ -2773,13 +5889,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "user"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "user"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2826,7 +5953,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -2852,7 +5981,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2878,7 +6009,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -2888,7 +6021,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2906,7 +6041,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2931,13 +6068,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "usernoread"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "usernoread"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -2984,7 +6132,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3010,7 +6160,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3036,7 +6188,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3046,7 +6200,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3064,7 +6220,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3089,13 +6247,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "permanent"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "permanent"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3142,7 +6311,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3168,7 +6339,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3194,7 +6367,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3204,7 +6379,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3222,7 +6399,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3247,13 +6426,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "auto"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "auto"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3300,7 +6490,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3326,7 +6518,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3352,7 +6546,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3362,7 +6558,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3380,7 +6578,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3405,13 +6605,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "autonoread"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "autonoread"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3458,7 +6669,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3484,7 +6697,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3510,7 +6725,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3520,7 +6737,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3538,7 +6757,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3563,13 +6784,24 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "default"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "default"
+         }
+        ]
+       ]
       },
-      "nomodify": false
+      "nomodify": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3616,7 +6848,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3642,7 +6876,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3668,7 +6904,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": false
@@ -3678,7 +6916,9 @@
      "method": "lock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3696,7 +6936,9 @@
      "method": "haslock",
      "args": [],
      "kwargs": {
-      "write": false
+      "write": {
+       "bool": false
+      }
      },
      "value": {
       "bool": true
@@ -3721,13 +6963,34 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "user",
-       "interval": 2.5,
-       "maxwait": 7
+       "dict": [
+        [
+         "option",
+         {
+          "str": "user"
+         }
+        ],
+        [
+         "interval",
+         {
+          "float": "2.5",
+          "type": "float"
+         }
+        ],
+        [
+         "maxwait",
+         {
+          "int": 7,
+          "type": "int"
+         }
+        ]
+       ]
       }
      },
      "value": {
@@ -3774,11 +7037,20 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {
       "lockoptions": {
-       "option": "nosuchoption"
+       "dict": [
+        [
+         "option",
+         {
+          "str": "nosuchoption"
+         }
+        ]
+       ]
       }
      },
      "error": {
@@ -3802,7 +7074,9 @@
     {
      "method": "open",
      "args": [
-      "<TABLE>"
+      {
+       "str": "<TABLE>"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3902,7 +7176,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3912,7 +7188,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3922,7 +7200,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3932,7 +7212,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3942,7 +7224,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -3986,8 +7270,13 @@
     {
      "method": "getcell",
      "args": [
-      "UVW",
-      0
+      {
+       "str": "UVW"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4005,8 +7294,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "UVW",
-      0
+      {
+       "str": "UVW"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4016,11 +7310,19 @@
     {
      "method": "getcol",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -4044,12 +7346,23 @@
     {
      "method": "getcol",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -4070,11 +7383,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "UVW"
+      {
+       "str": "UVW"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "list": [
@@ -4087,7 +7408,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4097,7 +7420,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4107,7 +7432,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4117,7 +7444,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4127,7 +7456,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4137,8 +7468,13 @@
     {
      "method": "getcell",
      "args": [
-      "FLAG",
-      0
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4410,8 +7746,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FLAG",
-      0
+      {
+       "str": "FLAG"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -4421,11 +7762,19 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "bool",
@@ -5209,12 +8558,23 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "bool",
@@ -5742,11 +9102,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "FLAG"
+      {
+       "str": "FLAG"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "list": [
@@ -5765,7 +9133,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5775,7 +9145,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5785,7 +9157,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5795,7 +9169,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5805,7 +9181,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5826,8 +9204,13 @@
     {
      "method": "getcell",
      "args": [
-      "FLAG_CATEGORY",
-      0
+      {
+       "str": "FLAG_CATEGORY"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -5838,8 +9221,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FLAG_CATEGORY",
-      0
+      {
+       "str": "FLAG_CATEGORY"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5849,11 +9237,19 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -5863,12 +9259,23 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -5878,11 +9285,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "FLAG_CATEGORY"
+      {
+       "str": "FLAG_CATEGORY"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -5892,7 +9307,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5902,7 +9319,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5912,7 +9331,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5922,7 +9343,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5932,7 +9355,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5942,8 +9367,13 @@
     {
      "method": "getcell",
      "args": [
-      "WEIGHT",
-      0
+      {
+       "str": "WEIGHT"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5962,8 +9392,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "WEIGHT",
-      0
+      {
+       "str": "WEIGHT"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -5973,11 +9408,19 @@
     {
      "method": "getcol",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6004,12 +9447,23 @@
     {
      "method": "getcol",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6032,11 +9486,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "WEIGHT"
+      {
+       "str": "WEIGHT"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "list": [
@@ -6055,7 +9517,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6065,7 +9529,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6075,7 +9541,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6085,7 +9553,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6095,7 +9565,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6105,8 +9577,13 @@
     {
      "method": "getcell",
      "args": [
-      "SIGMA",
-      0
+      {
+       "str": "SIGMA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6125,8 +9602,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "SIGMA",
-      0
+      {
+       "str": "SIGMA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6136,11 +9618,19 @@
     {
      "method": "getcol",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6167,12 +9657,23 @@
     {
      "method": "getcol",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6195,11 +9696,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "SIGMA"
+      {
+       "str": "SIGMA"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "list": [
@@ -6218,7 +9727,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6228,7 +9739,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6238,7 +9751,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6248,7 +9763,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6259,7 +9776,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6269,8 +9788,13 @@
     {
      "method": "getcell",
      "args": [
-      "ANTENNA1",
-      0
+      {
+       "str": "ANTENNA1"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6281,8 +9805,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "ANTENNA1",
-      0
+      {
+       "str": "ANTENNA1"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6292,11 +9821,19 @@
     {
      "method": "getcol",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6313,12 +9850,23 @@
     {
      "method": "getcol",
      "args": [
-      "ANTENNA1"
+      {
+       "str": "ANTENNA1"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6334,7 +9882,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6344,7 +9894,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6354,7 +9906,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6364,7 +9918,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6375,7 +9931,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6385,8 +9943,13 @@
     {
      "method": "getcell",
      "args": [
-      "ANTENNA2",
-      0
+      {
+       "str": "ANTENNA2"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6397,8 +9960,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "ANTENNA2",
-      0
+      {
+       "str": "ANTENNA2"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6408,11 +9976,19 @@
     {
      "method": "getcol",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6429,12 +10005,23 @@
     {
      "method": "getcol",
      "args": [
-      "ANTENNA2"
+      {
+       "str": "ANTENNA2"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6450,7 +10037,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6460,7 +10049,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6470,7 +10061,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6480,7 +10073,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6491,7 +10086,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6501,8 +10098,13 @@
     {
      "method": "getcell",
      "args": [
-      "ARRAY_ID",
-      0
+      {
+       "str": "ARRAY_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6513,8 +10115,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "ARRAY_ID",
-      0
+      {
+       "str": "ARRAY_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6524,11 +10131,19 @@
     {
      "method": "getcol",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6545,12 +10160,23 @@
     {
      "method": "getcol",
      "args": [
-      "ARRAY_ID"
+      {
+       "str": "ARRAY_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6566,7 +10192,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6576,7 +10204,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6586,7 +10216,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6596,7 +10228,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6607,7 +10241,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6617,8 +10253,13 @@
     {
      "method": "getcell",
      "args": [
-      "DATA_DESC_ID",
-      0
+      {
+       "str": "DATA_DESC_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6629,8 +10270,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "DATA_DESC_ID",
-      0
+      {
+       "str": "DATA_DESC_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6640,11 +10286,19 @@
     {
      "method": "getcol",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6661,12 +10315,23 @@
     {
      "method": "getcol",
      "args": [
-      "DATA_DESC_ID"
+      {
+       "str": "DATA_DESC_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6682,7 +10347,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6692,7 +10359,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6702,7 +10371,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6712,7 +10383,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6723,7 +10396,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6746,8 +10421,13 @@
     {
      "method": "getcell",
      "args": [
-      "EXPOSURE",
-      0
+      {
+       "str": "EXPOSURE"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6758,8 +10438,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "EXPOSURE",
-      0
+      {
+       "str": "EXPOSURE"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6769,11 +10454,19 @@
     {
      "method": "getcol",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6790,12 +10483,23 @@
     {
      "method": "getcol",
      "args": [
-      "EXPOSURE"
+      {
+       "str": "EXPOSURE"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -6811,7 +10515,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6821,7 +10527,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6831,7 +10539,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6841,7 +10551,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6852,7 +10564,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6862,8 +10576,13 @@
     {
      "method": "getcell",
      "args": [
-      "FEED1",
-      0
+      {
+       "str": "FEED1"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6874,8 +10593,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FEED1",
-      0
+      {
+       "str": "FEED1"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6885,11 +10609,19 @@
     {
      "method": "getcol",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6906,12 +10638,23 @@
     {
      "method": "getcol",
      "args": [
-      "FEED1"
+      {
+       "str": "FEED1"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -6927,7 +10670,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6937,7 +10682,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6947,7 +10694,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6957,7 +10706,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -6968,7 +10719,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6978,8 +10731,13 @@
     {
      "method": "getcell",
      "args": [
-      "FEED2",
-      0
+      {
+       "str": "FEED2"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -6990,8 +10748,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FEED2",
-      0
+      {
+       "str": "FEED2"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7001,11 +10764,19 @@
     {
      "method": "getcol",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7022,12 +10793,23 @@
     {
      "method": "getcol",
      "args": [
-      "FEED2"
+      {
+       "str": "FEED2"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7043,7 +10825,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7053,7 +10837,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7063,7 +10849,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7073,7 +10861,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7084,7 +10874,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7094,8 +10886,13 @@
     {
      "method": "getcell",
      "args": [
-      "FIELD_ID",
-      0
+      {
+       "str": "FIELD_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7106,8 +10903,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FIELD_ID",
-      0
+      {
+       "str": "FIELD_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7117,11 +10919,19 @@
     {
      "method": "getcol",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7138,12 +10948,23 @@
     {
      "method": "getcol",
      "args": [
-      "FIELD_ID"
+      {
+       "str": "FIELD_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7159,7 +10980,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7169,7 +10992,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7179,7 +11004,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7189,7 +11016,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7200,7 +11029,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7210,8 +11041,13 @@
     {
      "method": "getcell",
      "args": [
-      "FLAG_ROW",
-      0
+      {
+       "str": "FLAG_ROW"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7221,8 +11057,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "FLAG_ROW",
-      0
+      {
+       "str": "FLAG_ROW"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7232,11 +11073,19 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "bool",
@@ -7253,12 +11102,23 @@
     {
      "method": "getcol",
      "args": [
-      "FLAG_ROW"
+      {
+       "str": "FLAG_ROW"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "bool",
@@ -7274,7 +11134,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7284,7 +11146,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7294,7 +11158,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7304,7 +11170,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7315,7 +11183,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7338,8 +11208,13 @@
     {
      "method": "getcell",
      "args": [
-      "INTERVAL",
-      0
+      {
+       "str": "INTERVAL"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7350,8 +11225,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "INTERVAL",
-      0
+      {
+       "str": "INTERVAL"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7361,11 +11241,19 @@
     {
      "method": "getcol",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -7382,12 +11270,23 @@
     {
      "method": "getcol",
      "args": [
-      "INTERVAL"
+      {
+       "str": "INTERVAL"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -7403,7 +11302,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7413,7 +11314,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7423,7 +11326,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7433,7 +11338,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7444,7 +11351,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7454,8 +11363,13 @@
     {
      "method": "getcell",
      "args": [
-      "OBSERVATION_ID",
-      0
+      {
+       "str": "OBSERVATION_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7466,8 +11380,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "OBSERVATION_ID",
-      0
+      {
+       "str": "OBSERVATION_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7477,11 +11396,19 @@
     {
      "method": "getcol",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7498,12 +11425,23 @@
     {
      "method": "getcol",
      "args": [
-      "OBSERVATION_ID"
+      {
+       "str": "OBSERVATION_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7519,7 +11457,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7529,7 +11469,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7539,7 +11481,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7549,7 +11493,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7560,7 +11506,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7570,8 +11518,13 @@
     {
      "method": "getcell",
      "args": [
-      "PROCESSOR_ID",
-      0
+      {
+       "str": "PROCESSOR_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7582,8 +11535,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "PROCESSOR_ID",
-      0
+      {
+       "str": "PROCESSOR_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7593,11 +11551,19 @@
     {
      "method": "getcol",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7614,12 +11580,23 @@
     {
      "method": "getcol",
      "args": [
-      "PROCESSOR_ID"
+      {
+       "str": "PROCESSOR_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7635,7 +11612,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7645,7 +11624,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7655,7 +11636,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7665,7 +11648,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7676,7 +11661,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7686,8 +11673,13 @@
     {
      "method": "getcell",
      "args": [
-      "SCAN_NUMBER",
-      0
+      {
+       "str": "SCAN_NUMBER"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7698,8 +11690,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "SCAN_NUMBER",
-      0
+      {
+       "str": "SCAN_NUMBER"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7709,11 +11706,19 @@
     {
      "method": "getcol",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7730,12 +11735,23 @@
     {
      "method": "getcol",
      "args": [
-      "SCAN_NUMBER"
+      {
+       "str": "SCAN_NUMBER"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7751,7 +11767,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7761,7 +11779,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7771,7 +11791,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7781,7 +11803,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7792,7 +11816,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7802,8 +11828,13 @@
     {
      "method": "getcell",
      "args": [
-      "STATE_ID",
-      0
+      {
+       "str": "STATE_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7814,8 +11845,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "STATE_ID",
-      0
+      {
+       "str": "STATE_ID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7825,11 +11861,19 @@
     {
      "method": "getcol",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7846,12 +11890,23 @@
     {
      "method": "getcol",
      "args": [
-      "STATE_ID"
+      {
+       "str": "STATE_ID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "int64",
@@ -7867,7 +11922,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7877,7 +11934,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7887,7 +11946,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7897,7 +11958,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -7908,7 +11971,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7950,8 +12015,13 @@
     {
      "method": "getcell",
      "args": [
-      "TIME",
-      0
+      {
+       "str": "TIME"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7962,8 +12032,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "TIME",
-      0
+      {
+       "str": "TIME"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -7973,11 +12048,19 @@
     {
      "method": "getcol",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -7994,12 +12077,23 @@
     {
      "method": "getcol",
      "args": [
-      "TIME"
+      {
+       "str": "TIME"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -8015,7 +12109,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8025,7 +12121,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8035,7 +12133,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8045,7 +12145,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -8056,7 +12158,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8098,8 +12202,13 @@
     {
      "method": "getcell",
      "args": [
-      "TIME_CENTROID",
-      0
+      {
+       "str": "TIME_CENTROID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8110,8 +12219,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "TIME_CENTROID",
-      0
+      {
+       "str": "TIME_CENTROID"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8121,11 +12235,19 @@
     {
      "method": "getcol",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -8142,12 +12264,23 @@
     {
      "method": "getcol",
      "args": [
-      "TIME_CENTROID"
+      {
+       "str": "TIME_CENTROID"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "float64",
@@ -8163,7 +12296,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8173,7 +12308,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8183,7 +12320,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8193,7 +12332,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8203,7 +12344,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -8213,8 +12356,13 @@
     {
      "method": "getcell",
      "args": [
-      "DATA",
-      0
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -9254,8 +13402,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "DATA",
-      0
+      {
+       "str": "DATA"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -9265,11 +13418,19 @@
     {
      "method": "getcol",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "complex128",
@@ -12357,12 +16518,23 @@
     {
      "method": "getcol",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "value": {
       "ndarray": "complex128",
@@ -14426,11 +18598,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "DATA"
+      {
+       "str": "DATA"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "value": {
       "list": [
@@ -14449,7 +18629,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14459,7 +18641,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14469,7 +18653,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14479,7 +18665,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14489,7 +18677,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14499,8 +18689,13 @@
     {
      "method": "getcell",
      "args": [
-      "WEIGHT_SPECTRUM",
-      0
+      {
+       "str": "WEIGHT_SPECTRUM"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -14511,8 +18706,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "WEIGHT_SPECTRUM",
-      0
+      {
+       "str": "WEIGHT_SPECTRUM"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14522,11 +18722,19 @@
     {
      "method": "getcol",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -14536,12 +18744,23 @@
     {
      "method": "getcol",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -14551,11 +18770,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "WEIGHT_SPECTRUM"
+      {
+       "str": "WEIGHT_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -14565,7 +18792,9 @@
     {
      "method": "isscalarcol",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14575,7 +18804,9 @@
     {
      "method": "isvarcol",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14585,7 +18816,9 @@
     {
      "method": "coldatatype",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14595,7 +18828,9 @@
     {
      "method": "colarraytype",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14605,7 +18840,9 @@
     {
      "method": "getcolkeywords",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14615,8 +18852,13 @@
     {
      "method": "getcell",
      "args": [
-      "SIGMA_SPECTRUM",
-      0
+      {
+       "str": "SIGMA_SPECTRUM"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "error": {
@@ -14627,8 +18869,13 @@
     {
      "method": "iscelldefined",
      "args": [
-      "SIGMA_SPECTRUM",
-      0
+      {
+       "str": "SIGMA_SPECTRUM"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
      ],
      "kwargs": {},
      "value": {
@@ -14638,11 +18885,19 @@
     {
      "method": "getcol",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -14652,12 +18907,23 @@
     {
      "method": "getcol",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 1,
-      "nrow": 2,
-      "rowincr": 1
+      "startrow": {
+       "int": 1,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 2,
+       "type": "int"
+      },
+      "rowincr": {
+       "int": 1,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
@@ -14667,11 +18933,19 @@
     {
      "method": "getcolshapestring",
      "args": [
-      "SIGMA_SPECTRUM"
+      {
+       "str": "SIGMA_SPECTRUM"
+      }
      ],
      "kwargs": {
-      "startrow": 0,
-      "nrow": 3
+      "startrow": {
+       "int": 0,
+       "type": "int"
+      },
+      "nrow": {
+       "int": 3,
+       "type": "int"
+      }
      },
      "error": {
       "type": "RuntimeError",
