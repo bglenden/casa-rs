@@ -37,6 +37,8 @@ IMPLEMENTED["table"] = {
     "colarraytype", "getcell", "getcol", "getvarcol", "getcolshapestring", "iscelldefined",
     "keywordnames", "getkeywords", "getkeyword", "fieldnames", "colkeywordnames",
     "getcolkeywords", "getcolkeyword", "colfieldnames",
+    "putkeyword", "putkeywords", "removekeyword", "putcolkeyword", "putcolkeywords",
+    "removecolkeyword", "putinfo", "addreadmeline",
 }  # fmt: skip
 
 

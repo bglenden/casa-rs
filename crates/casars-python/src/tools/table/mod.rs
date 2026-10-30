@@ -15,11 +15,13 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod keyword_value;
 mod read;
 mod state;
 mod stubs;
 pub(crate) mod surface;
 mod values;
+mod write;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -29,8 +31,10 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use keyword_value::Incoming;
 use read::KeywordRef;
 use state::{Fail, LockRequest, State};
+use write::InfoUpdate;
 
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1028;
@@ -126,6 +130,44 @@ fn keyword_ref(value: Option<&Bound<'_, PyAny>>) -> PyResult<KeywordRef> {
         return Ok(KeywordRef::Whole);
     }
     Ok(KeywordRef::Index(value.extract()?))
+}
+
+/// A keyword's value; absent is `[]`, an empty array.
+fn keyword_value(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Incoming> {
+    match value {
+        Some(value) => Incoming::from_python(value),
+        None => Incoming::from_python(&PyList::empty(py)),
+    }
+}
+
+/// The fields of a `dict` argument, as keyword values.
+fn record_fields(value: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Incoming)>> {
+    let Ok(record) = value.cast::<PyDict>() else {
+        return Err(PyTypeError::new_err("_value is not a dictionary"));
+    };
+    let mut fields = Vec::with_capacity(record.len());
+    for (key, item) in record.iter() {
+        fields.push((key.extract::<String>()?, Incoming::from_python(&item)?));
+    }
+    Ok(fields)
+}
+
+/// `putinfo`'s record: the `type`, `subType` and `readme` it has.
+fn info_update(value: &Bound<'_, PyAny>) -> PyResult<InfoUpdate> {
+    let Ok(record) = value.cast::<PyDict>() else {
+        return Err(PyTypeError::new_err("_value is not a dictionary"));
+    };
+    let field = |name: &str| -> PyResult<Option<String>> {
+        record
+            .get_item(name)?
+            .map(|item| item.extract())
+            .transpose()
+    };
+    Ok(InfoUpdate {
+        table_type: field("type")?,
+        sub_type: field("subType")?,
+        readme: field("readme")?,
+    })
 }
 
 /// `open`'s `lockoptions`: a `dict` with `option`, `interval` and `maxwait`.
@@ -466,5 +508,103 @@ impl PyTableTool {
         self.call(py, move |state, log| {
             state.colfieldnames(&column, &key, log)
         })
+    }
+
+    /// Define a table keyword (by 1-based position, or by name; a dotted
+    /// name reaches into sub-records, made when `makesubrecord` is set).
+    #[pyo3(signature = (keyword = None, value = None, makesubrecord = None), text_signature = "($self, keyword=[], value=[], makesubrecord=False)")]
+    fn putkeyword(
+        &self,
+        py: Python<'_>,
+        keyword: Option<&Bound<'_, PyAny>>,
+        value: Option<&Bound<'_, PyAny>>,
+        makesubrecord: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let key = keyword_ref(keyword)?;
+        let value = keyword_value(py, value)?;
+        let make = flag(makesubrecord, false)?;
+        self.call(py, move |state, log| {
+            state.putkeyword(key, value, make, log)
+        })
+    }
+
+    /// Define several table keywords; the ones already there stay.
+    #[pyo3(signature = (value), text_signature = "($self, value)")]
+    fn putkeywords(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let fields = record_fields(value)?;
+        self.call(py, move |state, log| state.putkeywords(fields, log))
+    }
+
+    /// Remove a table keyword.
+    #[pyo3(signature = (keyword = None), text_signature = "($self, keyword=[])")]
+    fn removekeyword(
+        &self,
+        py: Python<'_>,
+        keyword: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let key = keyword_ref(keyword)?;
+        self.call(py, move |state, log| state.removekeyword(key, log))
+    }
+
+    /// Define a keyword of a column.
+    #[pyo3(signature = (columnname, keyword = None, value = None), text_signature = "($self, columnname, keyword=[], value=[])")]
+    fn putcolkeyword(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        keyword: Option<&Bound<'_, PyAny>>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let key = keyword_ref(keyword)?;
+        let value = keyword_value(py, value)?;
+        self.call(py, move |state, log| {
+            state.putcolkeyword(column, key, value, log)
+        })
+    }
+
+    /// Define several keywords of a column; the ones already there stay.
+    #[pyo3(signature = (columnname, value), text_signature = "($self, columnname, value)")]
+    fn putcolkeywords(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let fields = record_fields(value)?;
+        self.call(py, move |state, log| {
+            state.putcolkeywords(column, fields, log)
+        })
+    }
+
+    /// Remove a keyword of a column.
+    #[pyo3(signature = (columnname, keyword = None), text_signature = "($self, columnname, keyword=[])")]
+    fn removecolkeyword(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        keyword: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let key = keyword_ref(keyword)?;
+        self.call(py, move |state, log| {
+            state.removecolkeyword(column, key, log)
+        })
+    }
+
+    /// Set the table's type, subtype and readme, from the fields of a record
+    /// (`type`, `subType`, `readme`).
+    #[pyo3(signature = (value), text_signature = "($self, value)")]
+    fn putinfo(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let update = info_update(value)?;
+        self.call(py, move |state, log| state.putinfo(update, log))
+    }
+
+    /// Append a line to the table's readme.
+    #[pyo3(signature = (value), text_signature = "($self, value)")]
+    fn addreadmeline(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let line = text(value, "value")?;
+        self.call(py, move |state, log| state.addreadmeline(line, log))
     }
 }

@@ -71,6 +71,20 @@ pub(super) struct LockSettings {
 }
 
 impl LockSettings {
+    /// Whether the table locks itself for a write (and releases the lock
+    /// after), as `default`, `auto` and `autonoread` do.
+    pub(super) fn automatic(&self) -> bool {
+        matches!(
+            self.mode,
+            LockMode::DefaultLocking | LockMode::AutoLocking | LockMode::AutoNoReadLocking
+        )
+    }
+
+    /// The attempts at a lock `maxwait` allows; `0` waits for it.
+    pub(super) fn attempts(&self) -> u32 {
+        u32::try_from(self.maxwait.max(0)).unwrap_or(u32::MAX)
+    }
+
     fn from_request(request: &LockRequest) -> Result<Self, Fail> {
         let name = request.option.as_deref().unwrap_or("default");
         let (_, mode, reported) = OPTIONS

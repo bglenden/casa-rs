@@ -21,7 +21,8 @@ CASA behaviours casa-rs does not follow:
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
-[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64).
+[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
+[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2612,3 +2613,19 @@ the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
 `crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
 `getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
 `int64` array, as it does for every other integer column.
+
+## `tb.putkeyword` stores an int beyond 32 bits as 0
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion for table keywords
+
+`tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
+gives `0`, both for a new keyword and for an existing 32-bit `Int` one
+(CASA 6.7.6.14; the `casa_bugs` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
+stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
+refuses such a value for an existing 32-bit keyword with
+`RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
+bits`, rather than store a wrong number.

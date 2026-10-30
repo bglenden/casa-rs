@@ -81,6 +81,39 @@ def encode_value(value: Any, path: str) -> Any:
     raise TypeError(f"cannot encode {type(value)}")
 
 
+def decode_value(encoded: Any, path: str) -> Any:
+    """The Python value `encoded` stands for (the inverse of `encode_value`)."""
+    if "bool" in encoded:
+        return encoded["bool"]
+    if "none" in encoded:
+        return None
+    for key, native in (("int", int), ("float", float)):
+        if key in encoded:
+            kind = encoded["type"]
+            value = native(encoded[key])
+            return value if kind == native.__name__ else getattr(np, kind)(value)
+    if "complex" in encoded:
+        value = complex(float(encoded["complex"][0]), float(encoded["complex"][1]))
+        return value if encoded["type"] == "complex" else getattr(np, encoded["type"])(value)
+    if "str" in encoded:
+        return encoded["str"].replace(PLACEHOLDER, path)
+    if "ndarray" in encoded:
+        dtype = np.dtype(encoded["ndarray"])
+        data = encoded["data"]
+        if dtype.kind == "c":
+            data = [complex(float(re), float(im)) for re, im in data]
+        elif dtype.kind == "f":
+            data = [float(item) for item in data]
+        return np.array(data, dtype=dtype).reshape(encoded["shape"])
+    if "dict" in encoded:
+        return {key: decode_value(item, path) for key, item in encoded["dict"]}
+    if "list" in encoded:
+        return [decode_value(item, path) for item in encoded["list"]]
+    if "tuple" in encoded:
+        return tuple(decode_value(item, path) for item in encoded["tuple"])
+    raise TypeError(f"cannot decode {encoded}")
+
+
 @pytest.fixture(scope="module")
 def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """The python fixture table and the small MeasurementSet, once."""
@@ -126,14 +159,18 @@ def same_error(got: dict[str, str], want: dict[str, str], where: str) -> None:
 
 
 def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
-    args = [path if arg == PLACEHOLDER else arg for arg in step["args"]]
+    args = [decode_value(arg, path) for arg in step["args"]]
+    kwargs = {name: decode_value(value, path) for name, value in step["kwargs"].items()}
     try:
-        return {"value": encode_value(getattr(tool, step["method"])(*args, **step["kwargs"]), path)}
+        return {"value": encode_value(getattr(tool, step["method"])(*args, **kwargs), path)}
     except Exception as error:  # noqa: BLE001 - compared with what CASA raised
         return {"error": {"type": type(error).__name__, "message": str(error).replace(path, PLACEHOLDER)}}
 
 
-@pytest.mark.parametrize("scenario", sorted(RECORD["scenarios"]))
+REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"})
+
+
+@pytest.mark.parametrize("scenario", REPLAYED)
 def test_the_tool_answers_as_casa_does(
     scenario: str, fixtures: dict[str, Path], tmp_path: Path
 ) -> None:
@@ -185,4 +222,62 @@ def test_every_call_releases_the_gil(fixtures: dict[str, Path], tmp_path: Path) 
         thread.join()
     during = [tick for tick in ticks if tick >= started]
     assert len(during) > 20, "the ticker thread starved while the tool read"
+    tool.done()
+
+
+def table_files(root: Path) -> dict[str, bytes]:
+    """Every file of the table directory, by relative path."""
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.name != "table.lock"
+    }
+
+
+def test_writes_to_keywords_and_info_leave_the_storage_managers_alone(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Only `table.dat` and `table.info` change: a flush or an unlock that
+    rewrote the table would replace the data managers' files too (#1025)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    assert tool.putkeyword("added", 7)
+    assert tool.putcolkeyword("spectrum", "unit", "mJy")
+    assert tool.putinfo({"type": "Edited"})
+    assert tool.addreadmeline("a line")
+    assert tool.removekeyword("added")
+    assert tool.done()
+    after = table_files(path)
+    assert set(after) == set(before)
+    changed = {name for name in before if before[name] != after[name]}
+    assert changed <= {"table.dat", "table.info"}, changed
+    assert "table.dat" in changed
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.getcolkeywords("spectrum")["unit"] == "mJy"
+    assert reader.info()["type"] == "Edited"
+    assert reader.getcol("label").tolist() == ["alpha", "beta", "gamma"]
+    reader.done()
+
+
+def test_an_int_beyond_32_bits_is_kept_where_casa_truncates_it(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA 6.7.6.14 stores such a Python int as 0 (`docs/CASA (C++) bugs.md`);
+    casa-rs keeps it in a new keyword and refuses it for a 32-bit one."""
+    steps = RECORD["scenarios"]["casa_bugs"]["steps"]
+    assert [step["value"]["int"] for step in steps if step["method"] == "getkeyword"] == [0, 0]
+
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    assert tool.putkeyword("newbig", 2**40)
+    assert tool.getkeyword("newbig") == 2**40
+    with pytest.raises(RuntimeError, match="does not fit the integer keyword version"):
+        tool.putkeyword("version", 2**40)
+    assert tool.getkeyword("version") == 1
     tool.done()

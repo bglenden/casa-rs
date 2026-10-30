@@ -36,7 +36,7 @@ const METHODS: &[Method] = &[
         "addreadmeline",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, No),
     method("browse", &[], R::Any, No),
@@ -411,7 +411,7 @@ const METHODS: &[Method] = &[
             param("value", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolkeywords",
@@ -420,7 +420,7 @@ const METHODS: &[Method] = &[
             param("value", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolslice",
@@ -437,7 +437,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("putinfo", &[param("value", K::Any, Required)], R::Any, No),
+    method("putinfo", &[param("value", K::Any, Required)], R::Any, Yes),
     method(
         "putkeyword",
         &[
@@ -446,13 +446,13 @@ const METHODS: &[Method] = &[
             param("makesubrecord", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putkeywords",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putvarcol",
@@ -485,7 +485,7 @@ const METHODS: &[Method] = &[
             param("keyword", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removecols",
@@ -497,7 +497,7 @@ const METHODS: &[Method] = &[
         "removekeyword",
         &[param("keyword", K::Any, Empty)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removerows",
