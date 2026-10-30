@@ -15,7 +15,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use casa_aipsio::{AipsIo, ByteOrder};
 
-use super::{StorageError, bucket_offset, serialize_ssm_header};
+use super::{StorageError, bucket_offset, last_string_bucket, serialize_ssm_header};
 
 /// Bytes of an index bucket's chain header.
 const CHAIN_BYTES: usize = 8;
@@ -60,11 +60,6 @@ pub(super) fn write_index_and_header(
                 big_endian,
             )?
             .finish()?;
-    let first_string_bucket = if nr_string_buckets > 0 {
-        nr_data_buckets as i32
-    } else {
-        -1
-    };
     let nr_buckets = first_idx_bucket + nr_idx_buckets;
     let header = serialize_ssm_header(
         bucket_size,
@@ -74,7 +69,7 @@ pub(super) fn write_index_and_header(
         nr_idx_buckets as u32,
         first_idx_bucket as i32,
         0,
-        first_string_bucket,
+        last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_length as u32,
         1,
         big_endian,
