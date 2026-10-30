@@ -825,9 +825,8 @@ fn read_array_record_field(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
         CasacoreDataType::TpArrayBool => {
             let count = io.get_u32()? as usize;
             let mut vals = vec![false; count.min(nelem)];
-            for v in vals.iter_mut() {
-                *v = io.get_bool()?;
-            }
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte.
+            io.get_bool_into(&mut vals)?;
             ArrayValue::Bool(
                 ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1437,7 +1436,14 @@ fn write_array_record_field(io: &mut AipsIo, av: &ArrayValue) -> Result<(), Stor
 /// ([`read_array_record_field`]) rebuilds Fortran-layout arrays.
 fn write_array_elements(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
     match av {
-        ArrayValue::Bool(a) => put_each(io, a, AipsIo::put_bool),
+        ArrayValue::Bool(a) => {
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte;
+            // one byte each is a record casacore refuses ("part of object
+            // not read").
+            let flags: Vec<bool> = casacore_order(a).copied().collect();
+            io.put_bool_slice(&flags, false)?;
+            Ok(())
+        }
         ArrayValue::UInt8(a) => put_each(io, a, AipsIo::put_u8),
         ArrayValue::Int16(a) => put_each(io, a, AipsIo::put_i16),
         ArrayValue::UInt16(a) => put_each(io, a, AipsIo::put_u16),
@@ -2312,6 +2318,43 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("table_control_{name}_{nanos}"))
+    }
+
+    /// A Boolean array in a keyword record is bit-packed, as casacore's
+    /// `TypeIO` writes it: sixteen flags take the two bytes nine do, and the
+    /// first flag is the lowest bit. One byte per flag made CASA 6.7.6.14
+    /// refuse the table ("AipsIO::getend: part of object not read").
+    #[test]
+    fn a_boolean_array_keyword_is_bit_packed() {
+        fn record_with(flags: &[bool]) -> RecordValue {
+            let mut record = RecordValue::default();
+            let cells = ArrayD::from_shape_vec(IxDyn(&[flags.len()]).f(), flags.to_vec()).unwrap();
+            record.upsert("flags", Value::Array(ArrayValue::Bool(cells)));
+            record
+        }
+        let nine = [true, false, true, true, false, false, true, false, true];
+        let sixteen = [true; 16];
+        let short = serialize_record_to_uchar(&record_with(&nine)).unwrap();
+        let long = serialize_record_to_uchar(&record_with(&sixteen)).unwrap();
+        assert_eq!(short.len(), long.len(), "both pack into two bytes");
+
+        let three = serialize_record_to_uchar(&record_with(&[true, false, true])).unwrap();
+        let element_count_then_bits = [0, 0, 0, 3, 0b101];
+        assert!(
+            three
+                .windows(5)
+                .any(|window| window == element_count_then_bits),
+            "{three:?}"
+        );
+
+        for flags in [&nine[..], &sixteen[..]] {
+            let bytes = serialize_record_to_uchar(&record_with(flags)).unwrap();
+            let read = deserialize_record_from_uchar(&bytes).unwrap();
+            let Some(Value::Array(ArrayValue::Bool(cells))) = read.get("flags") else {
+                panic!("a Boolean array: {read:?}");
+            };
+            assert_eq!(cells.iter().copied().collect::<Vec<_>>(), flags);
+        }
     }
 
     #[test]
