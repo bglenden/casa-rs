@@ -282,6 +282,7 @@ fn survey_observation(
     );
     let plan = SurveyPlan {
         observation: store.observation(),
+        msv2: store.msv2(),
         candidates,
         row_selection,
         w_range: matches!(
