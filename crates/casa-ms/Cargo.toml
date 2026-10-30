@@ -171,6 +171,10 @@ name = "flagging"
 path = "tests/flagging.rs"
 
 [[test]]
+name = "casa_returns"
+path = "tests/casa_returns.rs"
+
+[[test]]
 name = "existing_outputs"
 path = "tests/existing_outputs.rs"
 
@@ -210,6 +214,10 @@ path = "tests/visibility_write_memory.rs"
 [[test]]
 name = "creation_write_memory"
 path = "tests/creation_write_memory.rs"
+
+[[test]]
+name = "creation_plan_memory"
+path = "tests/creation_plan_memory.rs"
 
 [[test]]
 name = "subtable_overrides"

@@ -23,7 +23,7 @@ use num_complex::Complex32;
 
 use super::{Key, Sample, fixture, samples};
 
-fn options(accept: &[LossKind]) -> ConversionOptions {
+pub(super) fn options(accept: &[LossKind]) -> ConversionOptions {
     ConversionOptions {
         data_groups: None,
         accept: accept.to_vec(),
@@ -272,7 +272,7 @@ fn partitions_and_data_groups_convert_together() {
 
 /// Every acquisition of `group` in partition `id`: the samples that are not
 /// padding (a NaN weight).
-fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
+pub(crate) fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
     read(path, id, group)
         .into_iter()
         .filter(|(_, sample)| !sample.weights.iter().all(|weight| weight.is_nan()))
@@ -280,7 +280,7 @@ fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Samp
 }
 
 /// MAIN's row count and `SIGMA`, `WEIGHT` of the MSv2 at `path`.
-fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
+pub(crate) fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
     let ms = casa_ms::MeasurementSet::open(path).expect("ms");
     let main = ms.main_table();
     let column = |name: &str| {
@@ -320,10 +320,17 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
         "{refused:?}"
     );
     assert!(!out.exists(), "nothing is written before the refusal");
+    let stated = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
+    let refused = to_msv2(&xradio, &out, &options(&stated));
+    assert!(
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("Defaulted")),
+        "what the MSv4 leaves unstated is refused until accepted: {refused:?}"
+    );
+    assert!(!out.exists(), "nothing is written before the refusal");
     let report = to_msv2(
         &xradio,
         &out,
-        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+        &options(&[stated.as_slice(), &[LossKind::Defaulted]].concat()),
     )
     .expect("convert");
     assert!(
@@ -331,6 +338,25 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
         "{:?}",
         report.losses
     );
+    // What XRADIO's MSv4 leaves unstated is written as MSv2's default and
+    // listed; what it states (the reference frequency, the release date)
+    // is written as stated.
+    let defaulted = |column: &str| report.losses.contains(&Loss::Defaulted(column.to_string()));
+    for column in [
+        "SPECTRAL_WINDOW IF_CONV_CHAIN",
+        "FIELD CODE",
+        "OBSERVATION TIME_RANGE",
+        "PROCESSOR TYPE_ID",
+    ] {
+        assert!(defaulted(column), "{column}: {:?}", report.losses);
+    }
+    for column in [
+        "SPECTRAL_WINDOW REF_FREQUENCY",
+        "OBSERVATION RELEASE_DATE",
+        "PROCESSOR TYPE",
+    ] {
+        assert!(!defaulted(column), "{column}: {:?}", report.losses);
+    }
     assert_eq!(
         (report.partitions, report.samples, report.rows),
         (1, 120, 120)
@@ -463,7 +489,7 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
     let v2 = two_windows(root.path());
     let v4 = root.path().join("two_windows.ps.zarr");
     let back = root.path().join("back.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     let report = to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
     let original = casa_ms::MeasurementSet::open(&v2)
@@ -518,7 +544,7 @@ fn padding_becomes_a_flagged_row_or_none_as_declared() {
     ms.main_table_mut().remove_rows(&[7]).expect("remove row 7");
     ms.save().expect("save");
     drop(ms);
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     let v4 = root.path().join("sparse.ps.zarr");
     to_msv4(&sparse, &v4, &options(&accept)).expect("to MSv4");
     let padded = |path: &Path| {
@@ -620,7 +646,12 @@ fn weights_varying_over_channels_are_refused() {
     let refused = to_msv2(
         &v4,
         &out,
-        &options(&[LossKind::Sigma, LossKind::Tables, LossKind::Columns]),
+        &options(&[
+            LossKind::Sigma,
+            LossKind::Tables,
+            LossKind::Columns,
+            LossKind::Defaulted,
+        ]),
     );
     assert!(
         matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("WEIGHT_SPECTRUM")),
@@ -669,7 +700,14 @@ fn main_ints(ms: &casa_ms::MeasurementSet, column: &str) -> Vec<i32> {
 /// spectral window, data description and state.
 fn two_sessions(root: &Path, early: bool) -> PathBuf {
     let path = fixture(root, "ms_trial.ms");
-    let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+    split_sessions(&path, early);
+    path
+}
+
+/// Put half the times of the MSv2 at `path` in a second observation, as
+/// [`two_sessions`] does.
+pub(super) fn split_sessions(path: &Path, early: bool) {
+    let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
     let rows = ms.main_table().row_count();
     let times: Vec<f64> = (0..rows)
         .map(|row| {
@@ -742,7 +780,6 @@ fn two_sessions(root: &Path, early: bool) -> PathBuf {
         .add_row(session)
         .expect("a second session");
     ms.save().expect("save");
-    path
 }
 
 /// Two partitions of one spectral window keep one window name in the MSv4
@@ -755,7 +792,7 @@ fn partitions_of_one_window_share_its_name_and_rows() {
     let v2 = two_sessions(root.path(), false);
     let v4 = root.path().join("sessions.ps.zarr");
     let back = root.path().join("back.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     let report = to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     assert_eq!(report.partitions, 2, "one partition per session");
     let converted = open(&v4, &OpenOptions::default()).expect("open");
@@ -860,52 +897,6 @@ fn keys_and_subtable_rows_the_destination_drops_are_losses() {
             .losses
             .contains(&Loss::Table("PROCESSOR".to_string()))
     );
-}
-
-/// A field whose direction moves is refused: one that follows an
-/// ephemeris, whose directions casacore reads as offsets, and one whose
-/// direction is a polynomial in time (as XRADIO refuses it). The catalogue
-/// would hold the offset or the constant term as the phase centre.
-#[test]
-fn moving_fields_are_refused() {
-    let ephemeris_root = tempfile::tempdir().expect("root");
-    let ephemeris = fixture(ephemeris_root.path(), "ms_trial.ms");
-    super::follow_ephemerides(&ephemeris, &[0]);
-    let polynomial_root = tempfile::tempdir().expect("root");
-    let polynomial = fixture(polynomial_root.path(), "ms_trial.ms");
-    let mut ms = casa_ms::MeasurementSet::open(&polynomial).expect("ms");
-    let mut fields = ms.field_mut().expect("FIELD");
-    fields.set_i32(0, "NUM_POLY", 1).expect("a polynomial");
-    // Each direction a polynomial of NUM_POLY + 1 terms: its constant
-    // term, and no motion.
-    for column in ["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] {
-        let casa_types::ArrayValue::Float64(constant) =
-            fields.as_ref().phase_dir(0).expect("PHASE_DIR").clone()
-        else {
-            panic!("a Float64 direction");
-        };
-        let terms = ndarray::ArrayD::from_shape_fn(vec![2, 2], |index| match index[1] {
-            0 => constant[[index[0], 0]],
-            _ => 0.0,
-        });
-        fields
-            .set_array(0, column, casa_types::ArrayValue::Float64(terms))
-            .expect("two terms");
-    }
-    ms.save().expect("save");
-    drop(ms);
-    for (root, source, moving) in [
-        (&ephemeris_root, &ephemeris, "ephemeris"),
-        (&polynomial_root, &polynomial, "polynomial"),
-    ] {
-        let out = root.path().join("moving.ps.zarr");
-        let refused = to_msv4(source, &out, &options(&[LossKind::Sigma, LossKind::Tables]));
-        assert!(
-            matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains(moving)),
-            "{refused:?}"
-        );
-        assert!(!out.exists());
-    }
 }
 
 /// XRADIO names antennas `NAME_STATION` only for ALMA, VLA, NOEMA and
@@ -1173,7 +1164,7 @@ fn a_round_trip_keeps_the_antenna_order() {
     drop(ms);
     let v4 = root.path().join("order.ps.zarr");
     let back = root.path().join("order.ms");
-    let accept = [LossKind::Sigma, LossKind::Tables];
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
     to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
     to_msv2(&v4, &back, &options(&accept)).expect("to MSv2");
     let stations = |path: &Path| subtable_strings(path, casa_ms::SubtableId::Antenna, "STATION");
@@ -1186,11 +1177,11 @@ fn a_round_trip_keeps_the_antenna_order() {
     );
 }
 
-/// A moving field no row names is refused into an MSv2, which writes every
-/// `FIELD` row and would write its offset as a fixed direction, and not
-/// into an MSv4, which writes only the fields its datasets name.
+/// A moving field no row names is written into an MSv2, which writes every
+/// `FIELD` row, with its ephemeris, and not into an MSv4, which writes only
+/// the fields its datasets name.
 #[test]
-fn an_unused_moving_field_is_refused_only_where_it_is_written() {
+fn an_unused_moving_field_is_written_only_where_every_field_is() {
     let root = tempfile::tempdir().expect("root");
     let v2 = fixture(root.path(), "ms_trial.ms");
     let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
@@ -1220,12 +1211,32 @@ fn an_unused_moving_field_is_refused_only_where_it_is_written() {
     drop(ms);
     casa_test_support::ephemeris_table::write_field_ephemeris(&v2, 0, "comet", &super::COMET);
     let accept = [LossKind::Sigma, LossKind::Tables];
-    to_msv4(&v2, &root.path().join("comet.ps.zarr"), &options(&accept)).expect("to MSv4");
-    let out = root.path().join("comet.ms");
-    let refused = to_msv2(&v2, &out, &options(&accept));
+    let v4 = root.path().join("comet.ps.zarr");
+    to_msv4(&v2, &v4, &options(&accept)).expect("to MSv4");
+    let catalogue = open(&v4, &OpenOptions::default())
+        .expect("MSv4")
+        .catalogue()
+        .clone();
     assert!(
-        matches!(refused, Err(ObservationError::Unsupported { what }) if what.contains("ephemeris")),
-        "{refused:?}"
+        catalogue
+            .fields
+            .iter()
+            .all(|field| field.ephemeris.is_none())
     );
-    assert!(!out.exists());
+    // The comet's table's own `VS_*` keywords are not carried.
+    let out = root.path().join("comet.ms");
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
+    to_msv2(&v2, &out, &options(&accept)).expect("to MSv2");
+    let catalogue = open(&out, &OpenOptions::default())
+        .expect("MSv2")
+        .catalogue()
+        .clone();
+    let comet = catalogue
+        .fields
+        .iter()
+        .find(|field| field.name == "comet")
+        .expect("the comet");
+    let ephemeris = comet.ephemeris.as_ref().expect("its ephemeris");
+    assert_eq!(ephemeris.times_mjd().len(), super::COMET.len());
+    assert!(out.join("FIELD/EPHEM0_comet.tab").is_dir());
 }

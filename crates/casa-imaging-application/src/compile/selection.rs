@@ -497,20 +497,41 @@ pub(super) fn observation_selection(
     ))
 }
 
-/// The visibility column imaged: the requested one, else `CORRECTED_DATA`
-/// when present, else `DATA`.
+/// The visibility column imaged: `DATA` when asked for, else
+/// `CORRECTED_DATA` when present, else `DATA`.
+///
+/// `datacolumn='corrected'` on a MeasurementSet without `CORRECTED_DATA`
+/// therefore images `DATA`, as CASA's `tclean` does (simulation plan §3,
+/// decision 6): `SIMapperCollection::grid` and `FTMachine::makeImage` turn a
+/// `CORRECTED` request into `OBSERVED` when the column is missing. CASA 6.x
+/// logs no message for the fallback, since the one `SynthesisImager::selectData`
+/// once logged is commented out. casa-rs logs that message as a warning,
+/// because the column imaged is not the one asked for; an unspecified column
+/// falls back without one.
+///
+/// CASA's VisibilityIterator2 also counts the column as missing in an
+/// iteration chunk whose first row's cell is undefined (`existsColumn` tests
+/// `isDefined(0)` on the chunk's attached table), so a partly written
+/// `CORRECTED_DATA` can image `DATA` chunk by chunk. casa-rs decides by the
+/// column's presence alone and images an existing `CORRECTED_DATA` as before:
+/// a deliberate scope limit, not full parity. casa-tables' metadata-only
+/// probe (`array_cell_is_defined_uncached`) answers only for lazy, disk-backed
+/// `TiledShapeStMan` columns, and one probe would not reproduce CASA's
+/// per-chunk rule.
 pub(super) fn visibility_column(
     ms: &MeasurementSet,
     requested: Option<DataColumn>,
 ) -> Result<OwnerVisibilityColumn, PrepareError> {
+    let present = |column| ms.data_column(column).is_ok();
     Ok(match requested {
         Some(DataColumn::Data) => OwnerVisibilityColumn::Data,
-        Some(DataColumn::Corrected) => OwnerVisibilityColumn::CorrectedData,
-        None if ms.data_column(VisibilityDataColumn::CorrectedData).is_ok() => {
-            OwnerVisibilityColumn::CorrectedData
+        _ if present(VisibilityDataColumn::CorrectedData) => OwnerVisibilityColumn::CorrectedData,
+        _ if !present(VisibilityDataColumn::Data) => return Err(PrepareError::NoVisibilityColumn),
+        Some(DataColumn::Corrected) => {
+            tracing::warn!("CORRECTED_DATA column does not exist. Using DATA column instead");
+            OwnerVisibilityColumn::Data
         }
-        None if ms.data_column(VisibilityDataColumn::Data).is_ok() => OwnerVisibilityColumn::Data,
-        None => return Err(PrepareError::NoVisibilityColumn),
+        None => OwnerVisibilityColumn::Data,
     })
 }
 
@@ -520,8 +541,12 @@ fn correlation_type(code: i32) -> Result<Correlation, PrepareError> {
 
 #[cfg(test)]
 mod tests {
-    use casa_ms::MeasurementSetBuilder;
+    use std::sync::{Arc, Mutex};
+
+    use casa_ms::{MeasurementSetBuilder, OptionalMainColumn};
     use serde_json::json;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
 
     use super::*;
     use crate::request::tests::request;
@@ -540,13 +565,90 @@ mod tests {
         ));
     }
 
+    /// The messages of the warnings an event logs.
+    #[derive(Clone, Default)]
+    struct Warnings(Arc<Mutex<Vec<String>>>);
+
+    impl tracing::field::Visit for Warnings {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0.lock().expect("warnings").push(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl<S: tracing::Subscriber> Layer<S> for Warnings {
+        fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                event.record(&mut self.clone());
+            }
+        }
+    }
+
+    /// The column `requested` images in a MeasurementSet with `columns`, and
+    /// the warnings choosing it logs.
+    fn chosen(
+        columns: &[OptionalMainColumn],
+        requested: Option<DataColumn>,
+    ) -> (Result<OwnerVisibilityColumn, PrepareError>, Vec<String>) {
+        let builder = columns
+            .iter()
+            .fold(MeasurementSetBuilder::new(), |builder, column| {
+                builder.with_main_column(*column)
+            });
+        let ms = MeasurementSet::create_memory(builder).expect("an in-memory MeasurementSet");
+        let warnings = Warnings::default();
+        let chosen = tracing::subscriber::with_default(
+            tracing_subscriber::registry().with(warnings.clone()),
+            || visibility_column(&ms, requested),
+        );
+        (chosen, warnings.0.lock().expect("warnings").clone())
+    }
+
     #[test]
     fn a_measurement_set_without_visibilities_has_no_column_to_image() {
-        let ms = MeasurementSet::create_memory(MeasurementSetBuilder::new())
-            .expect("a MeasurementSet with neither DATA nor CORRECTED_DATA");
+        for requested in [None, Some(DataColumn::Corrected)] {
+            assert!(matches!(
+                chosen(&[], requested).0,
+                Err(PrepareError::NoVisibilityColumn)
+            ));
+        }
+        // An explicit DATA is not checked here; reading the missing column
+        // refuses it later, as before.
         assert!(matches!(
-            visibility_column(&ms, None),
-            Err(PrepareError::NoVisibilityColumn)
+            chosen(&[], Some(DataColumn::Data)).0,
+            Ok(OwnerVisibilityColumn::Data)
+        ));
+    }
+
+    #[test]
+    fn corrected_falls_back_to_data_with_a_warning_when_the_ms_has_no_corrected_data() {
+        let (column, warnings) = chosen(&[OptionalMainColumn::Data], Some(DataColumn::Corrected));
+        assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
+        assert_eq!(
+            warnings,
+            ["CORRECTED_DATA column does not exist. Using DATA column instead"]
+        );
+    }
+
+    #[test]
+    fn an_unspecified_column_falls_back_to_data_without_a_warning() {
+        let (column, warnings) = chosen(&[OptionalMainColumn::Data], None);
+        assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn corrected_images_corrected_data_when_the_ms_has_it() {
+        let both = [OptionalMainColumn::Data, OptionalMainColumn::CorrectedData];
+        for requested in [None, Some(DataColumn::Corrected)] {
+            let (column, warnings) = chosen(&both, requested);
+            assert!(matches!(column, Ok(OwnerVisibilityColumn::CorrectedData)));
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+        assert!(matches!(
+            chosen(&both, Some(DataColumn::Data)).0,
+            Ok(OwnerVisibilityColumn::Data)
         ));
     }
 }

@@ -103,6 +103,7 @@ mod creation;
 mod cursor;
 mod ephemeris;
 mod grouping;
+mod merge;
 mod pointing;
 mod pool;
 mod request;
@@ -127,6 +128,7 @@ pub use ephemeris::{EphemerisSample, FieldEphemeris};
 pub use grouping::{
     FragmentPosition, GroupCompletion, GroupFragment, GroupKey, ReadEvent, WorkToken,
 };
+pub use merge::{InputMap, MergeTolerance, Merged, merge};
 pub use pointing::{
     AntennaPointing, PointingBracket, PointingCandidate, PointingDirection, PointingRequest,
     PointingSeries,

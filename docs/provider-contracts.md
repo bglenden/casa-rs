@@ -371,8 +371,8 @@ data in column-major (Fortran) order. `casars._core` rebuilds Python's
 types and NumPy arrays from it, so a CASA-signature wrapper returns what
 CASA returns. `tools/casa-compat/record_casa_returns.py` records the
 structure of CASA's own return values
-(`resources/casa-compat/casa-6.7.6.14/returns.json`), which the image task
-tests compare against.
+(`resources/casa-compat/casa-6.7.6.14/returns.json`), which the image and
+MeasurementSet task tests compare against.
 
 ## Shared Versioned Component Schemas
 

@@ -18,8 +18,8 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | bandpass | bandpass | no | 35 | 19 | 16 | 0 | 8 | 15 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
-| flagdata | flagdata | no | 76 | 18 | 58 | 0 | 0 | 13 |
-| flagmanager | flagmanager | no | 6 | 6 | 0 | 0 | 0 | 4 |
+| flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
+| flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | no | 15 | 3 | 12 | 0 | 7 | 2 |
 | gaincal | gaincal | no | 38 | 18 | 20 | 0 | 11 | 14 |
 | gencal | gencal | no | 14 | 5 | 9 | 0 | 5 | 5 |
@@ -29,15 +29,15 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
 | impbcor | impbcor | yes | 12 | 12 | 0 | 6 | 0 | 0 |
 | importfits | importfits | yes | 9 | 9 | 0 | 6 | 0 | 0 |
-| importvla | importvla | no | 12 | 12 | 0 | 0 | 0 | 6 |
+| importvla | importvla | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | impv | impv | yes | 16 | 16 | 0 | 9 | 0 | 0 |
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 16 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
-| mstransform | mstransform | no | 55 | 10 | 45 | 0 | 1 | 8 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| split | split | no | 19 | 10 | 9 | 0 | 1 | 8 |
+| split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
 
 ## Tasks
 
@@ -129,24 +129,12 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
   - returns at line 611: `summary_stats`
   - returns at line 800: `summary_stats_list`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `timedevscale`, `freqdevscale`, `spectralmax`, `spectralmin`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growtime`, `growfreq`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `spwchan`, `spwcorr`, `basecnt`, `fieldcnt`, `name`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `spwchan`, `spwcorr`, `basecnt`, `fieldcnt`, `name`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
 - casa-rs parameters CASA lacks: none
-- Shared parameters: 18, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `mode`: `'manual'`, `summary`
-  - `spw`: `''`, `none`
-  - `field`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `datacolumn`: `'DATA'`, `data`
-  - `quackinterval`: `1.0`, `0.0`
-  - `extendflags`: `True`, `false`
-  - `timedev`: `''`, `none`
-  - `freqdev`: `''`, `none`
-  - `extendpols`: `True`, `false`
-  - `action`: `'apply'`, `flag`
+- Shared parameters: 76, in CASA's order: yes
+- Defaults that differ: none
 
 ### flagmanager
 
@@ -154,15 +142,11 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Implementation: `casatasks/private/task_flagmanager.py`, `flagmanager` (line 8): 1 return statements, 9 raise statements
   - returns at line 49: `fversionsdict`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
+- CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 6, in CASA's order: yes
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `versionname`: `''`, `none`
-  - `oldname`: `''`, `none`
-  - `comment`: `''`, `none`
+- Defaults that differ: none
 
 ### fluxscale
 
@@ -339,17 +323,11 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - CASA source: `casatasks/importvla.py`, 12 parameters
 - Implementation: `casatasks/private/task_importvla.py`, `importvla` (line 10): 0 return statements, 7 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: *** Error importing [] to : Need valid visibility file name (bad name or already exists)
-- CASA's signature: not yet
+- CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
-- Defaults that differ (CASA, casa-rs):
-  - `archivefiles`: `[]`, `required`
-  - `vis`: `''`, `[]`
-  - `bandname`: `''`, `none`
-  - `project`: `''`, `none`
-  - `starttime`: `''`, `none`
-  - `stoptime`: `''`, `none`
+- Defaults that differ: none
 
 ### impv
 
@@ -411,19 +389,12 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
   - returns at line 137: `True`
   - returns at line 150: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `chanaverage`, `chanbin`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `taql`, `monolithic_processing`, `reindex`
-- casa-rs parameters CASA lacks: `msselect`
-- Shared parameters: 10, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `outputvis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `timerange`: `''`, `none`
-  - `datacolumn`: `'corrected'`, `DATA`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 55, in CASA's order: yes
+- Defaults that differ: none
 
 ### plotms
 
@@ -449,16 +420,9 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Implementation: `casatasks/private/task_split.py`, `split` (line 21): 1 return statements, 1 raise statements
   - returns at line 63: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
-- Shared parameters: 10, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `outputvis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `timerange`: `''`, `none`
-  - `datacolumn`: `'corrected'`, `DATA`
+- Shared parameters: 19, in CASA's order: yes
+- Defaults that differ: none

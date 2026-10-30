@@ -48,6 +48,26 @@ fn clipzeros_matches_casa_float_epsilon_behavior() {
 }
 
 #[test]
+fn clip_with_its_defaults_flags_nans_as_casa_does() {
+    // Astra's #997 F4: CASA's clip mode with clipminmax=[] and
+    // clipzeros=False flags NaNs; zeros stay.
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    seed_constant_data_with_outliers(&ms_path, &[(0, 0, 0, f32::NAN), (1, 2, 3, 0.0)]);
+    let reply = flagdata_json_run(serde_json::json!({
+        "vis": ms_path, "mode": "clip", "flagbackup": false,
+    }));
+    assert!(
+        matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+        "{reply:?}"
+    );
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    assert_eq!(flag_count(&ms), 1);
+    assert_flag(&ms, 0, 0, 0);
+    assert_not_flag(&ms, 1, 2, 3);
+}
+
+#[test]
 fn tfcrop_flags_time_and_frequency_outliers() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
@@ -91,8 +111,9 @@ fn rflag_uses_explicit_thresholds_to_flag_time_and_spectral_outliers() {
     .expect("run rflag");
 
     assert!(report.changed_samples >= 2);
-    assert_eq!(report.timedev, Some(1.0));
-    assert_eq!(report.freqdev, Some(10.0));
+    // The thresholds used: each given one times its default scale of 5.
+    assert_eq!(report.timedev, Some(5.0));
+    assert_eq!(report.freqdev, Some(50.0));
     assert_flag(&ms, 0, 0, 5);
     assert_flag(&ms, 3, 1, 7);
 }
@@ -137,6 +158,115 @@ fn the_flagdata_binary_applies_explicit_rflag_thresholds() {
         let ms = MeasurementSet::open(&ms_path).expect("open MS");
         assert_flag(&ms, 0, 0, 5);
         assert_flag(&ms, 3, 1, 7);
+    }
+}
+
+/// The `flagdata` binary's reply to a `--json-run` request of `values`.
+fn flagdata_json_run(values: serde_json::Value) -> casa_provider_contracts::TaskReply {
+    let temp = tempdir().expect("tempdir");
+    let request = temp.path().join("request.json");
+    let request_text = serde_json::json!({"surface": "flagdata", "values": values}).to_string();
+    std::fs::write(&request, request_text).expect("write request");
+    let output = Command::new(env!("CARGO_BIN_EXE_flagdata"))
+        .args(["--json-run", request.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("run flagdata");
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output.stderr)))
+}
+
+/// The flags an rflag run of `values` leaves on a fresh fixture whose DATA
+/// is `data(row, corr, chan)`, with `rows` as (row, scan, time offset).
+fn rflag_flags(
+    rows: &[(usize, i32, f64)],
+    data: impl Fn(usize, usize, usize) -> f32,
+    values: serde_json::Value,
+) -> usize {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    set_scan_and_time(&ms_path, rows);
+    seed_data(&ms_path, data);
+    let mut values = values;
+    values["vis"] = serde_json::json!(ms_path);
+    values["mode"] = serde_json::json!("rflag");
+    values["extendflags"] = serde_json::json!(false);
+    values["flagbackup"] = serde_json::json!(false);
+    let reply = flagdata_json_run(values);
+    assert!(
+        matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+        "{reply:?}"
+    );
+    flag_count(&MeasurementSet::open(&ms_path).expect("open MS"))
+}
+
+#[test]
+fn rflag_scales_a_given_threshold_as_it_scales_a_computed_one() {
+    // Astra's #997 F2: CASA multiplies a given timedev or freqdev by its
+    // scale too. Each row a scan of its own, every spectrum zero but for 2
+    // in its last channel: a spectral deviation of 2 from the median.
+    let separate = [(0, 1, 0.0), (1, 2, 1.0), (2, 3, 2.0), (3, 4, 3.0)];
+    let spike = |_: usize, _: usize, chan: usize| if chan == NUM_CHAN - 1 { 2.0 } else { 0.0 };
+    let spectral = |scale: f64| {
+        rflag_flags(
+            &separate,
+            spike,
+            serde_json::json!({"timedev": 1e9, "freqdev": 1.0, "freqdevscale": scale}),
+        )
+    };
+    assert_eq!(spectral(1.0), 4 * NUM_CORR, "one channel of each spectrum");
+    assert_eq!(spectral(5.0), 0, "CASA flags none at freqdev 1.0 times 5");
+
+    // One scan of four times; correlation 0 of channel 5 is 3 at the third:
+    // each three-time window of it has a deviation of sqrt(2).
+    let scan = [(0, 1, 0.0), (1, 1, 1.0), (2, 1, 2.0), (3, 1, 3.0)];
+    let step = |row: usize, corr: usize, chan: usize| {
+        if (row, corr, chan) == (2, 0, 5) {
+            3.0
+        } else {
+            0.0
+        }
+    };
+    let temporal = |scale: f64| {
+        rflag_flags(
+            &scan,
+            step,
+            serde_json::json!({"timedev": 1.0, "freqdev": 1e9, "timedevscale": scale}),
+        )
+    };
+    assert_eq!(temporal(1.0), 4, "channel 5 of correlation 0 at every time");
+    assert_eq!(temporal(5.0), 0);
+}
+
+#[test]
+fn rflag_thresholds_take_casas_empty_list_and_name_978_for_its_other_forms() {
+    // Astra's #997 F9: CASA's [] is rflag's own threshold, as '' is; its
+    // per-field and per-window thresholds and threshold files are #978.
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    for (value, refused) in [
+        (serde_json::json!([]), false),
+        (serde_json::json!(""), false),
+        (serde_json::json!([[0, 0, 1.5]]), true),
+        (serde_json::json!("thresholds.txt"), true),
+    ] {
+        for name in ["timedev", "freqdev"] {
+            let reply = flagdata_json_run(serde_json::json!({
+                "vis": ms_path, "mode": "rflag", "flagbackup": false, name: value,
+            }));
+            match (refused, reply) {
+                (false, casa_provider_contracts::TaskReply::Succeeded { .. }) => {}
+                (
+                    true,
+                    casa_provider_contracts::TaskReply::Failed {
+                        parameter, message, ..
+                    },
+                ) => {
+                    assert_eq!(parameter.as_deref(), Some(name), "{message}");
+                    assert!(message.contains("#978"), "{name}={value}: {message}");
+                }
+                (_, other) => panic!("{name}={value}: {other:?}"),
+            }
+        }
     }
 }
 
@@ -212,9 +342,11 @@ fn manual_flagging_respects_spw_channel_selection_and_unflag_action() {
 fn quack_flags_scan_edges_for_beg_and_end_modes() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
+    // Row 1 is exactly quackinterval from both ends of scan 7, and CASA's
+    // quack agent flags it in both modes (Astra's #997 F7).
     set_scan_and_time(
         &ms_path,
-        &[(0, 7, 0.0), (1, 7, 2.0), (2, 7, 5.0), (3, 8, 0.0)],
+        &[(0, 7, 0.0), (1, 7, 3.0), (2, 7, 6.0), (3, 8, 0.0)],
     );
     let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
 
@@ -259,8 +391,9 @@ fn quack_flags_scan_edges_for_beg_and_end_modes() {
     )
     .expect("quack end of scan");
 
-    assert_eq!(end_report.changed_rows, 2);
+    assert_eq!(end_report.changed_rows, 3);
     assert_not_flag(&ms, 0, 0, 0);
+    assert_flag(&ms, 1, 0, 0);
     assert_flag(&ms, 2, 0, 0);
     assert_flag(&ms, 3, 0, 0);
 }
@@ -301,6 +434,34 @@ fn extend_mode_grows_existing_flags_across_pols_time_and_frequency() {
     assert_flag(&ms, 0, 1, 15);
     assert_flag(&ms, 0, 0, 7);
     assert!(flag_row(&ms, 0));
+}
+
+#[test]
+fn extend_grows_each_correlation_on_its_own_and_reads_no_data_column() {
+    // Astra's #997 F3 and F10, through the binary: half of correlation 0's
+    // channels flagged on row 0 grow to all of them with growfreq=50, and to
+    // every correlation only with extendpols. CASA's extension agent reads
+    // flags alone, so CORRECTED on a MeasurementSet without the column is
+    // no failure.
+    for (extendpols, expected) in [(false, NUM_CHAN), (true, NUM_CORR * NUM_CHAN)] {
+        let temp = tempdir().expect("tempdir");
+        let ms_path = create_msexplore_fixture_ms(temp.path());
+        for chan in 0..NUM_CHAN / 2 {
+            set_flag(&ms_path, 0, 0, chan, true);
+        }
+        let reply = flagdata_json_run(serde_json::json!({
+            "vis": ms_path, "mode": "extend", "datacolumn": "CORRECTED",
+            "growtime": 0.0, "growfreq": 50.0, "extendpols": extendpols,
+            "flagbackup": false,
+        }));
+        assert!(
+            matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+            "{reply:?}"
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open MS");
+        assert_eq!(flag_count(&ms), expected, "extendpols={extendpols}");
+        assert_flag(&ms, 0, 0, NUM_CHAN - 1);
+    }
 }
 
 #[test]
@@ -607,6 +768,22 @@ fn flagdata_and_flagmanager_bins_emit_json() {
     let flagmanager_json: serde_json::Value =
         serde_json::from_slice(&flagmanager_output.stdout).expect("flagmanager JSON");
     assert_eq!(flagmanager_json[0]["name"], "main");
+}
+
+/// Set every row's DATA to `data(row, corr, chan)`.
+fn seed_data(ms_path: &std::path::Path, data: impl Fn(usize, usize, usize) -> f32) {
+    let mut ms = MeasurementSet::open(ms_path).expect("open MS for seed");
+    for row in 0..ms.row_count() {
+        let values = ArrayD::from_shape_fn(IxDyn(&[NUM_CORR, NUM_CHAN]), |index| {
+            Complex32::new(data(row, index[0], index[1]), 0.0)
+        });
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "DATA")
+            .expect("DATA cell")
+            .set(Value::Array(ArrayValue::Complex32(values)))
+            .expect("set DATA");
+    }
+    ms.save_main_table_only().expect("save seeded DATA");
 }
 
 fn seed_constant_data_with_outliers(

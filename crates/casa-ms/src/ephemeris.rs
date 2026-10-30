@@ -19,7 +19,9 @@ use thiserror::Error;
 use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, SelectedObservationReferenceDataBudget};
 
-const AU_METRES: f64 = 149_597_870_700.0;
+/// The astronomical unit, metres, in which ephemeris tables state `Rho`
+/// (and `RadVel` per day).
+pub(crate) const AU_METRES: f64 = 149_597_870_700.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EvaluatedEphemerisSample {
@@ -501,7 +503,7 @@ impl EphemerisSeriesPreflight {
     }
 }
 
-fn find_field_ephemeris(
+pub(crate) fn find_field_ephemeris(
     root: &Path,
     ephemeris_id: i32,
 ) -> Result<PathBuf, SelectedObservationEphemerisError> {

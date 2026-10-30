@@ -26,14 +26,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table_path = output_dir.join("python_fixture.table");
     let image_path = output_dir.join("python_fixture.image");
     let model_path = output_dir.join("simulator_model.image");
+    let direction_path = output_dir.join("direction_fixture.image");
+    let short_path = output_dir.join("short_coordinates.image");
 
     create_table_fixture(&table_path)?;
     create_image_fixture(&image_path)?;
     create_sky_model_fixture(&model_path)?;
+    create_direction_fixture(&direction_path)?;
+    create_short_coordinates_fixture(&short_path)?;
 
     println!("{}", table_path.display());
     println!("{}", image_path.display());
     println!("{}", model_path.display());
+    println!("{}", direction_path.display());
+    println!("{}", short_path.display());
+    Ok(())
+}
+
+/// A sky image for `imexplore`'s WCS, its direction after a Stokes axis and
+/// rotated: Stokes I, a J2000 SIN direction whose PC matrix turns by 0.3
+/// rad, and three channels, over pixel axes [Stokes, RA, Dec, Frequency] of
+/// shape [1, 6, 5, 3]. Pixel [s, x, y, c] holds `10x + y + 100c`. Its
+/// `misc_info` holds casa-rs's world coordinates (`expected_world`, in
+/// radians, Stokes codes and hertz) at the pixels `expected_pixels`.
+fn create_direction_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    let (sin, cos) = 0.3_f64.sin_cos();
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coords.add_coordinate(
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-5, 2.0e-5],
+            [2.5, 1.5],
+        )
+        .with_pc_matrix(ndarray::array![[cos, -sin], [sin, cos]]),
+    );
+    coords.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.4e9,
+        1.0e6,
+        0.0,
+        1.420_405_752e9,
+    ));
+    let pixels = [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 5.0, 0.0, 1.0],
+        [0.0, 0.0, 4.0, 1.0],
+        [0.0, 3.0, 2.0, 1.0],
+        [0.0, 5.0, 4.0, 1.0],
+    ];
+    let mut world = Vec::new();
+    for pixel in &pixels {
+        world.extend(coords.to_world(pixel)?);
+    }
+    let shape = vec![1, 6, 5, 3];
+    let mut image = Image::create(shape.clone(), coords, path)?;
+    let values = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+        (10 * index[1] + index[2] + 100 * index[3]) as f32
+    });
+    image.put_slice(&values, &[0, 0, 0, 0])?;
+    let table = |values: Vec<f64>| -> Result<Value, Box<dyn std::error::Error>> {
+        let array = ArrayD::from_shape_vec(IxDyn(&[pixels.len(), 4]), values)?;
+        Ok(Value::Array(ArrayValue::Float64(array)))
+    };
+    image.set_misc_info(RecordValue::new(vec![
+        RecordField::new("expected_pixels", table(pixels.concat())?),
+        RecordField::new("expected_world", table(world)?),
+    ]))?;
+    image.save()?;
+    Ok(())
+}
+
+/// An image whose coordinate system describes two of its three axes, a
+/// direction over [4, 3, 2] pixels.
+fn create_short_coordinates_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [1.2, -0.4],
+        [-2.0e-5, 2.0e-5],
+        [2.0, 1.0],
+    ));
+    let mut image = Image::create(vec![4, 3, 2], coords, path)?;
+    image.save()?;
     Ok(())
 }
 
