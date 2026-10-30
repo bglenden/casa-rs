@@ -29,3 +29,10 @@ impl PyTableTool {
         Self
     }
 }
+
+/// The tool keeps its table behind a `Mutex` and releases the GIL around
+/// Rust work (ADR-0019 item 4), which needs the table to be `Send`.
+const _: fn() = || {
+    fn is_send<T: Send>() {}
+    is_send::<casa_tables::Table>();
+};
