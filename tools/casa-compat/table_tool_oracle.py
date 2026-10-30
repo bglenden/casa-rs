@@ -31,8 +31,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from casatools import table
-import casatools
 
 PLACEHOLDER = "<TABLE>"
 COLUMNS = ["id", "label", "gain", "spectrum", "vary", "meta"]
@@ -398,6 +396,8 @@ MS_ROWS = 3
 
 
 def ms_steps(source):
+    from casatools import table  # CASA's Python only: `encode` is imported without it
+
     probe = table()
     probe.open(str(source))
     columns = list(probe.colnames())
@@ -426,6 +426,8 @@ def run_scenario(steps, source):
     work = Path(tempfile.mkdtemp(prefix="tb_oracle_"))
     path = str(work / Path(source).name)
     shutil.copytree(source, path)
+    from casatools import table
+
     tool = table()
     record = []
     for method, args, keywords in steps:
@@ -451,6 +453,8 @@ def run_scenario(steps, source):
 
 
 def main():
+    import casatools
+
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("fixture", type=Path)
     parser.add_argument("ms", type=Path)

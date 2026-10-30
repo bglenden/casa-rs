@@ -210,6 +210,20 @@ impl State {
                 .save_metadata_only(TableOptions::new(&open.name))
                 .map_err(Fail::from)
         });
+        // A table that holds the write lock and has changes it has not
+        // flushed is written in full, as StManAipsIO, when it is closed or
+        // dropped: a `user` table closed without an unlock, a `permanent`
+        // one always. The change is on disk (or, if it failed, must not be),
+        // so reload the table: it then matches the disk, with nothing left
+        // to flush, and the write is still published when the lock is
+        // released. An automatic table releases through
+        // `unlock_metadata_only`, which does the same.
+        if saved.is_err() || !automatic {
+            let reloaded = open.table.resync().map_err(Fail::from);
+            if saved.is_ok() {
+                reloaded?;
+            }
+        }
         if automatic {
             let released = open.table.unlock_metadata_only();
             saved?;

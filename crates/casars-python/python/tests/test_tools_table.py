@@ -263,6 +263,55 @@ def test_writes_to_keywords_and_info_leave_the_storage_managers_alone(
     reader.done()
 
 
+@pytest.mark.parametrize(
+    ("option", "lock_first", "ending"),
+    [
+        ("auto", False, "drop"),
+        ("auto", False, "done"),
+        ("permanent", False, "close"),
+        ("permanent", False, "drop"),
+        ("user", True, "close"),
+        ("user", True, "unlock"),
+        ("user", True, "drop"),
+    ],
+)
+def test_a_write_leaves_the_storage_managers_alone_however_the_table_ends(
+    option: str, lock_first: bool, ending: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """On a MeasurementSet, whose storage managers a rewrite would visibly
+    change: a table that holds the write lock when it is closed or dropped (a
+    `permanent` one, a `user` one not unlocked) is written in full by
+    casa-tables unless the tool left nothing unflushed (#1025)."""
+    import gc
+
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if lock_first:
+        assert tool.lock()
+    assert tool.putkeyword("added", 7)
+    assert tool.putcolkeyword("TIME", "note", "x")
+    if ending == "unlock":
+        assert tool.unlock()
+        assert tool.close()
+    elif ending in ("close", "done"):
+        assert getattr(tool, ending)()
+    else:
+        del tool
+        gc.collect()
+    after = table_files(path)
+    assert set(after) == set(before)
+    assert {name for name in before if before[name] != after[name]} == {"table.dat"}
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.getkeyword("added") == 7
+    assert reader.getcolkeyword("TIME", "note") == "x"
+    assert reader.nrows() == 1058
+    reader.done()
+
+
 def test_an_int_beyond_32_bits_is_kept_where_casa_truncates_it(
     fixtures: dict[str, Path], tmp_path: Path
 ) -> None:
