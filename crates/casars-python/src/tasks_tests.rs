@@ -12,8 +12,12 @@ fn the_application_catalog_lists_every_launch_entry() {
     assert!(
         applications
             .iter()
-            .all(|application| application.kind == "task" && application.id != "casars")
+            .all(|application| application.id != "casars")
     );
+    // Every entry is a task (#972 dropped the field that said so), and an
+    // entry holds only what a launch reads.
+    let entry = serde_json::to_value(&applications[0]).unwrap();
+    assert!(entry.get("kind").is_none() && entry.get("show_in_tui").is_none());
     assert!(applications.iter().any(|application| {
         application.id == "tclean"
             && application.display_name == "Tclean"

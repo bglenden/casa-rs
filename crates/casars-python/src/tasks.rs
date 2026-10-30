@@ -25,7 +25,6 @@ use crate::parameters::{reason_error, to_python};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ApplicationView {
     pub(crate) id: String,
-    pub(crate) kind: String,
     pub(crate) category: String,
     pub(crate) display_name: String,
     pub(crate) executable: String,
@@ -45,19 +44,8 @@ pub(crate) fn applications() -> Result<Vec<ApplicationView>, String> {
             let bundle = application
                 .surface_bundle()
                 .map_err(|reason| format!("resolve application {}: {reason}", application.id))?;
-            let kind = serde_json::to_value(application.kind)
-                .map_err(|error| format!("project application kind: {error}"))?
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| {
-                    format!(
-                        "application {} has a non-string enum projection",
-                        application.id
-                    )
-                })?;
             Ok(ApplicationView {
                 id: application.id.clone(),
-                kind,
                 display_name: bundle.surface.display_name().to_string(),
                 category: bundle.surface.category().to_string(),
                 executable: application.launch.executable.clone(),
