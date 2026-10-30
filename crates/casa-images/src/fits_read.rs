@@ -137,7 +137,7 @@ fn read_primary_fits_header(
     }
     for key in [
         "RADESYS", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4",
-        "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
+        "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER", "DATE-OBS", "TIMESYS",
     ] {
         if let Some(value) = read_optional_key::<String>(fits, hdu, key)? {
             header.set(key, FitsValue::String(value.trim_end().to_string()));
@@ -146,7 +146,7 @@ fn read_primary_fits_header(
     for key in [
         "EQUINOX", "CRVAL1", "CRVAL2", "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4",
         "CDELT1", "CDELT2", "CDELT3", "CDELT4", "RESTFRQ", "BMAJ", "BMIN", "BPA", "IMTYPE",
-        "LONPOLE", "LATPOLE", "CROTA2",
+        "LONPOLE", "LATPOLE", "CROTA2", "MJD-OBS",
     ] {
         if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
             header.set(key, FitsValue::Float(value));

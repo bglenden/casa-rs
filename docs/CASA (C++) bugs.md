@@ -103,7 +103,8 @@ Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
-[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table).
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
+[a FITS date's time scale](#importfits-reads-every-fits-date-as-utc).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2495,3 +2496,22 @@ reads the input's world values at the pixels it was cut from. CASA's
 `imsubimage` ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
+
+## `importfits` reads every FITS date as UTC
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1017)
+- Affected code: casacore `coordinates/Coordinates/FITSCoordinateUtil.cc`
+  (`getObsInfo`, which reads `TIMESYS` from the header record, and the WCS
+  date wcslib holds)
+
+`exportfits` writes an image's observation date in the epoch's own time
+scale, `DATE-OBS` with `TIMESYS` naming the scale (`ObsInfo::toFITS`).
+`importfits` gives the date back with the same calendar value but labelled
+UTC, whatever `TIMESYS` says. An image observed at 2020-05-31 12:00 TAI
+exported by CASA 6.7.6 with `TIMESYS = 'TAI'` imports at 2020-05-31 12:00
+UTC, 37 seconds later. Where the scale is lost was not pinned down:
+`getObsInfo` reads `TIMESYS` from the header record and the date from
+wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
+when it names none (`casa_coordinates::fits::from_fits_header`), so the
+round trip keeps the date.

@@ -4380,6 +4380,13 @@ mod tests {
             372.0e9,
         ));
 
+        // Observed at 2020-05-31 12:00 TAI: the date keeps its time scale
+        // (#1017).
+        coordinates.obs_info_mut().date = Some(casa_types::measures::epoch::MEpoch::from_mjd(
+            59_000.5,
+            casa_types::measures::EpochRef::TAI,
+        ));
+
         let shape = vec![3, 2, 2, 5];
         let mut source =
             PagedImage::<f32>::create(shape.clone(), coordinates, &source_path).unwrap();
@@ -4418,6 +4425,15 @@ mod tests {
         assert!((beam.major_in("deg").unwrap() - 1.7e-4).abs() < 1.0e-12);
         assert!((beam.minor_in("deg").unwrap() - 1.2e-4).abs() < 1.0e-12);
         assert!((beam.position_angle_in("deg").unwrap() + 34.5).abs() < 1.0e-12);
+        let date = imported.coordinates().obs_info().date.as_ref().unwrap();
+        assert_eq!(date.refer(), casa_types::measures::EpochRef::TAI);
+        assert_eq!(date.value().as_mjd(), 59_000.5);
+        // As CASA 6.7.6's exportfits writes the date: ISO, in its own scale.
+        assert_eq!(
+            read_fits_key_as_string(&first_fits, "DATE-OBS"),
+            "2020-05-31T12:00:00.000000"
+        );
+        assert_eq!(read_fits_key_as_string(&first_fits, "TIMESYS"), "TAI");
 
         assert_eq!(
             read_fits_pixels(&first_fits),
@@ -4428,6 +4444,7 @@ mod tests {
             "OBJECT", "RADESYS", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4", "CRVAL1", "CRVAL2",
             "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4", "CDELT1", "CDELT2",
             "CDELT3", "CDELT4", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "RESTFRQ", "SPECSYS",
+            "DATE-OBS", "TIMESYS",
         ] {
             assert_fits_key_matches(&first_fits, &second_fits, key);
         }
