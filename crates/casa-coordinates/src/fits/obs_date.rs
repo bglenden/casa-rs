@@ -25,7 +25,9 @@ pub(super) fn fits_date(epoch: &MEpoch) -> (String, String) {
 
 /// The epoch of a header's `MJD-OBS`, or else its `DATE-OBS`, in the scale
 /// of its `TIMESYS`; `None` when it has neither date, or the date or scale
-/// does not decode, as casacore then sets no date.
+/// does not decode. casa-rs then sets no date rather than guess a scale:
+/// `FITSDateUtil::fromFITS` refuses an unknown one, though CASA 6.7.6's
+/// `importfits`, which loses every `TIMESYS`, labels the date UTC.
 pub(super) fn obs_epoch(
     mjd_obs: Option<f64>,
     date_obs: Option<&str>,
@@ -89,11 +91,47 @@ mod tests {
     }
 
     #[test]
+    fn dates_at_day_and_leap_day_boundaries_are_written_as_casa_writes_them() {
+        // CASA 6.7.6's exportfits of each epoch (#1020 review): the last
+        // microsecond of a day, the last of a leap day and the next day's
+        // first, and an epoch whose rounding would carry over midnight.
+        for (value, reference, date) in [
+            (
+                59_000.999_999_999_99,
+                EpochRef::UTC,
+                "2020-05-31T23:59:59.999999",
+            ),
+            (
+                59_001.0 - 5.0e-12,
+                EpochRef::UTC,
+                "2020-05-31T23:59:59.999999",
+            ),
+            (58_908.5, EpochRef::UTC, "2020-02-29T12:00:00.000000"),
+            (
+                58_908.999_999_999_99,
+                EpochRef::UTC,
+                "2020-02-29T23:59:59.999999",
+            ),
+            (58_909.0, EpochRef::UTC, "2020-03-01T00:00:00.000000"),
+            // CASA names these scales UT and TDT; casa-rs writes the FITS
+            // standard's UT1 and TT, which casacore reads alike.
+            (59_000.25, EpochRef::UT1, "2020-05-31T06:00:00.000000"),
+            (51_544.5, EpochRef::TT, "2000-01-01T12:00:00.000000"),
+        ] {
+            let (written, timesys) = fits_date(&MEpoch::from_mjd(value, reference));
+            assert_eq!(written, date, "{value} {reference:?}");
+            assert_eq!(timesys, reference.as_str());
+        }
+    }
+
+    #[test]
     fn a_written_date_reads_back_in_its_scale() {
         for (value, reference) in [
             (51_544.123_456_789, EpochRef::UTC),
             (59_000.5, EpochRef::TAI),
             (60_000.25, EpochRef::TT),
+            (59_000.25, EpochRef::UT1),
+            (58_908.999_999_999_99, EpochRef::UTC),
         ] {
             let (date, timesys) = fits_date(&MEpoch::from_mjd(value, reference));
             let epoch = obs_epoch(None, Some(&date), Some(&timesys)).unwrap();
