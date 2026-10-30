@@ -16,24 +16,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, IdSelection,
-    IntentSelection, MsColumnKind, ObservationSelection, RowSelection, SelectedMainRow,
-    SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn, WeightColumn,
-};
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
-use casa_ms::{
-    SelectedObservationContentBudget, SelectedObservationResolutionRequest,
-    SelectedVisibilityWrite, SelectedVisibilityWriteTargets, resolve_selected_observation,
+use casa_ms::observation_io::{Msv2Observation, OpenOptions, open_update};
+use casa_observation::{
+    AccessRequest, BatchBuffers, CorrelationRequest, FieldSelection, Grouping, PatchValues,
+    ReadEvent, Roles, TimeSelection, UpdateTarget, WeightRequest, WritableRole,
 };
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
-use casa_types::Correlation;
-use casa_types::{ArrayValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 
 use common::{populate_main_rows, populate_subtables};
 
@@ -95,6 +90,118 @@ fn rust_model_data_sample(
     values[[correlation, channel]]
 }
 
+/// MAIN's `(row, correlation, channel, value)` cells written into
+/// `MODEL_DATA` at `path` by casa-rs's imaging writer: an update session
+/// with a model target, which creates a `MODEL_DATA` MAIN lacks, seeded
+/// with CASA's initial model. Each cell is found in its partition's batches
+/// by its row's time, baseline and data description, and written alone:
+/// every other cell keeps what the session seeds or the column holds.
+fn write_model_cells(path: &Path, cells: &[(usize, usize, usize, casa_types::Complex32)]) {
+    let keys = {
+        let ms = MeasurementSet::open(path).expect("open the MS");
+        let main = ms.main_table();
+        let cell = |row: usize, column: &str| {
+            main.column_accessor(column)
+                .expect("MAIN column")
+                .get(row)
+                .expect("read")
+                .expect("defined")
+                .clone()
+        };
+        cells
+            .iter()
+            .map(|&(row, ..)| {
+                let Value::Scalar(ScalarValue::Float64(time_s)) = cell(row, "TIME") else {
+                    panic!("TIME is Float64")
+                };
+                let int = |column| match cell(row, column) {
+                    Value::Scalar(ScalarValue::Int32(value)) => value,
+                    other => panic!("{column} is {other:?}"),
+                };
+                (
+                    time_s,
+                    int("ANTENNA1"),
+                    int("ANTENNA2"),
+                    int("DATA_DESC_ID"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let partition_of = {
+        let opened = Msv2Observation::open(path).expect("open");
+        opened
+            .catalogue()
+            .partition_ids()
+            .into_iter()
+            .map(|id| (opened.data_description_id(id), id))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let model = UpdateTarget {
+        create: true,
+        ..UpdateTarget::new("model", WritableRole::Visibilities)
+    };
+    let session = open_update(path, &OpenOptions::default(), &[model]).expect("session");
+    let observation = session.observation();
+    let mut written = 0;
+    for (&data_description, &id) in &partition_of {
+        let channels = observation.catalogue().partition(id).frequencies_hz.len();
+        let request = AccessRequest {
+            partitions: vec![id],
+            data_group: "base".to_string(),
+            roles: Roles::ALL,
+            channels: 0..channels,
+            times: TimeSelection::All,
+            fields: FieldSelection::All,
+            weights: WeightRequest::Stored,
+            correlations: CorrelationRequest::ALL,
+            grouping: Grouping::None,
+            batch_bytes: usize::MAX,
+        };
+        let mut updater = session.updater(&request, &[0]).expect("updater");
+        let mut traversal = observation.bind_read(&request).expect("traversal");
+        let mut buffers = BatchBuffers::default();
+        while let Some(event) = traversal.next(&mut buffers).expect("read") {
+            let ReadEvent::Batch(batch) = event else {
+                continue;
+            };
+            let shape = batch.shape();
+            let mut values = ndarray::Array3::zeros(shape);
+            let mut mask = ndarray::Array3::from_elem(shape, false);
+            let origin_s = batch.time.origin().as_mjd() * 86_400.0;
+            for sample in 0..batch.samples() {
+                let coordinate = batch.sample(sample);
+                let time_s = origin_s + coordinate.time_offset_s;
+                for (
+                    &(_, correlation, channel, value),
+                    &(key_time_s, antenna1, antenna2, key_ddid),
+                ) in cells.iter().zip(&keys)
+                {
+                    if i64::from(key_ddid) == i64::from(data_description)
+                        && (key_time_s - time_s).abs() < 1e-3
+                        && i64::from(antenna1) == i64::from(coordinate.baseline.antenna1.0)
+                        && i64::from(antenna2) == i64::from(coordinate.baseline.antenna2.0)
+                    {
+                        values[[sample, channel, correlation]] = value;
+                        mask[[sample, channel, correlation]] = true;
+                        written += 1;
+                    }
+                }
+            }
+            updater
+                .write(
+                    &batch,
+                    &[PatchValues::Visibilities {
+                        values: values.view(),
+                        written: Some(mask.view()),
+                    }],
+                )
+                .expect("write the cells");
+        }
+        updater.finish().expect("finish");
+    }
+    assert_eq!(written, cells.len(), "every cell is a sample's");
+}
+
 #[test]
 fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     if !casacore_oracle_available() {
@@ -136,42 +243,8 @@ fn model_data_write_read_interoperability_matrix() {
     populate_main_rows(&mut ms, 6);
     ms.save().unwrap();
 
-    let selection = ObservationSelection::new(
-        SelectedRows::from_ordered_main_rows(
-            6,
-            (0_u32..6).map(|row| SelectedMainRow::new(u64::from(row), 0)),
-        )
-        .unwrap(),
-        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
-        vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, (0..16).collect())],
-        vec![CorrelationSelection::new(
-            0,
-            vec![
-                CorrelationProduct::new(0, Correlation::RR),
-                CorrelationProduct::new(1, Correlation::RL),
-                CorrelationProduct::new(2, Correlation::LR),
-                CorrelationProduct::new(3, Correlation::LL),
-            ],
-        )],
-    );
-    let request = SelectedObservationResolutionRequest::new(
-        ms_path.display().to_string(),
-        selection,
-        VisibilityColumn::Data,
-        WeightColumn::Weight,
-        SelectedObservationContentBudget::new(1 << 20, 6, 64),
-        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
-    );
-    resolve_selected_observation(request).expect("resolve the MS without preparation");
-    let mut writer =
-        SelectedVisibilityWrite::begin(&ms_path, SelectedVisibilityWriteTargets::new(true, false))
-            .expect("begin MODEL_DATA write");
     let rust_written = casa_types::Complex32::new(4.5, -1.25);
-    writer
-        .write(MsColumnKind::ModelData, 0, 0, 0, rust_written)
-        .expect("write prediction");
-    writer.complete().expect("complete MODEL_DATA write");
+    write_model_cells(&ms_path, &[(0, 0, 0, rust_written)]);
 
     MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
     let rust_manifest = ms_digest::measurement_set_manifest(&ms_path);
@@ -240,53 +313,9 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     let path = directory.path().join("cpp-heterogeneous-tiled-shape.ms");
     MeasurementSetOracle::write_heterogeneous_tiled_shape_fixture(&path)
         .expect("C++ creates heterogeneous TiledShapeStMan fixture");
-    let selection = ObservationSelection::new(
-        SelectedRows::from_ordered_main_rows(
-            2,
-            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
-        )
-        .expect("two heterogeneous rows"),
-        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
-        vec![
-            DataDescriptionSelection::new(0, 0, 0),
-            DataDescriptionSelection::new(1, 1, 0),
-        ],
-        vec![
-            SpectralWindowSelection::new(0, (0..16).collect()),
-            SpectralWindowSelection::new(1, (0..8).collect()),
-        ],
-        vec![CorrelationSelection::new(
-            0,
-            vec![
-                CorrelationProduct::new(0, Correlation::RR),
-                CorrelationProduct::new(1, Correlation::RL),
-                CorrelationProduct::new(2, Correlation::LR),
-                CorrelationProduct::new(3, Correlation::LL),
-            ],
-        )],
-    );
-    let request = SelectedObservationResolutionRequest::new(
-        path.display().to_string(),
-        selection.clone(),
-        VisibilityColumn::Data,
-        WeightColumn::Weight,
-        SelectedObservationContentBudget::new(1 << 20, 2, 64),
-        casa_test_support::deterministic_measures_provider_for_identity([91; 32]),
-    );
-    resolve_selected_observation(request).expect("resolve C++ fixture");
-
-    let mut writer =
-        SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
-            .expect("clone and initialize MODEL_DATA");
     let rust_first = casa_types::Complex32::new(4.25, -0.75);
     let rust_second = casa_types::Complex32::new(-3.0, 2.5);
-    writer
-        .write(MsColumnKind::ModelData, 0, 15, 3, rust_first)
-        .expect("write 4x16 cell");
-    writer
-        .write(MsColumnKind::ModelData, 1, 7, 2, rust_second)
-        .expect("write 4x8 cell");
-    writer.complete().expect("complete Rust write");
+    write_model_cells(&path, &[(0, 3, 15, rust_first), (1, 2, 7, rust_second)]);
 
     MeasurementSetOracle::verify_heterogeneous_model_clone(&path)
         .expect("C++ verifies cloned TiledShapeStMan and heterogeneous row shapes");

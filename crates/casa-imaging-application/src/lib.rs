@@ -352,8 +352,9 @@ fn prepare_and_run(
 /// catalogs compiling loads for the run. They are admitted before compile
 /// opens anything, after the process's caches
 /// ([`casa_imaging_runtime::charge_process_caches`]);
-/// the MeasurementSet walks are admitted once its rows are known
-/// ([`compile::prepare`]) and released once the problem compiles. The
+/// compile's survey of the observation is admitted once the partitions it
+/// reads are known ([`compile::prepare`]) and released once the problem
+/// compiles. The
 /// device the request resolves to is set in
 /// `resolved_backend` as soon as it is known.
 fn compile_run(
@@ -389,7 +390,7 @@ fn compile_run(
     })?;
     let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
-    drop(prepared.walks);
+    drop(prepared.survey);
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,

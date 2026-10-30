@@ -936,7 +936,7 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
 
 /// A field that follows an ephemeris carries it (#942): the table its
 /// `EPHEMERIS_ID` names, read once however many fields share it and equal
-/// to the samples the selected-observation reader takes from it, while its
+/// to the samples a phase centre naming the table reads from it, while its
 /// phase centre keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
 /// counts each shared ephemeris once. An `EPHEMERIS_ID` whose table is
 /// missing refuses opening.
@@ -953,11 +953,10 @@ fn fields_carry_the_ephemerides_they_follow() {
     let observation = open(&v2, &OpenOptions::default()).expect("v2 with ephemerides");
     let catalogue = observation.catalogue();
     let table = v2.join("FIELD").join("EPHEM0_COMET0.tab");
-    let budget = casa_ms::SelectedObservationContentBudget::new(1 << 20, 1, 1);
-    let today =
-        casa_ms::SelectedObservationEphemeris::external(&table, budget.reference_data_budget())
-            .expect("the selected-observation reading");
-    let expected = today.external_series().expect("a table");
+    let reading =
+        casa_ms::PhaseCentreEphemeris::external(&table, casa_ms::EphemerisBudget::new(1 << 20))
+            .expect("the phase-centre reading");
+    let expected = reading.external_series().expect("a table");
     let [first, second, fixed] = &catalogue.fields[..] else {
         panic!("three fields");
     };

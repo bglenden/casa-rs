@@ -97,17 +97,14 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
         let (image_name, outcome) =
             image(name, selection).unwrap_or_else(|error| panic!("{name}: {error}"));
         let selected = outcome.problem.observation().sources()[0].selection();
-        assert_eq!(selected.rows().selected_row_count(), 12, "{name}");
+        assert_eq!(selected.samples(), 12, "{name}");
         assert_eq!(
             selected
-                .data_descriptions()
+                .partitions()
                 .iter()
-                .map(|description| (
-                    description.data_description_id(),
-                    description.spectral_window_id()
-                ))
-                .collect::<Vec<_>>(),
-            [(0, 0), (1, 1)],
+                .map(|partition| partition.spectral_window_id())
+                .collect::<std::collections::BTreeSet<_>>(),
+            [0, 1].into(),
             "{name}"
         );
         for suffix in [".psf", ".residual", ".sumwt"] {
@@ -115,7 +112,7 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
         }
     }
 
-    // Each selector alone selects rows; together they select none.
+    // Each selector alone selects samples; together they select none.
     let error = image(
         "none",
         json!({ "uvrange": ">4000lambda", "intent": "CALIBRATE_PHASE*" }),
@@ -125,7 +122,7 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     assert!(
         matches!(
             error,
-            ApplicationDispatchError::Preparation(PrepareError::NoSelectedRows)
+            ApplicationDispatchError::Preparation(PrepareError::NoSelectedSamples)
         ),
         "{error}"
     );

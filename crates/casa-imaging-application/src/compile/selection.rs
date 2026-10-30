@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The selection a request names, resolved against its MeasurementSet: the
-//! data descriptions, spectral windows and channels, and one pass over the
-//! selected MAIN rows for the facts the later stages need.
+//! data descriptions, spectral windows and channels, the per-sample
+//! predicates, the visibility column, and the observation selection the
+//! survey's partitions make of them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, ObservationSelection, SelectedMainRow, SelectedRows,
-    SelectedRowsBuilder, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    VisibilityColumn as OwnerVisibilityColumn,
+    IdSelection, IntentSelection, ObservationSelection, ResolvedIntent, RowSelection,
+    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
-    MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
-    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+    MeasurementSet, UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
+    parse_uv_distance_intervals, resolve_channel_selector_selection,
 };
-use casa_types::Correlation;
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::PrepareError;
-use crate::{DataColumn, ImagingRequest, SpecMode};
+use super::survey::Survey;
+use crate::{DataColumn, ImagingRequest};
 
 /// One selected spectral window's frequency axis.
 pub(super) struct SourceSpectralWindow {
@@ -31,275 +30,91 @@ pub(super) struct SourceSpectralWindow {
     pub(super) channel_widths_hz: Vec<f64>,
 }
 
-/// The `|w|` envelope of the selected rows, in metres.
-#[derive(Clone, Copy)]
-pub(super) struct WRange {
-    pub(super) maximum_abs_m: f64,
-    pub(super) minimum_abs_m: f64,
-    pub(super) sum_squares_m2: f64,
-    pub(super) rows: u64,
-}
-
 /// Selected source channels per spectral window id.
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
-/// What one pass over the selected rows establishes.
-pub(super) struct Survey {
-    /// The request's row predicate over the data descriptions of the
-    /// selected rows.
-    pub(super) row_selection: SelectedObservationRowSelection,
-    pub(super) rows: SelectedRows,
-    /// The selected spectral windows, in one source frame.
-    pub(super) spectral_windows: Vec<SourceSpectralWindow>,
-    pub(super) source_frequency_reference: FrequencyRef,
-    pub(super) fields: BTreeSet<i32>,
-    pub(super) observation_ids: BTreeSet<i32>,
-    pub(super) first_time_mjd_seconds: f64,
-    pub(super) time_bounds_mjd_seconds: [f64; 2],
-    /// The first unflagged cross-correlation row (native AW reads its
-    /// parallactic angle).
-    pub(super) first_cross_row: Option<SelectedObservationRow>,
-    pub(super) w: WRange,
-    /// A continuum run's selected channels per window and their envelope.
-    pub(super) continuum: Option<(WindowChannels, SelectedObservationSpectralEnvelope)>,
-}
-
-/// Per-row facts gathered by the pass.
-struct RowFacts {
-    rows: SelectedRowsBuilder,
-    rows_error: Option<casa_imaging_model::SelectedRowSequenceError>,
-    ddids: BTreeSet<i32>,
-    fields: BTreeSet<i32>,
-    observation_ids: BTreeSet<i32>,
-    first_time_mjd_seconds: Option<f64>,
-    time_bounds_mjd_seconds: [f64; 2],
-    first_cross_row: Option<SelectedObservationRow>,
-    w: WRange,
-}
-
-impl RowFacts {
-    /// Nothing observed yet, over `row_count` MAIN rows and `ddids`
-    /// candidate data descriptions.
-    fn new(row_count: usize, ddids: usize) -> Self {
-        Self {
-            rows: SelectedRowsBuilder::with_data_description_capacity(
-                u64::try_from(row_count).expect("a MAIN row count fits u64"),
-                ddids,
-            ),
-            rows_error: None,
-            ddids: BTreeSet::new(),
-            fields: BTreeSet::new(),
-            observation_ids: BTreeSet::new(),
-            first_time_mjd_seconds: None,
-            time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
-            first_cross_row: None,
-            w: WRange {
-                maximum_abs_m: 0.0,
-                minimum_abs_m: f64::INFINITY,
-                sum_squares_m2: 0.0,
-                rows: 0,
-            },
-        }
-    }
-
-    fn observe(&mut self, row: SelectedObservationRow) {
-        self.ddids.insert(row.data_description_id());
-        self.fields.insert(row.field_id());
-        self.observation_ids.insert(row.observation_id());
-        self.first_time_mjd_seconds
-            .get_or_insert(row.time_mjd_seconds());
-        if !row.flag_row() && row.antenna1() != row.antenna2() {
-            self.first_cross_row.get_or_insert(row);
-        }
-        self.time_bounds_mjd_seconds[0] =
-            self.time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
-        self.time_bounds_mjd_seconds[1] =
-            self.time_bounds_mjd_seconds[1].max(row.time_mjd_seconds());
-        let [_, _, w_m] = row.uvw_m();
-        self.w.maximum_abs_m = self.w.maximum_abs_m.max(w_m.abs());
-        self.w.minimum_abs_m = self.w.minimum_abs_m.min(w_m.abs());
-        self.w.sum_squares_m2 += w_m * w_m;
-        self.w.rows += 1;
-        if self.rows_error.is_none() {
-            self.rows_error = self
-                .rows
-                .push(SelectedMainRow::new(
-                    u64::try_from(row.physical_row()).expect("row bounded by MS row count"),
-                    u32::try_from(row.data_description_id()).expect("validated nonnegative DDID"),
-                ))
-                .err();
-        }
-    }
-}
-
-/// Bytes an MFS run's spectral envelope reducer may hold beside the survey
-/// walk, admitted on its own: one key per MAIN row at most (each key stands
-/// for a row), and at most a sixty-fourth of the run's `memory` (16 MiB at
-/// least), with its fixed part. Its keys are the selection's distinct
-/// `TIME·(DATA_DESC_ID+1)` products, about an integration per data
-/// description, so this binds only beyond about a million integrations per
-/// gibibyte of memory.
-pub(super) fn envelope_bytes(ms: &MeasurementSet, memory: u64) -> Result<usize, PrepareError> {
-    let fields = ms.field()?.row_count();
-    let fixed = fields.saturating_mul(512).saturating_add(1 << 20);
-    let keys = ms
-        .row_count()
-        .saturating_mul(casa_ms::SPECTRAL_ENVELOPE_KEY_BYTES);
-    let share = usize::try_from(memory / 64)
-        .unwrap_or(usize::MAX)
-        .max(16 << 20);
-    Ok(fixed.saturating_add(keys.min(share)))
-}
-
-/// Resolve the request's selection and survey its rows in one pass; an MFS
-/// run's spectral envelope holds at most `envelope_bytes`, admitted beside
-/// the walk's `budget`.
-pub(super) fn survey(
+/// The request's per-sample predicates: its fields, UV-distance intervals
+/// and scan intents (the `STATE` rows its `intent` selector names, with
+/// their `OBS_MODE`s).
+pub(super) fn row_selection(
     request: &ImagingRequest,
     ms: &MeasurementSet,
-    budget: SelectedObservationContentBudget,
-    envelope_bytes: usize,
-    frame_engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<Survey, PrepareError> {
-    let data_description = ms.data_description()?;
-    let ddids = selected_data_descriptions(request, &data_description)?;
-    let row_selection = ms.selected_observation_row_selection(
-        &ddids,
-        request.field.as_deref(),
-        request.uvrange.as_deref(),
-        request.intent.as_deref(),
-    )?;
-    let mut spectral_windows = candidate_windows(ms, &data_description, &ddids)?;
-    let mut continuum = continuum_envelope(
-        request,
-        ms,
-        &row_selection,
-        &spectral_windows,
-        frame_engine,
-        envelope_bytes,
-    )?;
-    let io = budget.row_io_budget();
-    let mut facts = RowFacts::new(ms.row_count(), ddids.len());
-    let mut row_error = None;
-    ms.visit_selected_observation_rows(&row_selection, io, |row| {
-        if row_error.is_none()
-            && let Some((_, reducer)) = continuum.as_mut()
-        {
-            row_error = reducer.observe(row).err();
-        }
-        facts.observe(row);
-    })?;
-    if let Some(error) = facts.rows_error {
-        return Err(error.into());
-    }
-    if let Some(error) = row_error {
-        return Err(error.into());
-    }
-    let rows = facts.rows.finish();
-    if rows.selected_row_count() == 0 {
-        return Err(PrepareError::NoSelectedRows);
-    }
-    let continuum = continuum
-        .map(|(selected, reducer)| reducer.finish().map(|envelope| (selected, envelope)))
-        .transpose()?;
-    // A candidate data description no selected row has goes, with its
-    // spectral window: the predicate admits a row only through its data
-    // description, so over the observed ones it selects the same rows.
-    let row_selection = ms.selected_observation_row_selection(
-        &facts.ddids.iter().copied().collect::<Vec<_>>(),
-        request.field.as_deref(),
-        request.uvrange.as_deref(),
-        request.intent.as_deref(),
-    )?;
-    let spw_ids = row_selection
-        .data_descriptions()
-        .iter()
-        .map(|description| description.spectral_window_id() as usize)
-        .collect::<BTreeSet<_>>();
-    spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
-    let source_frequency_reference = one_source_frame(&spectral_windows)?;
-    let continuum = continuum.map(|(mut selected, envelope)| {
-        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
-        (selected, envelope)
-    });
-    Ok(Survey {
-        row_selection,
-        rows,
-        spectral_windows,
-        source_frequency_reference,
-        fields: facts.fields,
-        observation_ids: facts.observation_ids,
-        first_time_mjd_seconds: facts
-            .first_time_mjd_seconds
-            .expect("nonempty selected row traversal"),
-        time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
-        first_cross_row: facts.first_cross_row,
-        w: facts.w,
-        continuum,
-    })
-}
-
-/// A continuum run's selected channels per candidate window, with the
-/// reducer of their LSRK envelope that the row pass feeds, holding at most
-/// `envelope_bytes`; `None` for a cube.
-fn continuum_envelope<'a>(
-    request: &ImagingRequest,
-    ms: &'a MeasurementSet,
-    row_selection: &'a SelectedObservationRowSelection,
-    spectral_windows: &[SourceSpectralWindow],
-    frame_engine: &'a casa_ms::derived::engine::MsCalEngine,
-    envelope_bytes: usize,
-) -> Result<
-    Option<(
-        WindowChannels,
-        SelectedObservationSpectralEnvelopeReducer<'a>,
-    )>,
-    PrepareError,
-> {
-    if request.specmode != SpecMode::Mfs {
-        return Ok(None);
-    }
-    let selected = spectral_windows
-        .iter()
-        .map(|window| {
-            Ok((
-                window.spw_id,
-                selected_channels(request, window.spw_id, &window.frequencies_hz)?,
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, PrepareError>>()?;
-    let reducer = ms.selected_observation_spectral_envelope_reducer(
-        row_selection,
-        spectral_windows.iter().map(|window| {
-            SelectedObservationSpectralWindow::borrow_selected(
-                u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
-                window.frequency_reference,
-                &window.frequencies_hz,
-                &window.channel_widths_hz,
-                selected
-                    .get(&window.spw_id)
-                    .expect("selected every candidate spectral window"),
+) -> Result<RowSelection, PrepareError> {
+    let fields = match &request.field {
+        Some(ids) => IdSelection::Only(
+            ids.iter()
+                .map(|id| {
+                    u32::try_from(*id).map_err(|_| PrepareError::NegativeId {
+                        selector: "field",
+                        value: *id,
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        ),
+        None => IdSelection::All,
+    };
+    let uv_distances = match request.uvrange.as_deref() {
+        Some(text) => UvSelection::Ranges(
+            parse_uv_distance_intervals(text)?
+                .into_iter()
+                .map(uv_range)
+                .collect(),
+        ),
+        None => UvSelection::All,
+    };
+    let intents = match request.intent.as_deref() {
+        Some(text) => {
+            let state = ms.state()?;
+            IntentSelection::Only(
+                ms.selected_state_ids(text)?
+                    .into_iter()
+                    .map(|id| {
+                        let row = usize::try_from(id).map_err(|_| PrepareError::NegativeId {
+                            selector: "intent",
+                            value: id,
+                        })?;
+                        Ok(ResolvedIntent::new(
+                            u32::try_from(id).expect("a nonnegative i32 fits u32"),
+                            state.string(row, "OBS_MODE")?,
+                        ))
+                    })
+                    .collect::<Result<_, PrepareError>>()?,
             )
-        }),
-        FrequencyRef::LSRK,
-        frame_engine,
-        envelope_bytes,
-    )?;
-    Ok(Some((selected, reducer)))
+        }
+        None => IntentSelection::All,
+    };
+    Ok(RowSelection::new(fields, uv_distances, intents))
 }
 
-/// The spectral windows of the candidate data descriptions.
-fn candidate_windows(
+/// One `uvrange` interval as the model states it.
+fn uv_range(interval: UvDistanceInterval) -> UvDistanceRange {
+    let bound = |limit: UvDistanceLimit| {
+        if limit.inclusive {
+            SelectionBound::inclusive(limit.value)
+        } else {
+            SelectionBound::exclusive(limit.value)
+        }
+    };
+    UvDistanceRange::new(
+        interval.lower.map(bound),
+        interval.upper.map(bound),
+        if interval.wavelengths {
+            UvDistanceUnit::Wavelengths
+        } else {
+            UvDistanceUnit::Meters
+        },
+    )
+}
+
+/// The frequency axes of the spectral windows `spw_ids`.
+pub(super) fn spectral_windows(
     ms: &MeasurementSet,
-    data_description: &casa_ms::MsDataDescription<'_>,
-    ddids: &[i32],
+    spw_ids: impl IntoIterator<Item = usize>,
 ) -> Result<Vec<SourceSpectralWindow>, PrepareError> {
     let spectral_window = ms.spectral_window()?;
-    let spw_ids = ddids
-        .iter()
-        .map(|ddid| data_description_binding(data_description, *ddid).map(|(spw_id, _)| spw_id))
-        .collect::<Result<BTreeSet<_>, _>>()?;
     spw_ids
+        .into_iter()
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|spw_id| {
             let code = spectral_window.meas_freq_ref(spw_id)?;
@@ -315,11 +130,13 @@ fn candidate_windows(
 }
 
 /// The one source frame every selected window shares.
-fn one_source_frame(windows: &[SourceSpectralWindow]) -> Result<FrequencyRef, PrepareError> {
+pub(super) fn one_source_frame(
+    windows: &[SourceSpectralWindow],
+) -> Result<FrequencyRef, PrepareError> {
     let mut frames = windows.iter().map(|window| window.frequency_reference);
     let first = frames
         .next()
-        .expect("the selected rows' data descriptions bind a candidate spectral window");
+        .expect("a selected sample is in a selected window");
     if frames.any(|frame| frame != first) {
         return Err(PrepareError::MixedSourceFrames);
     }
@@ -341,11 +158,27 @@ pub(super) fn one_window<'a>(
     }
 }
 
-fn selected_data_descriptions(
+/// The data descriptions the request selects: its `ddid`, else those of
+/// the windows its `spw` selector names (every window without one) that
+/// bind a spectral window and a polarization.
+pub(super) fn selected_data_descriptions(
     request: &ImagingRequest,
     table: &casa_ms::MsDataDescription<'_>,
 ) -> Result<Vec<i32>, PrepareError> {
     if let Some(ddid) = request.ddid {
+        let binds = usize::try_from(ddid)
+            .ok()
+            .filter(|row| *row < table.row_count())
+            .map(|row| {
+                Ok::<_, PrepareError>(
+                    table.spectral_window_id(row)? >= 0 && table.polarization_id(row)? >= 0,
+                )
+            })
+            .transpose()?
+            .unwrap_or(false);
+        if !binds {
+            return Err(PrepareError::InvalidDataDescription { ddid });
+        }
         return Ok(vec![ddid]);
     }
     let selected_spws = request
@@ -372,19 +205,6 @@ fn selected_data_descriptions(
         return Err(PrepareError::NoSelectedDataDescriptions);
     }
     Ok(ddids)
-}
-
-fn data_description_binding(
-    table: &casa_ms::MsDataDescription<'_>,
-    ddid: i32,
-) -> Result<(usize, usize), PrepareError> {
-    let row = usize::try_from(ddid).map_err(|_| PrepareError::InvalidDataDescription { ddid })?;
-    let spw = table.spectral_window_id(row)?;
-    let polarization = table.polarization_id(row)?;
-    match (usize::try_from(spw), usize::try_from(polarization)) {
-        (Ok(spw), Ok(polarization)) => Ok((spw, polarization)),
-        _ => Err(PrepareError::InvalidDataDescription { ddid }),
-    }
 }
 
 /// The channels of `spw_id` the request selects: those its `spw`
@@ -434,16 +254,14 @@ pub(super) fn explicit_spw_channels(
     ))
 }
 
-/// The observation selection: the surveyed rows, `channels` per window with
-/// the window's whole frequency axis (CASA's mosaic kernels select by the
-/// complete `CHAN_FREQ` and `|CHAN_WIDTH[0]|`), and every correlation of
-/// the selected polarization setups.
+/// The observation selection: the surveyed partitions and samples, and
+/// `channels` per window with the window's whole frequency axis (CASA's
+/// mosaic kernels select by the complete `CHAN_FREQ` and
+/// `|CHAN_WIDTH[0]|`).
 pub(super) fn observation_selection(
-    ms: &MeasurementSet,
     survey: Survey,
     channels: &WindowChannels,
 ) -> Result<ObservationSelection, PrepareError> {
-    let polarization = ms.polarization()?;
     let spectral_windows = channels
         .iter()
         .map(|(spw_id, channels)| {
@@ -469,34 +287,11 @@ pub(super) fn observation_selection(
             .with_coordinate_catalog(catalog))
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
-    let correlations = survey
-        .row_selection
-        .data_descriptions()
-        .iter()
-        .map(|description| description.polarization_id())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|polarization_id| {
-            let correlations = polarization
-                .corr_type(polarization_id as usize)?
-                .iter()
-                .enumerate()
-                .map(|(index, code)| {
-                    Ok(CorrelationProduct::new(
-                        u32::try_from(index).expect("a CORR_TYPE index fits u32"),
-                        correlation_type(*code)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, PrepareError>>()?;
-            Ok(CorrelationSelection::new(polarization_id, correlations))
-        })
-        .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(
-        survey.rows,
-        survey.row_selection.rows().clone(),
-        survey.row_selection.data_descriptions().to_vec(),
+        survey.samples,
+        survey.row_selection,
+        survey.partitions,
         spectral_windows,
-        correlations,
     ))
 }
 
@@ -536,10 +331,6 @@ pub(super) fn visibility_column(
         }
         None => OwnerVisibilityColumn::Data,
     })
-}
-
-fn correlation_type(code: i32) -> Result<Correlation, PrepareError> {
-    Correlation::from_casacore_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ use crate::geometry::{
     DirectionFrame, PhaseCentreLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
 };
 use crate::pointing_law::PointingLawError;
-use crate::selected_observation_sample::{
+use crate::sample_antennas::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
 };
 use crate::uvw_projection::GridFtProjection;
