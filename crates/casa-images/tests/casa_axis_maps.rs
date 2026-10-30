@@ -21,9 +21,17 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_images::{ImageError, ImpvRequest, ImsubimageRequest, PagedImage, impv, imsubimage};
+use casa_coordinates::{
+    CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType,
+};
+use casa_images::{
+    FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
+    ImsubimageRequest, PagedImage, feather, impv, imsubimage,
+};
 use casa_tables::{Table, TableOptions};
+use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, Value};
 use serde_json::Value as Json;
 
@@ -248,55 +256,198 @@ fn a_transposed_image_casa_rs_rewrites_numbers_its_coordinates_in_axis_order() {
     );
 }
 
+/// `transposed.image`'s pixel [s, x, y, c] (Stokes, RA, Dec, channel).
+fn transposed_value(s: usize, x: usize, y: usize, c: usize) -> f64 {
+    (s + 10 * x + 100 * y + 1000 * c) as f64 + 0.5
+}
+
 #[test]
-fn tasks_that_take_the_direction_from_the_first_two_axes_refuse_other_layouts() {
-    // Read in record order, these images claimed the direction on axes 0
-    // and 1; read as CASA reads them, it is not there, and impv (whose
-    // channel selection assumed the spectral axis after the path's two) and
-    // a box would misread or panic.
+fn regions_and_impv_take_the_direction_wherever_its_axes_are() {
+    // `transposed.image` holds [Stokes, RA, Dec, Freq] of shape [2, 4, 3, 5].
+    // A box's and an impv path's x and y are RA and Dec, as CASA takes them
+    // in the direction plane (#1002); they were refused, and read in record
+    // order they ran along Stokes and RA.
     let scratch = tempfile::tempdir().expect("scratch");
-    for name in ["transposed.image", "spectral_first.image"] {
-        let input = copy_image(name, scratch.path());
-        let error = imsubimage(&ImsubimageRequest {
-            imagename: input.clone(),
-            outfile: scratch.path().join("box.image"),
-            box_pixels: Some("0,0,1,1".into()),
-            chans: None,
+    let input = copy_image("transposed.image", scratch.path());
+
+    // RA 1 to 2 by Dec 0 to 1, every Stokes and channel, as a box and a pixel
+    // CRTF box: CASA 6.7.6's imstat of either gives npts 40, sum 82640, blc
+    // [0, 1, 0, 0] and trc [1, 2, 1, 4].
+    let expected = (0..2)
+        .flat_map(|s| (1..=2).flat_map(move |x| (0..=1).map(move |y| (s, x, y))))
+        .flat_map(|(s, x, y)| (0..5).map(move |c| transposed_value(s, x, y, c)))
+        .sum::<f64>();
+    assert_eq!(expected, 82_640.0);
+    for (box_pixels, region) in [
+        (Some("1,0,2,1"), None),
+        (None, Some("box[[1pix,0pix],[2pix,1pix]]")),
+    ] {
+        let stats = casa_images::imstat(&input, box_pixels, region, None, None).unwrap();
+        let label = format!("{box_pixels:?} {region:?}");
+        assert_eq!((stats.npts, stats.sum), (40.0, expected), "{label}");
+        assert_eq!(
+            (stats.blc.as_slice(), stats.trc.as_slice()),
+            (&[0, 1, 0, 0][..], &[1, 2, 1, 4][..]),
+            "{label}"
+        );
+    }
+    // A polygon's mask runs along RA and Dec too. casa-rs places a pix
+    // vertex at a pixel's corner where CASA places it at its centre (#1021),
+    // so these vertices hold the same four pixels.
+    let polygon = "poly [[1pix,0pix],[3pix,0pix],[3pix,2pix],[1pix,2pix]]";
+    let stats = casa_images::imstat(&input, None, Some(polygon), None, None).unwrap();
+    assert_eq!((stats.npts, stats.sum), (40.0, expected));
+
+    let outfile = scratch.path().join("box.image");
+    imsubimage(&ImsubimageRequest {
+        imagename: input.clone(),
+        outfile: outfile.clone(),
+        box_pixels: Some("1,0,2,1".into()),
+        chans: None,
+        overwrite: false,
+    })
+    .unwrap();
+    let cut = PagedImage::<f32>::open(&outfile).unwrap();
+    let image = PagedImage::<f32>::open(&input).unwrap();
+    assert_eq!(cut.shape(), [2, 2, 2, 5]);
+    for [s, x, y, c] in [[0usize, 0, 0, 0], [1, 1, 1, 4], [0, 1, 0, 2]] {
+        assert_eq!(
+            f64::from(cut.get_at(&[s, x, y, c]).unwrap()),
+            transposed_value(s, x + 1, y, c)
+        );
+        let at = [s, x, y, c].map(|p| p as f64);
+        assert_eq!(
+            cut.coordinates().to_world(&at).unwrap(),
+            image
+                .coordinates()
+                .to_world(&[at[0], at[1] + 1.0, at[2], at[3]])
+                .unwrap()
+        );
+    }
+
+    // A path along RA at Dec 1, of channels 1 to 2.
+    let pv_path = scratch.path().join("pv.image");
+    let summary = impv(&ImpvRequest {
+        imagename: input,
+        outfile: pv_path.clone(),
+        mode: "coords".into(),
+        start: "0,1".into(),
+        end: "3,1".into(),
+        width: 1,
+        chans: Some("1~2".into()),
+        overwrite: false,
+    })
+    .unwrap();
+    assert_eq!(summary.shape, [2, 4, 1, 2]);
+    let pv = PagedImage::<f32>::open(&pv_path).unwrap();
+    for [s, x, c] in [[0usize, 0, 0], [1, 3, 1], [0, 2, 1]] {
+        assert_eq!(
+            f64::from(pv.get_at(&[s, x, 0, c]).unwrap()),
+            transposed_value(s, x, 1, c + 1)
+        );
+    }
+}
+
+/// A feather pair, a high-resolution image (2″ beam) and a low-resolution
+/// one (6″), over [RA, Dec, Stokes, Freq] or [Stokes, RA, Dec, Freq] of 16 by
+/// 16 pixels, one Stokes and two channels, the same pixels either way.
+fn feather_pair(dir: &Path, direction_first: bool) -> (PathBuf, PathBuf) {
+    let arcsec = std::f64::consts::PI / 648_000.0;
+    let coordinates = || {
+        let mut coordinates = CoordinateSystem::new();
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-arcsec, arcsec],
+            [8.0, 8.0],
+        );
+        let stokes = StokesCoordinate::new(vec![StokesType::I]);
+        if direction_first {
+            coordinates.add_coordinate(direction);
+            coordinates.add_coordinate(stokes);
+        } else {
+            coordinates.add_coordinate(stokes);
+            coordinates.add_coordinate(direction);
+        }
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.0e11,
+            1.0e8,
+            0.0,
+            1.0e11,
+        ));
+        coordinates
+    };
+    let shape = if direction_first {
+        vec![16, 16, 1, 2]
+    } else {
+        vec![1, 16, 16, 2]
+    };
+    let make = |name: &str, beam: f64, value: fn(usize, usize, usize) -> f32| {
+        let path = dir.join(format!("{direction_first}-{name}.image"));
+        let mut image = PagedImage::<f32>::create(shape.clone(), coordinates(), &path).unwrap();
+        let pixels = ndarray::ArrayD::from_shape_fn(ndarray::IxDyn(&shape), |index| {
+            let (x, y) = if direction_first {
+                (index[0], index[1])
+            } else {
+                (index[1], index[2])
+            };
+            value(x, y, index[3])
+        });
+        image.put_slice(&pixels, &[0, 0, 0, 0]).unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::new(GaussianBeam::new(beam * arcsec, beam * arcsec, 0.0)),
+                image_type: ImageType::Intensity,
+                object_name: String::new(),
+            })
+            .unwrap();
+        image.save().unwrap();
+        path
+    };
+    let high = make("high", 2.0, |x, y, c| {
+        (0.7 * x as f32 + 0.3 * y as f32 + c as f32).sin()
+    });
+    let low = make("low", 6.0, |x, y, c| 0.01 * (x + 2 * y + 5 * c) as f32);
+    (high, low)
+}
+
+#[test]
+fn feather_takes_the_direction_wherever_its_axes_are() {
+    // A pair with Stokes first feathers to the transpose of the same pair
+    // with the direction first; its FFT ran over Stokes and RA (#1002).
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut outputs = Vec::new();
+    for direction_first in [true, false] {
+        let (highres, lowres) = feather_pair(scratch.path(), direction_first);
+        let imagename = scratch
+            .path()
+            .join(format!("{direction_first}-feathered.image"));
+        feather(&FeatherRequest {
+            imagename: imagename.clone(),
+            highres,
+            lowres,
+            sdfactor: 1.0,
             overwrite: false,
         })
-        .unwrap_err();
+        .unwrap();
+        outputs.push(PagedImage::<f32>::open(&imagename).unwrap().get().unwrap());
+    }
+    let (first, transposed) = (&outputs[0], &outputs[1]);
+    assert_eq!(transposed.shape(), [1, 16, 16, 2]);
+    let largest = first
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    for ((x, y, c), &value) in first
+        .indexed_iter()
+        .map(|(index, value)| ((index[0], index[1], index[3]), value))
+    {
+        let other = transposed[ndarray::IxDyn(&[0, x, y, c])];
         assert!(
-            error.to_string().contains("box or polygon region"),
-            "{name}: {error}"
-        );
-        let error = casa_images::imstat(
-            &input,
-            None,
-            Some("box[[0pix,0pix],[1pix,1pix]]"),
-            None,
-            None,
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("a region takes the direction plane"),
-            "{name}: {error}"
-        );
-        let error = impv(&ImpvRequest {
-            imagename: input,
-            outfile: scratch.path().join("pv.image"),
-            mode: "coords".into(),
-            start: "0,0".into(),
-            end: "2,2".into(),
-            width: 1,
-            chans: Some("1~2".into()),
-            overwrite: false,
-        })
-        .unwrap_err();
-        assert!(
-            error.to_string().contains("impv takes the direction plane"),
-            "{name}: {error}"
+            (value - other).abs() <= 1e-6 * largest,
+            "[{x}, {y}, {c}]: {value} against {other}"
         );
     }
 }

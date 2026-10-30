@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 mod axes;
 
 use self::axes::{
-    legacy_subimage_coordinates, require_direction_on_first_axes, subimage_coordinates,
+    direction_plane_axes, legacy_subimage_coordinates, other_axes, subimage_coordinates,
 };
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
@@ -1347,6 +1347,9 @@ struct Selection {
     start: Vec<usize>,
     shape: Vec<usize>,
     channel_indices: Option<Vec<usize>>,
+    /// The image axes a box or polygon's x and y run along: the direction
+    /// plane's.
+    plane: [usize; 2],
 }
 
 impl Selection {
@@ -1357,19 +1360,20 @@ impl Selection {
     ) -> Result<Self, ImageError> {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
+        let plane = direction_plane_axes(image);
         if let Some(region) = region {
-            require_direction_on_first_axes(image, "a box or polygon region")?;
             let [x0, y0, x1, y1] = region.bounding_box();
-            if image.ndim() < 2 || x1 >= shape[0] || y1 >= shape[1] {
+            let [x, y] = plane;
+            if image.ndim() < 2 || x1 >= shape[x] || y1 >= shape[y] {
                 return Err(ImageError::ShapeMismatch {
                     expected: image.shape().to_vec(),
                     got: vec![x0, y0, x1, y1],
                 });
             }
-            start[0] = x0;
-            start[1] = y0;
-            shape[0] = x1 - x0 + 1;
-            shape[1] = y1 - y0 + 1;
+            start[x] = x0;
+            start[y] = y0;
+            shape[x] = x1 - x0 + 1;
+            shape[y] = y1 - y0 + 1;
         }
         let channel_indices = if let Some(chans) = chans.filter(|text| !text.trim().is_empty()) {
             let spectral_axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
@@ -1389,6 +1393,7 @@ impl Selection {
             start,
             shape,
             channel_indices,
+            plane,
         })
     }
 }
@@ -1429,7 +1434,6 @@ fn region_pixels<T: ImagePixel>(
     let Some(region) = region.map(str::trim).filter(|text| !text.is_empty()) else {
         return Ok(None);
     };
-    require_direction_on_first_axes(image, "a region")?;
     if let Some(parsed) = crtf_box_pixels(image, region)? {
         return Ok(Some(PixelRegion::Box(parse_box(&parsed)?)));
     }
@@ -1488,9 +1492,10 @@ fn region_pixel_mask(
                     "CRTF polygon regions require at least three vertices".to_string(),
                 ));
             }
+            let [x_axis, y_axis] = selection.plane;
             ArrayD::from_shape_fn(IxDyn(&selection.shape).f(), |idx| {
-                let x = selection.start[0] + idx[0];
-                let y = selection.start[1] + idx[1];
+                let x = selection.start[x_axis] + idx[x_axis];
+                let y = selection.start[y_axis] + idx[y_axis];
                 point_in_polygon_or_boundary(x as f64 + 0.5, y as f64 + 0.5, vertices)
             })
         }
@@ -1628,18 +1633,19 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
+    let [x, y] = direction_plane_axes(image);
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let base_world = coordinates.to_world(&base_pixel)?;
     pairs
         .iter()
         .map(|pair| {
             let mut world = base_world.clone();
-            world[0] = parse_crtf_world_quantity(&pair[0])?;
-            world[1] = parse_crtf_world_quantity(&pair[1])?;
+            world[x] = parse_crtf_world_quantity(&pair[0])?;
+            world[y] = parse_crtf_world_quantity(&pair[1])?;
             let pixel = coordinates.to_pixel(&world)?;
             Ok([
-                rounded_nonnegative_pixel_value(pixel[0], "CRTF polygon world x")?,
-                rounded_nonnegative_pixel_value(pixel[1], "CRTF polygon world y")?,
+                rounded_nonnegative_pixel_value(pixel[x], "CRTF polygon world x")?,
+                rounded_nonnegative_pixel_value(pixel[y], "CRTF polygon world y")?,
             ])
         })
         .collect()
@@ -1724,19 +1730,20 @@ fn crtf_world_box_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
+    let [x, y] = direction_plane_axes(image);
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
     let mut second_world = first_world.clone();
-    first_world[0] = world_box[0];
-    first_world[1] = world_box[1];
-    second_world[0] = world_box[2];
-    second_world[1] = world_box[3];
+    first_world[x] = world_box[0];
+    first_world[y] = world_box[1];
+    second_world[x] = world_box[2];
+    second_world[y] = world_box[3];
     let first_pixel = coordinates.to_pixel(&first_world)?;
     let second_pixel = coordinates.to_pixel(&second_world)?;
-    let x0 = rounded_nonnegative_pixel_value(first_pixel[0], "first CRTF world x")?;
-    let y0 = rounded_nonnegative_pixel_value(first_pixel[1], "first CRTF world y")?;
-    let x1 = rounded_nonnegative_pixel_value(second_pixel[0], "second CRTF world x")?;
-    let y1 = rounded_nonnegative_pixel_value(second_pixel[1], "second CRTF world y")?;
+    let x0 = rounded_nonnegative_pixel_value(first_pixel[x], "first CRTF world x")?;
+    let y0 = rounded_nonnegative_pixel_value(first_pixel[y], "first CRTF world y")?;
+    let x1 = rounded_nonnegative_pixel_value(second_pixel[x], "second CRTF world x")?;
+    let y1 = rounded_nonnegative_pixel_value(second_pixel[y], "second CRTF world y")?;
     Ok(format!(
         "{},{},{},{}",
         x0.min(x1),
@@ -2713,7 +2720,6 @@ fn feather_typed(
     low: &PagedImage<f32>,
     request: &FeatherRequest,
 ) -> Result<FeatherSummary, ImageError> {
-    require_direction_on_first_axes(high, "feather")?;
     if request.imagename.exists() {
         if request.overwrite {
             fs::remove_dir_all(&request.imagename)
@@ -2750,21 +2756,27 @@ fn feather_typed(
             "feather requires at least two direction axes".to_string(),
         ));
     }
-    let nx = high_shape[0];
-    let ny = high_shape[1];
-    let trailing = if high_shape.len() > 2 {
-        high_shape[2..].iter().product()
-    } else {
-        1
-    };
+    // Feathered in the direction plane, wherever its axes are.
+    let direction = direction_plane_axes(high);
+    let others = other_axes(high_shape.len(), direction);
+    let other_shape = others
+        .iter()
+        .map(|&axis| high_shape[axis])
+        .collect::<Vec<_>>();
+    let nx = high_shape[direction[0]];
+    let ny = high_shape[direction[1]];
     let crossover = feather_crossover_weight(nx, ny, low_beam, high.coordinates())?;
     let low_scale = request.sdfactor * (high_beam.area() / low_beam.area()) as f32;
     let mut output_data = ArrayD::<f32>::zeros(IxDyn(&high_shape).f());
     let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&high_shape).f(), true);
-    for plane in 0..trailing {
-        let trailing_index = unravel_index(plane, &high_shape[2..]);
-        let high_plane = extract_plane2(&high_data, &trailing_index);
-        let low_plane = extract_plane2(&low_data, &trailing_index);
+    for plane in 0..other_shape.iter().product() {
+        let at = PlaneAt {
+            axes: direction,
+            others: &others,
+            values: &unravel_index(plane, &other_shape),
+        };
+        let high_plane = at.extract(&high_data);
+        let low_plane = at.extract(&low_data);
         let high_fft = centered_fft2(&high_plane.mapv(|value| Complex32::new(value, 0.0)));
         let low_fft = centered_fft2(&low_plane.mapv(|value| Complex32::new(value, 0.0)));
         let mut combined = Array2::<Complex32>::zeros((nx, ny));
@@ -2775,7 +2787,7 @@ fn feather_typed(
             }
         }
         let image_plane = centered_ifft2(&combined).mapv(|value| value.re);
-        put_plane2(&mut output_data, &trailing_index, &image_plane);
+        at.put(&mut output_data, &image_plane);
     }
     if let Some(mask) = high_mask {
         Zip::from(&mut output_mask)
@@ -2886,28 +2898,34 @@ fn direction_axis_geometry(
     ))
 }
 
-fn extract_plane2(data: &ArrayD<f32>, trailing_index: &[usize]) -> Array2<f32> {
-    let nx = data.shape()[0];
-    let ny = data.shape()[1];
-    let mut plane = Array2::<f32>::zeros((nx, ny));
-    for x in 0..nx {
-        for y in 0..ny {
-            let mut index = vec![x, y];
-            index.extend_from_slice(trailing_index);
-            plane[(x, y)] = data[IxDyn(&index)];
-        }
-    }
-    plane
+/// One plane of an image: its two `axes`, at `values` of the `others`.
+struct PlaneAt<'a> {
+    axes: [usize; 2],
+    others: &'a [usize],
+    values: &'a [usize],
 }
 
-fn put_plane2(data: &mut ArrayD<f32>, trailing_index: &[usize], plane: &Array2<f32>) {
-    let nx = data.shape()[0];
-    let ny = data.shape()[1];
-    for x in 0..nx {
-        for y in 0..ny {
-            let mut index = vec![x, y];
-            index.extend_from_slice(trailing_index);
-            data[IxDyn(&index)] = plane[(x, y)];
+impl PlaneAt<'_> {
+    /// The index of the plane's pixel (`x`, `y`) in the image.
+    fn index(&self, rank: usize, x: usize, y: usize) -> Vec<usize> {
+        let mut index = vec![0; rank];
+        for (&axis, &value) in self.others.iter().zip(self.values) {
+            index[axis] = value;
+        }
+        index[self.axes[0]] = x;
+        index[self.axes[1]] = y;
+        index
+    }
+
+    fn extract(&self, data: &ArrayD<f32>) -> Array2<f32> {
+        let shape = (data.shape()[self.axes[0]], data.shape()[self.axes[1]]);
+        Array2::from_shape_fn(shape, |(x, y)| data[IxDyn(&self.index(data.ndim(), x, y))])
+    }
+
+    fn put(&self, data: &mut ArrayD<f32>, plane: &Array2<f32>) {
+        for ((x, y), value) in plane.indexed_iter() {
+            let index = self.index(data.ndim(), x, y);
+            data[IxDyn(&index)] = *value;
         }
     }
 }
@@ -2989,12 +3007,14 @@ where
             "impv requires at least two image axes".to_string(),
         ));
     }
-    require_direction_on_first_axes(image, "impv")?;
+    // The path runs in the direction plane, wherever its axes are; an image
+    // without a direction takes its first two.
+    let plane = direction_plane_axes(image);
     let spectral_axis = image.find_axis(CoordinateType::Spectral);
-    if spectral_axis.is_some_and(|axis| axis < 2) {
+    if spectral_axis.is_some_and(|axis| plane.contains(&axis)) {
         return Err(ImageError::InvalidMetadata(format!(
-            "impv draws its path on the image's first two axes, but its axes are {}; transpose \
-             the image (imtrans) to put the spectral axis after them",
+            "impv draws its path on the image's first two axes when it has no direction, but \
+             its axes are {}; a path along the spectral axis is not a position-velocity cut",
             image.axis_names().join(", ")
         )));
     }
@@ -3035,52 +3055,23 @@ where
     };
     let input = image.get_slice(&start, &shape)?;
     let mut output_shape = shape.clone();
-    output_shape[0] = path.len();
-    output_shape[1] = 1;
-    if let Some((axis, indices)) = &channel_indices {
-        output_shape[*axis] = indices.len();
-    }
-    let mut output_data = ArrayD::<f32>::zeros(IxDyn(&output_shape).f());
-    let other_shape = output_shape[2..].to_vec();
+    output_shape[plane[0]] = path.len();
+    output_shape[plane[1]] = 1;
+    // Each output channel's channel in `input`, which starts at `start`.
+    let channels = channel_indices.map(|(axis, indices)| {
+        output_shape[axis] = indices.len();
+        let local = indices.iter().map(|index| index - start[axis]).collect();
+        (axis, local)
+    });
     let offsets = perpendicular_offsets(x0, y0, x1, y1, request.width.max(1));
-    let mut input_index = vec![0; input.ndim()];
-    let mut output_index = vec![0; output_shape.len()];
-    for sample_index in all_indices_for_shape(&other_shape) {
-        for (path_index, &(x, y)) in path.iter().enumerate() {
-            let mut sum = 0.0;
-            let mut count = 0usize;
-            for &(dx, dy) in &offsets {
-                let sx = x + dx;
-                let sy = y + dy;
-                if sx < 0
-                    || sy < 0
-                    || sx as usize >= image.shape()[0]
-                    || sy as usize >= image.shape()[1]
-                {
-                    continue;
-                }
-                input_index[0] = sx as usize;
-                input_index[1] = sy as usize;
-                for (offset_axis, value) in sample_index.iter().copied().enumerate() {
-                    input_index[offset_axis + 2] = value;
-                }
-                if let Some((axis, indices)) = &channel_indices {
-                    let local = sample_index[*axis - 2];
-                    input_index[*axis] = indices[local] - start[*axis];
-                }
-                sum += input[IxDyn(&input_index)].into();
-                count += 1;
-            }
-            if count > 0 {
-                output_index[0] = path_index;
-                output_index[1] = 0;
-                for (offset_axis, value) in sample_index.iter().copied().enumerate() {
-                    output_index[offset_axis + 2] = value;
-                }
-                output_data[IxDyn(&output_index)] = (sum / count as f64) as f32;
-            }
-        }
-    }
+    let output_data = pv_samples(
+        &input,
+        plane,
+        &path,
+        &offsets,
+        channels.as_ref(),
+        &output_shape,
+    );
     let mut output = TempImage::<f32>::new(
         output_shape.clone(),
         image.coordinates().clone(),
@@ -3102,6 +3093,63 @@ where
         width: request.width.max(1),
         units: output.units().to_string(),
     })
+}
+
+/// impv's samples: at each pixel of `path` in the image plane `plane`, the
+/// mean of `input` over `offsets` about it that fall in the image, for every
+/// pixel of the other axes. Output channel `j` of `channels`' axis comes from
+/// input channel `channels.1[j]`.
+fn pv_samples<T>(
+    input: &ArrayD<T>,
+    plane: [usize; 2],
+    path: &[(isize, isize)],
+    offsets: &[(isize, isize)],
+    channels: Option<&(usize, Vec<usize>)>,
+    output_shape: &[usize],
+) -> ArrayD<f32>
+where
+    T: Into<f64> + Copy,
+{
+    let [x_axis, y_axis] = plane;
+    let others = other_axes(output_shape.len(), plane);
+    let other_shape = others
+        .iter()
+        .map(|&axis| output_shape[axis])
+        .collect::<Vec<_>>();
+    let mut output = ArrayD::<f32>::zeros(IxDyn(output_shape).f());
+    let mut input_index = vec![0; input.ndim()];
+    let mut output_index = vec![0; output_shape.len()];
+    for sample_index in all_indices_for_shape(&other_shape) {
+        for (&axis, &value) in others.iter().zip(&sample_index) {
+            output_index[axis] = value;
+            input_index[axis] = match channels {
+                Some((channel_axis, local)) if *channel_axis == axis => local[value],
+                _ => value,
+            };
+        }
+        for (path_index, &(x, y)) in path.iter().enumerate() {
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for &(dx, dy) in offsets {
+                let (Ok(sx), Ok(sy)) = (usize::try_from(x + dx), usize::try_from(y + dy)) else {
+                    continue;
+                };
+                if sx >= input.shape()[x_axis] || sy >= input.shape()[y_axis] {
+                    continue;
+                }
+                input_index[x_axis] = sx;
+                input_index[y_axis] = sy;
+                sum += input[IxDyn(&input_index)].into();
+                count += 1;
+            }
+            if count > 0 {
+                output_index[x_axis] = path_index;
+                output_index[y_axis] = 0;
+                output[IxDyn(&output_index)] = (sum / count as f64) as f32;
+            }
+        }
+    }
+    output
 }
 
 fn parse_pixel_pair(text: &str) -> Result<[isize; 2], ImageError> {

@@ -295,19 +295,19 @@ fn reproject_image_mask(
     let index = source_coordinates
         .find_coordinate(CoordinateType::Direction)
         .ok_or(PrepareError::MaskImageDirection)?;
-    // The plane is taken from the first two axes, which are the direction's
-    // only when it is the first coordinate: a degenerate transposed mask
-    // passes the shape check below with its plane transposed.
-    if index != 0 {
-        return Err(PrepareError::MaskImageDirectionAxes {
-            axes: (0..source_coordinates.n_coordinates())
-                .flat_map(|k| source_coordinates.coordinate(k).axis_names())
-                .collect(),
-        });
-    }
-    if source_shape.len() < 2
-        || source_shape[2..].iter().any(|extent| *extent != 1)
-        || source_support.len() != source_shape[0] * source_shape[1]
+    // The direction's two axes follow those of the coordinates before it,
+    // wherever that is (#1002); every other axis has one pixel, so the
+    // support, in the image's index order, runs over the plane alone.
+    let longitude = (0..index)
+        .map(|k| source_coordinates.coordinate(k).n_pixel_axes())
+        .sum::<usize>();
+    let plane = [longitude, longitude + 1];
+    if source_shape.len() < longitude + 2
+        || source_shape
+            .iter()
+            .enumerate()
+            .any(|(axis, extent)| !plane.contains(&axis) && *extent != 1)
+        || source_support.len() != source_shape[plane[0]] * source_shape[plane[1]]
     {
         return Err(PrepareError::MaskImageShape {
             shape: source_shape,
@@ -316,7 +316,7 @@ fn reproject_image_mask(
     let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
     let support = casa_imaging_deconvolution::reproject_mask_support(
         source_spec,
-        [source_shape[0], source_shape[1]],
+        [source_shape[plane[0]], source_shape[plane[1]]],
         &source_support,
         target_spec,
         target_size,
@@ -400,8 +400,9 @@ mod tests {
         )
     }
 
-    /// A one-plane mask of ones on a 4 by 1 direction plane, with the
-    /// direction first or (as a transposed CASA mask reads) after Stokes.
+    /// A one-plane mask on a 4 by 1 direction plane, set at x = 0 and 2,
+    /// with the direction first or (as a transposed CASA mask reads) after
+    /// Stokes.
     fn mask(path: &Path, direction_first: bool) -> DirectionCoordinateSpec {
         let mut coordinates = CoordinateSystem::new();
         let stokes = StokesCoordinate::new(vec![StokesType::I]);
@@ -422,28 +423,35 @@ mod tests {
             1.0e9,
         ));
         let mut image = PagedImage::<f32>::create(shape, coordinates, path).unwrap();
-        image.set(1.0).unwrap();
+        for x in [0, 2] {
+            let pixel = if direction_first {
+                [x, 0, 0, 0]
+            } else {
+                [0, x, 0, 0]
+            };
+            image.put_at(1.0, &pixel).unwrap();
+        }
         image.save().unwrap();
         direction_model_spec(&CoordinateModel::Direction(direction())).unwrap()
     }
 
     #[test]
-    fn a_mask_whose_direction_is_not_on_its_first_two_axes_is_refused() {
-        // [Stokes, RA, Dec, Freq] of shape [1, 4, 1, 1] passes the
-        // one-plane shape check, but its first two axes are Stokes and RA:
-        // read as the direction plane, its 4 by 1 row would become a column.
+    fn a_mask_reads_its_direction_plane_wherever_its_axes_are() {
+        // [Stokes, RA, Dec, Freq] of shape [1, 4, 1, 1] has the 4 by 1 plane
+        // of a direction-first mask; taken from its first two axes it was 1
+        // by 4, a row turned into a column (#1005 review, #1002).
         let dir = tempfile::tempdir().unwrap();
-        let transposed = dir.path().join("transposed.mask");
-        let target = mask(&transposed, false);
-        let error = reproject_image_mask(&transposed, target, [4, 1]).unwrap_err();
-        assert!(
-            matches!(&error, PrepareError::MaskImageDirectionAxes { axes }
-                if axes[..2] == ["Stokes", "Right Ascension"]),
-            "{error}"
-        );
-
-        let first = dir.path().join("first.mask");
-        let target = mask(&first, true);
-        assert!(reproject_image_mask(&first, target, [4, 1]).is_ok());
+        let support = |direction_first: bool| {
+            let path = dir.path().join(format!("{direction_first}.mask"));
+            let target = mask(&path, direction_first);
+            let plan = reproject_image_mask(&path, target, [4, 1]).unwrap();
+            let ReconstructionMaskPlan::Reprojected { support, .. } = plan else {
+                panic!("a mask image is reprojected");
+            };
+            support
+        };
+        let first = support(true);
+        assert_eq!(&*first, &[true, false, true, false]);
+        assert_eq!(support(false), first);
     }
 }

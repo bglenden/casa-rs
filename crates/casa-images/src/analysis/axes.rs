@@ -12,25 +12,25 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
 
-/// Refuses `image` unless its direction coordinate, if it has one, owns
-/// pixel axes 0 and 1, where `task` takes the direction plane.
+/// The pixel axes of `image`'s direction plane, (longitude, latitude):
+/// its direction coordinate's wherever they are, or the first two axes of an
+/// image without one.
 ///
-/// A CASA image can hold its direction on other axes (`imtrans`); casa-rs
-/// reads its coordinates so (#1001), but these tasks do not yet look for
-/// the direction there (#1002).
-pub(super) fn require_direction_on_first_axes<T: ImagePixel>(
-    image: &impl ImageInterface<T>,
-    task: &str,
-) -> Result<(), ImageError> {
+/// A CASA image can hold its direction after other axes (`imtrans`); casa-rs
+/// reads a coordinate's axes adjacent and in its own order (#1001), so the
+/// latitude follows the longitude, and the world axes are numbered as the
+/// pixel axes are. Regions, `impv` and `feather` take their plane here, as
+/// CASA takes them in the direction plane (#1002).
+pub(super) fn direction_plane_axes<T: ImagePixel>(image: &impl ImageInterface<T>) -> [usize; 2] {
     match image.find_axis(CoordinateType::Direction) {
-        None | Some(0) => Ok(()),
-        Some(_) => Err(ImageError::InvalidMetadata(format!(
-            "{task} takes the direction plane from the image's first two axes, but its axes \
-             are {}; casa-rs does not yet take it from other axes (#1002). In CASA, transpose \
-             the image (imtrans) to put the direction first",
-            image.axis_names().join(", ")
-        ))),
+        Some(longitude) => [longitude, longitude + 1],
+        None => [0, 1],
     }
+}
+
+/// The axes of a `rank`-axis image other than its plane's, in order.
+pub(super) fn other_axes(rank: usize, plane: [usize; 2]) -> Vec<usize> {
+    (0..rank).filter(|axis| !plane.contains(axis)).collect()
 }
 
 /// `coordinates` for a subimage starting at pixel `start`.
