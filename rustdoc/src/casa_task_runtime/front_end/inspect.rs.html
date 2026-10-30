@@ -152,7 +152,7 @@
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span>profile = parse_profile(source).map_err(format_profile_error)<span class="question-mark">?</span>;
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>named;
 <a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>bundle = <span class="kw">match </span>bundle {
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="prelude-val">Some</span>(bundle) <span class="kw">if </span>bundle.surface.id() == profile.header.surface =&gt; bundle,
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="prelude-val">Some</span>(bundle) <span class="kw">if </span>bundle.surface.answers_to(<span class="kw-2">&amp;</span>profile.header.surface) =&gt; bundle,
 <a href=#156 id=156 data-nosnippet>156</a>        <span class="prelude-val">Some</span>(bundle) =&gt; {
 <a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#158 id=158 data-nosnippet>158</a>                <span class="string">"the profile is for {:?}, not {:?}"</span>,

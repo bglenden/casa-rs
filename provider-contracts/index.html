@@ -1004,7 +1004,7 @@ through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's 
 inventory all project from this catalog.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
 <p>ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by imager and simobserve.</p>
+current-only profile contract used by simobserve.</p>
 <p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
 <ul>
 <li>stable semantic ID and canonical CASA-facing name</li>
@@ -1053,7 +1053,10 @@ its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
 changed defaults. An empty migration set declares a current-only surface: only
 the exact current contract and canonical parameter names are accepted. The
-imager and simobserve surfaces are current-only. Future, stale, and otherwise
+simobserve surface is current-only. A chain may start after contract 1:
+<code>tclean</code>, the imager's surface since contract 29 (#931), migrates profiles
+from contract 28, the <code>imager</code> surface's last, and answers to that former
+id. Future, stale, and otherwise
 unmigratable contracts are errors.</p>
 <p>Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
@@ -1226,7 +1229,7 @@ a second default or migration implementation.</p>
 <h2 id="current-repo-mapping">Current Repo Mapping<a class="headerlink" href="#current-repo-mapping" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>calibrate</code>: task surface</li>
-<li><code>casars-imager</code> (surface <code>imager</code>): task surface</li>
+<li><code>casars-imager</code> (surface <code>tclean</code>): task surface</li>
 <li><code>msexplore</code> and <code>plotms</code>: task surfaces served by <code>msexplore</code></li>
 <li><code>imhead</code> and <code>imstat</code>: task surfaces served by <code>imexplore</code></li>
 <li><code>casars.data.Image</code>: object surface</li>

@@ -798,11 +798,11 @@ object contract.</p>
 <span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"profiles/target-imaging.toml"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
 <span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">niter</span><span class="o">=</span><span class="mi">20000</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s2">"1mJy"</span><span class="p">)</span>
 
-<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"imager"</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span>   <span class="c1"># runs in the draft's workspace, project/</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"tclean"</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span>   <span class="c1"># runs in the draft's workspace, project/</span>
 </code></pre></div>
 
 <p>A loaded profile also runs through a CASA-named wrapper, in the current
-directory: <code>tasks.imager(**parameters.load("profiles/target-imaging.toml"))</code>.</p>
+directory: <code>tasks.tclean(**parameters.load("profiles/target-imaging.toml"))</code>.</p>
 <p>The call saves no Last profile. <code>parameters.last(...)</code> reads the Last that a
 command-line run saved.</p>
 <p><code>parameters.defaults(surface, ...)</code> and <code>parameters.last(surface, ...)</code> create
@@ -810,9 +810,10 @@ the other common source types. The resulting <code>TaskParameters</code> support
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.</p>
 <p><code>casars.tasks</code> is generated from the 26 task definitions and supplies one
-CASA-named keyword wrapper and typing stub per task. Their signatures
-deliberately use an unset sentinel instead of copying catalog defaults into
-Python.</p>
+CASA-named wrapper and typing stub per task. A task that mimics CASA's has
+CASA 6.7.6.14's signature, defaults and return value (#931); the casa-rs
+tasks (<code>calibrate</code>, <code>msexplore</code>) and <code>plotms</code> take keywords with an unset
+sentinel instead of copying catalog defaults into Python.</p>
 <p>Python binds Rust through PyO3 alone, in one native module, <code>casars._core</code>.
 It carries task parameters, task results and MeasurementSet plot documents as
 well as the in-process objects: the <code>casars.data.Image</code> and

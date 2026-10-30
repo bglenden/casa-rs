@@ -189,10 +189,10 @@
 <a href=#189 id=189 data-nosnippet>189</a>    </span><span class="kw">fn </span>task_presentation_is_owned_by_the_referenced_surface() {
 <a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>application = builtin_application_catalog()
 <a href=#191 id=191 data-nosnippet>191</a>            .unwrap()
-<a href=#192 id=192 data-nosnippet>192</a>            .application(<span class="string">"imager"</span>)
+<a href=#192 id=192 data-nosnippet>192</a>            .application(<span class="string">"tclean"</span>)
 <a href=#193 id=193 data-nosnippet>193</a>            .unwrap();
 <a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>surface = application.surface_bundle().unwrap();
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="macro">assert_eq!</span>(surface.surface.display_name(), <span class="string">"Imager"</span>);
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="macro">assert_eq!</span>(surface.surface.display_name(), <span class="string">"Tclean"</span>);
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="macro">assert_eq!</span>(surface.surface.category(), <span class="string">"Imaging"</span>);
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="macro">assert_eq!</span>(application.protocol_family().unwrap(), <span class="string">"imager"</span>);
 <a href=#198 id=198 data-nosnippet>198</a>    }

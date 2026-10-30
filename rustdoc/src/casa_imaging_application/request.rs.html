@@ -1,120 +1,120 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-application/src/request.rs`."><title>request.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_application" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_application/</div>request.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
-<a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! The imaging request: the provider-contracts catalog's `imager` surface,
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! The imaging request: the provider-contracts catalog's `tclean` surface,
 <a href=#4 id=4 data-nosnippet>4</a>//! resolved, as one typed record (plan section 5.8, decision D8).
 <a href=#5 id=5 data-nosnippet>5</a>//!
-<a href=#6 id=6 data-nosnippet>6</a>//! Field names and choices are the catalog's, and so are the defaults: a
-<a href=#7 id=7 data-nosnippet>7</a>//! request is deserialized only from resolved catalog values (every route,
-<a href=#8 id=8 data-nosnippet>8</a>//! the command line and `--json-run` alike, resolves through the catalog),
-<a href=#9 id=9 data-nosnippet>9</a>//! so nothing here restates a default and a missing field is an error. The
-<a href=#10 id=10 data-nosnippet>10</a>//! catalog spells an unset optional value `"none"`. Parameters that are
-<a href=#11 id=11 data-nosnippet>11</a>//! active only for one gridder live in that gridder's variant.
-<a href=#12 id=12 data-nosnippet>12</a>
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">use </span>std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
+<a href=#6 id=6 data-nosnippet>6</a>//! A request is made only from resolved catalog values (every route, the
+<a href=#7 id=7 data-nosnippet>7</a>//! command line and `--json-run` alike, resolves through the catalog), by
+<a href=#8 id=8 data-nosnippet>8</a>//! [`ImagingRequest::from_tclean`], which reads CASA's tclean parameters as
+<a href=#9 id=9 data-nosnippet>9</a>//! CASA's modes read them (`crate::tclean`); so nothing here restates a
+<a href=#10 id=10 data-nosnippet>10</a>//! default and a missing field is an error. Most fields are tclean's
+<a href=#11 id=11 data-nosnippet>11</a>//! parameters by name; the reader fills the few casa-rs holds in its own
+<a href=#12 id=12 data-nosnippet>12</a>//! form. An unset optional value is spelled `"none"` or left blank.
+<a href=#13 id=13 data-nosnippet>13</a>//! Parameters that one gridder reads live in that gridder's variant.
 <a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#16 id=16 data-nosnippet>16</a>    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
-<a href=#17 id=17 data-nosnippet>17</a>    UvTaper,
-<a href=#18 id=18 data-nosnippet>18</a>};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_imaging_operator::GridPrecision;
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_imaging_runtime::{Diagnostics, ResourcePolicy};
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_ms::CubeInterpolation;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_types::quanta::{Quantity, Unit};
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>serde::{Deserialize, Deserializer, de::Error <span class="kw">as _</span>};
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>serde_json::Value;
-<a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="doccomment">/// One imaging run's parameters, as the catalog resolved them.
-<a href=#28 id=28 data-nosnippet>28</a></span><span class="attr">#[derive(Clone, Debug, Deserialize, PartialEq)]
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub struct </span>ImagingRequest {
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="doccomment">/// The MeasurementSet.
-<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"single"</span>)]
-<a href=#32 id=32 data-nosnippet>32</a>    </span><span class="kw">pub </span>vis: PathBuf,
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Prefix of every image product; a relative name is resolved against
-<a href=#34 id=34 data-nosnippet>34</a>    /// the working directory, as CASA's is.
-<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"absolute"</span>)]
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>imagename: PathBuf,
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Image size in pixels along x and y; one value sizes both, as CASA's
-<a href=#38 id=38 data-nosnippet>38</a>    /// `imsize` does.
-<a href=#39 id=39 data-nosnippet>39</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"pixel_pair"</span>)]
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>imsize: [usize; <span class="number">2</span>],
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Cell along x and y in arcseconds; one value sizes both, as CASA's
-<a href=#42 id=42 data-nosnippet>42</a>    /// `cell` does.
-<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"cell_pair_arcsec"</span>)]
-<a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>cell: [f64; <span class="number">2</span>],
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
-<a href=#46 id=46 data-nosnippet>46</a>    /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
-<a href=#47 id=47 data-nosnippet>47</a>    /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
-<a href=#48 id=48 data-nosnippet>48</a>    /// casa-rs also logs a warning.
-<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub </span>datacolumn: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
-<a href=#51 id=51 data-nosnippet>51</a>    <span class="doccomment">/// Whether the final model's prediction is written to `MODEL_DATA`.
-<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"save_model"</span>)]
-<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub </span>savemodel: bool,
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="doccomment">/// A CASA outlier file naming further image domains.
-<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub </span>outlierfile: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Selected `FIELD_ID`s, from identifiers and ranges such as
-<a href=#58 id=58 data-nosnippet>58</a>    /// `0,3~5`; `None` selects every field.
-<a href=#59 id=59 data-nosnippet>59</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"field_ids"</span>)]
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub </span>field: <span class="prelude-ty">Option</span>&lt;Vec&lt;i32&gt;&gt;,
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// The `FIELD_ID` whose phase centre is the image centre.
-<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">pub </span>phasecenter_field: <span class="prelude-ty">Option</span>&lt;i32&gt;,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// The selected `DATA_DESC_ID`.
-<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub </span>ddid: <span class="prelude-ty">Option</span>&lt;i32&gt;,
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// The image centre: `J2000 &lt;lon&gt; &lt;lat&gt;`, `TRACKFIELD`, or an
-<a href=#68 id=68 data-nosnippet>68</a>    /// ephemeris name or table.
-<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">pub </span>phasecenter: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// CASA spectral-window selection, for example `0:1~30`.
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub </span>spw: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// First selected channel when `spw` names none.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub </span>channel_start: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Number of selected channels when `spw` names none.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub </span>channel_count: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// CASA baseline-length selection.
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">pub </span>uvrange: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// CASA observing-intent selection.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>intent: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// The imaged Stokes parameters (`I`, `IQUV`, …) or correlations
-<a href=#87 id=87 data-nosnippet>87</a>    /// (`RR`, `XXYY`, …), in canonical order.
-<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"stokes"</span>)]
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>stokes: Vec&lt;PolarizationCoordinate&gt;,
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Continuum (`mfs`) or one of the cube modes.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>specmode: SpecMode,
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// First output channel of a cube: a channel, frequency or velocity.
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">pub </span>start: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Output channel width of a cube: channels, a frequency or a velocity.
-<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
-<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub </span>width: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="doccomment">/// Spectral frame of a `cube`'s output axis.
-<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"parsed"</span>)]
-<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub </span>outframe: FrequencyRef,
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// Velocity convention of a cube's velocity `start` and axis.
-<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"parsed"</span>)]
-<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub </span>veltype: DopplerRef,
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// How a cube resamples source channels onto its output channels.
-<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"interpolation"</span>)]
-<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub </span>interpolation: CubeInterpolation,
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Rest frequency of a cube's velocity axis, in Hz.
-<a href=#108 id=108 data-nosnippet>108</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"rest_frequency_hz"</span>)]
-<a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>restfreq: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// One restoring beam per plane or one common beam.
-<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"restoring_beam"</span>)]
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub </span>restoringbeam: RestoringBeamPolicy,
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Whether a cube's density weighting is per output channel.
-<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">pub </span>perchanweightdensity: bool,
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Write the dirty products only, with no minor cycle.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub </span>dirty_only: bool,
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Total minor-cycle iterations.
+<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">use </span>std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
+<a href=#16 id=16 data-nosnippet>16</a>
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#18 id=18 data-nosnippet>18</a>    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
+<a href=#19 id=19 data-nosnippet>19</a>    UvTaper,
+<a href=#20 id=20 data-nosnippet>20</a>};
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_imaging_operator::GridPrecision;
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_imaging_runtime::{Diagnostics, ResourcePolicy};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_ms::CubeInterpolation;
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>casa_types::quanta::{Quantity, Unit};
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>serde::{Deserialize, Deserializer, de::Error <span class="kw">as _</span>};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>serde_json::Value;
+<a href=#28 id=28 data-nosnippet>28</a>
+<a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// One imaging run's parameters, as the catalog resolved them.
+<a href=#30 id=30 data-nosnippet>30</a></span><span class="attr">#[derive(Clone, Debug, Deserialize, PartialEq)]
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">pub struct </span>ImagingRequest {
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// The MeasurementSet.
+<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"single"</span>)]
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>vis: PathBuf,
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Prefix of every image product; a relative name is resolved against
+<a href=#36 id=36 data-nosnippet>36</a>    /// the working directory, as CASA's is.
+<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"absolute"</span>)]
+<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub </span>imagename: PathBuf,
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Image size in pixels along x and y; one value sizes both, as CASA's
+<a href=#40 id=40 data-nosnippet>40</a>    /// `imsize` does.
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"pixel_pair"</span>)]
+<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub </span>imsize: [usize; <span class="number">2</span>],
+<a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// Cell along x and y in arcseconds; one value sizes both, as CASA's
+<a href=#44 id=44 data-nosnippet>44</a>    /// `cell` does.
+<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"cell_pair_arcsec"</span>)]
+<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">pub </span>cell: [f64; <span class="number">2</span>],
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
+<a href=#48 id=48 data-nosnippet>48</a>    /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
+<a href=#49 id=49 data-nosnippet>49</a>    /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
+<a href=#50 id=50 data-nosnippet>50</a>    /// casa-rs also logs a warning.
+<a href=#51 id=51 data-nosnippet>51</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">pub </span>datacolumn: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// Whether the final model's prediction is written to `MODEL_DATA`.
+<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"save_model"</span>)]
+<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">pub </span>savemodel: bool,
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// A CASA outlier file naming further image domains.
+<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub </span>outlierfile: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Selected `FIELD_ID`s, from identifiers and ranges such as
+<a href=#60 id=60 data-nosnippet>60</a>    /// `0,3~5`; `None` selects every field.
+<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"field_ids"</span>)]
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub </span>field: <span class="prelude-ty">Option</span>&lt;Vec&lt;i32&gt;&gt;,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// The `FIELD_ID` whose phase centre is the image centre.
+<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub </span>phasecenter_field: <span class="prelude-ty">Option</span>&lt;i32&gt;,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The selected `DATA_DESC_ID`.
+<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub </span>ddid: <span class="prelude-ty">Option</span>&lt;i32&gt;,
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// The image centre: `J2000 &lt;lon&gt; &lt;lat&gt;`, `TRACKFIELD`, or an
+<a href=#70 id=70 data-nosnippet>70</a>    /// ephemeris name or table.
+<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub </span>phasecenter: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// CASA spectral-window selection, for example `0:1~30`.
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub </span>spw: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// First selected channel when `spw` names none.
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub </span>channel_start: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Number of selected channels when `spw` names none.
+<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub </span>channel_count: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// CASA baseline-length selection.
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub </span>uvrange: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// CASA observing-intent selection.
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>intent: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// The imaged Stokes parameters (`I`, `IQUV`, …) or correlations
+<a href=#89 id=89 data-nosnippet>89</a>    /// (`RR`, `XXYY`, …), in canonical order.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"stokes"</span>)]
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>stokes: Vec&lt;PolarizationCoordinate&gt;,
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Continuum (`mfs`) or one of the cube modes.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub </span>specmode: SpecMode,
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// First output channel of a cube: a channel, frequency or velocity.
+<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub </span>start: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Output channel width of a cube: channels, a frequency or a velocity.
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub </span>width: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Spectral frame of a `cube`'s output axis.
+<a href=#101 id=101 data-nosnippet>101</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"parsed"</span>)]
+<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub </span>outframe: FrequencyRef,
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Velocity convention of a cube's velocity `start` and axis.
+<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"parsed"</span>)]
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub </span>veltype: DopplerRef,
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// How a cube resamples source channels onto its output channels.
+<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"interpolation"</span>)]
+<a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub </span>interpolation: CubeInterpolation,
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Rest frequency of a cube's velocity axis, in Hz.
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"rest_frequency_hz"</span>)]
+<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub </span>restfreq: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// One restoring beam per plane or one common beam.
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"restoring_beam"</span>)]
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">pub </span>restoringbeam: RestoringBeamPolicy,
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Whether a cube's density weighting is per output channel.
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub </span>perchanweightdensity: bool,
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Total minor-cycle iterations; zero writes the dirty products only.
 <a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub </span>niter: usize,
 <a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Absolute stopping threshold in Jy/beam.
 <a href=#120 id=120 data-nosnippet>120</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"threshold_jy"</span>)]
@@ -532,16 +532,16 @@
 <a href=#532 id=532 data-nosnippet>532</a>    }
 <a href=#533 id=533 data-nosnippet>533</a>
 <a href=#534 id=534 data-nosnippet>534</a>    <span class="doccomment">/// Whether the run solves for a model: `mtmfs` always, the other
-<a href=#535 id=535 data-nosnippet>535</a>    /// solvers unless the run is dirty (`dirty_only` or `niter = 0`).
+<a href=#535 id=535 data-nosnippet>535</a>    /// solvers unless the run is dirty (`niter = 0`).
 <a href=#536 id=536 data-nosnippet>536</a>    </span><span class="attr">#[must_use]
 <a href=#537 id=537 data-nosnippet>537</a>    </span><span class="kw">pub fn </span>solves(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#538 id=538 data-nosnippet>538</a>        <span class="self">self</span>.deconvolver == Deconvolver::Mtmfs || (!<span class="self">self</span>.dirty_only &amp;&amp; <span class="self">self</span>.niter &gt; <span class="number">0</span>)
-<a href=#539 id=539 data-nosnippet>539</a>    }
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="self">self</span>.deconvolver == Deconvolver::Mtmfs || <span class="self">self</span>.niter &gt; <span class="number">0
+<a href=#539 id=539 data-nosnippet>539</a>    </span>}
 <a href=#540 id=540 data-nosnippet>540</a>
-<a href=#541 id=541 data-nosnippet>541</a>    <span class="doccomment">/// Total minor-cycle iterations: none for `dirty_only`.
+<a href=#541 id=541 data-nosnippet>541</a>    <span class="doccomment">/// Total minor-cycle iterations.
 <a href=#542 id=542 data-nosnippet>542</a>    </span><span class="attr">#[must_use]
 <a href=#543 id=543 data-nosnippet>543</a>    </span><span class="kw">pub const fn </span>iterations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">if </span><span class="self">self</span>.dirty_only { <span class="number">0 </span>} <span class="kw">else </span>{ <span class="self">self</span>.niter }
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="self">self</span>.niter
 <a href=#545 id=545 data-nosnippet>545</a>    }
 <a href=#546 id=546 data-nosnippet>546</a>
 <a href=#547 id=547 data-nosnippet>547</a>    <span class="doccomment">/// The resource policy `parallel` asks for: the balanced share of the
@@ -1037,307 +1037,229 @@
 <a href=#1037 id=1037 data-nosnippet>1037</a>
 <a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#1039 id=1039 data-nosnippet>1039</a>
-<a href=#1040 id=1040 data-nosnippet>1040</a>    <span class="doccomment">/// The active values the catalog resolves from `overrides` over its
-<a href=#1041 id=1041 data-nosnippet>1041</a>    /// defaults, with a MeasurementSet and image name.
-<a href=#1042 id=1042 data-nosnippet>1042</a>    </span><span class="kw">fn </span>resolved(
+<a href=#1040 id=1040 data-nosnippet>1040</a>    <span class="doccomment">/// The values the catalog resolves from `overrides` over its defaults,
+<a href=#1041 id=1041 data-nosnippet>1041</a>    /// with a MeasurementSet, an image name and a cell.
+<a href=#1042 id=1042 data-nosnippet>1042</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolved(
 <a href=#1043 id=1043 data-nosnippet>1043</a>        overrides: Value,
 <a href=#1044 id=1044 data-nosnippet>1044</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;serde_json::Map&lt;String, Value&gt;, casa_task_runtime::ResolveError&gt; {
-<a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = <span class="macro">json!</span>({ <span class="string">"vis"</span>: <span class="string">"unused.ms"</span>, <span class="string">"imagename"</span>: <span class="string">"unused" </span>});
+<a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = <span class="macro">json!</span>({ <span class="string">"vis"</span>: <span class="string">"unused.ms"</span>, <span class="string">"imagename"</span>: <span class="string">"unused"</span>, <span class="string">"cell"</span>: <span class="string">"1arcsec" </span>});
 <a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="kw">let </span>fields = values.as_object_mut().expect(<span class="string">"object"</span>);
 <a href=#1047 id=1047 data-nosnippet>1047</a>        fields.extend(overrides.as_object().expect(<span class="string">"overrides object"</span>).clone());
 <a href=#1048 id=1048 data-nosnippet>1048</a>        casa_task_runtime::resolve_plain_values(
-<a href=#1049 id=1049 data-nosnippet>1049</a>            casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).expect(<span class="string">"imager surface"</span>),
+<a href=#1049 id=1049 data-nosnippet>1049</a>            casa_provider_contracts::builtin_surface_bundle(<span class="string">"tclean"</span>).expect(<span class="string">"tclean surface"</span>),
 <a href=#1050 id=1050 data-nosnippet>1050</a>            PathBuf::from(<span class="string">"."</span>),
 <a href=#1051 id=1051 data-nosnippet>1051</a>            fields,
 <a href=#1052 id=1052 data-nosnippet>1052</a>        )
 <a href=#1053 id=1053 data-nosnippet>1053</a>    }
 <a href=#1054 id=1054 data-nosnippet>1054</a>
-<a href=#1055 id=1055 data-nosnippet>1055</a>    <span class="doccomment">/// A request resolved through the catalog from `overrides` over its
-<a href=#1056 id=1056 data-nosnippet>1056</a>    /// defaults, with a MeasurementSet and image name.
-<a href=#1057 id=1057 data-nosnippet>1057</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>request(overrides: Value) -&gt; ImagingRequest {
-<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="kw">let </span>resolved = resolved(overrides).expect(<span class="string">"catalog values"</span>);
-<a href=#1059 id=1059 data-nosnippet>1059</a>        serde_json::from_value(Value::Object(resolved)).expect(<span class="string">"imaging request"</span>)
-<a href=#1060 id=1060 data-nosnippet>1060</a>    }
-<a href=#1061 id=1061 data-nosnippet>1061</a>
-<a href=#1062 id=1062 data-nosnippet>1062</a>    <span class="kw">fn </span>refusal(overrides: Value) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-<a href=#1063 id=1063 data-nosnippet>1063</a>        request(overrides)
-<a href=#1064 id=1064 data-nosnippet>1064</a>            .validate()
-<a href=#1065 id=1065 data-nosnippet>1065</a>            .expect_err(<span class="string">"an invalid request"</span>)
-<a href=#1066 id=1066 data-nosnippet>1066</a>            .parameters
-<a href=#1067 id=1067 data-nosnippet>1067</a>    }
-<a href=#1068 id=1068 data-nosnippet>1068</a>
-<a href=#1069 id=1069 data-nosnippet>1069</a>    <span class="doccomment">/// `facets` is active only with the standard gridder, so naming it with
-<a href=#1070 id=1070 data-nosnippet>1070</a>    /// another gridder is refused, not ignored.
-<a href=#1071 id=1071 data-nosnippet>1071</a>    </span><span class="attr">#[test]
-<a href=#1072 id=1072 data-nosnippet>1072</a>    </span><span class="kw">fn </span>facets_with_another_gridder_are_refused() {
-<a href=#1073 id=1073 data-nosnippet>1073</a>        <span class="kw">for </span>gridder <span class="kw">in </span>[<span class="string">"wproject"</span>, <span class="string">"mosaic"</span>, <span class="string">"awproject"</span>] {
-<a href=#1074 id=1074 data-nosnippet>1074</a>            <span class="kw">let </span>error = resolved(<span class="macro">json!</span>({ <span class="string">"gridder"</span>: gridder, <span class="string">"facets"</span>: <span class="number">2 </span>}))
-<a href=#1075 id=1075 data-nosnippet>1075</a>                .expect_err(<span class="string">"facets with a non-standard gridder"</span>);
-<a href=#1076 id=1076 data-nosnippet>1076</a>            <span class="macro">assert!</span>(
-<a href=#1077 id=1077 data-nosnippet>1077</a>                error.to_string().contains(<span class="string">"\"facets\" is inactive"</span>),
-<a href=#1078 id=1078 data-nosnippet>1078</a>                <span class="string">"{gridder}: {error}"
-<a href=#1079 id=1079 data-nosnippet>1079</a>            </span>);
-<a href=#1080 id=1080 data-nosnippet>1080</a>        }
-<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="kw">let </span>resolved = resolved(<span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"standard"</span>, <span class="string">"facets"</span>: <span class="number">2 </span>})).expect(<span class="string">"facets"</span>);
-<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="macro">assert_eq!</span>(resolved[<span class="string">"facets"</span>], <span class="macro">json!</span>(<span class="number">2</span>));
-<a href=#1083 id=1083 data-nosnippet>1083</a>    }
-<a href=#1084 id=1084 data-nosnippet>1084</a>
-<a href=#1085 id=1085 data-nosnippet>1085</a>    <span class="attr">#[test]
-<a href=#1086 id=1086 data-nosnippet>1086</a>    </span><span class="kw">fn </span>the_catalog_defaults_validate() {
-<a href=#1087 id=1087 data-nosnippet>1087</a>        <span class="kw">let </span>request = request(<span class="macro">json!</span>({}));
-<a href=#1088 id=1088 data-nosnippet>1088</a>        request.validate().expect(<span class="string">"defaults"</span>);
-<a href=#1089 id=1089 data-nosnippet>1089</a>        <span class="macro">assert_eq!</span>(
-<a href=#1090 id=1090 data-nosnippet>1090</a>            request.gridder,
-<a href=#1091 id=1091 data-nosnippet>1091</a>            Gridder::Standard {
-<a href=#1092 id=1092 data-nosnippet>1092</a>                facets: NonZeroUsize::MIN
-<a href=#1093 id=1093 data-nosnippet>1093</a>            }
-<a href=#1094 id=1094 data-nosnippet>1094</a>        );
-<a href=#1095 id=1095 data-nosnippet>1095</a>        <span class="macro">assert_eq!</span>(request.backend, BackendRequest::Auto);
-<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="macro">assert_eq!</span>(request.gridprecision, <span class="prelude-val">None</span>);
-<a href=#1097 id=1097 data-nosnippet>1097</a>        <span class="macro">assert_eq!</span>(
-<a href=#1098 id=1098 data-nosnippet>1098</a>            request.diagnostics,
-<a href=#1099 id=1099 data-nosnippet>1099</a>            Diagnostics {
-<a href=#1100 id=1100 data-nosnippet>1100</a>                stage_timing: <span class="bool-val">false</span>,
-<a href=#1101 id=1101 data-nosnippet>1101</a>                metal_stage_timing: <span class="bool-val">false</span>,
-<a href=#1102 id=1102 data-nosnippet>1102</a>                science_trace: <span class="bool-val">false</span>,
-<a href=#1103 id=1103 data-nosnippet>1103</a>            }
-<a href=#1104 id=1104 data-nosnippet>1104</a>        );
-<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="macro">assert_eq!</span>(
-<a href=#1106 id=1106 data-nosnippet>1106</a>            request.resource_policy(),
-<a href=#1107 id=1107 data-nosnippet>1107</a>            ResourcePolicy::Explicit {
-<a href=#1108 id=1108 data-nosnippet>1108</a>                workers: <span class="number">1</span>,
-<a href=#1109 id=1109 data-nosnippet>1109</a>                memory: u64::MAX,
-<a href=#1110 id=1110 data-nosnippet>1110</a>            }
-<a href=#1111 id=1111 data-nosnippet>1111</a>        );
-<a href=#1112 id=1112 data-nosnippet>1112</a>    }
-<a href=#1113 id=1113 data-nosnippet>1113</a>
-<a href=#1114 id=1114 data-nosnippet>1114</a>    <span class="doccomment">/// CASA's `imsize` and `cell` take one value for both axes or one per
-<a href=#1115 id=1115 data-nosnippet>1115</a>    /// axis, x first.
-<a href=#1116 id=1116 data-nosnippet>1116</a>    </span><span class="attr">#[test]
-<a href=#1117 id=1117 data-nosnippet>1117</a>    </span><span class="kw">fn </span>imsize_and_cell_take_one_value_or_one_per_axis() {
-<a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="kw">let </span>square = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: <span class="number">64</span>, <span class="string">"cell"</span>: <span class="string">"2arcsec" </span>}));
-<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="macro">assert_eq!</span>((square.imsize, square.cell), ([<span class="number">64</span>, <span class="number">64</span>], [<span class="number">2.0</span>, <span class="number">2.0</span>]));
-<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="comment">// CASA's one-element lists are one value for both axes (#970 review).
-<a href=#1121 id=1121 data-nosnippet>1121</a>        </span><span class="kw">let </span>listed = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">120</span>], <span class="string">"cell"</span>: [<span class="string">"8arcsec"</span>] }));
-<a href=#1122 id=1122 data-nosnippet>1122</a>        <span class="macro">assert_eq!</span>((listed.imsize, listed.cell), ([<span class="number">120</span>, <span class="number">120</span>], [<span class="number">8.0</span>, <span class="number">8.0</span>]));
-<a href=#1123 id=1123 data-nosnippet>1123</a>        <span class="kw">let </span>pairs = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">120</span>, <span class="number">80</span>], <span class="string">"cell"</span>: [<span class="string">"8arcsec"</span>, <span class="string">"6arcsec"</span>] }));
-<a href=#1124 id=1124 data-nosnippet>1124</a>        <span class="macro">assert_eq!</span>((pairs.imsize, pairs.cell), ([<span class="number">120</span>, <span class="number">80</span>], [<span class="number">8.0</span>, <span class="number">6.0</span>]));
-<a href=#1125 id=1125 data-nosnippet>1125</a>        pairs.validate().expect(<span class="string">"a non-square image"</span>);
-<a href=#1126 id=1126 data-nosnippet>1126</a>        <span class="macro">assert!</span>(resolved(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">64</span>, <span class="number">32</span>, <span class="number">16</span>] })).is_err());
-<a href=#1127 id=1127 data-nosnippet>1127</a>    }
-<a href=#1128 id=1128 data-nosnippet>1128</a>
-<a href=#1129 id=1129 data-nosnippet>1129</a>    <span class="doccomment">/// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the
-<a href=#1130 id=1130 data-nosnippet>1130</a>    /// image-plane FWHM θ, whose uv-plane HWHM is 2 ln 2 / (π θ), and
-<a href=#1131 id=1131 data-nosnippet>1131</a>    /// wavelengths are the uv-plane HWHM. CASA's
-<a href=#1132 id=1132 data-nosnippet>1132</a>    /// `π² θ² / (4 ln 2) = ln 2 / HWHM²`.
-<a href=#1133 id=1133 data-nosnippet>1133</a>    </span><span class="attr">#[test]
-<a href=#1134 id=1134 data-nosnippet>1134</a>    </span><span class="kw">fn </span>uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
-<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">use </span>std::f64::consts::{LN_2, PI};
-<a href=#1136 id=1136 data-nosnippet>1136</a>        <span class="kw">let </span>parsed = |value: Value| {
-<a href=#1137 id=1137 data-nosnippet>1137</a>            serde_json::from_value::&lt;ImagingRequest&gt;(Value::Object(
-<a href=#1138 id=1138 data-nosnippet>1138</a>                resolved(<span class="macro">json!</span>({ <span class="string">"uvtaper"</span>: value })).expect(<span class="string">"catalog values"</span>),
-<a href=#1139 id=1139 data-nosnippet>1139</a>            ))
-<a href=#1140 id=1140 data-nosnippet>1140</a>            .map(|request| request.uvtaper)
-<a href=#1141 id=1141 data-nosnippet>1141</a>        };
-<a href=#1142 id=1142 data-nosnippet>1142</a>        <span class="kw">let </span>close = |actual: f64, expected: f64| {
-<a href=#1143 id=1143 data-nosnippet>1143</a>            <span class="macro">assert!</span>(
-<a href=#1144 id=1144 data-nosnippet>1144</a>                (actual - expected).abs() &lt;= <span class="number">1.0e-12 </span>* expected,
-<a href=#1145 id=1145 data-nosnippet>1145</a>                <span class="string">"{actual} against {expected}"
-<a href=#1146 id=1146 data-nosnippet>1146</a>            </span>);
-<a href=#1147 id=1147 data-nosnippet>1147</a>        };
-<a href=#1148 id=1148 data-nosnippet>1148</a>        <span class="macro">assert_eq!</span>(request(<span class="macro">json!</span>({})).uvtaper, <span class="prelude-val">None</span>);
-<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="macro">assert_eq!</span>(parsed(<span class="macro">json!</span>([])).expect(<span class="string">"an empty taper"</span>), <span class="prelude-val">None</span>);
-<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="kw">let </span>arcsec = PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
-<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="kw">let </span>circular = parsed(<span class="macro">json!</span>([<span class="string">"10arcsec"</span>]))
-<a href=#1152 id=1152 data-nosnippet>1152</a>            .expect(<span class="string">"parsed"</span>)
-<a href=#1153 id=1153 data-nosnippet>1153</a>            .expect(<span class="string">"a taper"</span>);
-<a href=#1154 id=1154 data-nosnippet>1154</a>        close(circular.major_lambda(), <span class="number">2.0 </span>* LN_2 / (PI * <span class="number">10.0 </span>* arcsec));
-<a href=#1155 id=1155 data-nosnippet>1155</a>        close(circular.minor_lambda(), circular.major_lambda());
-<a href=#1156 id=1156 data-nosnippet>1156</a>        <span class="macro">assert_eq!</span>(circular.position_angle_rad(), <span class="number">0.0</span>);
-<a href=#1157 id=1157 data-nosnippet>1157</a>        <span class="kw">let </span>rbmaj = PI * PI * (<span class="number">10.0 </span>* arcsec).powi(<span class="number">2</span>) / (<span class="number">4.0 </span>* LN_2);
-<a href=#1158 id=1158 data-nosnippet>1158</a>        close(LN_2 / circular.major_lambda().powi(<span class="number">2</span>), rbmaj);
-<a href=#1159 id=1159 data-nosnippet>1159</a>        <span class="kw">let </span>uv = parsed(<span class="macro">json!</span>([<span class="string">"5klambda"</span>, <span class="string">"3klambda"</span>, <span class="string">"45deg"</span>]))
-<a href=#1160 id=1160 data-nosnippet>1160</a>            .expect(<span class="string">"parsed"</span>)
-<a href=#1161 id=1161 data-nosnippet>1161</a>            .expect(<span class="string">"a taper"</span>);
-<a href=#1162 id=1162 data-nosnippet>1162</a>        close(uv.major_lambda(), <span class="number">5000.0</span>);
-<a href=#1163 id=1163 data-nosnippet>1163</a>        close(uv.minor_lambda(), <span class="number">3000.0</span>);
-<a href=#1164 id=1164 data-nosnippet>1164</a>        close(uv.position_angle_rad(), PI / <span class="number">4.0</span>);
-<a href=#1165 id=1165 data-nosnippet>1165</a>        <span class="kw">let </span>two = parsed(<span class="macro">json!</span>([<span class="string">"80arcsec"</span>, <span class="string">"40arcsec"</span>]))
-<a href=#1166 id=1166 data-nosnippet>1166</a>            .expect(<span class="string">"parsed"</span>)
-<a href=#1167 id=1167 data-nosnippet>1167</a>            .expect(<span class="string">"a taper"</span>);
-<a href=#1168 id=1168 data-nosnippet>1168</a>        close(two.minor_lambda(), <span class="number">2.0 </span>* two.major_lambda());
-<a href=#1169 id=1169 data-nosnippet>1169</a>        <span class="comment">// CASA reads a bare number as radians and tapers every weight to
-<a href=#1170 id=1170 data-nosnippet>1170</a>        // zero; mixed axes and a unitless angle are refused too.
-<a href=#1171 id=1171 data-nosnippet>1171</a>        </span><span class="kw">for </span>value <span class="kw">in </span>[
-<a href=#1172 id=1172 data-nosnippet>1172</a>            <span class="macro">json!</span>([<span class="string">"500.0"</span>]),
-<a href=#1173 id=1173 data-nosnippet>1173</a>            <span class="macro">json!</span>([<span class="string">"10arcsec"</span>, <span class="string">"3klambda"</span>]),
-<a href=#1174 id=1174 data-nosnippet>1174</a>            <span class="macro">json!</span>([<span class="string">"10arcsec"</span>, <span class="string">"5arcsec"</span>, <span class="string">"30"</span>]),
-<a href=#1175 id=1175 data-nosnippet>1175</a>            <span class="macro">json!</span>([<span class="string">"1Jy"</span>]),
-<a href=#1176 id=1176 data-nosnippet>1176</a>        ] {
-<a href=#1177 id=1177 data-nosnippet>1177</a>            <span class="macro">assert!</span>(parsed(value.clone()).is_err(), <span class="string">"{value}"</span>);
-<a href=#1178 id=1178 data-nosnippet>1178</a>        }
-<a href=#1179 id=1179 data-nosnippet>1179</a>    }
-<a href=#1180 id=1180 data-nosnippet>1180</a>
-<a href=#1181 id=1181 data-nosnippet>1181</a>    <span class="attr">#[test]
-<a href=#1182 id=1182 data-nosnippet>1182</a>    </span><span class="kw">fn </span>contradictory_parameters_are_refused_before_any_data_is_read() {
-<a href=#1183 id=1183 data-nosnippet>1183</a>        <span class="kw">for </span>(overrides, parameters) <span class="kw">in </span>[
-<a href=#1184 id=1184 data-nosnippet>1184</a>            (
-<a href=#1185 id=1185 data-nosnippet>1185</a>                <span class="macro">json!</span>({ <span class="string">"phasecenter"</span>: <span class="string">"J2000 0rad 0rad"</span>, <span class="string">"phasecenter_field"</span>: <span class="string">"0" </span>}),
-<a href=#1186 id=1186 data-nosnippet>1186</a>                <span class="string">"phasecenter, phasecenter_field"</span>,
-<a href=#1187 id=1187 data-nosnippet>1187</a>            ),
-<a href=#1188 id=1188 data-nosnippet>1188</a>            (<span class="macro">json!</span>({ <span class="string">"nterms"</span>: <span class="number">2 </span>}), <span class="string">"nterms, deconvolver"</span>),
-<a href=#1189 id=1189 data-nosnippet>1189</a>            (
-<a href=#1190 id=1190 data-nosnippet>1190</a>                <span class="macro">json!</span>({ <span class="string">"deconvolver"</span>: <span class="string">"mtmfs"</span>, <span class="string">"nterms"</span>: <span class="number">2</span>, <span class="string">"specmode"</span>: <span class="string">"cube" </span>}),
-<a href=#1191 id=1191 data-nosnippet>1191</a>                <span class="string">"deconvolver, specmode"</span>,
-<a href=#1192 id=1192 data-nosnippet>1192</a>            ),
-<a href=#1193 id=1193 data-nosnippet>1193</a>            (<span class="macro">json!</span>({ <span class="string">"savemodel"</span>: <span class="string">"modelcolumn" </span>}), <span class="string">"savemodel, niter"</span>),
-<a href=#1194 id=1194 data-nosnippet>1194</a>            (
-<a href=#1195 id=1195 data-nosnippet>1195</a>                <span class="macro">json!</span>({ <span class="string">"save_continuum_residual"</span>: <span class="bool-val">true </span>}),
-<a href=#1196 id=1196 data-nosnippet>1196</a>                <span class="string">"save_continuum_residual, fitspw"</span>,
-<a href=#1197 id=1197 data-nosnippet>1197</a>            ),
-<a href=#1198 id=1198 data-nosnippet>1198</a>            (<span class="macro">json!</span>({ <span class="string">"fitspw"</span>: <span class="string">"0:0~3" </span>}), <span class="string">"fitspw, specmode"</span>),
-<a href=#1199 id=1199 data-nosnippet>1199</a>            (
-<a href=#1200 id=1200 data-nosnippet>1200</a>                <span class="macro">json!</span>({ <span class="string">"usemask"</span>: <span class="string">"auto-multithresh"</span>, <span class="string">"mask_box"</span>: <span class="string">"0,0,4,4" </span>}),
-<a href=#1201 id=1201 data-nosnippet>1201</a>                <span class="string">"usemask, mask_image, mask_box"</span>,
-<a href=#1202 id=1202 data-nosnippet>1202</a>            ),
-<a href=#1203 id=1203 data-nosnippet>1203</a>            (<span class="macro">json!</span>({ <span class="string">"pblimit"</span>: <span class="number">1.0 </span>}), <span class="string">"psfcutoff, pblimit"</span>),
-<a href=#1204 id=1204 data-nosnippet>1204</a>            (
-<a href=#1205 id=1205 data-nosnippet>1205</a>                <span class="macro">json!</span>({ <span class="string">"deconvolver"</span>: <span class="string">"mtmfs"</span>, <span class="string">"nterms"</span>: <span class="number">2</span>, <span class="string">"startmodel"</span>: <span class="string">"deep.model" </span>}),
-<a href=#1206 id=1206 data-nosnippet>1206</a>                <span class="string">"startmodel, deconvolver"</span>,
-<a href=#1207 id=1207 data-nosnippet>1207</a>            ),
-<a href=#1208 id=1208 data-nosnippet>1208</a>        ] {
-<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="macro">assert_eq!</span>(refusal(overrides), parameters);
-<a href=#1210 id=1210 data-nosnippet>1210</a>        }
-<a href=#1211 id=1211 data-nosnippet>1211</a>    }
-<a href=#1212 id=1212 data-nosnippet>1212</a>
-<a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="attr">#[test]
-<a href=#1214 id=1214 data-nosnippet>1214</a>    </span><span class="kw">fn </span>aw_projection_uses_the_32_plane_evla_cache() {
-<a href=#1215 id=1215 data-nosnippet>1215</a>        <span class="kw">let </span>aw = |planes: Value| {
-<a href=#1216 id=1216 data-nosnippet>1216</a>            <span class="macro">json!</span>({
-<a href=#1217 id=1217 data-nosnippet>1217</a>                <span class="string">"gridder"</span>: <span class="string">"awproject"</span>,
-<a href=#1218 id=1218 data-nosnippet>1218</a>                <span class="string">"cfcache"</span>: <span class="string">"cf"</span>,
-<a href=#1219 id=1219 data-nosnippet>1219</a>                <span class="string">"wprojplanes"</span>: planes,
-<a href=#1220 id=1220 data-nosnippet>1220</a>            })
-<a href=#1221 id=1221 data-nosnippet>1221</a>        };
-<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="macro">assert_eq!</span>(refusal(aw(<span class="macro">json!</span>(<span class="number">16</span>))), <span class="string">"wprojplanes"</span>);
-<a href=#1223 id=1223 data-nosnippet>1223</a>        request(aw(<span class="macro">json!</span>(<span class="number">32</span>))).validate().expect(<span class="string">"32 planes"</span>);
-<a href=#1224 id=1224 data-nosnippet>1224</a>        <span class="kw">let </span>native = <span class="macro">json!</span>({
-<a href=#1225 id=1225 data-nosnippet>1225</a>            <span class="string">"gridder"</span>: <span class="string">"awproject"</span>,
-<a href=#1226 id=1226 data-nosnippet>1226</a>            <span class="string">"aw_cf_source"</span>: <span class="string">"native-evla"</span>,
-<a href=#1227 id=1227 data-nosnippet>1227</a>            <span class="string">"wprojplanes"</span>: <span class="number">32</span>,
-<a href=#1228 id=1228 data-nosnippet>1228</a>            <span class="string">"native_cf_cache"</span>: <span class="string">"cache"</span>,
-<a href=#1229 id=1229 data-nosnippet>1229</a>            <span class="string">"evla_surface"</span>: <span class="string">"surface"</span>,
-<a href=#1230 id=1230 data-nosnippet>1230</a>            <span class="string">"native_cf_working_size"</span>: <span class="number">64</span>,
-<a href=#1231 id=1231 data-nosnippet>1231</a>            <span class="string">"native_cf_oversampling"</span>: <span class="number">4</span>,
-<a href=#1232 id=1232 data-nosnippet>1232</a>            <span class="string">"native_cf_cache_bytes"</span>: <span class="number">1_048_576</span>,
-<a href=#1233 id=1233 data-nosnippet>1233</a>            <span class="string">"native_cf_maximum_cells"</span>: <span class="number">16</span>,
-<a href=#1234 id=1234 data-nosnippet>1234</a>        });
-<a href=#1235 id=1235 data-nosnippet>1235</a>        <span class="macro">assert_eq!</span>(
-<a href=#1236 id=1236 data-nosnippet>1236</a>            refusal(native),
-<a href=#1237 id=1237 data-nosnippet>1237</a>            <span class="string">"native_cf_cache_bytes, native_cf_maximum_cells"
-<a href=#1238 id=1238 data-nosnippet>1238</a>        </span>);
+<a href=#1055 id=1055 data-nosnippet>1055</a>    <span class="doccomment">/// The request tclean's `overrides` make, or its refusal.
+<a href=#1056 id=1056 data-nosnippet>1056</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read(overrides: Value) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingRequest, <span class="kw">crate</span>::TcleanRefusal&gt; {
+<a href=#1057 id=1057 data-nosnippet>1057</a>        ImagingRequest::from_tclean(<span class="kw-2">&amp;</span>resolved(overrides).expect(<span class="string">"catalog values"</span>))
+<a href=#1058 id=1058 data-nosnippet>1058</a>    }
+<a href=#1059 id=1059 data-nosnippet>1059</a>
+<a href=#1060 id=1060 data-nosnippet>1060</a>    <span class="doccomment">/// A request resolved through the catalog from `overrides` over its
+<a href=#1061 id=1061 data-nosnippet>1061</a>    /// defaults, with a MeasurementSet, an image name and a cell.
+<a href=#1062 id=1062 data-nosnippet>1062</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>request(overrides: Value) -&gt; ImagingRequest {
+<a href=#1063 id=1063 data-nosnippet>1063</a>        read(overrides).expect(<span class="string">"imaging request"</span>)
+<a href=#1064 id=1064 data-nosnippet>1064</a>    }
+<a href=#1065 id=1065 data-nosnippet>1065</a>
+<a href=#1066 id=1066 data-nosnippet>1066</a>    <span class="kw">fn </span>refusal(overrides: Value) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#1067 id=1067 data-nosnippet>1067</a>        request(overrides)
+<a href=#1068 id=1068 data-nosnippet>1068</a>            .validate()
+<a href=#1069 id=1069 data-nosnippet>1069</a>            .expect_err(<span class="string">"an invalid request"</span>)
+<a href=#1070 id=1070 data-nosnippet>1070</a>            .parameters
+<a href=#1071 id=1071 data-nosnippet>1071</a>    }
+<a href=#1072 id=1072 data-nosnippet>1072</a>
+<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="attr">#[test]
+<a href=#1074 id=1074 data-nosnippet>1074</a>    </span><span class="kw">fn </span>the_catalog_defaults_validate() {
+<a href=#1075 id=1075 data-nosnippet>1075</a>        <span class="kw">let </span>request = request(<span class="macro">json!</span>({}));
+<a href=#1076 id=1076 data-nosnippet>1076</a>        request.validate().expect(<span class="string">"defaults"</span>);
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="macro">assert_eq!</span>(
+<a href=#1078 id=1078 data-nosnippet>1078</a>            request.gridder,
+<a href=#1079 id=1079 data-nosnippet>1079</a>            Gridder::Standard {
+<a href=#1080 id=1080 data-nosnippet>1080</a>                facets: NonZeroUsize::MIN
+<a href=#1081 id=1081 data-nosnippet>1081</a>            }
+<a href=#1082 id=1082 data-nosnippet>1082</a>        );
+<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="macro">assert_eq!</span>(request.backend, BackendRequest::Auto);
+<a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="macro">assert_eq!</span>(request.gridprecision, <span class="prelude-val">None</span>);
+<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="macro">assert_eq!</span>(
+<a href=#1086 id=1086 data-nosnippet>1086</a>            request.diagnostics,
+<a href=#1087 id=1087 data-nosnippet>1087</a>            Diagnostics {
+<a href=#1088 id=1088 data-nosnippet>1088</a>                stage_timing: <span class="bool-val">false</span>,
+<a href=#1089 id=1089 data-nosnippet>1089</a>                metal_stage_timing: <span class="bool-val">false</span>,
+<a href=#1090 id=1090 data-nosnippet>1090</a>                science_trace: <span class="bool-val">false</span>,
+<a href=#1091 id=1091 data-nosnippet>1091</a>            }
+<a href=#1092 id=1092 data-nosnippet>1092</a>        );
+<a href=#1093 id=1093 data-nosnippet>1093</a>        <span class="macro">assert_eq!</span>(
+<a href=#1094 id=1094 data-nosnippet>1094</a>            request.resource_policy(),
+<a href=#1095 id=1095 data-nosnippet>1095</a>            ResourcePolicy::Explicit {
+<a href=#1096 id=1096 data-nosnippet>1096</a>                workers: <span class="number">1</span>,
+<a href=#1097 id=1097 data-nosnippet>1097</a>                memory: u64::MAX,
+<a href=#1098 id=1098 data-nosnippet>1098</a>            }
+<a href=#1099 id=1099 data-nosnippet>1099</a>        );
+<a href=#1100 id=1100 data-nosnippet>1100</a>    }
+<a href=#1101 id=1101 data-nosnippet>1101</a>
+<a href=#1102 id=1102 data-nosnippet>1102</a>    <span class="doccomment">/// CASA's `imsize` and `cell` take one value for both axes or one per
+<a href=#1103 id=1103 data-nosnippet>1103</a>    /// axis, x first.
+<a href=#1104 id=1104 data-nosnippet>1104</a>    </span><span class="attr">#[test]
+<a href=#1105 id=1105 data-nosnippet>1105</a>    </span><span class="kw">fn </span>imsize_and_cell_take_one_value_or_one_per_axis() {
+<a href=#1106 id=1106 data-nosnippet>1106</a>        <span class="kw">let </span>square = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: <span class="number">64</span>, <span class="string">"cell"</span>: <span class="string">"2arcsec" </span>}));
+<a href=#1107 id=1107 data-nosnippet>1107</a>        <span class="macro">assert_eq!</span>((square.imsize, square.cell), ([<span class="number">64</span>, <span class="number">64</span>], [<span class="number">2.0</span>, <span class="number">2.0</span>]));
+<a href=#1108 id=1108 data-nosnippet>1108</a>        <span class="comment">// CASA's one-element lists are one value for both axes (#970 review).
+<a href=#1109 id=1109 data-nosnippet>1109</a>        </span><span class="kw">let </span>listed = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">120</span>], <span class="string">"cell"</span>: [<span class="string">"8arcsec"</span>] }));
+<a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="macro">assert_eq!</span>((listed.imsize, listed.cell), ([<span class="number">120</span>, <span class="number">120</span>], [<span class="number">8.0</span>, <span class="number">8.0</span>]));
+<a href=#1111 id=1111 data-nosnippet>1111</a>        <span class="kw">let </span>pairs = request(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">120</span>, <span class="number">80</span>], <span class="string">"cell"</span>: [<span class="string">"8arcsec"</span>, <span class="string">"6arcsec"</span>] }));
+<a href=#1112 id=1112 data-nosnippet>1112</a>        <span class="macro">assert_eq!</span>((pairs.imsize, pairs.cell), ([<span class="number">120</span>, <span class="number">80</span>], [<span class="number">8.0</span>, <span class="number">6.0</span>]));
+<a href=#1113 id=1113 data-nosnippet>1113</a>        pairs.validate().expect(<span class="string">"a non-square image"</span>);
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="macro">assert!</span>(resolved(<span class="macro">json!</span>({ <span class="string">"imsize"</span>: [<span class="number">64</span>, <span class="number">32</span>, <span class="number">16</span>] })).is_err());
+<a href=#1115 id=1115 data-nosnippet>1115</a>    }
+<a href=#1116 id=1116 data-nosnippet>1116</a>
+<a href=#1117 id=1117 data-nosnippet>1117</a>    <span class="doccomment">/// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the
+<a href=#1118 id=1118 data-nosnippet>1118</a>    /// image-plane FWHM θ, whose uv-plane HWHM is 2 ln 2 / (π θ), and
+<a href=#1119 id=1119 data-nosnippet>1119</a>    /// wavelengths are the uv-plane HWHM. CASA's
+<a href=#1120 id=1120 data-nosnippet>1120</a>    /// `π² θ² / (4 ln 2) = ln 2 / HWHM²`.
+<a href=#1121 id=1121 data-nosnippet>1121</a>    </span><span class="attr">#[test]
+<a href=#1122 id=1122 data-nosnippet>1122</a>    </span><span class="kw">fn </span>uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
+<a href=#1123 id=1123 data-nosnippet>1123</a>        <span class="kw">use </span>std::f64::consts::{LN_2, PI};
+<a href=#1124 id=1124 data-nosnippet>1124</a>        <span class="kw">let </span>parsed =
+<a href=#1125 id=1125 data-nosnippet>1125</a>            |value: Value| read(<span class="macro">json!</span>({ <span class="string">"uvtaper"</span>: value })).map(|request| request.uvtaper);
+<a href=#1126 id=1126 data-nosnippet>1126</a>        <span class="kw">let </span>close = |actual: f64, expected: f64| {
+<a href=#1127 id=1127 data-nosnippet>1127</a>            <span class="macro">assert!</span>(
+<a href=#1128 id=1128 data-nosnippet>1128</a>                (actual - expected).abs() &lt;= <span class="number">1.0e-12 </span>* expected,
+<a href=#1129 id=1129 data-nosnippet>1129</a>                <span class="string">"{actual} against {expected}"
+<a href=#1130 id=1130 data-nosnippet>1130</a>            </span>);
+<a href=#1131 id=1131 data-nosnippet>1131</a>        };
+<a href=#1132 id=1132 data-nosnippet>1132</a>        <span class="macro">assert_eq!</span>(request(<span class="macro">json!</span>({})).uvtaper, <span class="prelude-val">None</span>);
+<a href=#1133 id=1133 data-nosnippet>1133</a>        <span class="macro">assert_eq!</span>(parsed(<span class="macro">json!</span>([])).expect(<span class="string">"an empty taper"</span>), <span class="prelude-val">None</span>);
+<a href=#1134 id=1134 data-nosnippet>1134</a>        <span class="kw">let </span>arcsec = PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
+<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">let </span>circular = parsed(<span class="macro">json!</span>([<span class="string">"10arcsec"</span>]))
+<a href=#1136 id=1136 data-nosnippet>1136</a>            .expect(<span class="string">"parsed"</span>)
+<a href=#1137 id=1137 data-nosnippet>1137</a>            .expect(<span class="string">"a taper"</span>);
+<a href=#1138 id=1138 data-nosnippet>1138</a>        close(circular.major_lambda(), <span class="number">2.0 </span>* LN_2 / (PI * <span class="number">10.0 </span>* arcsec));
+<a href=#1139 id=1139 data-nosnippet>1139</a>        close(circular.minor_lambda(), circular.major_lambda());
+<a href=#1140 id=1140 data-nosnippet>1140</a>        <span class="macro">assert_eq!</span>(circular.position_angle_rad(), <span class="number">0.0</span>);
+<a href=#1141 id=1141 data-nosnippet>1141</a>        <span class="kw">let </span>rbmaj = PI * PI * (<span class="number">10.0 </span>* arcsec).powi(<span class="number">2</span>) / (<span class="number">4.0 </span>* LN_2);
+<a href=#1142 id=1142 data-nosnippet>1142</a>        close(LN_2 / circular.major_lambda().powi(<span class="number">2</span>), rbmaj);
+<a href=#1143 id=1143 data-nosnippet>1143</a>        <span class="kw">let </span>uv = parsed(<span class="macro">json!</span>([<span class="string">"5klambda"</span>, <span class="string">"3klambda"</span>, <span class="string">"45deg"</span>]))
+<a href=#1144 id=1144 data-nosnippet>1144</a>            .expect(<span class="string">"parsed"</span>)
+<a href=#1145 id=1145 data-nosnippet>1145</a>            .expect(<span class="string">"a taper"</span>);
+<a href=#1146 id=1146 data-nosnippet>1146</a>        close(uv.major_lambda(), <span class="number">5000.0</span>);
+<a href=#1147 id=1147 data-nosnippet>1147</a>        close(uv.minor_lambda(), <span class="number">3000.0</span>);
+<a href=#1148 id=1148 data-nosnippet>1148</a>        close(uv.position_angle_rad(), PI / <span class="number">4.0</span>);
+<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="kw">let </span>two = parsed(<span class="macro">json!</span>([<span class="string">"80arcsec"</span>, <span class="string">"40arcsec"</span>]))
+<a href=#1150 id=1150 data-nosnippet>1150</a>            .expect(<span class="string">"parsed"</span>)
+<a href=#1151 id=1151 data-nosnippet>1151</a>            .expect(<span class="string">"a taper"</span>);
+<a href=#1152 id=1152 data-nosnippet>1152</a>        close(two.minor_lambda(), <span class="number">2.0 </span>* two.major_lambda());
+<a href=#1153 id=1153 data-nosnippet>1153</a>        <span class="comment">// CASA reads a bare number as radians and tapers every weight to
+<a href=#1154 id=1154 data-nosnippet>1154</a>        // zero; mixed axes and a unitless angle are refused too.
+<a href=#1155 id=1155 data-nosnippet>1155</a>        </span><span class="kw">for </span>value <span class="kw">in </span>[
+<a href=#1156 id=1156 data-nosnippet>1156</a>            <span class="macro">json!</span>([<span class="string">"500.0"</span>]),
+<a href=#1157 id=1157 data-nosnippet>1157</a>            <span class="macro">json!</span>([<span class="string">"10arcsec"</span>, <span class="string">"3klambda"</span>]),
+<a href=#1158 id=1158 data-nosnippet>1158</a>            <span class="macro">json!</span>([<span class="string">"10arcsec"</span>, <span class="string">"5arcsec"</span>, <span class="string">"30"</span>]),
+<a href=#1159 id=1159 data-nosnippet>1159</a>            <span class="macro">json!</span>([<span class="string">"1Jy"</span>]),
+<a href=#1160 id=1160 data-nosnippet>1160</a>        ] {
+<a href=#1161 id=1161 data-nosnippet>1161</a>            <span class="macro">assert!</span>(parsed(value.clone()).is_err(), <span class="string">"{value}"</span>);
+<a href=#1162 id=1162 data-nosnippet>1162</a>        }
+<a href=#1163 id=1163 data-nosnippet>1163</a>    }
+<a href=#1164 id=1164 data-nosnippet>1164</a>
+<a href=#1165 id=1165 data-nosnippet>1165</a>    <span class="attr">#[test]
+<a href=#1166 id=1166 data-nosnippet>1166</a>    </span><span class="kw">fn </span>contradictory_parameters_are_refused_before_any_data_is_read() {
+<a href=#1167 id=1167 data-nosnippet>1167</a>        <span class="kw">for </span>(overrides, parameters) <span class="kw">in </span>[
+<a href=#1168 id=1168 data-nosnippet>1168</a>            (
+<a href=#1169 id=1169 data-nosnippet>1169</a>                <span class="macro">json!</span>({ <span class="string">"deconvolver"</span>: <span class="string">"mtmfs"</span>, <span class="string">"nterms"</span>: <span class="number">0 </span>}),
+<a href=#1170 id=1170 data-nosnippet>1170</a>                <span class="string">"nterms, deconvolver"</span>,
+<a href=#1171 id=1171 data-nosnippet>1171</a>            ),
+<a href=#1172 id=1172 data-nosnippet>1172</a>            (
+<a href=#1173 id=1173 data-nosnippet>1173</a>                <span class="macro">json!</span>({ <span class="string">"deconvolver"</span>: <span class="string">"mtmfs"</span>, <span class="string">"nterms"</span>: <span class="number">2</span>, <span class="string">"specmode"</span>: <span class="string">"cube" </span>}),
+<a href=#1174 id=1174 data-nosnippet>1174</a>                <span class="string">"deconvolver, specmode"</span>,
+<a href=#1175 id=1175 data-nosnippet>1175</a>            ),
+<a href=#1176 id=1176 data-nosnippet>1176</a>            (<span class="macro">json!</span>({ <span class="string">"savemodel"</span>: <span class="string">"modelcolumn" </span>}), <span class="string">"savemodel, niter"</span>),
+<a href=#1177 id=1177 data-nosnippet>1177</a>            (
+<a href=#1178 id=1178 data-nosnippet>1178</a>                <span class="macro">json!</span>({ <span class="string">"save_continuum_residual"</span>: <span class="bool-val">true </span>}),
+<a href=#1179 id=1179 data-nosnippet>1179</a>                <span class="string">"save_continuum_residual, fitspw"</span>,
+<a href=#1180 id=1180 data-nosnippet>1180</a>            ),
+<a href=#1181 id=1181 data-nosnippet>1181</a>            (<span class="macro">json!</span>({ <span class="string">"fitspw"</span>: <span class="string">"0:0~3" </span>}), <span class="string">"fitspw, specmode"</span>),
+<a href=#1182 id=1182 data-nosnippet>1182</a>            (<span class="macro">json!</span>({ <span class="string">"pblimit"</span>: <span class="number">1.0 </span>}), <span class="string">"psfcutoff, pblimit"</span>),
+<a href=#1183 id=1183 data-nosnippet>1183</a>            (
+<a href=#1184 id=1184 data-nosnippet>1184</a>                <span class="macro">json!</span>({ <span class="string">"deconvolver"</span>: <span class="string">"mtmfs"</span>, <span class="string">"nterms"</span>: <span class="number">2</span>, <span class="string">"startmodel"</span>: <span class="string">"deep.model" </span>}),
+<a href=#1185 id=1185 data-nosnippet>1185</a>                <span class="string">"startmodel, deconvolver"</span>,
+<a href=#1186 id=1186 data-nosnippet>1186</a>            ),
+<a href=#1187 id=1187 data-nosnippet>1187</a>        ] {
+<a href=#1188 id=1188 data-nosnippet>1188</a>            <span class="macro">assert_eq!</span>(refusal(overrides), parameters);
+<a href=#1189 id=1189 data-nosnippet>1189</a>        }
+<a href=#1190 id=1190 data-nosnippet>1190</a>    }
+<a href=#1191 id=1191 data-nosnippet>1191</a>
+<a href=#1192 id=1192 data-nosnippet>1192</a>    <span class="attr">#[test]
+<a href=#1193 id=1193 data-nosnippet>1193</a>    </span><span class="kw">fn </span>aw_projection_uses_the_32_plane_evla_cache() {
+<a href=#1194 id=1194 data-nosnippet>1194</a>        <span class="kw">let </span>aw = |planes: Value| {
+<a href=#1195 id=1195 data-nosnippet>1195</a>            <span class="macro">json!</span>({
+<a href=#1196 id=1196 data-nosnippet>1196</a>                <span class="string">"gridder"</span>: <span class="string">"awproject"</span>,
+<a href=#1197 id=1197 data-nosnippet>1197</a>                <span class="string">"conjbeams"</span>: <span class="bool-val">true</span>,
+<a href=#1198 id=1198 data-nosnippet>1198</a>                <span class="string">"cfcache"</span>: <span class="string">"cf"</span>,
+<a href=#1199 id=1199 data-nosnippet>1199</a>                <span class="string">"wprojplanes"</span>: planes,
+<a href=#1200 id=1200 data-nosnippet>1200</a>            })
+<a href=#1201 id=1201 data-nosnippet>1201</a>        };
+<a href=#1202 id=1202 data-nosnippet>1202</a>        <span class="macro">assert_eq!</span>(refusal(aw(<span class="macro">json!</span>(<span class="number">16</span>))), <span class="string">"wprojplanes"</span>);
+<a href=#1203 id=1203 data-nosnippet>1203</a>        <span class="macro">assert_eq!</span>(refusal(aw(<span class="macro">json!</span>(-<span class="number">1</span>))), <span class="string">"wprojplanes"</span>);
+<a href=#1204 id=1204 data-nosnippet>1204</a>        request(aw(<span class="macro">json!</span>(<span class="number">32</span>))).validate().expect(<span class="string">"32 planes"</span>);
+<a href=#1205 id=1205 data-nosnippet>1205</a>        <span class="kw">let </span>native = <span class="macro">json!</span>({
+<a href=#1206 id=1206 data-nosnippet>1206</a>            <span class="string">"gridder"</span>: <span class="string">"awproject"</span>,
+<a href=#1207 id=1207 data-nosnippet>1207</a>            <span class="string">"conjbeams"</span>: <span class="bool-val">true</span>,
+<a href=#1208 id=1208 data-nosnippet>1208</a>            <span class="string">"aw_cf_source"</span>: <span class="string">"native-evla"</span>,
+<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="string">"wprojplanes"</span>: <span class="number">32</span>,
+<a href=#1210 id=1210 data-nosnippet>1210</a>            <span class="string">"native_cf_cache"</span>: <span class="string">"cache"</span>,
+<a href=#1211 id=1211 data-nosnippet>1211</a>            <span class="string">"evla_surface"</span>: <span class="string">"surface"</span>,
+<a href=#1212 id=1212 data-nosnippet>1212</a>            <span class="string">"native_cf_working_size"</span>: <span class="number">64</span>,
+<a href=#1213 id=1213 data-nosnippet>1213</a>            <span class="string">"native_cf_oversampling"</span>: <span class="number">4</span>,
+<a href=#1214 id=1214 data-nosnippet>1214</a>            <span class="string">"native_cf_cache_bytes"</span>: <span class="number">1_048_576</span>,
+<a href=#1215 id=1215 data-nosnippet>1215</a>            <span class="string">"native_cf_maximum_cells"</span>: <span class="number">16</span>,
+<a href=#1216 id=1216 data-nosnippet>1216</a>        });
+<a href=#1217 id=1217 data-nosnippet>1217</a>        <span class="macro">assert_eq!</span>(
+<a href=#1218 id=1218 data-nosnippet>1218</a>            refusal(native),
+<a href=#1219 id=1219 data-nosnippet>1219</a>            <span class="string">"native_cf_cache_bytes, native_cf_maximum_cells"
+<a href=#1220 id=1220 data-nosnippet>1220</a>        </span>);
+<a href=#1221 id=1221 data-nosnippet>1221</a>    }
+<a href=#1222 id=1222 data-nosnippet>1222</a>
+<a href=#1223 id=1223 data-nosnippet>1223</a>    <span class="doccomment">/// A blank optional parameter is unset, as CASA's empty text is.
+<a href=#1224 id=1224 data-nosnippet>1224</a>    </span><span class="attr">#[test]
+<a href=#1225 id=1225 data-nosnippet>1225</a>    </span><span class="kw">fn </span>blank_optional_values_are_unset() {
+<a href=#1226 id=1226 data-nosnippet>1226</a>        <span class="kw">let </span>blank = request(<span class="macro">json!</span>({
+<a href=#1227 id=1227 data-nosnippet>1227</a>            <span class="string">"phasecenter"</span>: <span class="string">""</span>,
+<a href=#1228 id=1228 data-nosnippet>1228</a>            <span class="string">"mask"</span>: <span class="string">""</span>,
+<a href=#1229 id=1229 data-nosnippet>1229</a>            <span class="string">"outlierfile"</span>: <span class="string">""</span>,
+<a href=#1230 id=1230 data-nosnippet>1230</a>            <span class="string">"restfreq"</span>: <span class="string">""</span>,
+<a href=#1231 id=1231 data-nosnippet>1231</a>            <span class="string">"scales"</span>: [],
+<a href=#1232 id=1232 data-nosnippet>1232</a>            <span class="string">"field"</span>: <span class="string">""</span>,
+<a href=#1233 id=1233 data-nosnippet>1233</a>            <span class="string">"spw"</span>: <span class="string">""</span>,
+<a href=#1234 id=1234 data-nosnippet>1234</a>            <span class="string">"start"</span>: <span class="string">""</span>,
+<a href=#1235 id=1235 data-nosnippet>1235</a>            <span class="string">"startmodel"</span>: <span class="string">""</span>,
+<a href=#1236 id=1236 data-nosnippet>1236</a>        }));
+<a href=#1237 id=1237 data-nosnippet>1237</a>        <span class="macro">assert_eq!</span>(blank, request(<span class="macro">json!</span>({})));
+<a href=#1238 id=1238 data-nosnippet>1238</a>        <span class="macro">assert_eq!</span>(blank.datacolumn, <span class="prelude-val">None</span>);
 <a href=#1239 id=1239 data-nosnippet>1239</a>    }
 <a href=#1240 id=1240 data-nosnippet>1240</a>
-<a href=#1241 id=1241 data-nosnippet>1241</a>    <span class="doccomment">/// Every parameter the catalog resolves is a required field of the
-<a href=#1242 id=1242 data-nosnippet>1242</a>    /// request, for every gridder and AW source: a binding the request does
-<a href=#1243 id=1243 data-nosnippet>1243</a>    /// not read would otherwise be dropped silently (the flattened gridder
-<a href=#1244 id=1244 data-nosnippet>1244</a>    /// rules out `deny_unknown_fields`).
-<a href=#1245 id=1245 data-nosnippet>1245</a>    </span><span class="attr">#[test]
-<a href=#1246 id=1246 data-nosnippet>1246</a>    </span><span class="kw">fn </span>every_resolved_parameter_is_a_required_field() {
-<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="kw">for </span>overrides <span class="kw">in </span>[
-<a href=#1248 id=1248 data-nosnippet>1248</a>            <span class="macro">json!</span>({}),
-<a href=#1249 id=1249 data-nosnippet>1249</a>            <span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"wproject" </span>}),
-<a href=#1250 id=1250 data-nosnippet>1250</a>            <span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"mosaic" </span>}),
-<a href=#1251 id=1251 data-nosnippet>1251</a>            <span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"awproject"</span>, <span class="string">"cfcache"</span>: <span class="string">"cf" </span>}),
-<a href=#1252 id=1252 data-nosnippet>1252</a>            <span class="macro">json!</span>({
-<a href=#1253 id=1253 data-nosnippet>1253</a>                <span class="string">"gridder"</span>: <span class="string">"awproject"</span>,
-<a href=#1254 id=1254 data-nosnippet>1254</a>                <span class="string">"aw_cf_source"</span>: <span class="string">"native-evla"</span>,
-<a href=#1255 id=1255 data-nosnippet>1255</a>                <span class="string">"native_cf_cache"</span>: <span class="string">"cache"</span>,
-<a href=#1256 id=1256 data-nosnippet>1256</a>                <span class="string">"evla_surface"</span>: <span class="string">"surface"</span>,
-<a href=#1257 id=1257 data-nosnippet>1257</a>                <span class="string">"native_cf_working_size"</span>: <span class="number">64</span>,
-<a href=#1258 id=1258 data-nosnippet>1258</a>                <span class="string">"native_cf_oversampling"</span>: <span class="number">4</span>,
-<a href=#1259 id=1259 data-nosnippet>1259</a>                <span class="string">"native_cf_cache_bytes"</span>: <span class="number">1_048_576</span>,
-<a href=#1260 id=1260 data-nosnippet>1260</a>                <span class="string">"native_cf_maximum_cells"</span>: <span class="number">64</span>,
-<a href=#1261 id=1261 data-nosnippet>1261</a>            }),
-<a href=#1262 id=1262 data-nosnippet>1262</a>        ] {
-<a href=#1263 id=1263 data-nosnippet>1263</a>            <span class="kw">let </span>values = resolved(overrides.clone()).expect(<span class="string">"catalog values"</span>);
-<a href=#1264 id=1264 data-nosnippet>1264</a>            serde_json::from_value::&lt;ImagingRequest&gt;(Value::Object(values.clone()))
-<a href=#1265 id=1265 data-nosnippet>1265</a>                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"{overrides}: {error}"</span>));
-<a href=#1266 id=1266 data-nosnippet>1266</a>            <span class="kw">for </span>name <span class="kw">in </span>values.keys() {
-<a href=#1267 id=1267 data-nosnippet>1267</a>                <span class="kw">let </span><span class="kw-2">mut </span>without = values.clone();
-<a href=#1268 id=1268 data-nosnippet>1268</a>                without.remove(name);
-<a href=#1269 id=1269 data-nosnippet>1269</a>                <span class="macro">assert!</span>(
-<a href=#1270 id=1270 data-nosnippet>1270</a>                    serde_json::from_value::&lt;ImagingRequest&gt;(Value::Object(without)).is_err(),
-<a href=#1271 id=1271 data-nosnippet>1271</a>                    <span class="string">"{overrides}: the request does not read {name}"
-<a href=#1272 id=1272 data-nosnippet>1272</a>                </span>);
-<a href=#1273 id=1273 data-nosnippet>1273</a>            }
-<a href=#1274 id=1274 data-nosnippet>1274</a>        }
-<a href=#1275 id=1275 data-nosnippet>1275</a>    }
-<a href=#1276 id=1276 data-nosnippet>1276</a>
-<a href=#1277 id=1277 data-nosnippet>1277</a>    <span class="doccomment">/// A blank optional parameter is unset, as it always was.
-<a href=#1278 id=1278 data-nosnippet>1278</a>    </span><span class="attr">#[test]
-<a href=#1279 id=1279 data-nosnippet>1279</a>    </span><span class="kw">fn </span>blank_optional_values_are_unset() {
-<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="kw">let </span>blank = request(<span class="macro">json!</span>({
-<a href=#1281 id=1281 data-nosnippet>1281</a>            <span class="string">"datacolumn"</span>: <span class="string">""</span>,
-<a href=#1282 id=1282 data-nosnippet>1282</a>            <span class="string">"phasecenter"</span>: <span class="string">""</span>,
-<a href=#1283 id=1283 data-nosnippet>1283</a>            <span class="string">"mask_image"</span>: <span class="string">""</span>,
-<a href=#1284 id=1284 data-nosnippet>1284</a>            <span class="string">"outlierfile"</span>: <span class="string">""</span>,
-<a href=#1285 id=1285 data-nosnippet>1285</a>            <span class="string">"restfreq"</span>: <span class="string">""</span>,
-<a href=#1286 id=1286 data-nosnippet>1286</a>            <span class="string">"scales"</span>: <span class="string">""</span>,
-<a href=#1287 id=1287 data-nosnippet>1287</a>            <span class="string">"mask_box"</span>: <span class="string">""</span>,
-<a href=#1288 id=1288 data-nosnippet>1288</a>            <span class="string">"field"</span>: <span class="string">""</span>,
-<a href=#1289 id=1289 data-nosnippet>1289</a>            <span class="string">"spw"</span>: <span class="string">""</span>,
-<a href=#1290 id=1290 data-nosnippet>1290</a>            <span class="string">"start"</span>: <span class="string">""</span>,
-<a href=#1291 id=1291 data-nosnippet>1291</a>        }));
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="macro">assert_eq!</span>(blank, request(<span class="macro">json!</span>({})));
-<a href=#1293 id=1293 data-nosnippet>1293</a>    }
-<a href=#1294 id=1294 data-nosnippet>1294</a>
-<a href=#1295 id=1295 data-nosnippet>1295</a>    <span class="doccomment">/// A parameter its gridder does not read is refused when set, and
-<a href=#1296 id=1296 data-nosnippet>1296</a>    /// absent from the request when not.
-<a href=#1297 id=1297 data-nosnippet>1297</a>    </span><span class="attr">#[test]
-<a href=#1298 id=1298 data-nosnippet>1298</a>    </span><span class="kw">fn </span>the_catalog_refuses_a_parameter_its_gridder_does_not_read() {
-<a href=#1299 id=1299 data-nosnippet>1299</a>        <span class="kw">let </span>error = resolved(<span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"standard"</span>, <span class="string">"wprojplanes"</span>: <span class="number">4 </span>}))
-<a href=#1300 id=1300 data-nosnippet>1300</a>            .expect_err(<span class="string">"W planes without W projection"</span>);
-<a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="macro">assert!</span>(
-<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="macro">matches!</span>(
-<a href=#1303 id=1303 data-nosnippet>1303</a>                <span class="kw-2">&amp;</span>error,
-<a href=#1304 id=1304 data-nosnippet>1304</a>                casa_task_runtime::ResolveError::Invalid { parameter: <span class="prelude-val">Some</span>(name), .. }
-<a href=#1305 id=1305 data-nosnippet>1305</a>                    <span class="kw">if </span>name == <span class="string">"wprojplanes"
-<a href=#1306 id=1306 data-nosnippet>1306</a>            </span>),
-<a href=#1307 id=1307 data-nosnippet>1307</a>            <span class="string">"{error:?}"
-<a href=#1308 id=1308 data-nosnippet>1308</a>        </span>);
-<a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="kw">let </span>values = resolved(<span class="macro">json!</span>({ <span class="string">"gridder"</span>: <span class="string">"wproject"</span>, <span class="string">"wprojplanes"</span>: <span class="number">4 </span>})).expect(<span class="string">"W"</span>);
-<a href=#1310 id=1310 data-nosnippet>1310</a>        <span class="macro">assert_eq!</span>(values[<span class="string">"wprojplanes"</span>], <span class="macro">json!</span>(<span class="number">4</span>));
-<a href=#1311 id=1311 data-nosnippet>1311</a>        <span class="macro">assert!</span>(
-<a href=#1312 id=1312 data-nosnippet>1312</a>            !resolved(<span class="macro">json!</span>({}))
-<a href=#1313 id=1313 data-nosnippet>1313</a>                .expect(<span class="string">"defaults"</span>)
-<a href=#1314 id=1314 data-nosnippet>1314</a>                .contains_key(<span class="string">"wprojplanes"</span>)
-<a href=#1315 id=1315 data-nosnippet>1315</a>        );
-<a href=#1316 id=1316 data-nosnippet>1316</a>    }
-<a href=#1317 id=1317 data-nosnippet>1317</a>
-<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="attr">#[test]
-<a href=#1319 id=1319 data-nosnippet>1319</a>    </span><span class="kw">fn </span>stokes_names_stokes_parameters_or_correlations_in_casa_order() {
-<a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="kw">use </span>PolarizationCoordinate::<span class="kw-2">*</span>;
-<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="kw">for </span>(text, coordinates) <span class="kw">in </span>[
-<a href=#1322 id=1322 data-nosnippet>1322</a>            (<span class="string">"I"</span>, <span class="macro">vec!</span>[StokesI]),
-<a href=#1323 id=1323 data-nosnippet>1323</a>            (<span class="string">"VI"</span>, <span class="macro">vec!</span>[StokesI, StokesV]),
-<a href=#1324 id=1324 data-nosnippet>1324</a>            (<span class="string">"IQUV"</span>, <span class="macro">vec!</span>[StokesI, StokesQ, StokesU, StokesV]),
-<a href=#1325 id=1325 data-nosnippet>1325</a>            (<span class="string">"RRLL"</span>, <span class="macro">vec!</span>[CircularRr, CircularLl]),
-<a href=#1326 id=1326 data-nosnippet>1326</a>            (<span class="string">"XXYY"</span>, <span class="macro">vec!</span>[LinearXx, LinearYy]),
-<a href=#1327 id=1327 data-nosnippet>1327</a>            (<span class="string">"XXXYYXYY"</span>, <span class="macro">vec!</span>[LinearXx, LinearXy, LinearYx, LinearYy]),
-<a href=#1328 id=1328 data-nosnippet>1328</a>        ] {
-<a href=#1329 id=1329 data-nosnippet>1329</a>            <span class="macro">assert_eq!</span>(
-<a href=#1330 id=1330 data-nosnippet>1330</a>                request(<span class="macro">json!</span>({ <span class="string">"stokes"</span>: text })).stokes,
-<a href=#1331 id=1331 data-nosnippet>1331</a>                coordinates,
-<a href=#1332 id=1332 data-nosnippet>1332</a>                <span class="string">"{text}"
-<a href=#1333 id=1333 data-nosnippet>1333</a>            </span>);
-<a href=#1334 id=1334 data-nosnippet>1334</a>        }
-<a href=#1335 id=1335 data-nosnippet>1335</a>        <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">"IXX"</span>, <span class="string">"XXRR"</span>, <span class="string">"IQZ"</span>, <span class="string">"X"</span>, <span class="string">""</span>] {
-<a href=#1336 id=1336 data-nosnippet>1336</a>            <span class="kw">let </span>refused = resolved(<span class="macro">json!</span>({ <span class="string">"stokes"</span>: text })).map_or(<span class="bool-val">true</span>, |values| {
-<a href=#1337 id=1337 data-nosnippet>1337</a>                serde_json::from_value::&lt;ImagingRequest&gt;(Value::Object(values)).is_err()
-<a href=#1338 id=1338 data-nosnippet>1338</a>            });
-<a href=#1339 id=1339 data-nosnippet>1339</a>            <span class="macro">assert!</span>(refused, <span class="string">"{text:?}"</span>);
-<a href=#1340 id=1340 data-nosnippet>1340</a>        }
-<a href=#1341 id=1341 data-nosnippet>1341</a>    }
-<a href=#1342 id=1342 data-nosnippet>1342</a>}
+<a href=#1241 id=1241 data-nosnippet>1241</a>    <span class="attr">#[test]
+<a href=#1242 id=1242 data-nosnippet>1242</a>    </span><span class="kw">fn </span>stokes_names_stokes_parameters_or_correlations_in_casa_order() {
+<a href=#1243 id=1243 data-nosnippet>1243</a>        <span class="kw">use </span>PolarizationCoordinate::<span class="kw-2">*</span>;
+<a href=#1244 id=1244 data-nosnippet>1244</a>        <span class="kw">for </span>(text, coordinates) <span class="kw">in </span>[
+<a href=#1245 id=1245 data-nosnippet>1245</a>            (<span class="string">"I"</span>, <span class="macro">vec!</span>[StokesI]),
+<a href=#1246 id=1246 data-nosnippet>1246</a>            (<span class="string">"VI"</span>, <span class="macro">vec!</span>[StokesI, StokesV]),
+<a href=#1247 id=1247 data-nosnippet>1247</a>            (<span class="string">"IQUV"</span>, <span class="macro">vec!</span>[StokesI, StokesQ, StokesU, StokesV]),
+<a href=#1248 id=1248 data-nosnippet>1248</a>            (<span class="string">"RRLL"</span>, <span class="macro">vec!</span>[CircularRr, CircularLl]),
+<a href=#1249 id=1249 data-nosnippet>1249</a>            (<span class="string">"XXYY"</span>, <span class="macro">vec!</span>[LinearXx, LinearYy]),
+<a href=#1250 id=1250 data-nosnippet>1250</a>            (<span class="string">"XXXYYXYY"</span>, <span class="macro">vec!</span>[LinearXx, LinearXy, LinearYx, LinearYy]),
+<a href=#1251 id=1251 data-nosnippet>1251</a>        ] {
+<a href=#1252 id=1252 data-nosnippet>1252</a>            <span class="macro">assert_eq!</span>(
+<a href=#1253 id=1253 data-nosnippet>1253</a>                request(<span class="macro">json!</span>({ <span class="string">"stokes"</span>: text })).stokes,
+<a href=#1254 id=1254 data-nosnippet>1254</a>                coordinates,
+<a href=#1255 id=1255 data-nosnippet>1255</a>                <span class="string">"{text}"
+<a href=#1256 id=1256 data-nosnippet>1256</a>            </span>);
+<a href=#1257 id=1257 data-nosnippet>1257</a>        }
+<a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">"IXX"</span>, <span class="string">"XXRR"</span>, <span class="string">"IQZ"</span>, <span class="string">"X"</span>, <span class="string">""</span>] {
+<a href=#1259 id=1259 data-nosnippet>1259</a>            <span class="kw">let </span>refused = resolved(<span class="macro">json!</span>({ <span class="string">"stokes"</span>: text }))
+<a href=#1260 id=1260 data-nosnippet>1260</a>                .map_or(<span class="bool-val">true</span>, |values| ImagingRequest::from_tclean(<span class="kw-2">&amp;</span>values).is_err());
+<a href=#1261 id=1261 data-nosnippet>1261</a>            <span class="macro">assert!</span>(refused, <span class="string">"{text:?}"</span>);
+<a href=#1262 id=1262 data-nosnippet>1262</a>        }
+<a href=#1263 id=1263 data-nosnippet>1263</a>    }
+<a href=#1264 id=1264 data-nosnippet>1264</a>}
 </code></pre></div></section></main></body></html>

@@ -24,8 +24,8 @@ the rows are split into blocks; Metal’s agree with them to the device’s
 for the same arguments: each chunk’s prediction batch and record,
 each chunk’s backend per domain with what it keeps
 ([<code>CpuBackend::batch_bytes</code>] and its per-sample buffers; on Metal
-<a href="../../casa_imaging_metal/fn.ring_bytes.html" title="fn casa_imaging_metal::ring_bytes"><code>casa_imaging_metal::ring_bytes</code></a>, <a href="../../casa_imaging_metal/fn.batch_bytes.html" title="fn casa_imaging_metal::batch_bytes"><code>casa_imaging_metal::batch_bytes</code></a>
-and <a href="../../casa_imaging_metal/fn.kernel_bytes.html" title="fn casa_imaging_metal::kernel_bytes"><code>casa_imaging_metal::kernel_bytes</code></a>), on Metal the model at the
+[<code>casa_imaging_metal::ring_bytes</code>], [<code>casa_imaging_metal::batch_bytes</code>]
+and [<code>casa_imaging_metal::kernel_bytes</code>]), on Metal the model at the
 largest block’s native cells in device memory, and a call’s hand-off
 of the chunks to the team. The rows, the model grids and the output
 are the caller’s.</p>
@@ -45,7 +45,7 @@ not depend on its domains’ models.</p>
 beyond <a href="struct.BlockPredictor.html#method.bytes" title="associated function casa_imaging_runtime::pass::BlockPredictor::bytes"><code>Self::bytes</code></a> once <a href="struct.BlockPredictor.html#method.predict_into_with_noise" title="method casa_imaging_runtime::pass::BlockPredictor::predict_into_with_noise"><code>Self::predict_into_with_noise</code></a> has
 added noise of at most <code>terms</code> terms: on Metal the one backend that
 adds it keeps the rows and the terms on the device
-(<a href="../../casa_imaging_metal/fn.noise_bytes.html" title="fn casa_imaging_metal::noise_bytes"><code>casa_imaging_metal::noise_bytes</code></a>); nothing on the CPU, where the
+([<code>casa_imaging_metal::noise_bytes</code>]); nothing on the CPU, where the
 predictor adds none. The <a href="struct.DeviceNoise.html" title="struct casa_imaging_runtime::pass::DeviceNoise"><code>DeviceNoise</code></a> is the caller’s.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../../src/casa_imaging_runtime/pass/prediction.rs.html#582-627">Source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
     domains: &amp;[<a class="struct" href="struct.PredictionDomain.html" title="struct casa_imaging_runtime::pass::PredictionDomain">PredictionDomain</a>&lt;'w&gt;],
@@ -57,7 +57,7 @@ predictor adds none. The <a href="struct.DeviceNoise.html" title="struct casa_im
 correlations; each row projected on every domain) over <code>domains</code> on
 <code>backend</code>, in the chunks of <code>workers</code> workers; with <code>stage_timing</code>,
 each Metal backend logs its usage when it drops
-(<a href="../../casa_imaging_metal/constant.METAL_STAGE_TIMING.html" title="constant casa_imaging_metal::METAL_STAGE_TIMING"><code>casa_imaging_metal::METAL_STAGE_TIMING</code></a>).</p>
+([<code>casa_imaging_metal::METAL_STAGE_TIMING</code>]).</p>
 <h5 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h5>
 <p><a href="enum.PassError.html#variant.NoDomains" title="variant casa_imaging_runtime::pass::PassError::NoDomains"><code>PassError::NoDomains</code></a> without a domain, <a href="enum.PassError.html#variant.Workers" title="variant casa_imaging_runtime::pass::PassError::Workers"><code>PassError::Workers</code></a>
 for no workers, and on Metal <a href="enum.PassError.html#variant.Operator" title="variant casa_imaging_runtime::pass::PassError::Operator"><code>PassError::Operator</code></a> when the host

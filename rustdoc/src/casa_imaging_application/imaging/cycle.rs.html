@@ -1314,18 +1314,19 @@
 <a href=#1314 id=1314 data-nosnippet>1314</a>        actual_iterations: summary.components,
 <a href=#1315 id=1315 data-nosnippet>1315</a>        total_actual_iterations,
 <a href=#1316 id=1316 data-nosnippet>1316</a>        total_flux: summary.absolute_flux,
-<a href=#1317 id=1317 data-nosnippet>1317</a>        initial_peak_flux: summary.start_peak,
-<a href=#1318 id=1318 data-nosnippet>1318</a>        final_peak_flux: summary.peak,
-<a href=#1319 id=1319 data-nosnippet>1319</a>        noise_rms: summary.noise_rms,
-<a href=#1320 id=1320 data-nosnippet>1320</a>        effective_threshold: controls.threshold.max(global_threshold),
-<a href=#1321 id=1321 data-nosnippet>1321</a>        global_threshold,
-<a href=#1322 id=1322 data-nosnippet>1322</a>        cycle_threshold: <span class="prelude-val">Some</span>(controls.threshold),
-<a href=#1323 id=1323 data-nosnippet>1323</a>        stop_reason: NativeMinorCycleStopReason::from_planes(<span class="kw-2">&amp;</span>summary.stops),
-<a href=#1324 id=1324 data-nosnippet>1324</a>        clark_refreshes: summary.refreshes,
-<a href=#1325 id=1325 data-nosnippet>1325</a>        associated_replay_ordinal: cycle,
-<a href=#1326 id=1326 data-nosnippet>1326</a>        recorded_components: summary.trace.clone(),
-<a href=#1327 id=1327 data-nosnippet>1327</a>        mask_support: mask.support().to_vec(),
-<a href=#1328 id=1328 data-nosnippet>1328</a>        auto_mask: outcome.auto_masks[<span class="number">0</span>],
-<a href=#1329 id=1329 data-nosnippet>1329</a>    }
-<a href=#1330 id=1330 data-nosnippet>1330</a>}
+<a href=#1317 id=1317 data-nosnippet>1317</a>        model_flux: summary.model_flux,
+<a href=#1318 id=1318 data-nosnippet>1318</a>        initial_peak_flux: summary.start_peak,
+<a href=#1319 id=1319 data-nosnippet>1319</a>        final_peak_flux: summary.peak,
+<a href=#1320 id=1320 data-nosnippet>1320</a>        noise_rms: summary.noise_rms,
+<a href=#1321 id=1321 data-nosnippet>1321</a>        effective_threshold: controls.threshold.max(global_threshold),
+<a href=#1322 id=1322 data-nosnippet>1322</a>        global_threshold,
+<a href=#1323 id=1323 data-nosnippet>1323</a>        cycle_threshold: <span class="prelude-val">Some</span>(controls.threshold),
+<a href=#1324 id=1324 data-nosnippet>1324</a>        stop_reason: NativeMinorCycleStopReason::from_planes(<span class="kw-2">&amp;</span>summary.stops),
+<a href=#1325 id=1325 data-nosnippet>1325</a>        clark_refreshes: summary.refreshes,
+<a href=#1326 id=1326 data-nosnippet>1326</a>        associated_replay_ordinal: cycle,
+<a href=#1327 id=1327 data-nosnippet>1327</a>        recorded_components: summary.trace.clone(),
+<a href=#1328 id=1328 data-nosnippet>1328</a>        mask_support: mask.support().to_vec(),
+<a href=#1329 id=1329 data-nosnippet>1329</a>        auto_mask: outcome.auto_masks[<span class="number">0</span>],
+<a href=#1330 id=1330 data-nosnippet>1330</a>    }
+<a href=#1331 id=1331 data-nosnippet>1331</a>}
 </code></pre></div></section></main></body></html>

@@ -136,7 +136,7 @@
 <a href=#136 id=136 data-nosnippet>136</a>
 <a href=#137 id=137 data-nosnippet>137</a>    <span class="attr">#[test]
 <a href=#138 id=138 data-nosnippet>138</a>    </span><span class="kw">fn </span>source_options_are_mutually_exclusive() {
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>bundle = builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>bundle = builtin_surface_bundle(<span class="string">"tclean"</span>).unwrap();
 <a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">let </span>error =
 <a href=#141 id=141 data-nosnippet>141</a>            TaskCommandLine::parse(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--defaults"</span>.into(), <span class="string">"--last"</span>.into()]).unwrap_err();
 <a href=#142 id=142 data-nosnippet>142</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"mutually exclusive"</span>));

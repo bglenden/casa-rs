@@ -541,17 +541,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#imager-casas-tclean" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        imager (CASA's tclean)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#imhead" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -699,6 +688,17 @@
     <span class="md-ellipsis">
       
         split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tclean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean
       
     </span>
   </a>
@@ -1096,17 +1096,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#imager-casas-tclean" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        imager (CASA's tclean)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#imhead" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1260,6 +1249,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tclean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1405,17 +1405,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">8</td>
 <td style="text-align: right;">4</td>
 <td style="text-align: right;">0</td>
-</tr>
-<tr>
-<td>imager</td>
-<td>tclean</td>
-<td>no</td>
-<td style="text-align: right;">92</td>
-<td style="text-align: right;">56</td>
-<td style="text-align: right;">36</td>
-<td style="text-align: right;">0</td>
-<td style="text-align: right;">27</td>
-<td style="text-align: right;">24</td>
 </tr>
 <tr>
 <td>imhead</td>
@@ -1571,6 +1560,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">1</td>
 <td style="text-align: right;">0</td>
 </tr>
+<tr>
+<td>tclean</td>
+<td>tclean</td>
+<td>yes</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">22</td>
+<td style="text-align: right;">0</td>
+</tr>
 </tbody>
 </table>
 <h2 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h2>
@@ -1692,52 +1692,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>gaincurve_table</code></li>
 <li>Shared parameters: 14, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
-</ul>
-<h3 id="imager-casas-tclean">imager (CASA's tclean)<a class="headerlink" href="#imager-casas-tclean" title="Permanent link">&para;</a></h3>
-<ul>
-<li>CASA source: <code>casatasks/tclean.py</code>, 92 parameters</li>
-<li>Implementation: <code>casatasks/private/task_tclean.py</code>, <code>tclean</code> (line 44): 11 return statements, 1 raise statements</li>
-<li>returns at line 193: <code>None</code></li>
-<li>returns at line 211: <code>None</code></li>
-<li>returns at line 231: <code>None</code></li>
-<li>returns at line 239: <code>None</code></li>
-<li>returns at line 254: <code>None</code></li>
-<li>returns at line 263: <code>None</code></li>
-<li>returns at line 272: <code>None</code></li>
-<li>returns at line 380: <code>False</code></li>
-<li>returns at line 391: <code>False</code></li>
-<li>returns at line 434: <code>None</code></li>
-<li>returns at line 706: <code>retrec</code></li>
-<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)</li>
-<li>CASA's signature: not yet</li>
-<li>CASA parameters casa-rs lacks: <code>selectdata</code>, <code>timerange</code>, <code>antenna</code>, <code>scan</code>, <code>observation</code>, <code>projection</code>, <code>reffreq</code>, <code>nchan</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>mosweight</code>, <code>aterm</code>, <code>psterm</code>, <code>wbawp</code>, <code>conjbeams</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>fusedthreshold</code>, <code>largestscale</code>, <code>restoration</code>, <code>noise</code>, <code>npixels</code>, <code>cycleniter</code>, <code>interactive</code>, <code>fullsummary</code>, <code>mask</code>, <code>pbmask</code>, <code>smoothfactor</code>, <code>cutthreshold</code>, <code>dogrowprune</code>, <code>minpercentchange</code>, <code>verbose</code>, <code>fastnoise</code>, <code>restart</code>, <code>calcres</code>, <code>calcpsf</code></li>
-<li>casa-rs parameters CASA lacks: <code>phasecenter_field</code>, <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>dirty_only</code>, <code>minor_cycle_length</code>, <code>hogbom_iteration_mode</code>, <code>mask_box</code>, <code>mask_image</code>, <code>write_pb</code>, <code>cf_resident_mb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>aw_cf_source</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>backend</code>, <code>gridprecision</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
-<li>Shared parameters: 56, in CASA's order: no</li>
-<li>Defaults that differ (CASA, casa-rs):</li>
-<li><code>vis</code>: <code>''</code>, <code>required</code></li>
-<li><code>field</code>: <code>''</code>, <code>none</code></li>
-<li><code>spw</code>: <code>''</code>, <code>none</code></li>
-<li><code>uvrange</code>: <code>''</code>, <code>none</code></li>
-<li><code>intent</code>: <code>''</code>, <code>none</code></li>
-<li><code>datacolumn</code>: <code>'corrected'</code>, <code>none</code></li>
-<li><code>imagename</code>: <code>''</code>, <code>required</code></li>
-<li><code>imsize</code>: <code>[100]</code>, <code>512</code></li>
-<li><code>cell</code>: <code>[]</code>, <code>1.0arcsec</code></li>
-<li><code>phasecenter</code>: <code>''</code>, <code>none</code></li>
-<li><code>startmodel</code>: <code>''</code>, <code>none</code></li>
-<li><code>start</code>: <code>''</code>, <code>none</code></li>
-<li><code>width</code>: <code>''</code>, <code>none</code></li>
-<li><code>veltype</code>: <code>'radio'</code>, <code>RADIO</code></li>
-<li><code>restfreq</code>: <code>[]</code>, <code>none</code></li>
-<li><code>perchanweightdensity</code>: <code>True</code>, <code>conditional (fallback False)</code></li>
-<li><code>wprojplanes</code>: <code>1</code>, <code>none</code></li>
-<li><code>cfcache</code>: <code>''</code>, <code>none</code></li>
-<li><code>pointingoffsetsigdev</code>: <code>[]</code>, <code>0</code></li>
-<li><code>scales</code>: <code>[]</code>, <code>none</code></li>
-<li><code>nterms</code>: <code>2</code>, <code>1</code></li>
-<li><code>restoringbeam</code>: <code>[]</code>, <code>none</code></li>
-<li><code>outlierfile</code>: <code>''</code>, <code>none</code></li>
-<li><code>threshold</code>: <code>0.0</code>, <code>0.0Jy</code></li>
 </ul>
 <h3 id="imhead">imhead<a class="headerlink" href="#imhead" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1914,6 +1868,30 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Accepted only at CASA's default until #978: <code>keepmms</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>, <code>feed</code>, <code>timebin</code>, <code>combine</code></li>
 <li>casa-rs parameters CASA lacks: <code>msselect</code></li>
 <li>Shared parameters: 19, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
+<h3 id="tclean">tclean<a class="headerlink" href="#tclean" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/tclean.py</code>, 92 parameters</li>
+<li>Implementation: <code>casatasks/private/task_tclean.py</code>, <code>tclean</code> (line 44): 11 return statements, 1 raise statements</li>
+<li>returns at line 193: <code>None</code></li>
+<li>returns at line 211: <code>None</code></li>
+<li>returns at line 231: <code>None</code></li>
+<li>returns at line 239: <code>None</code></li>
+<li>returns at line 254: <code>None</code></li>
+<li>returns at line 263: <code>None</code></li>
+<li>returns at line 272: <code>None</code></li>
+<li>returns at line 380: <code>False</code></li>
+<li>returns at line 391: <code>False</code></li>
+<li>returns at line 434: <code>None</code></li>
+<li>returns at line 706: <code>retrec</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #944: <code>restart</code></li>
+<li>Accepted only at CASA's default until #980: <code>timerange</code>, <code>antenna</code>, <code>scan</code>, <code>observation</code>, <code>projection</code>, <code>reffreq</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>restoration</code>, <code>noise</code>, <code>npixels</code>, <code>interactive</code>, <code>pbmask</code>, <code>smoothfactor</code>, <code>cutthreshold</code>, <code>dogrowprune</code>, <code>minpercentchange</code>, <code>verbose</code>, <code>fastnoise</code>, <code>calcres</code>, <code>calcpsf</code></li>
+<li>casa-rs parameters CASA lacks: <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>hogbom_iteration_mode</code>, <code>write_pb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>backend</code>, <code>gridprecision</code>, <code>aw_cf_source</code>, <code>cf_resident_mb</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
+<li>Shared parameters: 92, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 

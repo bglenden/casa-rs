@@ -873,9 +873,9 @@ types, units, defaults, groups, and summaries.</p>
 designed to paste cleanly into Markdown:</p>
 <div class="codehilite"><pre><span></span><code><span class="k">[casars]</span>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
-<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
+<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tclean"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">27</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">29</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -899,12 +899,16 @@ expressions, and executable selection are not part of the format. Unknown,
 duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.</p>
-<p>The imager profile contract is current-only. Its <code>contract</code> must equal the
-current imager surface contract listed in the generated parameter reference,
-and <code>[parameters]</code> must use canonical names. Stale contracts and historical
-aliases are rejected rather than migrated or silently interpreted. Other
-surfaces retain older profiles only when their canonical definition publishes
-an explicit ordered migration chain.</p>
+<p>A surface retains older profiles only when its canonical definition publishes
+an explicit ordered migration chain; other stale contracts and historical
+aliases are rejected rather than silently interpreted. The imager surface
+became CASA's <code>tclean</code> at contract 29 (#931): a profile naming surface
+<code>imager</code> at contract 28, its last, migrates. Its casa-rs names move to
+CASA's (<code>phasecenter_field</code> to <code>phasecenter</code>, <code>mask_box</code> and <code>mask_image</code> to
+<code>mask</code>, <code>minor_cycle_length</code> to <code>cycleniter</code>, and <code>dirty_only = true</code> to
+<code>niter = 0</code>), its values to CASA's forms, and an omitted value whose default
+changed (<code>imsize</code>, <code>cell</code>, <code>cycleniter</code>, <code>nterms</code>) takes tclean's with a
+warning. Older imager contracts are refused.</p>
 <p>Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file
 merely because the file lives elsewhere.</p>
@@ -1036,7 +1040,7 @@ its workspace.</p>
 <p>The Python API exposes the same profile model:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
-<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">"imager"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">"tclean"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
 <span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
     <span class="n">vis</span><span class="o">=</span><span class="s2">"data/target.ms"</span><span class="p">,</span>
     <span class="n">imagename</span><span class="o">=</span><span class="s2">"products/target"</span><span class="p">,</span>
@@ -1046,7 +1050,7 @@ its workspace.</p>
 <span class="n">p</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"profiles/target-imaging.toml"</span><span class="p">)</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>                          <span class="c1"># in the draft's workspace</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"imager"</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># the draft, with one more value</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"tclean"</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># the draft, with one more value</span>
 </code></pre></div>
 
 <p>Companion constructors are <code>parameters.last(...)</code>,

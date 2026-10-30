@@ -435,10 +435,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#imager-imager" class="md-nav__link">
+  <a href="#tclean-tclean" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Imager (imager)
+        Tclean (tclean)
       
     </span>
   </a>
@@ -1023,10 +1023,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#imager-imager" class="md-nav__link">
+  <a href="#tclean-tclean" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Imager (imager)
+        Tclean (tclean)
       
     </span>
   </a>
@@ -1303,9 +1303,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 517</li>
+<li>Concepts: 542</li>
 <li>Surfaces: 26 (26 task, 0 session)</li>
-<li>Surface bindings: 749</li>
+<li>Surface bindings: 780</li>
 </ul>
 <table>
 <thead>
@@ -1344,12 +1344,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>scan or import old VLA export archives from disk</td>
 </tr>
 <tr>
-<td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
+<td><a href="#surface-tclean">Tclean</a><br><code>tclean</code></td>
 <td>task</td>
-<td style="text-align: right;">28</td>
+<td style="text-align: right;">29</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">83</td>
-<td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
+<td style="text-align: right;">114</td>
+<td>Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</td>
 </tr>
 <tr>
 <td><a href="#surface-simobserve">SimObserve</a><br><code>simobserve</code></td>
@@ -2646,14 +2646,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 </tbody>
 </table>
-<p><a id="surface-imager"></a></p>
-<h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
+<p><a id="surface-tclean"></a></p>
+<h2 id="tclean-tclean">Tclean (<code>tclean</code>)<a class="headerlink" href="#tclean-tclean" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>28</code></li>
+<li>Contract version: <code>29</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
-<li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
+<li>Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</li>
 </ul>
 <table>
 <thead>
@@ -2671,113 +2671,121 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>vis</code></td>
 <td><code>data.input.vis@r1</code></td>
 <td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>""</code>; required</td>
 <td>Context</td>
-<td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms.</td>
+<td>Input MeasurementSet path or paths.</td>
 </tr>
 <tr>
-<td><code>imagename</code></td>
-<td><code>image.output.imagename@r1</code></td>
-<td><code>path (image)</code></td>
-<td>no default; required</td>
-<td>Products</td>
-<td>Output CASA image prefix</td>
-</tr>
-<tr>
-<td><code>imsize</code></td>
-<td><code>image.geometry.imsize@r2</code></td>
-<td><code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code></td>
-<td><code>512</code>; optional</td>
-<td>Stage Parameters</td>
-<td>Image dimensions in pixels</td>
-</tr>
-<tr>
-<td><code>cell</code></td>
-<td><code>image.geometry.cell@r2</code></td>
-<td><code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code></td>
-<td><code>"1.0arcsec"</code>; optional</td>
-<td>Stage Parameters</td>
-<td>Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec.</td>
-</tr>
-<tr>
-<td><code>datacolumn</code></td>
-<td><code>parameter.datacolumn@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>selectdata</code></td>
+<td><code>parameter.selectdata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
 <td>Context</td>
-<td>Visibility data column used by the surface.</td>
-</tr>
-<tr>
-<td><code>savemodel</code></td>
-<td><code>parameter.savemodel@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Products</td>
-<td>Write the predicted final model into the MeasurementSet</td>
-</tr>
-<tr>
-<td><code>outlierfile</code></td>
-<td><code>parameter.outlierfile@r1</code></td>
-<td><code>path (image)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Products</td>
-<td>CASA outlier-field definitions for supported MFS/Hogbom image sets</td>
+<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> False ignores the selection parameters, as CASA's tclean does.</td>
 </tr>
 <tr>
 <td><code>field</code></td>
 <td><code>ms.selection.field@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Context</td>
 <td>CASA field selector.</td>
-</tr>
-<tr>
-<td><code>phasecenter_field</code></td>
-<td><code>parameter.phasecenter_field@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Context</td>
-<td>FIELD_ID used as the imaging phase center</td>
-</tr>
-<tr>
-<td><code>ddid</code></td>
-<td><code>parameter.ddid@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Context</td>
-<td>Restrict imaging to one DATA_DESC_ID</td>
-</tr>
-<tr>
-<td><code>phasecenter</code></td>
-<td><code>parameter.phasecenter@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Context</td>
-<td>Explicit CASA-style J2000 phase center</td>
 </tr>
 <tr>
 <td><code>spw</code></td>
 <td><code>ms.selection.spw@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Context</td>
 <td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
 </tr>
 <tr>
-<td><code>channel_start</code></td>
-<td><code>parameter.channel_start@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
 <td>Context</td>
-<td>First selected input channel</td>
+<td>Inclusive TIME range in MJD seconds</td>
 </tr>
 <tr>
-<td><code>channel_count</code></td>
-<td><code>parameter.channel_count@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Number of selected input channels</td>
+<td>UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Context</td>
+<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Context</td>
+<td>Comma-separated scan numbers</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Context</td>
+<td>Comma-separated OBSERVATION_ID integers</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Context</td>
+<td>Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine.</td>
+</tr>
+<tr>
+<td><code>datacolumn</code></td>
+<td><code>parameter.datacolumn@r1</code></td>
+<td><code>string</code></td>
+<td><code>"corrected"</code>; optional</td>
+<td>Context</td>
+<td>Visibility data column used by the surface.<br><em>Surface:</em> 'corrected' images CORRECTED_DATA, or DATA when the MeasurementSet has no CORRECTED_DATA, as CASA's tclean does.</td>
+</tr>
+<tr>
+<td><code>imagename</code></td>
+<td><code>image.output.imagename@r1</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; required</td>
+<td>Products</td>
+<td>Output CASA image prefix</td>
+</tr>
+<tr>
+<td><code>imsize</code></td>
+<td><code>image.geometry.imsize@r3</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[100]</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Image dimensions in pixels</td>
+</tr>
+<tr>
+<td><code>cell</code></td>
+<td><code>image.geometry.cell@r3</code></td>
+<td><code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code></td>
+<td><code>[]</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Image cell size<br><em>Surface:</em> Required in practice: CASA's tclean and casa-rs refuse an empty cell. A bare number is in arcseconds.</td>
+</tr>
+<tr>
+<td><code>phasecenter</code></td>
+<td><code>tclean.phasecenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Context</td>
+<td>Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field.</td>
 </tr>
 <tr>
 <td><code>stokes</code></td>
@@ -2788,84 +2796,356 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Stokes selector.</td>
 </tr>
 <tr>
+<td><code>projection</code></td>
+<td><code>parameter.projection@r2</code></td>
+<td><code>string</code></td>
+<td><code>"SIN"</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Spherical projection of the image's direction axes.</td>
+</tr>
+<tr>
+<td><code>startmodel</code></td>
+<td><code>parameter.startmodel@r2</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; optional</td>
+<td>Stage Parameters</td>
+<td>CASA image in Jy/pixel that the model starts from</td>
+</tr>
+<tr>
 <td><code>specmode</code></td>
-<td><code>parameter.specmode@r3</code></td>
-<td><code>choice (4 values)</code></td>
+<td><code>parameter.specmode@r4</code></td>
+<td><code>choice (6 values)</code></td>
 <td><code>"mfs"</code>; optional</td>
 <td>Stages</td>
 <td>MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame</td>
 </tr>
 <tr>
-<td><code>start</code></td>
-<td><code>parameter.start@r1</code></td>
+<td><code>reffreq</code></td>
+<td><code>parameter.reffreq@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Stages</td>
-<td>Cube-axis start channel, frequency, or velocity</td>
+<td>Reference frequency.</td>
+</tr>
+<tr>
+<td><code>nchan</code></td>
+<td><code>regridms.nchan@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Stages</td>
+<td>Number of channels of the regridded spectral axis; -1 for all.<br><em>Surface:</em> Output channels of a cube; -1 for all. casa-rs's channel_count gives the same count when nchan is -1.</td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td><code>tclean.start@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Stages</td>
+<td>First channel of a cube: a channel number, a frequency or a velocity; empty for the first selected channel.</td>
 </tr>
 <tr>
 <td><code>width</code></td>
-<td><code>imager.width@r2</code></td>
-<td><code>optional&lt;string&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>imager.width@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
 <td>Stages</td>
 <td>Cube-axis width as channels, frequency, or velocity</td>
 </tr>
 <tr>
 <td><code>outframe</code></td>
-<td><code>parameter.outframe@r2</code></td>
-<td><code>choice (4 values)</code></td>
+<td><code>parameter.outframe@r3</code></td>
+<td><code>string</code></td>
 <td><code>"LSRK"</code>; optional</td>
 <td>Stages</td>
 <td>Spectral frame of a cube's output axis</td>
 </tr>
 <tr>
 <td><code>veltype</code></td>
-<td><code>parameter.veltype@r2</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"RADIO"</code>; optional</td>
+<td><code>parameter.veltype@r3</code></td>
+<td><code>string</code></td>
+<td><code>"radio"</code>; optional</td>
 <td>Stages</td>
 <td>Velocity convention of a cube's velocity start and axis</td>
 </tr>
 <tr>
+<td><code>restfreq</code></td>
+<td><code>tclean.restfreq@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Stages</td>
+<td>Rest frequencies of a cube's velocity axis; empty for the source's.</td>
+</tr>
+<tr>
 <td><code>interpolation</code></td>
 <td><code>parameter.interpolation@r1</code></td>
-<td><code>choice (2 values; surface-narrowed)</code></td>
+<td><code>choice (3 values; surface-narrowed)</code></td>
 <td><code>"linear"</code>; optional</td>
 <td>Stages</td>
 <td>Spectral interpolation mode for cube gridding</td>
 </tr>
 <tr>
-<td><code>restfreq</code></td>
-<td><code>parameter.restfreq@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Rest frequency used for velocity-style cube axes</td>
-</tr>
-<tr>
-<td><code>restoringbeam</code></td>
-<td><code>parameter.restoringbeam@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Restored-beam policy for cube outputs</td>
-</tr>
-<tr>
 <td><code>perchanweightdensity</code></td>
 <td><code>parameter.perchanweightdensity@r1</code></td>
 <td><code>bool</code></td>
-<td><code>specmode="cube"→true; otherwise→false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Stages</td>
-<td>Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata</td>
+<td>Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata<br><em>Surface:</em> Used by the cube modes only, as CASA's tclean uses it.</td>
 </tr>
 <tr>
-<td><code>dirty_only</code></td>
-<td><code>parameter.dirty_only@r1</code></td>
+<td><code>gridder</code></td>
+<td><code>parameter.gridder@r3</code></td>
+<td><code>choice (14 values)</code></td>
+<td><code>"standard"</code>; optional</td>
+<td>Stages</td>
+<td>CASA tclean gridder family</td>
+</tr>
+<tr>
+<td><code>facets</code></td>
+<td><code>parameter.facets@r3</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Stages</td>
+<td>Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed. casa-rs's wproject takes one facet.</td>
+</tr>
+<tr>
+<td><code>psfphasecenter</code></td>
+<td><code>parameter.psfphasecenter@r2</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Phase centre the mosaic PSF is made at; empty for phasecenter.</td>
+</tr>
+<tr>
+<td><code>wprojplanes</code></td>
+<td><code>parameter.wprojplanes@r2</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Stages</td>
+<td>Explicit wproject plane budget<br><em>Surface:</em> -1 derives the W planes from the selected W range; awproject takes CASA's 32-plane EVLA cache.</td>
+</tr>
+<tr>
+<td><code>vptable</code></td>
+<td><code>parameter.vptable@r2</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Voltage-pattern table of the primary beams; empty for the built-in models.</td>
+</tr>
+<tr>
+<td><code>mosweight</code></td>
+<td><code>parameter.mosweight@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Weigh the visibility density of each mosaic field on its own.<br><em>Surface:</em> casa-rs's mosaic weighs density over all fields (CASA's mosweight=False): with the mosaic gridder and density weighting, True is refused (#818).</td>
+</tr>
+<tr>
+<td><code>aterm</code></td>
+<td><code>parameter.aterm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Include the antenna aperture illumination in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another aterm is refused.</td>
+</tr>
+<tr>
+<td><code>psterm</code></td>
+<td><code>parameter.psterm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another psterm is refused.</td>
+</tr>
+<tr>
+<td><code>wbawp</code></td>
+<td><code>parameter.wbawp@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Use frequency-dependent A-terms in wideband AW projection.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another wbawp is refused.</td>
+</tr>
+<tr>
+<td><code>conjbeams</code></td>
+<td><code>parameter.conjbeams@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Grid with the beam at the conjugate frequency, removing the beam's spectral index.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another conjbeams is refused.</td>
+</tr>
+<tr>
+<td><code>cfcache</code></td>
+<td><code>parameter.cfcache@r3</code></td>
+<td><code>path (directory)</code></td>
+<td><code>""</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Read-only CASA AW convolution-function cache input<br><em>Surface:</em> awproject with aw_cf_source='casa-import' reads this existing CASA CFS_/WTCFS_ cache read-only; casa-rs never writes it.</td>
+</tr>
+<tr>
+<td><code>usepointing</code></td>
+<td><code>parameter.usepointing@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Use POINTING-table directions instead of FIELD phase centers</td>
+</tr>
+<tr>
+<td><code>computepastep</code></td>
+<td><code>parameter.computepastep@r2</code></td>
+<td><code>float</code></td>
+<td><code>360.0</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Parallactic-angle step, in degrees, between computed A-terms.</td>
+</tr>
+<tr>
+<td><code>rotatepastep</code></td>
+<td><code>parameter.rotatepastep@r2</code></td>
+<td><code>float</code></td>
+<td><code>360.0</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Parallactic-angle step, in degrees, between rotated A-terms.</td>
+</tr>
+<tr>
+<td><code>pointingoffsetsigdev</code></td>
+<td><code>parameter.pointingoffsetsigdev@r2</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600</td>
+</tr>
+<tr>
+<td><code>pblimit</code></td>
+<td><code>parameter.pblimit@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.2</code>; optional</td>
+<td>Stages</td>
+<td>Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked</td>
+</tr>
+<tr>
+<td><code>normtype</code></td>
+<td><code>parameter.normtype@r3</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"flatnoise"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Mosaic and AWProject sensitivity normalization policy</td>
+</tr>
+<tr>
+<td><code>deconvolver</code></td>
+<td><code>parameter.deconvolver@r2</code></td>
+<td><code>choice (9 values)</code></td>
+<td><code>"hogbom"</code>; optional</td>
+<td>Stages</td>
+<td>Minor-cycle algorithm used for deconvolution</td>
+</tr>
+<tr>
+<td><code>scales</code></td>
+<td><code>parameter.scales@r2</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Stages</td>
+<td>Multiscale component sizes in pixels</td>
+</tr>
+<tr>
+<td><code>nterms</code></td>
+<td><code>parameter.nterms@r1</code></td>
+<td><code>integer</code></td>
+<td><code>2</code>; optional</td>
+<td>Stages</td>
+<td>Number of Taylor terms.<br><em>Surface:</em> Used by mtmfs only, as CASA's tclean uses it.</td>
+</tr>
+<tr>
+<td><code>smallscalebias</code></td>
+<td><code>parameter.smallscalebias@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Stages</td>
+<td>CASA multiscale bias in [-1, 1]</td>
+</tr>
+<tr>
+<td><code>fusedthreshold</code></td>
+<td><code>parameter.fusedthreshold@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Threshold, in Jy, below which deconvolver='asp' switches to Hogbom components.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223).</td>
+</tr>
+<tr>
+<td><code>largestscale</code></td>
+<td><code>parameter.largestscale@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Largest scale, in pixels, deconvolver='asp' fits; -1 for no limit.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223).</td>
+</tr>
+<tr>
+<td><code>restoration</code></td>
+<td><code>parameter.restoration@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Stages</td>
+<td>Restore the model with the clean beam and write the restored image.</td>
+</tr>
+<tr>
+<td><code>restoringbeam</code></td>
+<td><code>parameter.restoringbeam@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Stages</td>
+<td>Restoring beam: empty for each plane's fitted beam, 'common' for one beam over all planes, or a beam's axes and angle</td>
+</tr>
+<tr>
+<td><code>pbcor</code></td>
+<td><code>parameter.pbcor@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Stages</td>
-<td>Skip CLEAN and only write dirty / residual products</td>
+<td>Write mosaic primary-beam-corrected image products</td>
+</tr>
+<tr>
+<td><code>outlierfile</code></td>
+<td><code>parameter.outlierfile@r1</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; optional</td>
+<td>Products</td>
+<td>CASA outlier-field definitions for supported MFS/Hogbom image sets</td>
+</tr>
+<tr>
+<td><code>weighting</code></td>
+<td><code>parameter.weighting@r2</code></td>
+<td><code>choice (7 values)</code></td>
+<td><code>"natural"</code>; optional</td>
+<td>Stages</td>
+<td>Visibility weighting policy</td>
+</tr>
+<tr>
+<td><code>robust</code></td>
+<td><code>parameter.robust@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.5</code>; optional</td>
+<td>Stages</td>
+<td>Briggs robust parameter when weighting=briggs or briggsbwtaper</td>
+</tr>
+<tr>
+<td><code>noise</code></td>
+<td><code>parameter.noise@r1</code></td>
+<td><code>string</code></td>
+<td><code>"1.0Jy"</code>; optional</td>
+<td>Stages</td>
+<td>Noise per visibility of weighting='briggsabs'.</td>
+</tr>
+<tr>
+<td><code>npixels</code></td>
+<td><code>parameter.npixels@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Stages</td>
+<td>Size, in pixels, of the uv cell of super-uniform and Briggs weighting; 0 for the default.</td>
+</tr>
+<tr>
+<td><code>uvtaper</code></td>
+<td><code>parameter.uvtaper@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[""]</code>; optional</td>
+<td>Stages</td>
+<td>Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none.</td>
 </tr>
 <tr>
 <td><code>niter</code></td>
@@ -2876,28 +3156,20 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Minor-cycle iteration budget; ignored when Dirty Only is enabled</td>
 </tr>
 <tr>
-<td><code>threshold</code></td>
-<td><code>image.deconvolution.threshold@r2</code></td>
-<td><code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code></td>
-<td><code>"0.0Jy"</code>; optional</td>
-<td>Stages</td>
-<td>Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> Canonical threshold maps to provider field threshold_jy.</td>
-</tr>
-<tr>
-<td><code>nmajor</code></td>
-<td><code>parameter.nmajor@r1</code></td>
-<td><code>integer</code></td>
-<td><code>-1</code>; optional</td>
-<td>Stage Parameters</td>
-<td>Major-cycle limit; -1 keeps CASA's unlimited default</td>
-</tr>
-<tr>
 <td><code>gain</code></td>
 <td><code>parameter.gain@r1</code></td>
 <td><code>float</code></td>
 <td><code>0.1</code>; optional</td>
 <td>Stage Parameters</td>
 <td>Minor-cycle loop gain</td>
+</tr>
+<tr>
+<td><code>threshold</code></td>
+<td><code>image.deconvolution.threshold@r2</code></td>
+<td><code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Stages</td>
+<td>Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> A bare number is in Jy, as CASA's tclean reads it.</td>
 </tr>
 <tr>
 <td><code>nsigma</code></td>
@@ -2908,20 +3180,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Robust-RMS stopping multiplier</td>
 </tr>
 <tr>
-<td><code>psfcutoff</code></td>
-<td><code>parameter.psfcutoff@r1</code></td>
-<td><code>float</code></td>
-<td><code>0.35</code>; optional</td>
-<td>Stage Parameters</td>
-<td>PSF beam-fit cutoff fraction</td>
-</tr>
-<tr>
-<td><code>minor_cycle_length</code></td>
-<td><code>parameter.minor_cycle_length@r1</code></td>
+<td><code>cycleniter</code></td>
+<td><code>parameter.cycleniter@r1</code></td>
 <td><code>integer</code></td>
-<td><code>1000</code>; optional</td>
+<td><code>-1</code>; optional</td>
 <td>Stage Parameters</td>
-<td>Residual refresh cadence in component updates</td>
+<td>Most minor-cycle iterations, per plane, before a major cycle; -1 for niter.<br><em>Surface:</em> -1 is niter, as CASA's tclean reads it.</td>
 </tr>
 <tr>
 <td><code>cyclefactor</code></td>
@@ -2930,14 +3194,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>1.0</code>; optional</td>
 <td>Stage Parameters</td>
 <td>Scale factor used for cycle-threshold derivation</td>
-</tr>
-<tr>
-<td><code>deconvolver</code></td>
-<td><code>parameter.deconvolver@r1</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"hogbom"</code>; optional</td>
-<td>Stages</td>
-<td>Minor-cycle algorithm used for deconvolution</td>
 </tr>
 <tr>
 <td><code>minpsffraction</code></td>
@@ -2956,44 +3212,52 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Upper clamp for the PSF-fraction controller term</td>
 </tr>
 <tr>
-<td><code>nterms</code></td>
-<td><code>parameter.nterms@r1</code></td>
+<td><code>interactive</code></td>
+<td><code>parameter.interactive@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Stages</td>
+<td>Interactive clean.</td>
+</tr>
+<tr>
+<td><code>nmajor</code></td>
+<td><code>parameter.nmajor@r1</code></td>
 <td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Stages</td>
-<td>Number of Taylor terms.</td>
-</tr>
-<tr>
-<td><code>hogbom_iteration_mode</code></td>
-<td><code>parameter.hogbom_iteration_mode@r1</code></td>
-<td><code>string</code></td>
-<td><code>"strict"</code>; optional</td>
+<td><code>-1</code>; optional</td>
 <td>Stage Parameters</td>
-<td>Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons</td>
+<td>Major-cycle limit; -1 keeps CASA's unlimited default</td>
 </tr>
 <tr>
-<td><code>scales</code></td>
-<td><code>parameter.scales@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>fullsummary</code></td>
+<td><code>parameter.fullsummary@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
 <td>Stages</td>
-<td>Comma-separated multiscale kernel sizes in pixels</td>
-</tr>
-<tr>
-<td><code>smallscalebias</code></td>
-<td><code>parameter.smallscalebias@r1</code></td>
-<td><code>float</code></td>
-<td><code>0.0</code>; optional</td>
-<td>Stages</td>
-<td>CASA multiscale bias in [-1, 1]</td>
+<td>Return each minor cycle's full detail in the summary record.<br><em>Surface:</em> Adds the per-cycle detail of summaryminor to the returned record.</td>
 </tr>
 <tr>
 <td><code>usemask</code></td>
-<td><code>parameter.usemask@r1</code></td>
-<td><code>choice (2 values)</code></td>
+<td><code>parameter.usemask@r2</code></td>
+<td><code>choice (3 values)</code></td>
 <td><code>"user"</code>; optional</td>
 <td>Stage Parameters</td>
 <td>Clean-mask generation mode</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>tclean.mask@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.<br><em>Surface:</em> A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'.</td>
+</tr>
+<tr>
+<td><code>pbmask</code></td>
+<td><code>parameter.pbmask@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.0</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Primary-beam level of usemask='pb', and the bound of auto-multithresh's mask.</td>
 </tr>
 <tr>
 <td><code>sidelobethreshold</code></td>
@@ -3028,12 +3292,28 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Auto-multithresh negative-feature threshold factor</td>
 </tr>
 <tr>
+<td><code>smoothfactor</code></td>
+<td><code>parameter.smoothfactor@r1</code></td>
+<td><code>float</code></td>
+<td><code>1.0</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Smoothing of auto-multithresh's mask, in beams.</td>
+</tr>
+<tr>
 <td><code>minbeamfrac</code></td>
 <td><code>parameter.minbeamfrac@r1</code></td>
 <td><code>float</code></td>
 <td><code>0.3</code>; optional</td>
 <td>Stage Parameters</td>
 <td>Auto-multithresh pruning region size as a beam fraction</td>
+</tr>
+<tr>
+<td><code>cutthreshold</code></td>
+<td><code>parameter.cutthreshold@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.01</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Fraction of the smoothed mask's peak auto-multithresh keeps.</td>
 </tr>
 <tr>
 <td><code>growiterations</code></td>
@@ -3044,92 +3324,76 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Auto-multithresh constrained mask-growth iterations</td>
 </tr>
 <tr>
-<td><code>mask_box</code></td>
-<td><code>parameter.mask_box@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>dogrowprune</code></td>
+<td><code>parameter.dogrowprune@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
 <td>Stage Parameters</td>
-<td>Inclusive clean mask box in pixel coordinates</td>
+<td>Prune auto-multithresh's grown mask.</td>
 </tr>
 <tr>
-<td><code>weighting</code></td>
-<td><code>parameter.weighting@r1</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"natural"</code>; optional</td>
-<td>Stages</td>
-<td>Visibility weighting policy</td>
-</tr>
-<tr>
-<td><code>mask_image</code></td>
-<td><code>parameter.mask_image@r1</code></td>
-<td><code>path (image)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>minpercentchange</code></td>
+<td><code>parameter.minpercentchange@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
 <td>Stage Parameters</td>
-<td>CASA image mask whose non-zero pixels are cleanable</td>
+<td>Mask change, in percent, below which auto-multithresh stops updating a channel; -1 for never.</td>
 </tr>
 <tr>
-<td><code>robust</code></td>
-<td><code>parameter.robust@r1</code></td>
-<td><code>float</code></td>
-<td><code>0.5</code>; optional</td>
-<td>Stages</td>
-<td>Briggs robust parameter when weighting=briggs or briggsbwtaper</td>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Verbose logging.</td>
 </tr>
 <tr>
-<td><code>wprojplanes</code></td>
-<td><code>parameter.wprojplanes@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>fastnoise</code></td>
+<td><code>parameter.fastnoise@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Estimate auto-multithresh's noise from the whole residual, unmasked.</td>
+</tr>
+<tr>
+<td><code>restart</code></td>
+<td><code>parameter.restart@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Products</td>
+<td>Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> casa-rs overwrites existing products: it never restarts from them (#944).</td>
+</tr>
+<tr>
+<td><code>savemodel</code></td>
+<td><code>parameter.savemodel@r2</code></td>
+<td><code>choice (3 values)</code></td>
 <td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Explicit wproject plane budget</td>
+<td>Products</td>
+<td>Write the predicted final model into the MeasurementSet</td>
 </tr>
 <tr>
-<td><code>usepointing</code></td>
-<td><code>parameter.usepointing@r1</code></td>
+<td><code>calcres</code></td>
+<td><code>parameter.calcres@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Use POINTING-table directions instead of FIELD phase centers</td>
-</tr>
-<tr>
-<td><code>write_pb</code></td>
-<td><code>parameter.write_pb@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Stages</td>
-<td>Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA</td>
+<td>Compute the initial residual image.</td>
 </tr>
 <tr>
-<td><code>pbcor</code></td>
-<td><code>parameter.pbcor@r1</code></td>
+<td><code>calcpsf</code></td>
+<td><code>parameter.calcpsf@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Stages</td>
-<td>Write mosaic primary-beam-corrected image products</td>
+<td>Compute the PSF image.</td>
 </tr>
 <tr>
-<td><code>pblimit</code></td>
-<td><code>parameter.pblimit@r1</code></td>
+<td><code>psfcutoff</code></td>
+<td><code>parameter.psfcutoff@r1</code></td>
 <td><code>float</code></td>
-<td><code>0.2</code>; optional</td>
-<td>Stages</td>
-<td>Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked</td>
-</tr>
-<tr>
-<td><code>gridder</code></td>
-<td><code>parameter.gridder@r2</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"standard"</code>; optional</td>
-<td>Stages</td>
-<td>CASA tclean gridder family</td>
-</tr>
-<tr>
-<td><code>facets</code></td>
-<td><code>parameter.facets@r3</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Stages</td>
-<td>Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed.</td>
+<td><code>0.35</code>; optional</td>
+<td>Stage Parameters</td>
+<td>PSF beam-fit cutoff fraction</td>
 </tr>
 <tr>
 <td><code>parallel</code></td>
@@ -3140,52 +3404,44 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Image on the host's workers (the balanced resource policy); false images on one worker</td>
 </tr>
 <tr>
-<td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>ddid</code></td>
+<td><code>parameter.ddid@r1</code></td>
 <td><code>string</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Context</td>
-<td>UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.</td>
+<td>Restrict imaging to one DATA_DESC_ID</td>
 </tr>
 <tr>
-<td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
-<td><code>string</code></td>
+<td><code>channel_start</code></td>
+<td><code>parameter.channel_start@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Context</td>
-<td>Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine.</td>
+<td>First selected input channel</td>
 </tr>
 <tr>
-<td><code>cfcache</code></td>
-<td><code>parameter.cfcache@r2</code></td>
-<td><code>optional&lt;path (directory)&gt; (states: none)</code></td>
-<td><code>"none"</code>; required</td>
-<td>Advanced Wide-Field</td>
-<td>Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache.</td>
+<td><code>channel_count</code></td>
+<td><code>parameter.channel_count@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Context</td>
+<td>Number of selected input channels</td>
 </tr>
 <tr>
-<td><code>cf_resident_mb</code></td>
-<td><code>parameter.cf_resident_mb@r2</code></td>
-<td><code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero.</td>
-</tr>
-<tr>
-<td><code>pointingoffsetsigdev</code></td>
-<td><code>parameter.pointingoffsetsigdev@r1</code></td>
+<td><code>hogbom_iteration_mode</code></td>
+<td><code>parameter.hogbom_iteration_mode@r1</code></td>
 <td><code>string</code></td>
-<td><code>"0"</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600</td>
+<td><code>"strict"</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons</td>
 </tr>
 <tr>
-<td><code>normtype</code></td>
-<td><code>parameter.normtype@r2</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"flatnoise"</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Mosaic and AWProject sensitivity normalization policy</td>
+<td><code>write_pb</code></td>
+<td><code>parameter.write_pb@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Stages</td>
+<td>Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA</td>
 </tr>
 <tr>
 <td><code>fitspw</code></td>
@@ -3212,12 +3468,36 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.</td>
 </tr>
 <tr>
+<td><code>backend</code></td>
+<td><code>parameter.backend@r2</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Stages</td>
+<td>Device the major-cycle passes grid on: auto, cpu or gpu</td>
+</tr>
+<tr>
+<td><code>gridprecision</code></td>
+<td><code>parameter.gridprecision@r2</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Stages</td>
+<td>Grid arithmetic: auto, f32 or f64</td>
+</tr>
+<tr>
 <td><code>aw_cf_source</code></td>
 <td><code>parameter.aw_cf_source@r1</code></td>
 <td><code>choice (2 values)</code></td>
 <td><code>"casa-import"</code>; optional</td>
 <td>Advanced Wide-Field</td>
 <td>Paired AW convolution-function source<br><em>Surface:</em> Exactly one read-only CASA import or frozen native EVLA source; there is no fallback.</td>
+</tr>
+<tr>
+<td><code>cf_resident_mb</code></td>
+<td><code>parameter.cf_resident_mb@r2</code></td>
+<td><code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero.</td>
 </tr>
 <tr>
 <td><code>native_cf_cache</code></td>
@@ -3276,22 +3556,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state.</td>
 </tr>
 <tr>
-<td><code>backend</code></td>
-<td><code>parameter.backend@r2</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Stages</td>
-<td>Device the major-cycle passes grid on: auto, cpu or gpu</td>
-</tr>
-<tr>
-<td><code>gridprecision</code></td>
-<td><code>parameter.gridprecision@r2</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"auto"</code>; optional</td>
-<td>Stages</td>
-<td>Grid arithmetic: auto, f32 or f64</td>
-</tr>
-<tr>
 <td><code>stage_timing</code></td>
 <td><code>parameter.stage_timing@r1</code></td>
 <td><code>bool</code></td>
@@ -3314,22 +3578,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Stages</td>
 <td>Log the clean controller's science quantities at each cycle</td>
-</tr>
-<tr>
-<td><code>uvtaper</code></td>
-<td><code>parameter.uvtaper@r2</code></td>
-<td><code>array&lt;string&gt;</code></td>
-<td><code>[""]</code>; optional</td>
-<td>Stages</td>
-<td>Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none.</td>
-</tr>
-<tr>
-<td><code>startmodel</code></td>
-<td><code>parameter.startmodel@r2</code></td>
-<td><code>path (image)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stage Parameters</td>
-<td>CASA image in Jy/pixel that the model starts from</td>
 </tr>
 </tbody>
 </table>
