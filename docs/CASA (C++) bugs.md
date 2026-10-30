@@ -103,7 +103,8 @@ Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
-[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table).
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
+[`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2495,3 +2496,23 @@ reads the input's world values at the pixels it was cut from. CASA's
 `imsubimage` ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
+
+## `feather` fails on an image whose direction is not on its first two axes
+
+- Date noted: 2026-10-30
+- Status: CASA limitation; casa-rs does not follow it (#1002, PR #1022
+  review)
+- Affected code: casatools `synthesis/MeasurementEquations/Feather.cc`
+  (its FFT, cursor and weight-image paths)
+
+`feather` finds an image's direction axes for part of its setup, but its
+lattice cursors and FFTs assume the direction plane is the first two axes.
+CASA 6.7.6.14's `feather` of a pair of 16 by 16 pixel images, one Stokes and
+two channels, with 2″ and 6″ beams, succeeds over [RA, Dec, Stokes, Freq].
+The same pair over [Stokes, RA, Dec, Freq] or [Freq, RA, Dec, Stokes], as
+`imtrans` makes it, fails with `LatticeStepper::setCursorShape: cursorShape
+<=0 or > latticeShape`. casa-rs feathers each direction plane wherever its
+axes are. The transposed pair's result is the transpose of the
+direction-first pair's (`casa-images` `casa_axis_maps` test
+`feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
+result is checked against CASA's in `image_analysis_casa`.

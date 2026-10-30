@@ -2965,9 +2965,19 @@ where
             "impv requires at least two image axes".to_string(),
         ));
     }
-    // The path runs in the direction plane, wherever its axes are; an image
-    // without a direction takes its first two.
+    // The path runs in the direction plane; an image without a direction
+    // takes its first two axes. The output keeps the input's coordinates
+    // rather than a PV image's (#1024), so a direction elsewhere is refused
+    // until it has them, rather than labelled more wrongly (#1022 review).
     let plane = direction_plane_axes(image);
+    if plane[0] != 0 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "impv takes the direction from the image's first two axes until its output has a PV \
+             image's coordinates (#1024), but the image's axes are {}. In CASA, transpose the \
+             image (imtrans) to put the direction first",
+            image.axis_names().join(", ")
+        )));
+    }
     let spectral_axis = image.find_axis(CoordinateType::Spectral);
     if spectral_axis.is_some_and(|axis| plane.contains(&axis)) {
         return Err(ImageError::InvalidMetadata(format!(

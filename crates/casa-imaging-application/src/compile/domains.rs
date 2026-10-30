@@ -252,6 +252,29 @@ fn mask_plan(
     })
 }
 
+/// Whether each pixel of `values`, in index order, is finite, non-zero and
+/// valid in the image's default `mask`.
+///
+/// The values and the mask are walked together; indexing the mask with the
+/// running count of a many-axis image panicked (#1022 review).
+fn mask_support<T>(values: &ndarray::ArrayD<T>, mask: Option<&ndarray::ArrayD<bool>>) -> Vec<bool>
+where
+    T: Into<f64> + Copy,
+{
+    let support = |value: &T| {
+        let value: f64 = (*value).into();
+        value.is_finite() && value != 0.0
+    };
+    match mask {
+        Some(mask) => values
+            .iter()
+            .zip(mask.iter())
+            .map(|(value, valid)| *valid && support(value))
+            .collect(),
+        None => values.iter().map(support).collect(),
+    }
+}
+
 /// The non-zero, unmasked, finite pixels of a one-plane CASA image,
 /// reprojected onto `target_spec`.
 fn reproject_image_mask(
@@ -261,31 +284,11 @@ fn reproject_image_mask(
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
     let (source_shape, source_coordinates, source_support) = match AnyPagedImage::open(path)? {
         AnyPagedImage::Float32(image) => {
-            let mask = image.get_mask()?;
-            let support = image
-                .get()?
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    value.is_finite()
-                        && *value != 0.0
-                        && mask.as_ref().is_none_or(|mask| mask[index])
-                })
-                .collect::<Vec<_>>();
+            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
             (image.shape().to_vec(), image.coordinates().clone(), support)
         }
         AnyPagedImage::Float64(image) => {
-            let mask = image.get_mask()?;
-            let support = image
-                .get()?
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    value.is_finite()
-                        && *value != 0.0
-                        && mask.as_ref().is_none_or(|mask| mask[index])
-                })
-                .collect::<Vec<_>>();
+            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
             (image.shape().to_vec(), image.coordinates().clone(), support)
         }
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
@@ -387,8 +390,9 @@ mod tests {
         DirectionCoordinate, Projection as CoordinateProjection, SpectralCoordinate,
         StokesCoordinate, StokesType,
     };
-    use casa_images::PagedImage;
+    use casa_images::{ImagePixel, PagedImage};
     use casa_types::measures::frequency::FrequencyRef;
+    use ndarray::{ArrayD, IxDyn};
 
     fn direction() -> DirectionCoordinate {
         DirectionCoordinate::new(
@@ -400,20 +404,21 @@ mod tests {
         )
     }
 
-    /// A one-plane mask on a 4 by 1 direction plane, set at x = 0 and 2,
-    /// with the direction first or (as a transposed CASA mask reads) after
-    /// Stokes.
-    fn mask(path: &Path, direction_first: bool) -> DirectionCoordinateSpec {
+    /// A one-plane mask image of `T` pixels on a 3 by 2 direction plane:
+    /// non-zero at (0, 0), (2, 0), (1, 1) and (2, 1), with (2, 1) invalid in
+    /// its default pixel mask; the direction first, or (as a transposed CASA
+    /// mask reads) after Stokes. Its support reprojected onto its own grid.
+    fn support<T: ImagePixel + From<f32>>(dir: &Path, direction_first: bool) -> Box<[bool]> {
         let mut coordinates = CoordinateSystem::new();
         let stokes = StokesCoordinate::new(vec![StokesType::I]);
         let shape = if direction_first {
             coordinates.add_coordinate(direction());
             coordinates.add_coordinate(stokes);
-            vec![4, 1, 1, 1]
+            vec![3, 2, 1, 1]
         } else {
             coordinates.add_coordinate(stokes);
             coordinates.add_coordinate(direction());
-            vec![1, 4, 1, 1]
+            vec![1, 3, 2, 1]
         };
         coordinates.add_coordinate(SpectralCoordinate::new(
             FrequencyRef::LSRK,
@@ -422,36 +427,54 @@ mod tests {
             0.0,
             1.0e9,
         ));
-        let mut image = PagedImage::<f32>::create(shape, coordinates, path).unwrap();
-        for x in [0, 2] {
-            let pixel = if direction_first {
-                [x, 0, 0, 0]
+        let plane = |index: &IxDyn| {
+            if direction_first {
+                (index[0], index[1])
             } else {
-                [0, x, 0, 0]
-            };
-            image.put_at(1.0, &pixel).unwrap();
-        }
+                (index[1], index[2])
+            }
+        };
+        let values = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+            let set = matches!(plane(&index), (0, 0) | (2, 0) | (1, 1) | (2, 1));
+            T::from(if set { 1.0 } else { 0.0 })
+        });
+        let valid = ArrayD::from_shape_fn(IxDyn(&shape), |index| plane(&index) != (2, 1));
+        let path = dir.join(format!("{direction_first}-{}.mask", values.len()));
+        let mut image = PagedImage::<T>::create(shape, coordinates, &path).unwrap();
+        image.put_slice(&values, &[0, 0, 0, 0]).unwrap();
+        image.put_mask("mask0", &valid).unwrap();
+        image.set_default_mask("mask0").unwrap();
         image.save().unwrap();
-        direction_model_spec(&CoordinateModel::Direction(direction())).unwrap()
+        drop(image);
+        let target = direction_model_spec(&CoordinateModel::Direction(direction())).unwrap();
+        let plan = reproject_image_mask(&path, target, [3, 2]).unwrap();
+        let ReconstructionMaskPlan::Reprojected { support, .. } = plan else {
+            panic!("a mask image is reprojected");
+        };
+        support
     }
 
     #[test]
     fn a_mask_reads_its_direction_plane_wherever_its_axes_are() {
-        // [Stokes, RA, Dec, Freq] of shape [1, 4, 1, 1] has the 4 by 1 plane
+        // [Stokes, RA, Dec, Freq] of shape [1, 3, 2, 1] has the 3 by 2 plane
         // of a direction-first mask; taken from its first two axes it was 1
-        // by 4, a row turned into a column (#1005 review, #1002).
-        let dir = tempfile::tempdir().unwrap();
-        let support = |direction_first: bool| {
-            let path = dir.path().join(format!("{direction_first}.mask"));
-            let target = mask(&path, direction_first);
-            let plan = reproject_image_mask(&path, target, [4, 1]).unwrap();
-            let ReconstructionMaskPlan::Reprojected { support, .. } = plan else {
-                panic!("a mask image is reprojected");
-            };
-            support
-        };
-        let first = support(true);
-        assert_eq!(&*first, &[true, false, true, false]);
-        assert_eq!(support(false), first);
+        // by 3, and a default pixel mask indexed by a running count panicked
+        // on a many-axis image (#1005 and #1022 reviews, #1002). The support
+        // runs over x, y fastest.
+        let expected = [true, false, false, true, true, false];
+        for direction_first in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            assert_eq!(
+                &*support::<f32>(dir.path(), direction_first),
+                &expected,
+                "f32, direction first {direction_first}"
+            );
+            let dir = tempfile::tempdir().unwrap();
+            assert_eq!(
+                &*support::<f64>(dir.path(), direction_first),
+                &expected,
+                "f64, direction first {direction_first}"
+            );
+        }
     }
 }

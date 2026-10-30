@@ -19,8 +19,13 @@ use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
 /// A CASA image can hold its direction after other axes (`imtrans`); casa-rs
 /// reads a coordinate's axes adjacent and in its own order (#1001), so the
 /// latitude follows the longitude, and the world axes are numbered as the
-/// pixel axes are. Regions, `impv` and `feather` take their plane here, as
-/// CASA takes them in the direction plane (#1002).
+/// pixel axes are (#1002).
+///
+/// - Regions take their plane here, as CASA does.
+/// - `feather` does too, where CASA 6.7.6's `feather` fails on such an
+///   image (`docs/CASA (C++) bugs.md`).
+/// - `impv` takes it only on axes 0 and 1 until its output has a PV image's
+///   coordinates (#1024).
 pub(super) fn direction_plane_axes<T: ImagePixel>(image: &impl ImageInterface<T>) -> [usize; 2] {
     match image.find_axis(CoordinateType::Direction) {
         Some(longitude) => [longitude, longitude + 1],
