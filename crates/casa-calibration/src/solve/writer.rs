@@ -170,6 +170,8 @@ pub(crate) fn write_gain_caltable_named(
         field_ids: field_ids.iter().copied().collect(),
         spectral_window_ids: spw_ids.iter().copied().collect(),
         solution_row_count: rows.len(),
+        selected_data: solved.selected_data.clone(),
+        solve_stats: solved.solve_stats.clone(),
     })
 }
 

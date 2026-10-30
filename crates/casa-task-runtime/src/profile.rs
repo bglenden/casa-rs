@@ -3,15 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_provider_contracts::{
-    DefaultSpec, MigrationStep, MigrationTransform, ParameterValue, Predicate,
-    SurfaceContractBundle, SurfaceKind,
+    DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle, SurfaceKind,
 };
 use thiserror::Error;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-use crate::normalize::{
-    NormalizationError, normalize_quantity_unit, normalize_value, semantic_eq, validate_value,
-};
+use crate::migrate::migrate_parameters;
+use crate::normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 use crate::overrides::normalize_overrides;
 
 /// Current human-profile document format.
@@ -501,148 +499,6 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
     }
 }
 
-fn migrate_parameters(
-    profile: &ParameterProfile,
-    bundle: &SurfaceContractBundle,
-) -> Result<(BTreeMap<String, ParameterValue>, Vec<Diagnostic>), ProfileError> {
-    let mut version = profile.header.contract;
-    let mut parameters = profile.parameters.clone();
-    let mut diagnostics = Vec::new();
-    while version < bundle.surface.contract_version() {
-        let migration = bundle
-            .surface
-            .migrations()
-            .iter()
-            .find(|migration| migration.from_contract == version)
-            .ok_or_else(|| {
-                ProfileError::Contract(format!(
-                    "surface {} has no migration from contract {} to {}",
-                    bundle.surface.id(),
-                    version,
-                    bundle.surface.contract_version()
-                ))
-            })?;
-        for name in &migration.changed_defaults {
-            if !parameters.contains_key(name) {
-                diagnostics.push(
-                    Diagnostic::warning(
-                        DiagnosticCode::DefaultChanged,
-                        format!(
-                            "default for {name:?} changed after contract {}; omitted value adopts the current default",
-                            migration.from_contract
-                        ),
-                    )
-                    .for_parameter(name.clone()),
-                );
-            }
-        }
-        for step in &migration.steps {
-            apply_migration_step(step, &mut parameters)?;
-        }
-        diagnostics.push(Diagnostic::warning(
-            DiagnosticCode::Migrated,
-            format!(
-                "migrated surface {} contract {} to {}",
-                bundle.surface.id(),
-                migration.from_contract,
-                migration.to_contract
-            ),
-        ));
-        version = migration.to_contract;
-    }
-    Ok((parameters, diagnostics))
-}
-
-fn apply_migration_step(
-    step: &MigrationStep,
-    parameters: &mut BTreeMap<String, ParameterValue>,
-) -> Result<(), ProfileError> {
-    match step {
-        MigrationStep::Rename { from, to } => {
-            if let Some(value) = parameters.remove(from)
-                && parameters.insert(to.clone(), value).is_some()
-            {
-                return Err(ProfileError::Contract(format!(
-                    "migration rename {from:?} -> {to:?} collides with an explicit value"
-                )));
-            }
-        }
-        MigrationStep::Remove { parameter } => {
-            parameters.remove(parameter);
-        }
-        MigrationStep::ReplaceValue {
-            parameter,
-            from,
-            to,
-        } => {
-            if parameters.get(parameter) == Some(from) {
-                parameters.insert(parameter.clone(), to.clone());
-            }
-        }
-        MigrationStep::Transform {
-            parameter,
-            transform,
-        } => {
-            if let Some(value) = parameters.remove(parameter) {
-                parameters.insert(
-                    parameter.clone(),
-                    transform_value(value, transform, parameter)?,
-                );
-            }
-        }
-        MigrationStep::Set {
-            parameter,
-            value,
-            when,
-        } => {
-            if when.holds_for_overrides(parameters) {
-                parameters.insert(parameter.clone(), value.clone());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn transform_value(
-    value: ParameterValue,
-    transform: &MigrationTransform,
-    parameter: &str,
-) -> Result<ParameterValue, ProfileError> {
-    match transform {
-        MigrationTransform::ScalarToArray { length } => {
-            Ok(ParameterValue::Array(vec![value; *length]))
-        }
-        MigrationTransform::SingletonArrayToScalar => match value {
-            ParameterValue::Array(mut values) if values.len() == 1 => Ok(values.remove(0)),
-            other => Err(ProfileError::Contract(format!(
-                "migration expected a singleton array for {parameter:?}, got {other:?}"
-            ))),
-        },
-        MigrationTransform::IntegerToString => match value {
-            ParameterValue::Integer(value) => Ok(ParameterValue::String(value.to_string())),
-            other => Err(ProfileError::Contract(format!(
-                "migration expected an integer for {parameter:?}, got {other:?}"
-            ))),
-        },
-        MigrationTransform::QuantityUnit { canonical_unit } => {
-            normalize_quantity_unit(value, canonical_unit).map_err(ProfileError::from)
-        }
-        MigrationTransform::Lowercase => match value {
-            ParameterValue::String(value) => Ok(ParameterValue::String(value.to_ascii_lowercase())),
-            other => Err(ProfileError::Contract(format!(
-                "migration expected a string for {parameter:?}, got {other:?}"
-            ))),
-        },
-        MigrationTransform::Trim => match value {
-            ParameterValue::String(value) => Ok(ParameterValue::String(value.trim().to_string())),
-            other => Err(ProfileError::Contract(format!(
-                "migration expected a string for {parameter:?}, got {other:?}"
-            ))),
-        },
-        MigrationTransform::NumberList => crate::normalize::number_list(value, parameter),
-    }
-}
-
 /// Render resolved values as deterministic sparse TOML against current defaults.
 pub fn render_sparse_profile(
     bundle: &SurfaceContractBundle,
@@ -933,13 +789,13 @@ pub enum ProfileError {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::SurfaceParameterBinding;
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, ContextRole, ParameterCatalog, ParameterConcept, ParameterConceptId,
         ParameterConceptRef, ParameterDocs, ParameterPresentation, ParameterProjections,
         ParameterRole, ParameterType, PersistenceClass, SemanticRevision, SurfaceDefinition,
         SurfaceExecutionProjection, SurfaceMigration, TaskDefinition, UnitDimension,
     };
+    use casa_provider_contracts::{MigrationStep, MigrationTransform, SurfaceParameterBinding};
 
     use super::*;
 

@@ -119,9 +119,10 @@ any catalog task from a draft, in a chosen workspace. Each call resolves its
 parameters through the shared Rust contracts and starts the task's own
 executable, whose log reaches `sys.stderr` as it runs. They do not call CASA.
 A task whose surface names its CASA task (the image tasks, the MeasurementSet
-and flagging tasks and `simobserve` so far) has CASA's signature and returns
-CASA's value, such as `imstat`'s statistics dictionary or `flagdata`'s
-summary. A task that refuses its parameters raises
+and flagging tasks, the calibration tasks and `simobserve` so far) has CASA's
+signature and returns CASA's value, such as `imstat`'s statistics dictionary,
+`flagdata`'s summary or `fluxscale`'s flux densities. A task that refuses its
+parameters raises
 `casars.tasks.TaskParameterError`, a `ValueError`; one that does not succeed
 raises `casars.tasks.TaskExecutionError`.
 Parameters can also be loaded, edited, validated, and saved as sparse TOML

@@ -98,6 +98,7 @@ fn bandpass_request(
         amplitude_degree: 3,
         phase_degree: 3,
         smodel: [1.0, 0.0, 0.0, 0.0],
+        cuts: None,
     }
 }
 

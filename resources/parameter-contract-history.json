@@ -27,6 +27,11 @@
       "fingerprint": "63678a3eed3347c7f54c88bdd695c6d3723cbaf350b0b530c441896b00a7a2c0"
     },
     {
+      "id": "calibration.caltable",
+      "semantic_revision": 1,
+      "fingerprint": "5552e6c91969772b12225d9e13e3e21d8cb73e98355451bab4c21627031aa88e"
+    },
+    {
       "id": "calibration.report.output",
       "semantic_revision": 1,
       "fingerprint": "3747051eacd5822c510c25222de8b9664566d1c70f8ad1b8d1ee7aa32ef8883e"
@@ -2932,6 +2937,186 @@
       "fingerprint": "af6d15e5c7b8a95180d039661a5b247c4c08eef31c9033ec98046ed8871e0976"
     },
     {
+      "id": "scaling.append",
+      "semantic_revision": 1,
+      "fingerprint": "6c81f1a837df9a2ca4df530112e1fcd1303e931e479585f559968f209cd80017"
+    },
+    {
+      "id": "scaling.caltable",
+      "semantic_revision": 1,
+      "fingerprint": "f21e51ebfccb69ba3cbe0cf9148ccd6871badf84f7efebb4880b50f12a980961"
+    },
+    {
+      "id": "scaling.display",
+      "semantic_revision": 1,
+      "fingerprint": "c0b36d62a89ebea61b8552a2b7e2aaf1fb2d4b61ade5d62fcc3d857d5636bba8"
+    },
+    {
+      "id": "scaling.fitorder",
+      "semantic_revision": 1,
+      "fingerprint": "8e45ca01a0e073db9502c133378f9577fe235b778fa3e0c3ec0953c851ec1ead"
+    },
+    {
+      "id": "scaling.fluxtable",
+      "semantic_revision": 1,
+      "fingerprint": "cfe409100d7eddb3eb60b69f933401446d0fd4445fa97e88fe49bff47cebefff"
+    },
+    {
+      "id": "scaling.gainthreshold",
+      "semantic_revision": 1,
+      "fingerprint": "3fc76d465b6442208bd505c5b2631fbb82ba251239ab54a1a5e6fb8c70e5f017"
+    },
+    {
+      "id": "scaling.listfile",
+      "semantic_revision": 1,
+      "fingerprint": "d592d0c89dccf3961d83923540e87f65b2220f405e63d2d35e278b23c3698c00"
+    },
+    {
+      "id": "scaling.reference",
+      "semantic_revision": 1,
+      "fingerprint": "16099a4cfabd7cf7060f2df23c805d199c771b1842ed57ac17da8493ac8adf3b"
+    },
+    {
+      "id": "scaling.refspwmap",
+      "semantic_revision": 1,
+      "fingerprint": "9e9cb43840b592be5d949f9c55dad58c6e1440ea5e71ff30c5614ffe7538e9a2"
+    },
+    {
+      "id": "scaling.transfer",
+      "semantic_revision": 1,
+      "fingerprint": "6674f456cd82d083d2c1549163cb408fb53a9b6f472d7bb6ce5440268c11e0a2"
+    },
+    {
+      "id": "setapply.applymode",
+      "semantic_revision": 1,
+      "fingerprint": "79a012af1fdab665d6e0d1b29b1e0b7255b11f77b8edac38814dc39bdcdd4b47"
+    },
+    {
+      "id": "setapply.calwt",
+      "semantic_revision": 1,
+      "fingerprint": "864497a08141d3dc0c387b5ded813eabde90f4d3592e23bb7434af8106946d17"
+    },
+    {
+      "id": "setapply.gainfield",
+      "semantic_revision": 1,
+      "fingerprint": "0cafc7426f24f651c47ff28a066066e21d94c479fb7fd9193a56137d55ef5f2e"
+    },
+    {
+      "id": "setapply.gaintable",
+      "semantic_revision": 1,
+      "fingerprint": "0f7a3fc955b7eea9481d4d9d49450216014fbd6177aabdff1a2f724caa2256a4"
+    },
+    {
+      "id": "setapply.interp",
+      "semantic_revision": 1,
+      "fingerprint": "7c29f15966bb996cd2fb6919835ad9ac3fde9eb85bb79cbec54c253988681548"
+    },
+    {
+      "id": "setapply.spwmap",
+      "semantic_revision": 1,
+      "fingerprint": "b8f8746242b712a8ade24da0a8d8b2efee34a5e12ec766715312287b3aec94ef"
+    },
+    {
+      "id": "setsolve.append",
+      "semantic_revision": 1,
+      "fingerprint": "0eabfab86631db511b4b6178372653e382ceed1b879c23b29c852db4c08f8c11"
+    },
+    {
+      "id": "setsolve.bandtype",
+      "semantic_revision": 1,
+      "fingerprint": "d4b166001471e28253bcac8bed102b72fd35e95db693edf9b5d09b9de6162e39"
+    },
+    {
+      "id": "setsolve.calmode",
+      "semantic_revision": 1,
+      "fingerprint": "359acc81f2d72ed13c9860adc842579fdbfeba3a8bfce8197d4a0c18a314ed06"
+    },
+    {
+      "id": "setsolve.combine",
+      "semantic_revision": 1,
+      "fingerprint": "7c4cf1dfa5ddde4dd6b7452362b62e582a8cefde0214441822cdd75ea3a22654"
+    },
+    {
+      "id": "setsolve.corrdepflags",
+      "semantic_revision": 1,
+      "fingerprint": "1305c31f35e1c7160db0f6023e147e40f0d4064e72cc9cfbf5433281f72220ee"
+    },
+    {
+      "id": "setsolve.fillgaps",
+      "semantic_revision": 1,
+      "fingerprint": "4fba17adab70f3c991e3b2d41394df6f14e2acf1f5424510e886687419be54fe"
+    },
+    {
+      "id": "setsolve.gaintype",
+      "semantic_revision": 1,
+      "fingerprint": "caf472fcb703e87af312306cb164ed878d31eafe052b9e6ce8d2ded14e973f24"
+    },
+    {
+      "id": "setsolve.maskcenter",
+      "semantic_revision": 1,
+      "fingerprint": "ea04144f766c3bf1edac0cab1f416409d9d18524494679e650cd92048e7c0ddf"
+    },
+    {
+      "id": "setsolve.maskedge",
+      "semantic_revision": 1,
+      "fingerprint": "14c9695e191a4ff0f6cec42726354b211ee7856b8bcacafe5268a794f06330ab"
+    },
+    {
+      "id": "setsolve.minsnr",
+      "semantic_revision": 1,
+      "fingerprint": "be5a0baa1d70068df7295336b3a6fdbfad18ddd548e6213dd4471c1dadf1e6b0"
+    },
+    {
+      "id": "setsolve.normtype",
+      "semantic_revision": 1,
+      "fingerprint": "a050d10769b00f69d430e31043f2b97722dc790a34aea3a64fb3701b838c6174"
+    },
+    {
+      "id": "setsolve.npointaver",
+      "semantic_revision": 1,
+      "fingerprint": "46b6761bddb3fb0fef9eda3d86d26c3acff3e381daea3c8ebd3f35f7ca30a4c1"
+    },
+    {
+      "id": "setsolve.phasewrap",
+      "semantic_revision": 1,
+      "fingerprint": "387c23523a4ecf8cf5c88226b9d3de57c7c90afa398547adfff55562692c9d8d"
+    },
+    {
+      "id": "setsolve.preavg",
+      "semantic_revision": 1,
+      "fingerprint": "811d3e7080b25367f975658982d23b1e931758e3ef6b9a2a9abd7dad516ab41b"
+    },
+    {
+      "id": "setsolve.refantmode",
+      "semantic_revision": 1,
+      "fingerprint": "00fa81923b02a1455bd81e3e35a791b8527b8a3973c9716a2e1485448a234bb1"
+    },
+    {
+      "id": "setsolve.rmsthresh",
+      "semantic_revision": 1,
+      "fingerprint": "efbb78d698f2ac130bb7e83b8f0a786f95f5530121b53d64373361bb6f5e83d7"
+    },
+    {
+      "id": "setsolve.smodel",
+      "semantic_revision": 1,
+      "fingerprint": "3bdd5023afa0a968810bc63fcb6cf91cad30ee67f3685ef26c90bacf34089723"
+    },
+    {
+      "id": "setsolve.solmode",
+      "semantic_revision": 1,
+      "fingerprint": "b2a55314e3918437a0eb600cc3de2d7bddbcc8b2f0618ec23ad43ffb768eb026"
+    },
+    {
+      "id": "setsolve.splinetime",
+      "semantic_revision": 1,
+      "fingerprint": "3d55f39694ecd844b7976a2a437dade2217b4170d9d9126e6ab80f2bba8b0006"
+    },
+    {
+      "id": "setsolve.visnorm",
+      "semantic_revision": 1,
+      "fingerprint": "c4390df6c2072dece4b0a93c08dc2aa0a1d0e9407dd83f8c44e54e38003c28b5"
+    },
+    {
       "id": "simalma.image",
       "semantic_revision": 1,
       "fingerprint": "11012087786172ccb0c656513ffa14732cc0bad50390156a2031921002aae1f2"
@@ -3042,6 +3227,56 @@
       "fingerprint": "7d46336624115b8b966121e1521ce0da650c1fba9dbb1d3f8c0cd265fbda3c0b"
     },
     {
+      "id": "specifycal.ant_pos_time_limit",
+      "semantic_revision": 1,
+      "fingerprint": "1bf7b8553db5ab062555f39f665da3ec7f236c1615aa0d75bc881e349e5761fe"
+    },
+    {
+      "id": "specifycal.caltype",
+      "semantic_revision": 1,
+      "fingerprint": "9615c9dcb793b9372d9c20da5c42746b87f499b99b0a43f31194790453357ea2"
+    },
+    {
+      "id": "specifycal.endpoint",
+      "semantic_revision": 1,
+      "fingerprint": "da257902b6d03e129e00ded9b9aed28013e01cce61af2d35133837f3fe1771c7"
+    },
+    {
+      "id": "specifycal.infile",
+      "semantic_revision": 1,
+      "fingerprint": "3d7afcac010b1c97957fd1ca35c91f3741366bee9072f33bcf4b36e0ce54f4c4"
+    },
+    {
+      "id": "specifycal.parameter",
+      "semantic_revision": 1,
+      "fingerprint": "1442982b5e2549f518fb13b6e482e1bbf80fd151c78ed9c12f4a55b40e80e21c"
+    },
+    {
+      "id": "specifycal.pol",
+      "semantic_revision": 1,
+      "fingerprint": "a3d7e0a7c0a43cbc94b2969f6666e9dc3c80f2e41ea409eb2e5265d698e39e17"
+    },
+    {
+      "id": "specifycal.retry",
+      "semantic_revision": 1,
+      "fingerprint": "fd8e22a63a4b32da52f13e34e2bb37ed9621a8e7deac11c59cd1749c29124312"
+    },
+    {
+      "id": "specifycal.retry_wait_time",
+      "semantic_revision": 1,
+      "fingerprint": "aaefd88b4a6763b669b6065873ecde417b5e4944e8b2a373fb37a20e7be6d8ec"
+    },
+    {
+      "id": "specifycal.timeout",
+      "semantic_revision": 1,
+      "fingerprint": "acb43ffa272bc231498a752a9956fa4cd38219e430c7d68b80b9ceb49f51bb1b"
+    },
+    {
+      "id": "specifycal.uniform",
+      "semantic_revision": 1,
+      "fingerprint": "fda63ee1f12f01402950e64fd114b3f6a6b6b838b05d40e62e9c720644407a09"
+    },
+    {
       "id": "split.width",
       "semantic_revision": 1,
       "fingerprint": "49a186bf5d1cbe105677041dfb4e0bd1a9f42a4786033bf7daf781d577eaa4b3"
@@ -3114,6 +3349,11 @@
       "fingerprint": "8ea04c45952724f4fb7173693dbbfb4d858faf243b10fb30805ed12f8f72014c"
     },
     {
+      "id": "applycal",
+      "contract_version": 6,
+      "fingerprint": "7efe161705d8b97c66db12e7f16aaaaf489e48ecd9b05741f4a32581071ed861"
+    },
+    {
       "id": "bandpass",
       "contract_version": 1,
       "fingerprint": "32e706780607d535fba5d6e430bea0e6e191554796bc60d9cb250acc41ff28b5"
@@ -3137,6 +3377,11 @@
       "id": "bandpass",
       "contract_version": 5,
       "fingerprint": "29fe47fb57e4b263b2c331a181c9dbf3d203e80fa4084b4a27c2c1ffe70798aa"
+    },
+    {
+      "id": "bandpass",
+      "contract_version": 6,
+      "fingerprint": "84d3f2e6dfc538ca4f639340d9a3de6bdf543026b0f1c755a3811ac9055a21a9"
     },
     {
       "id": "calibrate",
@@ -3339,6 +3584,11 @@
       "fingerprint": "7af7ecaebd6ac0721b68a10478ba8ec9aee5d23e21efe54f2bf71c4a2b74ba3b"
     },
     {
+      "id": "fluxscale",
+      "contract_version": 6,
+      "fingerprint": "3d904f309c4181e1153916d486159d66c3e79c703d927de6852a470409523a91"
+    },
+    {
       "id": "ft",
       "contract_version": 1,
       "fingerprint": "9684895bb362df6d0375ae7e4d54e077bf0efc22d5ae21db34476903909a7f2e"
@@ -3379,6 +3629,11 @@
       "fingerprint": "3ad06ec3dffd401da0debc23f32653c213d4e97c4c69e98eb730137e09f4be79"
     },
     {
+      "id": "gaincal",
+      "contract_version": 6,
+      "fingerprint": "23800628ced6cf0876a43c4bde77b0e23f9bc750fdab033e4b8327a3c5122b27"
+    },
+    {
       "id": "gencal",
       "contract_version": 1,
       "fingerprint": "a77ef8bb565b7257ff3a0c0484e72e730fe0f2f431a111bb3d789241d2d2b29b"
@@ -3402,6 +3657,11 @@
       "id": "gencal",
       "contract_version": 5,
       "fingerprint": "aea62df233c7ca176daf2d02034b9e6452a01722f8b791721ff7132ace5c553f"
+    },
+    {
+      "id": "gencal",
+      "contract_version": 6,
+      "fingerprint": "0f1aba6835b2f7a2869ce1ac171181befbce37195962d2e8b6f98791b35fc6e7"
     },
     {
       "id": "hanningsmooth",

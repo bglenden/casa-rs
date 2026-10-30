@@ -14,15 +14,15 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| applycal | applycal | no | 21 | 16 | 5 | 0 | 6 | 13 |
-| bandpass | bandpass | no | 35 | 19 | 16 | 0 | 8 | 15 |
+| applycal | applycal | yes | 21 | 21 | 0 | 2 | 4 | 0 |
+| bandpass | bandpass | yes | 35 | 35 | 0 | 8 | 4 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
-| fluxscale | fluxscale | no | 15 | 3 | 12 | 0 | 7 | 2 |
-| gaincal | gaincal | no | 38 | 18 | 20 | 0 | 11 | 14 |
-| gencal | gencal | no | 14 | 5 | 9 | 0 | 5 | 5 |
+| fluxscale | fluxscale | yes | 15 | 15 | 0 | 7 | 3 | 0 |
+| gaincal | gaincal | yes | 38 | 38 | 0 | 12 | 4 | 0 |
+| gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
 | imager | tclean | no | 92 | 56 | 36 | 0 | 27 | 24 |
 | imhead | imhead | yes | 5 | 5 | 0 | 1 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
@@ -48,24 +48,12 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
   - returns at line 53: `ret`
   - returns at line 55: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `intent`, `uvrange`, `docallib`, `gaintable`, `applymode`
-- casa-rs parameters CASA lacks: `gaintables`, `apply_mode`, `output`, `overwrite`, `format`, `array`
-- Shared parameters: 16, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `timerange`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `observation`: `''`, `none`
-  - `msselect`: `''`, `none`
-  - `callib`: `''`, `none`
-  - `gainfield`: `[]`, `none`
-  - `interp`: `[]`, `none`
-  - `spwmap`: `[]`, `none`
-  - `calwt`: `[True]`, `none`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #979: `intent`, `uvrange`
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
+- Shared parameters: 21, in CASA's order: yes
+- Defaults that differ: none
 
 ### bandpass
 
@@ -73,26 +61,12 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Implementation: `casatasks/private/task_bandpass.py`, `bandpass` (line 8): 1 return statements, 1 raise statements
   - returns at line 139: `results_dict`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `caltable`, `intent`, `uvrange`, `solint`, `combine`, `minblperant`, `minsnr`, `corrdepflags`, `append`, `fillgaps`, `visnorm`, `maskcenter`, `maskedge`, `docallib`, `gaintable`, `parang`
-- casa-rs parameters CASA lacks: `gaintables`, `output`, `overwrite`, `format`, `out_table`, `min_snr`, `bandpass_combine`, `array`
-- Shared parameters: 19, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `timerange`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `observation`: `''`, `none`
-  - `msselect`: `''`, `none`
-  - `refant`: `''`, `required`
-  - `bandtype`: `'B'`, `b`
-  - `smodel`: `[]`, `1,0,0,0`
-  - `callib`: `''`, `none`
-  - `gainfield`: `[]`, `none`
-  - `interp`: `[]`, `none`
-  - `spwmap`: `[]`, `none`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `append`, `fillgaps`, `visnorm`, `maskcenter`
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
+- Shared parameters: 35, in CASA's order: yes
+- Defaults that differ: none
 
 ### exportfits
 
@@ -154,13 +128,12 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Implementation: `casatasks/private/task_fluxscale.py`, `fluxscale` (line 95): 1 return statements, 2 raise statements
   - returns at line 211: `output`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `vis`, `caltable`, `fluxtable`, `reference`, `transfer`, `listfile`, `append`, `antenna`, `timerange`, `scan`, `fitorder`, `display`
-- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `out_table`, `fluxscale_input`, `reference_fields`, `transfer_fields`
-- Shared parameters: 3, in CASA's order: yes
-- Defaults that differ (CASA, casa-rs):
-  - `refspwmap`: `[-1]`, `none`
-  - `gainthreshold`: `-1.0`, `none`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #979: `listfile`, `append`, `antenna`, `timerange`, `scan`, `fitorder`, `display`
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
+- Shared parameters: 15, in CASA's order: yes
+- Defaults that differ: none
 
 ### gaincal
 
@@ -168,41 +141,24 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Implementation: `casatasks/private/task_gaincal.py`, `gaincal` (line 8): 1 return statements, 1 raise statements
   - returns at line 164: `results_dict`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `caltable`, `intent`, `uvrange`, `combine`, `preavg`, `refantmode`, `minsnr`, `normtype`, `gaintype`, `calmode`, `solmode`, `rmsthresh`, `corrdepflags`, `append`, `splinetime`, `npointaver`, `phasewrap`, `docallib`, `gaintable`, `parang`
-- casa-rs parameters CASA lacks: `gaintables`, `output`, `overwrite`, `format`, `out_table`, `gain_type`, `solve_mode`, `gain_combine`, `gain_model_source`, `min_snr`, `array`
-- Shared parameters: 18, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `timerange`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `scan`: `''`, `none`
-  - `observation`: `''`, `none`
-  - `msselect`: `''`, `none`
-  - `refant`: `''`, `required`
-  - `smodel`: `[]`, `1,0,0,0`
-  - `callib`: `''`, `none`
-  - `gainfield`: `[]`, `none`
-  - `interp`: `[]`, `none`
-  - `spwmap`: `[]`, `none`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #979: `intent`, `uvrange`, `preavg`, `refantmode`, `normtype`, `solmode`, `rmsthresh`, `corrdepflags`, `append`, `splinetime`, `npointaver`, `phasewrap`
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
+- Shared parameters: 38, in CASA's order: yes
+- Defaults that differ: none
 
 ### gencal
 
 - CASA source: `casatasks/gencal.py`, 14 parameters
 - Implementation: `casatasks/private/task_gencal.py`, `gencal` (line 14): 0 return statements, 4 raise statements
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `caltable`, `infile`, `endpoint`, `timeout`, `retry`, `retry_wait_time`, `ant_pos_time_limit`, `pol`, `uniform`
-- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `out_table`, `gaincurve_table`
-- Shared parameters: 5, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `caltype`: `''`, `required`
-  - `spw`: `''`, `none`
-  - `antenna`: `''`, `none`
-  - `parameter`: `[]`, `none`
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #979: `infile`, `endpoint`, `timeout`, `retry`, `retry_wait_time`, `ant_pos_time_limit`, `pol`, `uniform`
+- casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `gaincurve_table`
+- Shared parameters: 14, in CASA's order: yes
+- Defaults that differ: none
 
 ### imager (CASA's tclean)
 

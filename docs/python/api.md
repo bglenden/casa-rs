@@ -27,8 +27,9 @@ A task call starts the task's own executable. `tasks.run` returns a
 reply; `stderr`, the log; `provider_invocation`, `status`, `message`,
 `parameter`, `value`, CASA's return value; and `result`, the declared
 products). A wrapper whose surface names its CASA task (the image tasks,
-`flagdata`, `flagmanager`, `importvla`, `mstransform`, `split` and
-`simobserve` so far) has CASA's signature, positional or by keyword with
+`flagdata`, `flagmanager`, `importvla`, `mstransform`, `split`, `applycal`,
+`gaincal`, `bandpass`, `fluxscale`, `gencal` and `simobserve` so far) has
+CASA's signature, positional or by keyword with
 CASA's defaults, then casa-rs's own controls, keyword-only, and returns
 CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
 does not implement yet is taken only at CASA's default; its docstring names

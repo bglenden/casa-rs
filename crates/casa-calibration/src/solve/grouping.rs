@@ -72,63 +72,94 @@ pub(crate) fn build_solve_groups(
     preapplied_rows: Option<&HashMap<usize, EvaluatedApplyRow>>,
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
-    let mut sorted_rows = rows.to_vec();
-    sorted_rows.sort_by_key(|row| {
-        (
-            row.field_id,
-            row.data_spw_id,
-            row.observation_id,
-            row.scan_number,
-            row.time_seconds.to_bits(),
-            row.interval_seconds.to_bits(),
-            row.row_index,
-        )
-    });
-
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let mut bucket_starts = BTreeMap::<SolveBaseKey, f64>::new();
-
-    for row in sorted_rows {
-        if row.antenna1 == row.antenna2 {
-            continue;
-        }
-        let base_key = SolveBaseKey {
-            field_id: if options.combine.fields {
-                0
-            } else {
-                row.field_id
-            },
-            spw_id: row.data_spw_id,
-            observation_id: row.observation_id,
-            scan_number: if options.combine.scans {
-                0
-            } else {
-                row.scan_number
-            },
-        };
-        let bucket_key = match options.solve_interval {
-            GainSolveInterval::Infinite => SolveBucketKey::Infinite,
-            GainSolveInterval::Integration => SolveBucketKey::Integration {
-                time_bits: row.time_seconds.to_bits(),
-                interval_bits: row.interval_seconds.to_bits(),
-            },
-            GainSolveInterval::Seconds(seconds) => {
-                let bucket_start = bucket_starts.entry(base_key).or_insert(row.time_seconds);
-                let bucket_index = ((row.time_seconds - *bucket_start) / seconds)
-                    .floor()
-                    .max(0.0);
-                SolveBucketKey::Seconds(bucket_index as u64)
-            }
-        };
-
+    for (row, base_key, bucket_key) in bucketed_rows(rows, options.solve_interval, options.combine)
+    {
+        // A group takes its field from its earliest row, as CASA's
+        // `SDBList::aggregateFld` takes the first buffer's.
         let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
             SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
         });
         let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
-        group.observe(ms, &row, preapplied, &options)?;
+        group.observe(ms, row, preapplied, &options)?;
     }
 
     Ok(groups)
+}
+
+/// Each cross-correlation row of `rows`, in solve order, with the group and
+/// interval it is solved in.
+///
+/// CASA's iteration sorts by the axes `combine` keeps apart and then by
+/// time, so the rows of a group come in time order whatever their fields
+/// and scans, and a `solint` interval starts at its group's earliest time.
+fn bucketed_rows(
+    rows: &[SelectedSolveRow],
+    solve_interval: GainSolveInterval,
+    combine: GainSolveCombine,
+) -> Vec<(&SelectedSolveRow, SolveBaseKey, SolveBucketKey)> {
+    let mut keyed = rows
+        .iter()
+        .filter(|row| row.antenna1 != row.antenna2)
+        .map(|row| {
+            let base_key = SolveBaseKey {
+                field_id: if combine.fields { 0 } else { row.field_id },
+                spw_id: row.data_spw_id,
+                observation_id: row.observation_id,
+                scan_number: if combine.scans { 0 } else { row.scan_number },
+            };
+            (row, base_key)
+        })
+        .collect::<Vec<_>>();
+    keyed.sort_by(|(a, a_key), (b, b_key)| {
+        a_key
+            .cmp(b_key)
+            .then(a.time_seconds.total_cmp(&b.time_seconds))
+            .then(a.interval_seconds.total_cmp(&b.interval_seconds))
+            .then(a.row_index.cmp(&b.row_index))
+    });
+
+    let mut bucket_starts = BTreeMap::<SolveBaseKey, f64>::new();
+    keyed
+        .into_iter()
+        .map(|(row, base_key)| {
+            let bucket_key = match solve_interval {
+                GainSolveInterval::Infinite => SolveBucketKey::Infinite,
+                GainSolveInterval::Integration => SolveBucketKey::Integration {
+                    time_bits: row.time_seconds.to_bits(),
+                    interval_bits: row.interval_seconds.to_bits(),
+                },
+                GainSolveInterval::Seconds(seconds) => {
+                    let start = *bucket_starts.entry(base_key).or_insert(row.time_seconds);
+                    let index = ((row.time_seconds - start) / seconds).floor().max(0.0);
+                    SolveBucketKey::Seconds(index as u64)
+                }
+            };
+            (row, base_key, bucket_key)
+        })
+        .collect()
+}
+
+/// Refuses `rows` when two of their data descriptions share a spectral
+/// window, whatever their polarizations: CASA solves each description
+/// apart, where casa-rs's groups and tables are keyed by window.
+pub(crate) fn refuse_shared_spectral_windows(
+    rows: &[SelectedSolveRow],
+) -> Result<(), GainSolveError> {
+    let mut descriptions = BTreeMap::<i32, BTreeSet<i32>>::new();
+    for row in rows {
+        descriptions
+            .entry(row.data_spw_id)
+            .or_default()
+            .insert(row.data_desc_id);
+    }
+    match descriptions.into_iter().find(|(_, ids)| ids.len() > 1) {
+        Some((spw_id, ids)) => Err(GainSolveError::SharedSpectralWindow {
+            spw_id,
+            data_desc_ids: ids.into_iter().collect(),
+        }),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn all_antenna_ids(ms: &MeasurementSet) -> Result<BTreeSet<i32>, GainSolveError> {
@@ -1074,6 +1105,88 @@ mod tests {
         group.finalize_for_solve(GainSolveMode::AmplitudePhase);
 
         assert!((group.solution_time - (3.0 * 11.0 + 20.0) / 4.0).abs() < 1.0e-12);
+    }
+
+    /// A cross-correlation row of field `field_id`, scan `scan_number` and
+    /// data description `data_desc_id` (on window 0) at `time_seconds`.
+    fn row(
+        row_index: usize,
+        field_id: i32,
+        scan_number: i32,
+        data_desc_id: i32,
+        time_seconds: f64,
+    ) -> SelectedSolveRow {
+        SelectedSolveRow {
+            row_index,
+            field_id,
+            observation_id: 0,
+            data_desc_id,
+            data_spw_id: 0,
+            channel_selection: None,
+            antenna1: 0,
+            antenna2: 1,
+            time_seconds,
+            time_centroid_seconds: time_seconds,
+            interval_seconds: 1.0,
+            scan_number,
+            flag_row: false,
+        }
+    }
+
+    #[test]
+    fn combined_intervals_start_at_the_earliest_row_whatever_the_field_order() {
+        // Field 1 is observed first, in scan 1; field 0 thirty seconds
+        // later, in scan 2. Sorting by field first would start the 20 s
+        // intervals at field 0's scan and fold field 1's into its first.
+        let rows = [130.0, 131.0, 132.0]
+            .map(|time| (0, 2, time))
+            .into_iter()
+            .chain([100.0, 101.0, 102.0].map(|time| (1, 1, time)))
+            .enumerate()
+            .map(|(index, (field, scan, time))| row(index, field, scan, 0, time))
+            .collect::<Vec<_>>();
+        let buckets = |combine| {
+            bucketed_rows(&rows, GainSolveInterval::Seconds(20.0), combine)
+                .into_iter()
+                .map(|(row, base, bucket)| (row.time_seconds, base.field_id, bucket))
+                .collect::<Vec<_>>()
+        };
+        let combined = buckets(GainSolveCombine {
+            scans: true,
+            fields: true,
+        });
+        let times = combined.iter().map(|(time, ..)| *time).collect::<Vec<_>>();
+        assert_eq!(times, [100.0, 101.0, 102.0, 130.0, 131.0, 132.0]);
+        let intervals = combined
+            .iter()
+            .map(|(.., bucket)| *bucket)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            intervals,
+            BTreeSet::from([SolveBucketKey::Seconds(0), SolveBucketKey::Seconds(1)])
+        );
+        // Kept apart, each field's intervals start at its own first row.
+        for (time, field, bucket) in buckets(GainSolveCombine::default()) {
+            assert_eq!(bucket, SolveBucketKey::Seconds(0), "{time} {field}");
+        }
+    }
+
+    #[test]
+    fn data_descriptions_sharing_a_window_are_refused() {
+        // Two descriptions on window 0, as a duplicated description or one
+        // holding the cross hands would give.
+        let rows = [row(0, 0, 1, 0, 100.0), row(1, 0, 1, 1, 100.0)];
+        let error = refuse_shared_spectral_windows(&rows).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                GainSolveError::SharedSpectralWindow { spw_id: 0, data_desc_ids }
+                    if data_desc_ids == &[0, 1]
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("#979"), "{error}");
+        assert!(refuse_shared_spectral_windows(&rows[..1]).is_ok());
     }
 
     #[test]
