@@ -2027,19 +2027,6 @@
      "method": "getkeyword",
      "args": [
       {
-       "str": "version"
-      }
-     ],
-     "kwargs": {},
-     "value": {
-      "int": 1,
-      "type": "int"
-     }
-    },
-    {
-     "method": "getkeyword",
-     "args": [
-      {
        "int": 0,
        "type": "int"
       }
@@ -2402,22 +2389,6 @@
       },
       {
        "int": 7,
-       "type": "int"
-      }
-     ],
-     "kwargs": {},
-     "value": {
-      "bool": true
-     }
-    },
-    {
-     "method": "putkeyword",
-     "args": [
-      {
-       "str": "newbig"
-      },
-      {
-       "int": 1099511627776,
        "type": "int"
       }
      ],
@@ -3053,22 +3024,6 @@
      }
     },
     {
-     "method": "putkeyword",
-     "args": [
-      {
-       "str": "version"
-      },
-      {
-       "int": 1099511627776,
-       "type": "int"
-      }
-     ],
-     "kwargs": {},
-     "value": {
-      "bool": true
-     }
-    },
-    {
      "method": "getkeyword",
      "args": [
       {
@@ -3077,7 +3032,7 @@
      ],
      "kwargs": {},
      "value": {
-      "int": 0,
+      "int": 2,
       "type": "int"
      }
     },
@@ -3237,13 +3192,6 @@
         }
        ],
        [
-        "newbig",
-        {
-         "int": 0,
-         "type": "int"
-        }
-       ],
-       [
         "newbool",
         {
          "bool": true
@@ -3343,7 +3291,7 @@
        [
         "version",
         {
-         "int": 0,
+         "int": 2,
          "type": "int"
         }
        ]
@@ -3390,9 +3338,6 @@
        },
        {
         "str": "newint"
-       },
-       {
-        "str": "newbig"
        },
        {
         "str": "newfloat"
@@ -3493,7 +3438,7 @@
      "kwargs": {},
      "error": {
       "type": "RuntimeError",
-      "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/casa/Containers/RecordDescRep.cc : 318) Failed AlwaysAssert whichField>=0 && whichField < Int(n_p)"
+      "message": "RecordRep::deleteDataField"
      }
     },
     {
@@ -3510,9 +3455,6 @@
        },
        {
         "str": "newint"
-       },
-       {
-        "str": "newbig"
        },
        {
         "str": "newfloat"
@@ -3566,9 +3508,221 @@
      "method": "getkeywords",
      "args": [],
      "kwargs": {},
-     "error": {
-      "type": "RuntimeError",
-      "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/tables/Tables/TableRecordRep.cc : 266) Failed AlwaysAssert whichField >= 0 && whichField < Int(nused_p)"
+     "value": {
+      "dict": [
+       [
+        "arr_bool",
+        {
+         "ndarray": "bool",
+         "shape": [
+          2
+         ],
+         "data": [
+          true,
+          false
+         ]
+        }
+       ],
+       [
+        "arr_complex",
+        {
+         "ndarray": "complex128",
+         "shape": [
+          2
+         ],
+         "data": [
+          [
+           "1.0",
+           "1.0"
+          ],
+          [
+           "2.0",
+           "-2.0"
+          ]
+         ]
+        }
+       ],
+       [
+        "arr_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2,
+          3
+         ],
+         "data": [
+          "0.0",
+          "1.0",
+          "2.0",
+          "3.0",
+          "4.0",
+          "5.0"
+         ]
+        }
+       ],
+       [
+        "arr_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          2
+         ],
+         "data": [
+          4,
+          5
+         ]
+        }
+       ],
+       [
+        "arr_str",
+        {
+         "ndarray": "<U2",
+         "shape": [
+          2
+         ],
+         "data": [
+          "a",
+          "bc"
+         ]
+        }
+       ],
+       [
+        "k2",
+        {
+         "str": "v"
+        }
+       ],
+       [
+        "list_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ],
+       [
+        "list_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          3
+         ],
+         "data": [
+          1,
+          2,
+          3
+         ]
+        }
+       ],
+       [
+        "list_str",
+        {
+         "ndarray": "<U1",
+         "shape": [
+          2
+         ],
+         "data": [
+          "x",
+          "y"
+         ]
+        }
+       ],
+       [
+        "newbool",
+        {
+         "bool": true
+        }
+       ],
+       [
+        "newcomplex",
+        {
+         "complex": [
+          "1.0",
+          "2.0"
+         ],
+         "type": "complex"
+        }
+       ],
+       [
+        "newfloat",
+        {
+         "float": "2.5",
+         "type": "float"
+        }
+       ],
+       [
+        "newint",
+        {
+         "int": 7,
+         "type": "int"
+        }
+       ],
+       [
+        "newstr",
+        {
+         "str": "text"
+        }
+       ],
+       [
+        "norec",
+        {
+         "dict": [
+          [
+           "x",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "observer",
+        {
+         "str": "by index"
+        }
+       ],
+       [
+        "rec",
+        {
+         "dict": [
+          [
+           "a",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "added",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "b",
+           {
+            "str": "two"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "version",
+        {
+         "int": 2,
+         "type": "int"
+        }
+       ]
+      ]
      }
     },
     {
@@ -3587,9 +3741,8 @@
       }
      ],
      "kwargs": {},
-     "error": {
-      "type": "RuntimeError",
-      "message": "AipsIO: read beyond end of object"
+     "value": {
+      "bool": true
      }
     },
     {
@@ -3597,7 +3750,62 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "list": []
+      "list": [
+       {
+        "str": "observer"
+       },
+       {
+        "str": "version"
+       },
+       {
+        "str": "newint"
+       },
+       {
+        "str": "newfloat"
+       },
+       {
+        "str": "newbool"
+       },
+       {
+        "str": "newstr"
+       },
+       {
+        "str": "newcomplex"
+       },
+       {
+        "str": "arr_int"
+       },
+       {
+        "str": "arr_float"
+       },
+       {
+        "str": "arr_str"
+       },
+       {
+        "str": "arr_bool"
+       },
+       {
+        "str": "arr_complex"
+       },
+       {
+        "str": "list_int"
+       },
+       {
+        "str": "list_float"
+       },
+       {
+        "str": "list_str"
+       },
+       {
+        "str": "rec"
+       },
+       {
+        "str": "norec"
+       },
+       {
+        "str": "k2"
+       }
+      ]
      }
     },
     {
@@ -3605,7 +3813,307 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "dict": []
+      "dict": [
+       [
+        "arr_bool",
+        {
+         "ndarray": "bool",
+         "shape": [
+          2
+         ],
+         "data": [
+          true,
+          false
+         ]
+        }
+       ],
+       [
+        "arr_complex",
+        {
+         "ndarray": "complex128",
+         "shape": [
+          2
+         ],
+         "data": [
+          [
+           "1.0",
+           "1.0"
+          ],
+          [
+           "2.0",
+           "-2.0"
+          ]
+         ]
+        }
+       ],
+       [
+        "arr_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2,
+          3
+         ],
+         "data": [
+          "0.0",
+          "1.0",
+          "2.0",
+          "3.0",
+          "4.0",
+          "5.0"
+         ]
+        }
+       ],
+       [
+        "arr_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          2
+         ],
+         "data": [
+          4,
+          5
+         ]
+        }
+       ],
+       [
+        "arr_str",
+        {
+         "ndarray": "<U2",
+         "shape": [
+          2
+         ],
+         "data": [
+          "a",
+          "bc"
+         ]
+        }
+       ],
+       [
+        "k2",
+        {
+         "str": "v"
+        }
+       ],
+       [
+        "list_float",
+        {
+         "ndarray": "float64",
+         "shape": [
+          2
+         ],
+         "data": [
+          "1.5",
+          "2.5"
+         ]
+        }
+       ],
+       [
+        "list_int",
+        {
+         "ndarray": "int64",
+         "shape": [
+          3
+         ],
+         "data": [
+          1,
+          2,
+          3
+         ]
+        }
+       ],
+       [
+        "list_str",
+        {
+         "ndarray": "<U1",
+         "shape": [
+          2
+         ],
+         "data": [
+          "x",
+          "y"
+         ]
+        }
+       ],
+       [
+        "newbool",
+        {
+         "bool": true
+        }
+       ],
+       [
+        "newcomplex",
+        {
+         "complex": [
+          "1.0",
+          "2.0"
+         ],
+         "type": "complex"
+        }
+       ],
+       [
+        "newfloat",
+        {
+         "float": "2.5",
+         "type": "float"
+        }
+       ],
+       [
+        "newint",
+        {
+         "int": 7,
+         "type": "int"
+        }
+       ],
+       [
+        "newstr",
+        {
+         "str": "text"
+        }
+       ],
+       [
+        "norec",
+        {
+         "dict": [
+          [
+           "x",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "observer",
+        {
+         "str": "by index"
+        }
+       ],
+       [
+        "rec",
+        {
+         "dict": [
+          [
+           "a",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "added",
+           {
+            "int": 1,
+            "type": "int"
+           }
+          ],
+          [
+           "b",
+           {
+            "str": "two"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "version",
+        {
+         "int": 2,
+         "type": "int"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
+  "casa_bugs": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "newbig"
+      },
+      {
+       "int": 1099511627776,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      {
+       "str": "newbig"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "putkeyword",
+     "args": [
+      {
+       "str": "version"
+      },
+      {
+       "int": 1099511627776,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      {
+       "str": "version"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
      }
     },
     {
