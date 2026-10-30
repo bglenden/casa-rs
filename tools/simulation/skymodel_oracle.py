@@ -159,8 +159,10 @@ def coordinate_record(spec):
     from FITS has them.
 
     `newcoordsys` makes the coordinates in its own order, and a transpose
-    would leave them in that order with permuted axis maps, a form casa-rs's
-    coordinate systems do not read.
+    would leave them in that order with permuted axis maps. casa-rs reads
+    that form with its coordinates renumbered in axis order (#1001), so its
+    outputs would number them unlike CASA's, and the record comparisons
+    here go by coordinate field name.
     """
     cs = coordinates(spec)
     record = cs.torecord()

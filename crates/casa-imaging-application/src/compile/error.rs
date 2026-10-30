@@ -386,6 +386,16 @@ pub enum PrepareError {
     /// A reconstruction mask image has no direction coordinate.
     #[error("mask image has no direction coordinate")]
     MaskImageDirection,
+    /// A reconstruction mask image holds its direction on axes other than
+    /// its first two, as a transposed CASA image can (#1001).
+    #[error(
+        "reconstruction mask must hold its direction on its first two axes, not on axes ordered \
+         {axes:?}; transpose it in CASA (imtrans) to put the direction first"
+    )]
+    MaskImageDirectionAxes {
+        /// The image's axis names, in pixel-axis order.
+        axes: Vec<String>,
+    },
     /// Native mask reprojection supports SIN only.
     #[error("native mask reprojection currently requires SIN coordinates, not {projection:?}")]
     MaskImageProjection {

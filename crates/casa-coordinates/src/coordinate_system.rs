@@ -6,7 +6,13 @@
 //! data cube. Each coordinate owns a contiguous range of pixel and world
 //! axes.
 //!
-//! This corresponds to C++ `CoordinateSystem`.
+//! This corresponds to C++ `CoordinateSystem`. casacore instead records
+//! which axes each coordinate owns, so a transposed casacore system keeps
+//! its coordinates in creation order over permuted axes;
+//! [`CoordinateSystem::from_record`] reads it with its coordinates in the
+//! order of their axes.
+
+mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
 
@@ -232,27 +238,115 @@ impl CoordinateSystem {
     ///
     /// Unknown or malformed coordinate sub-records are rejected; callers never
     /// receive a silently truncated coordinate system.
+    ///
+    /// casacore's `CoordinateSystem::restore` keeps the record's coordinates
+    /// in index order (`direction0`, `stokes1`, ...) and takes the axes each
+    /// owns from `pixelmap<i>` and `worldmap<i>`. A system transposed in
+    /// casacore (`imtrans`, `ia.transpose`, `coordsys.transpose`) keeps its
+    /// coordinates in creation order over permuted axes. This reads the
+    /// coordinates in the order of the axes they own, so that each owns
+    /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
+    /// the same, but its coordinate numbers can differ from casacore's
+    /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
+    /// them in this order. [`record_coordinates`](Self::record_coordinates)
+    /// says where in the record each coordinate came from.
+    ///
+    /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
+    /// the maps with a replacement value. A linear coordinate whose other axes
+    /// do not depend on its removed ones (the offset axis of an `impv`
+    /// position-velocity image) is read over its other axes only, which
+    /// converts as casacore does.
+    ///
+    /// # Errors
+    ///
+    /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
+    /// that no coordinate order represents: a coordinate whose axes are out
+    /// of its own order (`imtrans order='1023'`) or not adjacent
+    /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
+    /// other removed axis (`imsubimage(dropdeg=True)` of a single-pixel
+    /// direction axis).
+    /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
+    /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let obs_info = match rec.get("obsinfo") {
             Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
             _ => ObsInfo::from_record(rec)?,
         };
-
-        let mut coordinates = Vec::new();
-        for (_, key) in coordinate_record_entries(rec) {
-            let Some(Value::Record(coord_rec)) = rec.get(&key) else {
-                return Err(CoordinateError::InvalidRecord(format!(
-                    "coordinate field '{key}' is not a record"
-                )));
-            };
-            coordinates.push(parse_coordinate_record(&key, coord_rec)?);
-        }
-
+        let coordinates = read_coordinates(rec)?
+            .into_iter()
+            .map(|(_, coordinate)| coordinate)
+            .collect();
         Ok(Self {
             coordinates,
             obs_info,
         })
     }
+
+    /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
+    /// them, in the order of the system's coordinates:
+    /// `record_coordinates(rec)?[i]` is coordinate `i`.
+    ///
+    /// Each names the record field that holds the coordinate and the system
+    /// pixel axis of each of the record coordinate's own axes. These can
+    /// differ from the system's: a transposed casacore system numbers its
+    /// coordinates in creation order, and a linear coordinate's removed axes
+    /// are in the record but not in the system. For a record whose
+    /// coordinates own consecutive axes in index order, as casa-rs writes
+    /// them, the fields come in index order over consecutive axes.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_record`](Self::from_record).
+    pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
+        Ok(read_coordinates(rec)?
+            .into_iter()
+            .map(|(placed, _)| placed)
+            .collect())
+    }
+}
+
+/// One coordinate of a casacore coordinate-system record, as
+/// [`CoordinateSystem::record_coordinates`] places it in the system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordCoordinate {
+    /// The record field that holds the coordinate (`direction0`,
+    /// `stokes1`, ...).
+    pub field: String,
+    /// For each of the record coordinate's own axes, in its order, the
+    /// system pixel axis it lies on; `None` for an axis the record removed.
+    pub pixel_axes: Vec<Option<usize>>,
+}
+
+/// `rec`'s coordinates with where they come from, in the order of their
+/// axes.
+fn read_coordinates(
+    rec: &RecordValue,
+) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
+    let mut parsed = Vec::new();
+    for (index, key) in coordinate_record_entries(rec) {
+        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field '{key}' is not a record"
+            )));
+        };
+        let coordinate = parse_coordinate_record(&key, coord_rec)?;
+        parsed.push((index, key, coordinate));
+    }
+    let placements = record_axes::coordinate_order(rec, &mut parsed)?;
+    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
+    Ok(placements
+        .into_iter()
+        .map(|placement| {
+            let (_, field, coordinate) = parsed[placement.index]
+                .take()
+                .expect("an order names each coordinate once");
+            let placed = RecordCoordinate {
+                field,
+                pixel_axes: placement.pixel_axes,
+            };
+            (placed, coordinate)
+        })
+        .collect())
 }
 
 impl Default for CoordinateSystem {
