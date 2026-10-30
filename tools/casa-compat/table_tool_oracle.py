@@ -705,6 +705,29 @@ def run_scenario(steps, source):
     return record
 
 
+def dump(record):
+    """The recording as JSON with one step per line, which a reviewer can read
+    and `git diff` can follow."""
+    names = list(record["scenarios"])
+    lines = [
+        "{",
+        f' "casa_version": {json.dumps(record["casa_version"])},',
+        ' "scenarios": {',
+    ]
+    for index, name in enumerate(names):
+        scenario = record["scenarios"][name]
+        lines.append(
+            f'  {json.dumps(name)}: {{"fixture": {json.dumps(scenario["fixture"])}, "steps": ['
+        )
+        steps = scenario["steps"]
+        for position, step in enumerate(steps):
+            comma = "," if position < len(steps) - 1 else ""
+            lines.append("   " + json.dumps(step, separators=(",", ":")) + comma)
+        lines.append("  ]}" + ("," if index < len(names) - 1 else ""))
+    lines += [" }", "}"]
+    return "\n".join(lines) + "\n"
+
+
 def main():
     import casatools
 
@@ -740,7 +763,7 @@ def main():
             "fixture": scenario["fixture"],
             "steps": run_scenario(scenario["steps"], scenario["source"]),
         }
-    arguments.json.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+    arguments.json.write_text(dump(record), encoding="utf-8")
 
 
 if __name__ == "__main__":
