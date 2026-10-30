@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The subtables of an MSv2 a conversion creates, from the source's
-//! catalogue: one antenna and feed per catalogue antenna, one field per
-//! field, one source per source in each spectral window, one observation
-//! per session, and
-//! spectral windows, polarizations, data descriptions and states shared by
-//! the partitions whose content is the same, so long as no two partitions
-//! share a data description, state and observation (an MSv2 would read
-//! them back as one). The layout says where each partition's rows point.
+//! The subtables of an MSv2 a plan creates, from the catalogue: one antenna
+//! per catalogue antenna, one field, observation, state, processor and
+//! source record per catalogue entry ([`super::msv2_identity`],
+//! [`super::msv2_sources`]), one spectral window per window a partition
+//! uses, the feeds the partitions' receptors need, and polarizations and
+//! data descriptions shared by the partitions whose content is the same, so
+//! long as no two partitions share a data description, `OBS_MODE` and
+//! observation (an MSv2 would read them back as one). The layout says where
+//! each partition's rows point. What the catalogue leaves unstated is
+//! written as MSv2's default, and noted ([`Notes`]) as a loss.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use casa_observation::{
-    AntennaId, Catalogue, Correlation, FieldEntry, ObservationError, PartitionEntry, Receptors,
-};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MeasFrame};
+use casa_observation::{AntennaId, Catalogue, Correlation, ObservationError, Receptors, UvwFrame};
 use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
 use super::msv2_rows::Spans;
+use super::{Loss, msv2_identity, msv2_sources};
+use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::{self, SubtableId};
 use crate::subtable_rows::{
@@ -28,11 +26,9 @@ use crate::subtable_rows::{
 };
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
-/// Seconds per day, for MSv2 `TIME` (MJD seconds).
-const SECONDS_PER_DAY: f64 = 86_400.0;
-
 /// The MeasurementSet to create for `catalogue` with the visibility
-/// `columns`: a `SOURCE` subtable when some field names its source.
+/// `columns`: a `SOURCE` subtable when the catalogue holds sources or some
+/// field names its source.
 pub(super) fn builder(
     catalogue: &Catalogue,
     columns: &[OptionalMainColumn],
@@ -42,10 +38,11 @@ pub(super) fn builder(
         .fold(MeasurementSetBuilder::new(), |builder, column| {
             builder.with_main_column(*column)
         });
-    if catalogue
-        .fields
-        .iter()
-        .any(|field| field.source_name.is_some())
+    if !catalogue.sources.is_empty()
+        || catalogue
+            .fields
+            .iter()
+            .any(|field| field.source_name.is_some())
     {
         builder.with_optional_subtable(SubtableId::Source)
     } else {
@@ -59,10 +56,44 @@ pub(super) struct Layout {
     pub(super) data_description: Vec<i32>,
     /// `SPECTRAL_WINDOW` row of each partition.
     pub(super) spectral_window: Vec<i32>,
-    /// `STATE_ID` of each partition.
-    pub(super) state: Vec<i32>,
-    /// `SCAN_NUMBER` of each catalogue scan.
-    pub(super) scan_number: Vec<i32>,
+    /// The `STATE_ID` of each partition's state of intents, for its rows
+    /// that state intents but no state.
+    pub(super) intent_states: Vec<Option<i32>>,
+}
+
+/// What writing a catalogue's subtables writes as MSv2's default, or
+/// leaves out, each a loss.
+#[derive(Default)]
+pub(super) struct Notes(BTreeSet<Loss>);
+
+impl Notes {
+    /// `value`, or when unstated `default`, noting `column` as defaulted.
+    pub(super) fn or<T>(
+        &mut self,
+        value: Option<T>,
+        column: &str,
+        default: impl FnOnce() -> T,
+    ) -> T {
+        value.unwrap_or_else(|| {
+            self.defaulted(column);
+            default()
+        })
+    }
+
+    /// Note `column` as written with MSv2's default for some row.
+    pub(super) fn defaulted(&mut self, column: &str) {
+        self.0.insert(Loss::Defaulted(column.to_string()));
+    }
+
+    /// Note `loss`.
+    pub(super) fn lost(&mut self, loss: Loss) {
+        self.0.insert(loss);
+    }
+
+    /// Every loss noted, in order.
+    pub(super) fn into_losses(self) -> Vec<Loss> {
+        self.0.into_iter().collect()
+    }
 }
 
 /// Refuse what an MSv2's subtables cannot say of `catalogue`, before
@@ -122,42 +153,93 @@ fn feed_receptors(catalogue: &Catalogue) -> Result<&[String], ObservationError> 
     Ok(first)
 }
 
+/// What writing a catalogue's subtables in memory gives ([`rehearse`]).
+pub(super) struct Rehearsal {
+    /// Where the subtables place each partition.
+    pub(super) layout: Layout,
+    /// What writing them notes.
+    pub(super) losses: Vec<Loss>,
+    /// What the MSv2 adapter reads back from them
+    /// ([`Msv2Observation::subtable_catalogue`]): what reopening the
+    /// MeasurementSet gives of its entities, defaults and the states written
+    /// for intents included, and the UVW frame MAIN's keywords give.
+    pub(super) read_back: (Catalogue, UvwFrame),
+}
+
+/// The subtables of `catalogue` written into a MeasurementSet in memory,
+/// for where they place each partition, what writing them notes and
+/// refuses, and what reopening them gives: a plan learns its losses, and
+/// that its subtables can be written, before anything is. `intents` says
+/// which partitions need a state of intents.
+pub(super) fn rehearse(
+    catalogue: &Catalogue,
+    spans: &Spans,
+    intents: &[bool],
+) -> Result<Rehearsal, ObservationError> {
+    let mut ms = MeasurementSet::create_memory(builder(catalogue, &[])).map_err(storage)?;
+    let (layout, notes) = populate(&mut ms, catalogue, spans, intents)?;
+    Ok(Rehearsal {
+        layout,
+        losses: notes.into_losses(),
+        read_back: Msv2Observation::subtable_catalogue(&ms)?,
+    })
+}
+
 /// Fill `ms`'s subtables from `catalogue`, whose data span the times
-/// `spans` gives (MJD seconds); [`refuse_unwritable`] has accepted it.
-/// Antennas, fields and sessions keep their catalogue order.
+/// `spans` gives (MJD seconds), `intents` saying which partitions need a
+/// state of intents; [`refuse_unwritable`] has accepted it. Antennas,
+/// fields, sessions, states, processors and sources keep their catalogue
+/// order, and windows theirs among those a partition uses.
 pub(super) fn populate(
     ms: &mut MeasurementSet,
     catalogue: &Catalogue,
     spans: &Spans,
-) -> Result<Layout, ObservationError> {
+    intents: &[bool],
+) -> Result<(Layout, Notes), ObservationError> {
     let time_range = spans.time_range;
-    antennas(ms, catalogue)?;
-    let named_sources = fields(ms, catalogue, time_range[0], &spans.field_first)?;
-    observations(ms, catalogue, &spans.observation_ranges)?;
-    let scan_number = scan_numbers(catalogue)?;
-    let mut windows: Vec<&PartitionEntry> = Vec::new();
+    let mut notes = Notes::default();
+    antennas(ms, catalogue, &mut notes)?;
+    let times = (time_range[0], spans.field_first.as_slice());
+    let named_sources = msv2_sources::named(catalogue, times)?;
+    msv2_identity::fields(ms, catalogue, (&named_sources, times), &mut notes)?;
+    msv2_identity::observations(ms, catalogue, &spans.observation_ranges, &mut notes)?;
+    let window_rows = msv2_identity::spectral_windows(ms, catalogue, &mut notes)?;
+    let states = msv2_identity::states(ms, catalogue, intents, &mut notes)?;
+    msv2_identity::processors(ms, catalogue, &mut notes)?;
+    msv2_sources::write(
+        ms,
+        catalogue,
+        (&named_sources, &window_rows),
+        time_range,
+        &mut notes,
+    )?;
     let mut polarizations: Vec<&[Correlation]> = Vec::new();
-    let mut descriptions: Vec<(usize, usize)> = Vec::new();
-    let mut states: Vec<&[String]> = Vec::new();
-    let mut keys: Vec<(usize, usize, u32)> = Vec::new();
+    let mut descriptions: Vec<(i32, usize)> = Vec::new();
+    let mut keys: Vec<(usize, &str, u32)> = Vec::new();
     let mut layout = Layout {
         data_description: Vec::new(),
         spectral_window: Vec::new(),
-        state: Vec::new(),
-        scan_number,
+        intent_states: states.intent_states,
     };
-    for entry in &catalogue.partitions {
-        let window = position_or_push(&mut windows, entry, |known| same_window(known, entry));
+    for (index, entry) in catalogue.partitions.iter().enumerate() {
+        let window = window_rows
+            .get(entry.window.0 as usize)
+            .copied()
+            .flatten()
+            .ok_or_else(|| request_error("a partition names a window the catalogue lacks"))?;
         let polarization = position_or_push(&mut polarizations, &entry.correlations, |known| {
             *known == entry.correlations.as_slice()
         });
-        let state = position_or_push(&mut states, &entry.intents, |known| {
-            *known == entry.intents.as_slice()
-        });
-        // Partitions an MSv2 keys alike (data description, state,
+        // Partitions an MSv2 keys alike (data description, OBS_MODE,
         // observation) would read back as one: a later one gets a data
         // description of its own.
-        let key = |description| (description, state, entry.observation.0);
+        let key = |description| {
+            (
+                description,
+                states.modes[index].as_str(),
+                entry.observation.0,
+            )
+        };
         let description = (0..descriptions.len())
             .find(|index| {
                 descriptions[*index] == (window, polarization) && !keys.contains(&key(*index))
@@ -168,12 +250,9 @@ pub(super) fn populate(
             });
         keys.push(key(description));
         layout.data_description.push(description as i32);
-        layout.spectral_window.push(window as i32);
-        layout.state.push(state as i32);
+        layout.spectral_window.push(window);
     }
-    spectral_windows(ms, &windows)?;
     feeds(ms, catalogue, &layout.spectral_window, time_range)?;
-    sources(ms, &named_sources, windows.len(), time_range)?;
     let receptors = feed_receptors(catalogue)?;
     for correlations in &polarizations {
         polarization(ms, correlations, receptors)?;
@@ -185,7 +264,7 @@ pub(super) fn populate(
                     .add_row(row_from_defs(
                         schema::data_description::REQUIRED_COLUMNS,
                         &[
-                            ("SPECTRAL_WINDOW_ID", i(*window as i32)),
+                            ("SPECTRAL_WINDOW_ID", i(*window)),
                             ("POLARIZATION_ID", i(*polarization as i32)),
                             ("FLAG_ROW", b(false)),
                         ],
@@ -194,39 +273,7 @@ pub(super) fn populate(
             })
             .map_err(storage)?;
     }
-    for intents in &states {
-        subtable_mut(ms, SubtableId::State)
-            .and_then(|table| {
-                table
-                    .add_row(row_from_defs(
-                        schema::state::REQUIRED_COLUMNS,
-                        &[
-                            ("OBS_MODE", s(&intents.join(","))),
-                            ("SIG", b(true)),
-                            ("REF", b(false)),
-                            ("FLAG_ROW", b(false)),
-                        ],
-                    ))
-                    .map_err(Into::into)
-            })
-            .map_err(storage)?;
-    }
-    subtable_mut(ms, SubtableId::Processor)
-        .and_then(|table| {
-            table
-                .add_row(row_from_defs(
-                    schema::processor::REQUIRED_COLUMNS,
-                    &[
-                        ("TYPE", s("CORRELATOR")),
-                        ("TYPE_ID", i(-1)),
-                        ("MODE_ID", i(-1)),
-                        ("FLAG_ROW", b(false)),
-                    ],
-                ))
-                .map_err(Into::into)
-        })
-        .map_err(storage)?;
-    Ok(layout)
+    Ok((layout, notes))
 }
 
 /// The index of the first of `known` that `is` matches, after pushing
@@ -238,37 +285,33 @@ fn position_or_push<T: Copy>(known: &mut Vec<T>, item: T, is: impl Fn(&T) -> boo
     })
 }
 
-/// Whether two partitions have one spectral window: the same name,
-/// channels (bit for bit) and frame.
-fn same_window(a: &PartitionEntry, b: &PartitionEntry) -> bool {
-    let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
-    a.spectral_window == b.spectral_window
-        && a.frequency_frame == b.frequency_frame
-        && bits(&a.frequencies_hz) == bits(&b.frequencies_hz)
-        && bits(&a.channel_widths_hz) == bits(&b.channel_widths_hz)
-}
-
-fn antennas(ms: &mut MeasurementSet, catalogue: &Catalogue) -> Result<(), ObservationError> {
+fn antennas(
+    ms: &mut MeasurementSet,
+    catalogue: &Catalogue,
+    notes: &mut Notes,
+) -> Result<(), ObservationError> {
     let metres = Unit::new("m").expect("metres");
+    let table = subtable_mut(ms, SubtableId::Antenna).map_err(storage)?;
     for antenna in &catalogue.antennas {
         let diameter = antenna
             .dish_diameter
             .get_value_in(&metres)
             .map_err(|_| request_error("a dish diameter is not a length"))?;
-        let position = antenna.position.values();
-        ms.antenna_mut()
-            .and_then(|mut table| {
-                table.add_antenna(
-                    &antenna.name,
-                    &antenna.station,
-                    "GROUND-BASED",
-                    &antenna.mount,
-                    [position[0], position[1], position[2]],
-                    [0.0; 3],
-                    diameter,
-                )
-            })
-            .map_err(storage)?;
+        let flagged = notes.or(antenna.flagged, "ANTENNA FLAG_ROW", || false);
+        let row = row_from_defs(
+            schema::antenna::REQUIRED_COLUMNS,
+            &[
+                ("NAME", s(&antenna.name)),
+                ("STATION", s(&antenna.station)),
+                ("TYPE", s("GROUND-BASED")),
+                ("MOUNT", s(&antenna.mount)),
+                ("POSITION", f64_array(&antenna.position.as_itrf(), vec![3])),
+                ("OFFSET", f64_array(&[0.0; 3], vec![3])),
+                ("DISH_DIAMETER", f(diameter)),
+                ("FLAG_ROW", b(flagged)),
+            ],
+        );
+        table.add_row(row).map_err(storage)?;
     }
     Ok(())
 }
@@ -431,214 +474,6 @@ fn feed_row(
         .map_err(storage)
 }
 
-/// A source's `DIRECTION`, from its first field (at `field_time`, MJD
-/// seconds): a fixed field's phase centre, or the body a moving field
-/// follows at that time (clamped to its samples), in J2000 as the column
-/// states it. The source is the body; its fields are offsets from it.
-fn source_direction(field: &FieldEntry, field_time: f64) -> Result<[f64; 2], ObservationError> {
-    let Some(ephemeris) = field.ephemeris.as_deref() else {
-        let (longitude, latitude) = field.phase_centre.as_angles();
-        return Ok([longitude, latitude]);
-    };
-    let times = ephemeris.times_mjd();
-    let mjd = (field_time / SECONDS_PER_DAY).clamp(times[0], times[times.len() - 1]);
-    let body = crate::ephemeris::reference_direction(ephemeris, mjd, [0.0, 0.0])
-        .and_then(|body| {
-            body.convert_to(DirectionRef::J2000, &MeasFrame::new())
-                .map_err(Into::into)
-        })
-        .map_err(storage)?;
-    let (longitude, latitude) = body.as_angles();
-    Ok([longitude, latitude])
-}
-
-/// The fields, and the sources they name: each name once, at its first
-/// field's direction ([`source_direction`]). A field's `TIME` is `time`,
-/// the observation's first, but a moving field's is the epoch its
-/// catalogue entry states (an MSv2's), or else its own first time in
-/// `first`: an image without a phase centre is centred on its body at that
-/// time (#987).
-fn fields(
-    ms: &mut MeasurementSet,
-    catalogue: &Catalogue,
-    time: f64,
-    first: &[Option<f64>],
-) -> Result<Vec<(String, [f64; 2])>, ObservationError> {
-    let mut sources: Vec<(String, [f64; 2])> = Vec::new();
-    // Fields are J2000 (refused otherwise before the conversion begins).
-    for (index, field) in catalogue.fields.iter().enumerate() {
-        let field_time = if field.ephemeris.is_some() {
-            field
-                .reference_epoch
-                .as_ref()
-                .filter(|epoch| epoch.refer() == EpochRef::UTC)
-                .map(|epoch| epoch.value().as_mjd() * SECONDS_PER_DAY)
-                .or(first.get(index).copied().flatten())
-                .unwrap_or(time)
-        } else {
-            time
-        };
-        let (longitude, latitude) = field.phase_centre.as_angles();
-        let source = match field.source_name.as_deref() {
-            None => -1,
-            Some(name) => match sources.iter().position(|known| known.0 == name) {
-                Some(index) => index as i32,
-                None => {
-                    sources.push((name.to_string(), source_direction(field, field_time)?));
-                    sources.len() as i32 - 1
-                }
-            },
-        };
-        let direction = f64_array(&[longitude, latitude], vec![2, 1]);
-        let row = row_from_defs(
-            schema::field::REQUIRED_COLUMNS,
-            &[
-                ("NAME", s(&field.name)),
-                ("CODE", s("")),
-                ("NUM_POLY", i(0)),
-                ("DELAY_DIR", direction.clone()),
-                ("PHASE_DIR", direction.clone()),
-                ("REFERENCE_DIR", direction),
-                ("SOURCE_ID", i(source)),
-                ("TIME", f(field_time)),
-                ("FLAG_ROW", b(false)),
-            ],
-        );
-        subtable_mut(ms, SubtableId::Field)
-            .and_then(|table| table.add_row(row).map_err(Into::into))
-            .map_err(storage)?;
-    }
-    Ok(sources)
-}
-
-/// One `SOURCE` row per source and spectral window, as CASA's fillers
-/// write them and XRADIO's converter looks them up (by `SOURCE_ID` and
-/// `SPECTRAL_WINDOW_ID`): what the catalogue says of a source, its name
-/// and its first field's direction.
-fn sources(
-    ms: &mut MeasurementSet,
-    sources: &[(String, [f64; 2])],
-    windows: usize,
-    time_range: [f64; 2],
-) -> Result<(), ObservationError> {
-    for (id, (name, direction)) in sources.iter().enumerate() {
-        for window in 0..windows {
-            let row = row_from_defs(
-                schema::source::REQUIRED_COLUMNS,
-                &[
-                    ("CALIBRATION_GROUP", i(-1)),
-                    ("CODE", s("")),
-                    ("DIRECTION", f64_array(direction, vec![2])),
-                    ("INTERVAL", f(time_range[1] - time_range[0])),
-                    ("NAME", s(name)),
-                    ("NUM_LINES", i(0)),
-                    ("PROPER_MOTION", f64_array(&[0.0, 0.0], vec![2])),
-                    ("SOURCE_ID", i(id as i32)),
-                    ("SPECTRAL_WINDOW_ID", i(window as i32)),
-                    ("TIME", f(0.5 * (time_range[0] + time_range[1]))),
-                ],
-            );
-            subtable_mut(ms, SubtableId::Source)
-                .and_then(|table| table.add_row(row).map_err(Into::into))
-                .map_err(storage)?;
-        }
-    }
-    Ok(())
-}
-
-/// One `OBSERVATION` row per session, each with the times its partitions
-/// span (`ranges`, by session).
-fn observations(
-    ms: &mut MeasurementSet,
-    catalogue: &Catalogue,
-    ranges: &[[f64; 2]],
-) -> Result<(), ObservationError> {
-    for (observation, time_range) in catalogue.observations.iter().zip(ranges) {
-        // The archive identifiers as importasdm writes them, which is how
-        // the MSv2 adapter and XRADIO's converter read them back.
-        let schedule = match (&observation.scheduling_block, &observation.execution_block) {
-            (Some(scheduling), Some(execution)) => vec![
-                format!("[SchedulingBlock {scheduling},"),
-                format!("ExecBlock {execution}]"),
-            ],
-            _ => Vec::new(),
-        };
-        let schedule: Vec<&str> = schedule.iter().map(String::as_str).collect();
-        let row = row_from_defs(
-            schema::observation::REQUIRED_COLUMNS,
-            &[
-                ("FLAG_ROW", b(false)),
-                ("LOG", string_array(&[], vec![0])),
-                ("OBSERVER", s(&observation.observers.join(", "))),
-                ("PROJECT", s(&observation.project)),
-                ("RELEASE_DATE", f(0.0)),
-                ("SCHEDULE", string_array(&schedule, vec![schedule.len()])),
-                ("SCHEDULE_TYPE", s("")),
-                ("TELESCOPE_NAME", s(&observation.telescope)),
-                ("TIME_RANGE", f64_array(time_range, vec![2])),
-            ],
-        );
-        subtable_mut(ms, SubtableId::Observation)
-            .and_then(|table| table.add_row(row).map_err(Into::into))
-            .map_err(storage)?;
-    }
-    Ok(())
-}
-
-fn spectral_windows(
-    ms: &mut MeasurementSet,
-    windows: &[&PartitionEntry],
-) -> Result<(), ObservationError> {
-    let table = subtable_mut(ms, SubtableId::SpectralWindow).map_err(storage)?;
-    for entry in windows {
-        let channels = entry.frequencies_hz.len();
-        let widths = &entry.channel_widths_hz;
-        let magnitudes: Vec<f64> = widths.iter().map(|width| width.abs()).collect();
-        table
-            .add_row(row_from_defs(
-                schema::spectral_window::REQUIRED_COLUMNS,
-                &[
-                    ("NUM_CHAN", i(channels as i32)),
-                    ("NAME", s(&entry.spectral_window)),
-                    ("REF_FREQUENCY", f(entry.frequencies_hz[0])),
-                    ("TOTAL_BANDWIDTH", f(magnitudes.iter().sum())),
-                    (
-                        "CHAN_FREQ",
-                        f64_array(&entry.frequencies_hz, vec![channels]),
-                    ),
-                    ("CHAN_WIDTH", f64_array(widths, vec![channels])),
-                    ("EFFECTIVE_BW", f64_array(&magnitudes, vec![channels])),
-                    ("RESOLUTION", f64_array(&magnitudes, vec![channels])),
-                    ("MEAS_FREQ_REF", i(entry.frequency_frame.casacore_code())),
-                    ("NET_SIDEBAND", i(if widths[0] >= 0.0 { 1 } else { -1 })),
-                    ("FREQ_GROUP", i(0)),
-                    ("FREQ_GROUP_NAME", s("")),
-                    ("IF_CONV_CHAIN", i(0)),
-                    ("FLAG_ROW", b(false)),
-                ],
-            ))
-            .map_err(storage)?;
-    }
-    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
-        TableMeasDesc::new_variable_int(
-            column,
-            MeasureType::Frequency,
-            "MEAS_FREQ_REF",
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.as_str().to_owned())
-                .collect(),
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.casacore_code())
-                .collect(),
-        )
-        .and_then(|description| description.write(table))
-        .map_err(storage)?;
-    }
-    Ok(())
-}
-
 /// The receptors a correlation product correlates, by their positions in
 /// the feed's `receptors` (`R`, `L`, `X`, `Y`), as `CORR_PRODUCT` holds
 /// them.
@@ -713,68 +548,7 @@ mod tests {
     use casa_observation::{AntennaId, Receptors};
     use casa_types::quanta::Quantity;
 
-    use std::sync::Arc;
-
-    use casa_observation::{FieldEntry, FieldEphemeris};
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::radial_velocity::RadialVelocityRef;
-
-    use super::{SECONDS_PER_DAY, feed_plan, position_or_push, receptor_pair, source_direction};
-
-    /// A moving field's source is the body it follows at the field's time
-    /// (clamped to the samples), not its offset; a fixed field's is its
-    /// phase centre.
-    #[test]
-    fn a_moving_fields_source_is_its_body_at_the_fields_time() {
-        let times = vec![60_000.0, 60_000.01, 60_000.02];
-        let directions = vec![[1.0, 0.2], [1.01, 0.21], [1.02, 0.22]];
-        let ephemeris = FieldEphemeris::new(
-            "comet",
-            times.clone(),
-            directions.clone(),
-            DirectionRef::J2000,
-            vec![3.8e8; 3],
-            (vec![10.0; 3], RadialVelocityRef::GEO),
-        )
-        .expect("an ephemeris");
-        let offset = MDirection::from_angles(1.0e-5, -5.0e-6, DirectionRef::J2000);
-        let field = FieldEntry {
-            name: "comet".to_string(),
-            phase_centre: offset.clone(),
-            reference_epoch: None,
-            source_name: Some("comet".to_string()),
-            source: None,
-            code: None,
-            delay_centre: None,
-            reference_centre: None,
-            flagged: None,
-            ephemeris: Some(Arc::new(ephemeris)),
-        };
-        let close = |found: [f64; 2], expected: [f64; 2]| {
-            assert!(
-                (found[0] - expected[0]).abs() < 1.0e-12
-                    && (found[1] - expected[1]).abs() < 1.0e-12,
-                "{found:?} is not {expected:?}"
-            );
-        };
-        close(
-            source_direction(&field, times[1] * SECONDS_PER_DAY).expect("a direction"),
-            directions[1],
-        );
-        close(
-            source_direction(&field, (times[2] + 1.0) * SECONDS_PER_DAY).expect("clamped"),
-            directions[2],
-        );
-        let fixed = FieldEntry {
-            ephemeris: None,
-            ..field
-        };
-        let (longitude, latitude) = offset.as_angles();
-        close(
-            source_direction(&fixed, 0.0).expect("a direction"),
-            [longitude, latitude],
-        );
-    }
+    use super::{feed_plan, position_or_push, receptor_pair};
 
     #[test]
     fn products_name_receptors_by_their_place_in_the_feed() {

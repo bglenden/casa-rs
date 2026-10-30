@@ -351,7 +351,12 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
         // The MSv2 whose namespace is the batch table's, for CASA to apply
         // it to by its own association.
         let options = ConversionOptions {
-            accept: vec![LossKind::Sigma, LossKind::Tables, LossKind::Columns],
+            accept: vec![
+                LossKind::Sigma,
+                LossKind::Tables,
+                LossKind::Columns,
+                LossKind::Defaulted,
+            ],
             ..conversion_options()
         };
         casa_ms::observation_io::convert::to_msv2(

@@ -9,7 +9,7 @@
 //! ```
 //!
 //! `KIND` is `sigma`, `row-flags`, `flag-categories`, `data-groups`,
-//! `tables` or `columns`. MSv4 chunks hold `T` times (default 10, the
+//! `tables`, `columns` or `defaulted`. MSv4 chunks hold `T` times (default 10, the
 //! measurements' chunk) and every baseline, channel and correlation.
 //! Prints one JSON object: elapsed seconds and the conversion report.
 
@@ -32,6 +32,7 @@ fn kind(name: &str) -> Result<LossKind, Error> {
         "data-groups" => LossKind::DataGroups,
         "tables" => LossKind::Tables,
         "columns" => LossKind::Columns,
+        "defaulted" => LossKind::Defaulted,
         other => return Err(format!("unknown loss kind {other}").into()),
     })
 }
