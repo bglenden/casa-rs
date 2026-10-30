@@ -12,10 +12,10 @@ use casa_imaging_model::{
     SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
 use casa_ms::{
-    CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpectralSetup, MeasurementSet,
-    SubtableId, spectral_selection::CubeSpecMode,
+    CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpectralSetup,
+    spectral_selection::CubeSpecMode,
 };
-use casa_types::ArrayValue;
+use casa_observation::{Catalogue, FieldId, WindowId};
 use casa_types::measures::{
     direction::MDirection, doppler::DopplerRef, epoch::EpochRef, frame::MeasFrame,
     frequency::FrequencyRef,
@@ -95,7 +95,7 @@ struct AxisLaw {
 /// The request's spectral axis over the surveyed selection.
 pub(super) fn prepare_axis(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     survey: &Survey,
     frame: &FrameContext<'_>,
     moving_rest_frame: Option<&MeasFrame>,
@@ -103,11 +103,11 @@ pub(super) fn prepare_axis(
     let source_reference = survey.source_frequency_reference;
     let law = match request.specmode {
         SpecMode::Mfs => continuum_law(survey),
-        SpecMode::Cube | SpecMode::Cubedata => cube_law(request, ms, survey, frame)?,
+        SpecMode::Cube | SpecMode::Cubedata => cube_law(request, catalogue, survey, frame)?,
         SpecMode::Cubesource => {
             let frame_with_velocity = moving_rest_frame
                 .expect("prepare resolves the moving rest frame of every source-frame cube");
-            source_frame_cube_law(request, ms, survey, frame, frame_with_velocity)?
+            source_frame_cube_law(request, catalogue, survey, frame, frame_with_velocity)?
         }
     };
     let source_frame = imaging_frequency_frame(source_reference)?;
@@ -160,7 +160,7 @@ fn continuum_law(survey: &Survey) -> AxisLaw {
 /// A cube in its output frame (`cube`) or the data's (`cubedata`).
 fn cube_law(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     survey: &Survey,
     frame: &FrameContext<'_>,
 ) -> Result<AxisLaw, PrepareError> {
@@ -178,7 +178,8 @@ fn cube_law(
         return Err(PrepareError::NoCommonCubeChannels);
     }
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels, 1.0)?;
-    let source_rest_hz = source_rest_frequency(ms, frame.field_id, &survey.spectral_windows)?;
+    let source_rest_hz =
+        source_rest_frequency(catalogue, frame.field_id, &survey.spectral_windows)?;
     let (resolved_rest_hz, image_rest_frequency_hz) =
         cube_rest_frequency_hz(request.restfreq, source_rest_hz, window, explicit.as_ref());
     let (rest_frequency, doppler) = match resolved_rest_hz {
@@ -211,7 +212,7 @@ fn cube_law(
 /// scaled into the source's rest frame (`cubesource`).
 fn source_frame_cube_law(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     survey: &Survey,
     frame: &FrameContext<'_>,
     moving_rest_frame: &MeasFrame,
@@ -234,7 +235,7 @@ fn source_frame_cube_law(
     let rest_frequency_hz = request
         .restfreq
         .or(source_rest_frequency(
-            ms,
+            catalogue,
             frame.field_id,
             &survey.spectral_windows,
         )?)
@@ -386,42 +387,34 @@ pub(super) fn imaging_time_scale(reference: EpochRef) -> Result<TimeScale, Prepa
     }
 }
 
-/// The `REST_FREQUENCY` the `SOURCE` table gives the field over the
-/// selected windows, if any.
+/// The rest frequency the field's source states over the selected windows
+/// (MSv2 `SOURCE::REST_FREQUENCY`, MSv4 `LINE_REST_FREQUENCY`), if any: the
+/// first line of each record for a selected window or for every window
+/// ([`Catalogue::source_records`]), which must agree.
 fn source_rest_frequency(
-    measurement_set: &MeasurementSet,
+    catalogue: &Catalogue,
     field_id: usize,
     spectral_windows: &[SourceSpectralWindow],
 ) -> Result<Option<f64>, PrepareError> {
-    let source_id = measurement_set.field()?.source_id(field_id)?;
-    if source_id < 0 || measurement_set.subtable(SubtableId::Source).is_none() {
-        return Ok(None);
-    }
-    let source = measurement_set.source()?;
-    let selected = spectral_windows
-        .iter()
-        .map(|window| i32::try_from(window.spw_id).expect("SPW ids are stored i32 values"))
-        .collect::<BTreeSet<_>>();
+    let field = FieldId(u32::try_from(field_id).expect("a FIELD row is an u32 id"));
     let mut resolved = None;
-    for row in 0..source.row_count() {
-        if source.i32(row, "SOURCE_ID")? != source_id {
-            continue;
+    for window in spectral_windows {
+        let window = WindowId(u32::try_from(window.spw_id).expect("a window id fits u32"));
+        for record in catalogue.source_records(field, window) {
+            let Some(value) = record
+                .rest_frequencies
+                .as_ref()
+                .and_then(|lines| lines.first())
+                .map(casa_types::measures::frequency::MFrequency::hz)
+                .filter(|value| *value > 0.0)
+            else {
+                continue;
+            };
+            if resolved.is_some_and(|prior: f64| prior.to_bits() != value.to_bits()) {
+                return Err(PrepareError::RestFrequencyConflict);
+            }
+            resolved = Some(value);
         }
-        let spectral_window_id = source.i32(row, "SPECTRAL_WINDOW_ID")?;
-        if spectral_window_id >= 0 && !selected.contains(&spectral_window_id) {
-            continue;
-        }
-        let Some(ArrayValue::Float64(values)) = source.optional_array(row, "REST_FREQUENCY")?
-        else {
-            continue;
-        };
-        let Some(value) = values.first().copied().filter(|value| *value > 0.0) else {
-            continue;
-        };
-        if resolved.is_some_and(|prior: f64| prior.to_bits() != value.to_bits()) {
-            return Err(PrepareError::RestFrequencyConflict);
-        }
-        resolved = Some(value);
     }
     Ok(resolved)
 }

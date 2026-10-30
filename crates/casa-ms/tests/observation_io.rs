@@ -25,6 +25,9 @@ mod metadata;
 mod namespace;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[cfg(unix)]
+#[path = "observation_io/sources.rs"]
+mod sources;
 #[path = "observation_io/split.rs"]
 mod split;
 #[path = "observation_io/times.rs"]

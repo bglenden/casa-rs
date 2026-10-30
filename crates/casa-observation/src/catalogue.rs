@@ -20,6 +20,7 @@ use casa_types::quanta::Quantity;
 use crate::ObservationError;
 use crate::ephemeris::FieldEphemeris;
 
+mod held;
 mod metadata;
 
 pub use metadata::{

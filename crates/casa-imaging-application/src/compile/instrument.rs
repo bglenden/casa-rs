@@ -13,19 +13,31 @@ use casa_imaging_model::{
     PointingInterpolation, PointingTimeSampling,
 };
 use casa_imaging_products::AnalyticPrimaryBeamModel;
-use casa_ms::MeasurementSet;
+use casa_observation::Catalogue;
+use casa_types::quanta::Unit;
 
 use super::PrepareError;
 use crate::Gridder;
 
-fn telescopes(ms: &MeasurementSet) -> Result<BTreeSet<String>, PrepareError> {
-    let observation = ms.observation()?;
-    (0..observation.row_count())
-        .map(|row| {
-            observation
-                .string(row, "TELESCOPE_NAME")
-                .map(|name| name.trim().to_string())
-                .map_err(Into::into)
+fn telescopes(catalogue: &Catalogue) -> BTreeSet<String> {
+    catalogue
+        .observations
+        .iter()
+        .map(|observation| observation.telescope.trim().to_string())
+        .collect()
+}
+
+/// Each antenna's dish diameter, metres, in antenna order.
+pub(super) fn dish_diameters(catalogue: &Catalogue) -> Vec<f64> {
+    let metres = Unit::new("m").expect("metres are a unit");
+    catalogue
+        .antennas
+        .iter()
+        .map(|antenna| {
+            antenna
+                .dish_diameter
+                .get_value_in(&metres)
+                .unwrap_or(f64::NAN)
         })
         .collect()
 }
@@ -33,32 +45,35 @@ fn telescopes(ms: &MeasurementSet) -> Result<BTreeSet<String>, PrepareError> {
 /// The analytic primary beam a standard-gridder run writes `.pb` and
 /// `.image.pbcor` with.
 pub(super) fn standard_primary_beam_model(
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
 ) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
-    let telescopes = telescopes(ms)?;
+    let telescopes = telescopes(catalogue);
     match telescopes
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>()
         .as_slice()
     {
-        ["ALMA"] => homogeneous_dishes(ms, 10.0..13.0, AnalyticPrimaryBeamModel::CasaAlma12mAiry),
-        ["ACA"] => homogeneous_dishes(ms, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry),
+        ["ALMA"] => homogeneous_dishes(
+            catalogue,
+            10.0..13.0,
+            AnalyticPrimaryBeamModel::CasaAlma12mAiry,
+        ),
+        ["ACA"] => homogeneous_dishes(catalogue, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry),
         _ => analytic_primary_beam_model_for_telescopes(&telescopes),
     }
 }
 
 fn homogeneous_dishes(
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     diameter_range_m: Range<f64>,
     model: AnalyticPrimaryBeamModel,
 ) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
-    let antenna = ms.antenna()?;
-    if antenna.row_count() == 0 {
+    let diameters = dish_diameters(catalogue);
+    if diameters.is_empty() {
         return Err(PrepareError::NoAntennaDishes);
     }
-    for row in 0..antenna.row_count() {
-        let diameter_m = antenna.dish_diameter(row)?;
+    for (row, diameter_m) in diameters.into_iter().enumerate() {
         if !diameter_m.is_finite() || !diameter_range_m.contains(&diameter_m) {
             return Err(PrepareError::MixedAlmaDishes { row, diameter_m });
         }
@@ -88,7 +103,7 @@ fn analytic_primary_beam_model_for_telescopes(
 /// others.
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
 ) -> Result<Option<InstrumentModel>, PrepareError> {
     let (model, dishes): (_, fn(f64) -> bool) = match gridder {
         Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
@@ -100,7 +115,7 @@ pub(super) fn scientific_instrument_model(
         ),
         Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
-    let telescopes = telescopes(ms)?;
+    let telescopes = telescopes(catalogue);
     let supported = !telescopes.is_empty()
         && telescopes.iter().all(|name| match gridder {
             Gridder::Awproject(_) => matches!(name.as_str(), "VLA" | "EVLA"),
@@ -111,12 +126,11 @@ pub(super) fn scientific_instrument_model(
             telescopes: telescopes.into_iter().collect(),
         });
     }
-    let antenna = ms.antenna()?;
-    if antenna.row_count() == 0 {
+    let diameters = dish_diameters(catalogue);
+    if diameters.is_empty() {
         return Err(PrepareError::NoAntennaDishes);
     }
-    for row in 0..antenna.row_count() {
-        let diameter_m = antenna.dish_diameter(row)?;
+    for (row, diameter_m) in diameters.into_iter().enumerate() {
         if !(diameter_m.is_finite() && dishes(diameter_m)) {
             return Err(PrepareError::DishOutsideResponse {
                 model,

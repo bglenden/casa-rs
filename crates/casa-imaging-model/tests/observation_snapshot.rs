@@ -3,10 +3,9 @@
 use casa_imaging_model::{
     CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
     ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, PartitionId, PartitionSelection, ResolvedIntent, RowSelection,
-    SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
-    compile_observation,
+    ObservationSourceProvenance, PartitionId, PartitionSelection, RowSelection, SelectedColumns,
+    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 use casa_types::Correlation;
 
@@ -49,8 +48,8 @@ fn partitions(reverse: bool) -> Vec<PartitionSelection> {
 fn selection(samples: u64, reverse: bool) -> ObservationSelection {
     let mut fields = vec![7, 2];
     let mut intents = vec![
-        ResolvedIntent::new(8, "OBSERVE_TARGET#ON_SOURCE".to_string()),
-        ResolvedIntent::new(3, "CALIBRATE_PHASE#ON_SOURCE".to_string()),
+        "OBSERVE_TARGET#ON_SOURCE".to_string(),
+        "CALIBRATE_PHASE#ON_SOURCE".to_string(),
     ];
     let mut spectral_windows = vec![
         SpectralWindowSelection::new(9, vec![7, 5, 3]),
@@ -408,8 +407,8 @@ fn snapshot_exposes_exact_selection_semantics_without_bulk_samples() {
     assert_eq!(
         selection.rows_filter().intents(),
         &IntentSelection::Only(vec![
-            ResolvedIntent::new(3, "CALIBRATE_PHASE#ON_SOURCE".to_string()),
-            ResolvedIntent::new(8, "OBSERVE_TARGET#ON_SOURCE".to_string()),
+            "CALIBRATE_PHASE#ON_SOURCE".to_string(),
+            "OBSERVE_TARGET#ON_SOURCE".to_string(),
         ])
     );
     assert_eq!(

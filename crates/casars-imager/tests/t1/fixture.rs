@@ -351,11 +351,22 @@ impl Observation {
         name: &str,
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_store(&self.measurement_set, name, controls)
+    }
+
+    /// [`Observation::try_image`] of `store`, another store of this
+    /// observation (an MSv4 conversion).
+    pub fn try_image_store(
+        &self,
+        store: &Path,
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
         // would move a law onto the GPU wherever the host has one.
         let mut parameters = json!({
-            "vis": self.measurement_set,
+            "vis": store,
             "imagename": image_name,
             "backend": "cpu",
         });

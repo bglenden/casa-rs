@@ -88,6 +88,16 @@ impl Msv4Update {
         })
     }
 
+    /// An update over `observation`, opened already.
+    pub(in crate::observation_io) fn over(observation: Msv4Observation) -> Self {
+        Self {
+            root: observation.path().to_path_buf(),
+            observation,
+            #[cfg(test)]
+            failure: std::sync::Mutex::new(None),
+        }
+    }
+
     pub(in crate::observation_io) fn observation(&self) -> &Msv4Observation {
         &self.observation
     }

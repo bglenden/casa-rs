@@ -195,6 +195,11 @@ name = "msv2_opening_memory"
 path = "tests/msv2_opening_memory.rs"
 
 [[test]]
+name = "msv4_opening_memory"
+path = "tests/msv4_opening_memory.rs"
+required-features = ["msv4"]
+
+[[test]]
 name = "msv2_update_memory"
 path = "tests/msv2_update_memory.rs"
 

@@ -4,7 +4,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_observation::{
@@ -30,6 +30,7 @@ use super::metadata::{
     invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
     time_reference, visibility_units,
 };
+use super::opening;
 use crate::observation_io::OpenOptions;
 use crate::observation_io::msv2::{metres, radians};
 
@@ -99,6 +100,8 @@ pub(super) struct Dataset {
 /// unit and frame, against the profile and refuses others rather than
 /// reinterpreting or rescaling them.
 pub struct Msv4Observation {
+    /// The processing set's directory.
+    pub(super) root: PathBuf,
     pub(super) store: Arc<FilesystemStore>,
     pub(super) catalogue: Arc<Catalogue>,
     pub(super) datasets: Vec<Dataset>,
@@ -129,6 +132,27 @@ impl Msv4Observation {
         path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<Self, ObservationError> {
+        Self::open_granted(path, options, &mut |_| Ok(()))
+    }
+
+    /// [`Self::open_with`], asking `grant` for the bytes the opening will
+    /// hold before it decodes any dataset: what each dataset holds once
+    /// open and, beyond, the largest dataset's decoding, projected from the
+    /// arrays' shapes and element sizes (the `opening` module). The
+    /// processing set's metadata documents and the projection are read
+    /// first. An error from `grant` refuses the opening with nothing more
+    /// decoded. What the opened observation holds is
+    /// [`Self::held_bytes`], to which a caller that admitted the grant
+    /// trims or raises its charge.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], and whatever `grant` returns.
+    pub fn open_granted(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Self, ObservationError> {
         let store = Arc::new(FilesystemStore::new(path.as_ref()).map_err(storage)?);
         let root = Group::open(store.clone(), "/").map_err(storage)?;
         if text(root.attributes(), "type", "the processing set")? != "processing_set" {
@@ -141,7 +165,13 @@ impl Msv4Observation {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         names.sort();
+        let projections: Vec<opening::Projection> = names
+            .iter()
+            .map(|name| opening::project(&store, &format!("/{name}")))
+            .collect();
+        grant(opening::opening_bytes(&projections))?;
         let mut observation = Self {
+            root: path.as_ref().to_path_buf(),
             store: store.clone(),
             catalogue: Arc::new(Catalogue::default()),
             datasets: Vec::new(),
@@ -183,6 +213,37 @@ impl Msv4Observation {
     #[must_use]
     pub fn catalogue(&self) -> &Arc<Catalogue> {
         &self.catalogue
+    }
+
+    /// The processing set's directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.root
+    }
+
+    /// The bytes the opened processing set holds while it is open, by
+    /// capacity: its catalogue ([`Catalogue::held_bytes`]) and, for each
+    /// dataset, its times, each time's scan and, for each data group, each
+    /// time's field, its names and its array handles with their metadata.
+    /// What decoding a batch holds is the cursor's, counted in its
+    /// estimate.
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        // The catalogue's shared allocation holds two reference counts
+        // beside it; the store's, its root.
+        self.root.capacity()
+            + 2 * size_of::<usize>()
+            + size_of::<Catalogue>()
+            + self.catalogue.held_bytes()
+            + 2 * size_of::<usize>()
+            + size_of::<FilesystemStore>()
+            + self.root.capacity()
+            + self.datasets.capacity() * size_of::<Dataset>()
+            + self
+                .datasets
+                .iter()
+                .map(opening::dataset_bytes)
+                .sum::<usize>()
     }
 
     /// The name of partition `id`'s dataset in the processing set.
@@ -301,7 +362,7 @@ impl Msv4Observation {
                         store,
                         &format!("{path}/{}", record.field_and_source),
                         (&times, &field_names),
-                        uvw_frame,
+                        (uvw_frame, window),
                     )?;
                     contexts.push((key, fields.clone()));
                     fields
@@ -610,8 +671,9 @@ impl Msv4Observation {
 
     /// The catalogue field at each of the dataset's `times` (Unix seconds)
     /// of `per_time`'s names, read from the field dataset at `path` of a
-    /// data group whose UVW is in `uvw_frame`: a `field_and_source`
-    /// dataset's phase centres, in that frame, or a
+    /// data group whose UVW is in `uvw_frame`, in spectral window `window`:
+    /// a `field_and_source` dataset's phase centres, in that frame, and its
+    /// sources' records for the window ([`super::sources`]), or a
     /// `field_and_source_ephemeris` dataset's moving fields
     /// ([`super::ephemeris`]).
     fn fields(
@@ -619,7 +681,7 @@ impl Msv4Observation {
         store: &Arc<FilesystemStore>,
         path: &str,
         (times, per_time): (&[f64], &[String]),
-        uvw_frame: DirectionRef,
+        (uvw_frame, window): (DirectionRef, WindowId),
     ) -> Result<Vec<FieldId>, ObservationError> {
         let group = Group::open(store.clone(), path).map_err(storage)?;
         if text(group.attributes(), "type", path)? == ephemeris::EPHEMERIS_DATASET {
@@ -639,8 +701,17 @@ impl Msv4Observation {
         if centres.len() != 2 * names.len() {
             return Err(invalid(format!("{path} has one phase centre per field")));
         }
+        let records = super::sources::records(store, path, names.len(), window)?;
         let mut indices = Vec::new();
-        for (row, name) in names.iter().enumerate() {
+        for ((row, name), record) in names.iter().enumerate().zip(records) {
+            // XRADIO's placeholder for an absent source is none.
+            let source_name = sources
+                .get(row)
+                .filter(|name| !super::is_unknown_source(name))
+                .cloned();
+            let source = source_name.as_deref().map(|source| {
+                super::sources::add(&mut self.catalogue_mut().sources, source, record)
+            });
             let entry = FieldEntry {
                 name: name.clone(),
                 phase_centre: MDirection::from_angles(
@@ -650,15 +721,9 @@ impl Msv4Observation {
                 ),
                 // MSv4 phase centres are in celestial frames (fk5, icrs).
                 reference_epoch: None,
-                // XRADIO's placeholder for an absent source is none.
-                source_name: sources
-                    .get(row)
-                    .filter(|name| !super::is_unknown_source(name))
-                    .cloned(),
-                // The adapter does not yet read `field_and_source`'s
-                // SOURCE_DIRECTION and line variables (#976), nor XRADIO's
-                // other field centres.
-                source: None,
+                source_name,
+                // The adapter does not read XRADIO's other field centres.
+                source,
                 code: None,
                 delay_centre: None,
                 reference_centre: None,
@@ -666,13 +731,18 @@ impl Msv4Observation {
                 ephemeris: None,
             };
             let fields = &mut self.catalogue_mut().fields;
-            let index = fields
-                .iter()
-                .position(|known| same_field(known, &entry))
-                .unwrap_or_else(|| {
+            let index = match fields.iter().position(|known| same_field(known, &entry)) {
+                Some(index) => {
+                    // One name is one source, so a field met again names
+                    // the source it named.
+                    fields[index].source = fields[index].source.or(source);
+                    index
+                }
+                None => {
                     fields.push(entry);
                     fields.len() - 1
-                });
+                }
+            };
             indices.push(FieldId(u32::try_from(index).expect("few fields")));
         }
         per_time
@@ -1053,8 +1123,12 @@ fn read_antennas(
     let names = strings(store, &format!("{path}/antenna_name"))?;
     let stations = strings(store, &format!("{path}/station_name"))?;
     let mounts = strings(store, &format!("{path}/mount"))?;
-    // XRADIO writes no receptor variables for a window FEED states none for.
-    let types = if has_node(store, &format!("{path}/polarization_type"))? {
+    // XRADIO writes no receptor angles for a window FEED states none for,
+    // though it may still write the polarization types; such antennas have
+    // no receptors, as the MSv2 adapter reads that FEED.
+    let types = if has_node(store, &format!("{path}/polarization_type"))?
+        && has_node(store, &format!("{path}/ANTENNA_RECEPTOR_ANGLE"))?
+    {
         strings(store, &format!("{path}/polarization_type"))?
     } else {
         Vec::new()
@@ -1140,6 +1214,10 @@ impl Observation for Msv4Observation {
         request: &casa_observation::PointingRequest,
     ) -> Result<casa_observation::PointingSeries, ObservationError> {
         self.read_pointing(request)
+    }
+
+    fn pointing_bytes(&self) -> Result<usize, ObservationError> {
+        self.pointing_bound()
     }
 
     fn group_keys(
