@@ -4380,6 +4380,13 @@ mod tests {
             372.0e9,
         ));
 
+        // Observed at 2020-05-31 12:00 TAI: the date keeps its time scale
+        // (#1017).
+        coordinates.obs_info_mut().date = Some(casa_types::measures::epoch::MEpoch::from_mjd(
+            59_000.5,
+            casa_types::measures::EpochRef::TAI,
+        ));
+
         let shape = vec![3, 2, 2, 5];
         let mut source =
             PagedImage::<f32>::create(shape.clone(), coordinates, &source_path).unwrap();
@@ -4418,6 +4425,15 @@ mod tests {
         assert!((beam.major_in("deg").unwrap() - 1.7e-4).abs() < 1.0e-12);
         assert!((beam.minor_in("deg").unwrap() - 1.2e-4).abs() < 1.0e-12);
         assert!((beam.position_angle_in("deg").unwrap() + 34.5).abs() < 1.0e-12);
+        let date = imported.coordinates().obs_info().date.as_ref().unwrap();
+        assert_eq!(date.refer(), casa_types::measures::EpochRef::TAI);
+        assert_eq!(date.value().as_mjd(), 59_000.5);
+        // As CASA 6.7.6's exportfits writes the date: ISO, in its own scale.
+        assert_eq!(
+            read_fits_key_as_string(&first_fits, "DATE-OBS"),
+            "2020-05-31T12:00:00.000000"
+        );
+        assert_eq!(read_fits_key_as_string(&first_fits, "TIMESYS"), "TAI");
 
         assert_eq!(
             read_fits_pixels(&first_fits),
@@ -4428,8 +4444,87 @@ mod tests {
             "OBJECT", "RADESYS", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4", "CRVAL1", "CRVAL2",
             "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4", "CDELT1", "CDELT2",
             "CDELT3", "CDELT4", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "RESTFRQ", "SPECSYS",
+            "DATE-OBS", "TIMESYS",
         ] {
             assert_fits_key_matches(&first_fits, &second_fits, key);
+        }
+    }
+
+    /// A 2 by 2 FITS sky image of float pixels whose header holds `cards`,
+    /// each written as given, after the required ones and a SIN direction.
+    fn write_fits_with_cards(path: &Path, cards: &[&str]) {
+        let mut header = vec![
+            "SIMPLE  =                    T",
+            "BITPIX  =                  -32",
+            "NAXIS   =                    2",
+            "NAXIS1  =                    2",
+            "NAXIS2  =                    2",
+            "CTYPE1  = 'RA---SIN'",
+            "CTYPE2  = 'DEC--SIN'",
+            "CRVAL1  =                 68.8",
+            "CRVAL2  =                -22.9",
+            "CDELT1  =           -0.0002778",
+            "CDELT2  =            0.0002778",
+            "CRPIX1  =                  1.0",
+            "CRPIX2  =                  1.0",
+            "CUNIT1  = 'deg'",
+            "CUNIT2  = 'deg'",
+        ];
+        header.extend_from_slice(cards);
+        header.push("END");
+        let mut bytes = header
+            .iter()
+            .flat_map(|card| format!("{card:<80}").into_bytes())
+            .collect::<Vec<u8>>();
+        bytes.resize(bytes.len().div_ceil(2880) * 2880, b' ');
+        for value in [1.0_f32, 2.0, 3.0, 4.0] {
+            bytes.extend(value.to_be_bytes());
+        }
+        bytes.resize(bytes.len().div_ceil(2880) * 2880, 0);
+        fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn importfits_takes_the_date_past_unusable_date_cards() {
+        // An MJD-OBS with no value (FITS's way to say it is unknown) or one
+        // CFITSIO cannot read as a number leaves DATE-OBS to give the date,
+        // as CASA 6.7.6 imports such headers; it once stopped the import
+        // (#1020 review). A TIMESYS with no value is UTC, and a DATE-OBS with
+        // none gives no date.
+        use casa_types::measures::EpochRef;
+        let temp = tempfile::tempdir().unwrap();
+        let date = "DATE-OBS= '2000-01-01T02:57:46.666569'";
+        let no_mjd = "MJD-OBS =                      / date unavailable";
+        let cases: [(&[&str], Option<EpochRef>); 5] = [
+            (&[date, "TIMESYS = 'UTC'", no_mjd], Some(EpochRef::UTC)),
+            (
+                &[date, "TIMESYS = 'TAI'", "MJD-OBS = 'garbage'"],
+                Some(EpochRef::TAI),
+            ),
+            (
+                &[date, "TIMESYS =                      / unknown"],
+                Some(EpochRef::UTC),
+            ),
+            (&["DATE-OBS=                      / unknown"], None),
+            (&[], None),
+        ];
+        for (index, (cards, expected)) in cases.into_iter().enumerate() {
+            let fits = temp.path().join(format!("{index}.fits"));
+            let image_path = temp.path().join(format!("{index}.image"));
+            write_fits_with_cards(&fits, cards);
+            import_fits(&fits, &image_path, false)
+                .unwrap_or_else(|error| panic!("case {index}: {error}"));
+            let image = PagedImage::<f32>::open(&image_path).unwrap();
+            let date = image.coordinates().obs_info().date.as_ref();
+            match expected {
+                Some(reference) => {
+                    let date = date.unwrap_or_else(|| panic!("case {index}: no date"));
+                    assert_eq!(date.refer(), reference, "case {index}");
+                    let seconds = (date.value().as_mjd() - 51_544.123_456_789) * 86_400.0;
+                    assert!(seconds.abs() < 1e-5, "case {index}: {seconds} s");
+                }
+                None => assert!(date.is_none(), "case {index}"),
+            }
         }
     }
 

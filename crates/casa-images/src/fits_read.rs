@@ -152,6 +152,18 @@ fn read_primary_fits_header(
             header.set(key, FitsValue::Float(value));
         }
     }
+    // The observation date (#1017). A date card with no value (`MJD-OBS =`,
+    // FITS's way to say it is unknown) or one of another type is left out,
+    // as casacore warns and leaves it out, so `DATE-OBS` can still give the
+    // date and the image still imports.
+    for key in ["DATE-OBS", "TIMESYS"] {
+        if let Some(value) = read_optional_date_key::<String>(fits, hdu, key)? {
+            header.set(key, FitsValue::String(value.trim_end().to_string()));
+        }
+    }
+    if let Some(value) = read_optional_date_key::<f64>(fits, hdu, "MJD-OBS")? {
+        header.set("MJD-OBS", FitsValue::Float(value));
+    }
     for i in 1..=shape.len() {
         for j in 1..=shape.len() {
             let pc_key = format!("PC{i}_{j}");
@@ -182,6 +194,38 @@ fn read_fits_axis_shape(
         shape.push(axis_len as usize);
     }
     Ok(shape)
+}
+
+/// CFITSIO's statuses for a missing card, a card with no value, and a
+/// value it cannot convert to an integer, a float or a double.
+const KEY_NO_EXIST: i32 = 202;
+const VALUE_UNDEFINED: i32 = 204;
+const BAD_C2I: i32 = 407;
+const BAD_C2D: i32 = 409;
+
+/// Card `key` of an observation date, `None` when the header lacks it,
+/// gives it no value, or gives a value CFITSIO cannot read as `T`; any
+/// other error stands.
+fn read_optional_date_key<T>(
+    fits: &mut FitsFile,
+    hdu: &fitsio::hdu::FitsHdu,
+    key: &str,
+) -> Result<Option<T>, ImageError>
+where
+    T: fitsio::headers::ReadsKey,
+{
+    match hdu.read_key::<T>(fits, key) {
+        Ok(value) => Ok(Some(value)),
+        Err(fitsio::errors::Error::Fits(error))
+            if matches!(
+                error.status,
+                KEY_NO_EXIST | VALUE_UNDEFINED | BAD_C2I..=BAD_C2D
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(ImageError::Io(error.to_string())),
+    }
 }
 
 fn read_optional_key<T>(
