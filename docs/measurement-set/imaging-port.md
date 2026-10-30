@@ -577,17 +577,25 @@ for bit on the trial's fixed, ICRS-variable and moving fields (the law
   `SPECTRAL_WINDOW` rows, an MSv4's windows in the order its datasets name
   them. A window's axis and frame are its first partition's.
 - **Intents.** An intent selection resolves to observing modes
-  (`compile/intents.rs`): a pattern matches a whole mode, an MSv2 `STATE`
-  row's `OBS_MODE` or an MSv4 partition's intents joined by commas in the
-  catalogue's (sorted) order; a state number names an MSv2 `STATE` row and
-  matches nothing on an MSv4. `IntentSelection::Only` holds the modes. A
-  selection by number that takes some of the states sharing an `OBS_MODE`
-  is still refused, since the MSv2 adapter partitions their rows together.
-- **Visibility column.** A MeasurementSet holds `CORRECTED_DATA` or `DATA`
-  when MAIN has the column (its adapter declares the `base` group whether
-  or not MAIN has `DATA`); an MSv4 when a partition has the `corrected` or
-  `base` data group. The partitions read the group of that name. An MSv4's
-  weights are per channel (`WEIGHT_SPECTRUM` in the manifest).
+  (`compile/intents.rs`): an MSv2 `STATE` row's `OBS_MODE`, or an MSv4
+  partition's intents joined by commas in the catalogue's (sorted) order.
+  A name or a pattern selects a mode when it matches any of the mode's
+  comma-separated intents, as casacore's `MSStateIndex` splits `OBS_MODE`
+  before it matches, and a flagged `STATE` row is selected by none. Today's
+  selector matched the whole mode, so an exact name missed a mode of two
+  intents. A state number names an MSv2 `STATE` row and matches nothing on
+  an MSv4. `IntentSelection::Only` holds the modes. A selection by number
+  that takes some of the states sharing an `OBS_MODE` is still refused,
+  since the MSv2 adapter partitions their rows together.
+- **Visibility column.** It is chosen once the request's partitions are
+  named (`partitions::selected`), from them. A MeasurementSet holds
+  `CORRECTED_DATA` or `DATA` when MAIN has the column (its adapter declares
+  the `base` group whether or not MAIN has `DATA`), as CASA asks. An MSv4,
+  whose partitions each state their own data groups, holds it when every
+  selected partition has the `corrected` or `base` data group, so a
+  partition the request leaves out does not choose the column for those it
+  takes. The partitions read the group of that name. An MSv4's weights are
+  per channel (`WEIGHT_SPECTRUM` in the manifest).
 - **Fields and sources.** A fixed field's direction is the catalogue's
   phase centre, in its stored frame. A moving field with no reference epoch
   (an MSv4's) is evaluated, when asked at no time, at its first selected

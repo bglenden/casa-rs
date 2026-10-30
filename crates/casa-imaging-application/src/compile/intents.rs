@@ -3,10 +3,12 @@
 //! catalogue: the observing modes it selects, which name the partitions
 //! that hold them (a partition's samples share one mode).
 //!
-//! A pattern is matched, as CASA's `intent` selection matches it, against a
-//! whole observing mode: an MSv2 `STATE::OBS_MODE`, or an MSv4 partition's
-//! intents joined by commas in the catalogue's order. A state number
-//! selects its MSv2 `STATE` row's mode; an MSv4 has no states.
+//! A pattern selects an observing mode, as CASA's `intent` selection does
+//! (casacore `MSStateIndex`), when it matches any of the mode's
+//! comma-separated intents: an MSv2 `STATE::OBS_MODE` split at its commas,
+//! or an MSv4 partition's intents. A flagged `STATE` row is selected by no
+//! pattern. A state number selects its MSv2 `STATE` row's mode; an MSv4 has
+//! no states.
 
 use std::collections::BTreeSet;
 
@@ -56,6 +58,7 @@ pub(super) fn resolve(text: &str, catalogue: &Catalogue) -> Result<Intents, Prep
         catalogue
             .states
             .iter()
+            .filter(|state| state.flagged != Some(true))
             .map(|state| state.obs_mode.clone())
             .collect()
     };
@@ -72,15 +75,20 @@ pub(super) fn resolve(text: &str, catalogue: &Catalogue) -> Result<Intents, Prep
                 states.insert(StateId(state));
             }
             IntentSelector::Mode(pattern) => {
-                let matching: Vec<&String> =
-                    known.iter().filter(|mode| selector.matches(mode)).collect();
+                let matching: Vec<&String> = known
+                    .iter()
+                    .filter(|mode| selects(&selector, mode))
+                    .collect();
                 if matching.is_empty() {
                     return Err(unmatched(pattern.clone()));
                 }
                 // A pattern selects every state of the modes it matches.
                 states.extend(
                     (0..catalogue.states.len())
-                        .filter(|state| selector.matches(&catalogue.states[*state].obs_mode))
+                        .filter(|state| {
+                            let state = &catalogue.states[*state];
+                            state.flagged != Some(true) && selects(&selector, &state.obs_mode)
+                        })
                         .map(|state| StateId(u32::try_from(state).expect("few states"))),
                 );
                 modes.extend(matching.into_iter().cloned());
@@ -97,6 +105,14 @@ pub(super) fn resolve(text: &str, catalogue: &Catalogue) -> Result<Intents, Prep
     })
 }
 
+/// Whether `selector` selects observing mode `mode`: whether it matches
+/// any of the mode's comma-separated intents, as casacore's `MSStateIndex`
+/// splits `OBS_MODE` at its commas before it matches a name, a pattern or a
+/// regular expression.
+fn selects(selector: &IntentSelector, mode: &str) -> bool {
+    mode.split(',').any(|intent| selector.matches(intent))
+}
+
 /// Whether partition `entry`, of a selected mode, holds samples of a state
 /// the selection leaves out beside a selected one: only a state number can
 /// leave one out, and the MSv2 adapter partitions the rows of every state
@@ -105,4 +121,65 @@ pub(super) fn resolve(text: &str, catalogue: &Catalogue) -> Result<Intents, Prep
 pub(super) fn split_state(entry: &PartitionEntry, states: &BTreeSet<StateId>) -> bool {
     entry.states.iter().any(|state| states.contains(state))
         && entry.states.iter().any(|state| !states.contains(state))
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_observation::StateEntry;
+
+    use super::*;
+
+    fn state(obs_mode: &str, flagged: Option<bool>) -> StateEntry {
+        StateEntry {
+            obs_mode: obs_mode.to_string(),
+            cal_k: None,
+            load_k: None,
+            signal: None,
+            reference: None,
+            sub_scan: None,
+            flagged,
+        }
+    }
+
+    fn selected(text: &str, catalogue: &Catalogue) -> Option<Vec<String>> {
+        match resolve(text, catalogue).ok()?.selection {
+            IntentSelection::Only(modes) => Some(modes),
+            IntentSelection::All => None,
+        }
+    }
+
+    /// A name or a pattern selects a mode when it matches any of its
+    /// intents, as casacore splits `OBS_MODE` at its commas (Astra's review
+    /// of #1013); a flagged state is selected by none.
+    #[test]
+    fn an_intent_selects_every_mode_holding_it_and_no_flagged_state() {
+        let catalogue = Catalogue {
+            states: vec![
+                state(
+                    "CALIBRATE_BANDPASS#ON_SOURCE,CALIBRATE_PHASE#ON_SOURCE",
+                    None,
+                ),
+                state("OBSERVE_TARGET#ON_SOURCE", Some(false)),
+                state("CALIBRATE_POINTING#ON_SOURCE", Some(true)),
+            ],
+            ..Catalogue::default()
+        };
+        let both = "CALIBRATE_BANDPASS#ON_SOURCE,CALIBRATE_PHASE#ON_SOURCE".to_string();
+        for text in [
+            "CALIBRATE_PHASE#ON_SOURCE",
+            "*PHASE*",
+            "CALIBRATE_BANDPASS*",
+        ] {
+            assert_eq!(
+                selected(text, &catalogue),
+                Some(vec![both.clone()]),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            selected("*ON_SOURCE", &catalogue),
+            Some(vec![both, "OBSERVE_TARGET#ON_SOURCE".to_string()])
+        );
+        assert!(selected("CALIBRATE_POINTING*", &catalogue).is_none());
+    }
 }

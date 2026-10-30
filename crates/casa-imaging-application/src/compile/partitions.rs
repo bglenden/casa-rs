@@ -58,38 +58,28 @@ pub(super) struct Candidates {
 }
 
 /// The partitions of `store` in the windows `windows` selects that `rows`
-/// may select, in partition order, with the data group holding
-/// `visibility`: a partition's fields must include a selected one and, under
-/// an intent selection, its observing mode must be a selected one. A state
-/// number in the selection (`states`) must select every state of its
-/// partition. A partition's UV distances and times are the survey's to
-/// test.
+/// may select, in partition order: a partition's fields must include a
+/// selected one and, under an intent selection, its observing mode must be
+/// a selected one. A state number in the selection (`states`) must select
+/// every state of its partition. A partition's UV distances and times are
+/// the survey's to test.
 ///
 /// # Errors
 ///
-/// [`PartitionSelectionError::Unsupported`] for what the passes do not
-/// read: `FLOAT_DATA` (no request names it), a partition without the data
-/// group, and an intent selection by state that splits an `OBS_MODE`.
-/// [`PartitionSelectionError::Inconsistent`] for a window without a
-/// positive reference frequency under a UV-distance interval in
-/// wavelengths.
-pub(super) fn candidates(
+/// [`PartitionSelectionError::Unsupported`] for an intent selection by
+/// state that splits an `OBS_MODE`.
+pub(super) fn selected(
     store: &OpenedStore,
     windows: &WindowChoice,
     (rows, states): (&RowSelection, &BTreeSet<StateId>),
-    visibility: VisibilityColumn,
-) -> Result<Candidates, PartitionSelectionError> {
-    if visibility == VisibilityColumn::FloatData {
-        return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
-    }
-    let group = data_group(visibility);
+) -> Result<Vec<PartitionId>, PartitionSelectionError> {
     let fields = field_selection(rows.fields());
     let modes = match rows.intents() {
         IntentSelection::All => None,
         IntentSelection::Only(modes) => Some(modes.iter().cloned().collect::<BTreeSet<_>>()),
     };
     let catalogue = store.catalogue();
-    let mut partitions = Vec::new();
+    let mut selected = Vec::new();
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);
         if !windows.holds(store, id) {
@@ -106,9 +96,37 @@ pub(super) fn candidates(
                 ));
             }
         }
-        if !entry.fields.iter().any(|field| fields.holds(*field)) {
-            continue;
+        if entry.fields.iter().any(|field| fields.holds(*field)) {
+            selected.push(id);
         }
+    }
+    Ok(selected)
+}
+
+/// The `selected` partitions of `store` ([`selected`]) with the data group
+/// holding `visibility`, which each must have.
+///
+/// # Errors
+///
+/// [`PartitionSelectionError::Unsupported`] for what the passes do not
+/// read: `FLOAT_DATA` (no request names it) and a partition without the data
+/// group. [`PartitionSelectionError::Inconsistent`] for a window without a
+/// positive reference frequency under a UV-distance interval in
+/// wavelengths.
+pub(super) fn candidates(
+    store: &OpenedStore,
+    selected: &[PartitionId],
+    rows: &RowSelection,
+    visibility: VisibilityColumn,
+) -> Result<Candidates, PartitionSelectionError> {
+    if visibility == VisibilityColumn::FloatData {
+        return Err(PartitionSelectionError::Unsupported("FLOAT_DATA"));
+    }
+    let group = data_group(visibility);
+    let catalogue = store.catalogue();
+    let mut partitions = Vec::new();
+    for &id in selected {
+        let entry = catalogue.partition(id);
         if entry.data_group(group).is_none() {
             return Err(PartitionSelectionError::Unsupported(
                 "a selected partition without the imaged data group",

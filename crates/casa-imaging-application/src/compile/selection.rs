@@ -357,10 +357,16 @@ pub(super) fn data_group(visibility: OwnerVisibilityColumn) -> &'static str {
     }
 }
 
-/// Whether `store` holds `visibility`: a MeasurementSet when MAIN has its
-/// column (its adapter states the `base` group whether or not MAIN has
-/// `DATA`), an MSv4 when one of its partitions has the column's data group.
-pub(super) fn holds(store: &OpenedStore, visibility: OwnerVisibilityColumn) -> bool {
+/// Whether `store` holds `visibility` for the `selected` partitions: a
+/// MeasurementSet when MAIN has its column (its adapter states the `base`
+/// group whether or not MAIN has `DATA`), as CASA asks; an MSv4, whose
+/// partitions each state their own data groups, when every selected
+/// partition has the column's data group.
+pub(super) fn holds(
+    store: &OpenedStore,
+    selected: &[casa_observation::PartitionId],
+    visibility: OwnerVisibilityColumn,
+) -> bool {
     match store.msv2() {
         Some(observation) => {
             let column = match visibility {
@@ -370,15 +376,19 @@ pub(super) fn holds(store: &OpenedStore, visibility: OwnerVisibilityColumn) -> b
             };
             observation.measurement_set().data_column(column).is_ok()
         }
-        None => {
-            let group = data_group(visibility);
-            store
-                .catalogue()
-                .partitions
-                .iter()
-                .any(|entry| entry.data_group(group).is_some())
-        }
+        None => held_by_every(store.catalogue(), selected, data_group(visibility)),
     }
+}
+
+/// Whether every `selected` partition of `catalogue` has data group `group`.
+fn held_by_every(
+    catalogue: &casa_observation::Catalogue,
+    selected: &[casa_observation::PartitionId],
+    group: &str,
+) -> bool {
+    selected
+        .iter()
+        .all(|id| catalogue.partition(*id).data_group(group).is_some())
 }
 
 #[cfg(test)]
@@ -391,6 +401,81 @@ mod tests {
 
     use super::*;
     use crate::request::tests::request;
+
+    /// A partition whose data groups are `groups`.
+    fn partition(groups: &[&str]) -> casa_observation::PartitionEntry {
+        use casa_observation::{
+            DataGroupEntry, ObservationId, PartitionEntry, UvwFrame, VisibilityUnits, WindowId,
+        };
+        use casa_types::measures::direction::DirectionRef;
+        use casa_types::measures::frequency::FrequencyRef;
+        use casa_types::measures::{EpochRef, MjdHighPrec};
+        PartitionEntry {
+            spectral_window: "spw".to_string(),
+            frequencies_hz: vec![1.0e9],
+            frequency_frame: FrequencyRef::LSRK,
+            channel_widths_hz: vec![1.0e6],
+            correlations: vec![casa_types::Correlation::XX],
+            intents: Vec::new(),
+            observation: ObservationId(0),
+            feeds: None,
+            fields: Vec::new(),
+            scans: Vec::new(),
+            baselines: Vec::new(),
+            time_scale: EpochRef::UTC,
+            time_origin: MjdHighPrec::new(0.0, 0.0),
+            data_groups: groups
+                .iter()
+                .map(|name| DataGroupEntry {
+                    name: (*name).to_string(),
+                    visibilities: String::new(),
+                    flags: String::new(),
+                    weights: String::new(),
+                    uvw: String::new(),
+                    units: VisibilityUnits::default(),
+                    uvw_frame: UvwFrame {
+                        effective: DirectionRef::J2000,
+                        stored_label: None,
+                    },
+                })
+                .collect(),
+            receptors: std::collections::BTreeMap::new(),
+            window: WindowId(0),
+            states: Vec::new(),
+            processor: None,
+        }
+    }
+
+    /// An MSv4's partitions each state their own data groups: `corrected` is
+    /// held, and so the default, only when every selected partition has it,
+    /// whatever an unselected one holds (Astra's review of #1013).
+    #[test]
+    fn an_msv4_holds_a_group_when_every_selected_partition_does() {
+        use casa_observation::{Catalogue, PartitionId};
+        let catalogue = Catalogue {
+            partitions: vec![
+                partition(&["base", "corrected"]),
+                partition(&["base"]),
+                partition(&["base", "corrected"]),
+            ],
+            ..Catalogue::default()
+        };
+        let corrected = |selected: &[u32]| {
+            let selected: Vec<PartitionId> = selected.iter().map(|id| PartitionId(*id)).collect();
+            let holds = |column| held_by_every(&catalogue, &selected, data_group(column));
+            visibility_column(holds, None).expect("a column")
+                == OwnerVisibilityColumn::CorrectedData
+        };
+        assert!(
+            !corrected(&[1]),
+            "an unselected partition's group is not the default"
+        );
+        assert!(
+            !corrected(&[0, 1]),
+            "a selected partition without the group"
+        );
+        assert!(corrected(&[0, 2]));
+    }
 
     #[test]
     fn channels_past_the_window_are_refused() {

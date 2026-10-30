@@ -121,10 +121,13 @@ pub(crate) fn prepare(
     // batches' both evaluate with it.
     let measures = casa_ms::open_measures_runtime()?;
     let engine = MsCalEngine::from_catalogue(catalogue, Arc::clone(&measures))?;
-    let Admitted {
-        value: mut survey,
-        reservation: survey_charge,
-    } = survey_observation(request, store, context)?;
+    let (
+        Admitted {
+            value: mut survey,
+            reservation: survey_charge,
+        },
+        columns,
+    ) = survey_observation(request, store, context)?;
     if request.specmode == SpecMode::Mfs {
         let selected = survey
             .spectral_windows
@@ -222,7 +225,7 @@ pub(crate) fn prepare(
         })
         .transpose()?;
     let geometry = geometry(request, &domains, &centre, &spectral);
-    let snapshot = snapshot_input(request, store, survey, &channels)?;
+    let snapshot = snapshot_input(request, (store, columns), survey, &channels)?;
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
     let phase_table = centre
@@ -269,14 +272,17 @@ fn survey_observation(
     request: &ImagingRequest,
     store: &OpenedStore,
     context: &RunContext,
-) -> Result<Admitted<Survey>, PrepareError> {
+) -> Result<(Admitted<Survey>, Columns), PrepareError> {
     let catalogue = store.catalogue();
     let windows = selection::window_choice(request, store)?;
     let (row_selection, states) = selection::row_selection(request, catalogue)?;
-    let visibility =
-        selection::visibility_column(|column| selection::holds(store, column), request.datacolumn)?;
-    let candidates =
-        partitions::candidates(store, &windows, (&row_selection, &states), visibility)?;
+    let selected = partitions::selected(store, &windows, (&row_selection, &states))?;
+    let holds = |column| selection::holds(store, &selected, column);
+    let columns = Columns {
+        visibility: selection::visibility_column(holds, request.datacolumn)?,
+        corrected_data_present: holds(casa_imaging_model::VisibilityColumn::CorrectedData),
+    };
+    let candidates = partitions::candidates(store, &selected, &row_selection, columns.visibility)?;
     let spectral_windows = selection::spectral_windows(
         catalogue,
         candidates
@@ -298,7 +304,19 @@ fn survey_observation(
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
         ),
     };
-    survey::survey(plan, spectral_windows, (&context.host, &context.policy))
+    Ok((
+        survey::survey(plan, spectral_windows, (&context.host, &context.policy))?,
+        columns,
+    ))
+}
+
+/// The columns compile chose for the selected partitions: the visibility
+/// column imaged, and whether they hold `CORRECTED_DATA`
+/// ([`selection::holds`]).
+#[derive(Clone, Copy)]
+struct Columns {
+    visibility: casa_imaging_model::VisibilityColumn,
+    corrected_data_present: bool,
 }
 
 /// The rest frame of a moving source (`cubesource`): the observatory frame
@@ -394,12 +412,11 @@ fn specification_inputs(
 /// by CASA's rule, [`partitions::stored_weights`]).
 fn snapshot_input(
     request: &ImagingRequest,
-    store: &OpenedStore,
+    (store, columns): (&OpenedStore, Columns),
     survey: Survey,
     channels: &WindowChannels,
 ) -> Result<ObservationSnapshotInput, PrepareError> {
-    let visibility =
-        selection::visibility_column(|column| selection::holds(store, column), request.datacolumn)?;
+    let visibility = columns.visibility;
     let weights = partitions::stored_weights(
         store,
         survey.partitions.iter().map(PartitionSelection::partition),
@@ -411,7 +428,7 @@ fn snapshot_input(
             ObservationSourceProvenance::new(request.vis.display().to_string()),
             selection,
             SelectedColumns::new(visibility, FlagPolicy::FlagOrFlagRow, weights),
-            selection::holds(store, casa_imaging_model::VisibilityColumn::CorrectedData),
+            columns.corrected_data_present,
         ),
     ]))
 }
