@@ -32314,6 +32314,1718 @@
      }
     }
    ]
+  },
+  "rows_columns": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {
+      "nomodify": {
+       "bool": false
+      }
+     },
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "id"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "int64"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "label"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "string"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "spectrum"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": [
+          [
+           "frame",
+           {
+            "str": "LSRK"
+           }
+          ],
+          [
+           "unit",
+           {
+            "str": "Jy"
+           }
+          ]
+         ]
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "ndim",
+        {
+         "int": 2,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 4,
+         "type": "int"
+        }
+       ],
+       [
+        "shape",
+        {
+         "ndarray": "int64",
+         "shape": [
+          2
+         ],
+         "data": [
+          2,
+          2
+         ]
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "float"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "vary"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "ndim",
+        {
+         "int": 1,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "double"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "meta"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "record"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "nosuchcolumn"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "getdminfo",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "*1",
+        {
+         "dict": [
+          [
+           "COLUMNS",
+           {
+            "ndarray": "<U8",
+            "shape": [
+             6
+            ],
+            "data": [
+             "gain",
+             "id",
+             "label",
+             "meta",
+             "spectrum",
+             "vary"
+            ]
+           }
+          ],
+          [
+           "NAME",
+           {
+            "str": ""
+           }
+          ],
+          [
+           "SEQNR",
+           {
+            "int": 0,
+            "type": "int"
+           }
+          ],
+          [
+           "SPEC",
+           {
+            "dict": []
+           }
+          ],
+          [
+           "TYPE",
+           {
+            "str": "StManAipsIO"
+           }
+          ]
+         ]
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [
+      {
+       "int": 2,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 5,
+      "type": "int"
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      {
+       "str": "label"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "<U5",
+      "shape": [
+       5
+      ],
+      "data": [
+       "alpha",
+       "beta",
+       "gamma",
+       "",
+       ""
+      ]
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       2,
+       2
+      ],
+      "data": [
+       "1.1914993280621484e+27",
+       "7.18539998095734e+22",
+       "1.9091125619979862e-19",
+       "1.7882430723739595e+28"
+      ]
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      {
+       "str": "spectrum"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "putcell",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "int": 3,
+       "type": "int"
+      },
+      {
+       "int": 33,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcell",
+     "args": [
+      {
+       "str": "label"
+      },
+      {
+       "int": 4,
+       "type": "int"
+      },
+      {
+       "str": "five"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 6,
+      "type": "int"
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [
+      {
+       "int": -1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": [
+        {
+         "int": 3,
+         "type": "int"
+        },
+        {
+         "int": 4,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 3,
+      "type": "int"
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 2,
+      "type": "int"
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 2,
+      "type": "int"
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": [
+        {
+         "int": 99,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: removeRow: rownr 99 too high in table <TABLE> (#rows=2)"
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": []
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        },
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [
+      {
+       "int": 3,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcol",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "ndarray": "int64",
+       "shape": [
+        3
+       ],
+       "data": [
+        1,
+        2,
+        3
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "putcol",
+     "args": [
+      {
+       "str": "label"
+      },
+      {
+       "list": [
+        {
+         "str": "a"
+        },
+        {
+         "str": "b"
+        },
+        {
+         "str": "c"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "x",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "double"
+            }
+           ],
+           [
+            "comment",
+            {
+             "str": "a new column"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "ncols",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 7,
+      "type": "int"
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "x"
+       }
+      ]
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "x"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": "a new column"
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "double"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      {
+       "str": "x"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       3
+      ],
+      "data": [
+       "0.0",
+       "0.0",
+       "0.0"
+      ]
+     }
+    },
+    {
+     "method": "putcell",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      },
+      {
+       "float": "2.5",
+       "type": "float"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "arr",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "float"
+            }
+           ],
+           [
+            "ndim",
+            {
+             "int": 2,
+             "type": "int"
+            }
+           ],
+           [
+            "shape",
+            {
+             "list": [
+              {
+               "int": 2,
+               "type": "int"
+              },
+              {
+               "int": 3,
+               "type": "int"
+              }
+             ]
+            }
+           ],
+           [
+            "option",
+            {
+             "int": 4,
+             "type": "int"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "getcoldesc",
+     "args": [
+      {
+       "str": "arr"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "dict": [
+       [
+        "comment",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerGroup",
+        {
+         "str": ""
+        }
+       ],
+       [
+        "dataManagerType",
+        {
+         "str": "StManAipsIO"
+        }
+       ],
+       [
+        "keywords",
+        {
+         "dict": []
+        }
+       ],
+       [
+        "maxlen",
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ],
+       [
+        "ndim",
+        {
+         "int": 2,
+         "type": "int"
+        }
+       ],
+       [
+        "option",
+        {
+         "int": 4,
+         "type": "int"
+        }
+       ],
+       [
+        "shape",
+        {
+         "ndarray": "int64",
+         "shape": [
+          2
+         ],
+         "data": [
+          2,
+          3
+         ]
+        }
+       ],
+       [
+        "valueType",
+        {
+         "str": "float"
+        }
+       ]
+      ]
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "s",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "string"
+            }
+           ]
+          ]
+         }
+        ],
+        [
+         "b",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "boolean"
+            }
+           ]
+          ]
+         }
+        ],
+        [
+         "i",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "int"
+            }
+           ]
+          ]
+         }
+        ],
+        [
+         "c",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "dcomplex"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "x"
+       },
+       {
+        "str": "arr"
+       },
+       {
+        "str": "b"
+       },
+       {
+        "str": "c"
+       },
+       {
+        "str": "i"
+       },
+       {
+        "str": "s"
+       }
+      ]
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "s"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "str": ""
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "b"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": false
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "i"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 0,
+      "type": "int"
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "x",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "double"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid description of column x: column already exists"
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "bad",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "nosuchtype"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "addColumns failed: Unknown data type nosuchtype for scalar column bad"
+     }
+    },
+    {
+     "method": "renamecol",
+     "args": [
+      {
+       "str": "x"
+      },
+      {
+       "str": "y"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "y"
+       },
+       {
+        "str": "arr"
+       },
+       {
+        "str": "b"
+       },
+       {
+        "str": "c"
+       },
+       {
+        "str": "i"
+       },
+       {
+        "str": "s"
+       }
+      ]
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "y"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "float": "2.5",
+      "type": "float"
+     }
+    },
+    {
+     "method": "renamecol",
+     "args": [
+      {
+       "str": "nosuch"
+      },
+      {
+       "str": "z"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::renameColumn; column nosuch does not exist in table <TABLE>"
+     }
+    },
+    {
+     "method": "renamecol",
+     "args": [
+      {
+       "str": "y"
+      },
+      {
+       "str": "label"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::renameColumn; new column label already exists in table <TABLE>"
+     }
+    },
+    {
+     "method": "removecols",
+     "args": [
+      {
+       "list": [
+        {
+         "str": "y"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "arr"
+       },
+       {
+        "str": "b"
+       },
+       {
+        "str": "c"
+       },
+       {
+        "str": "i"
+       },
+       {
+        "str": "s"
+       }
+      ]
+     }
+    },
+    {
+     "method": "removecols",
+     "args": [
+      {
+       "list": [
+        {
+         "str": "nosuch"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::removeColumn - column nosuch does not exist in table <TABLE>"
+     }
+    },
+    {
+     "method": "removecols",
+     "args": [
+      {
+       "str": "s"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "arr"
+       },
+       {
+        "str": "b"
+       },
+       {
+        "str": "c"
+       },
+       {
+        "str": "i"
+       }
+      ]
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "open",
+     "args": [
+      {
+       "str": "<TABLE>"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "nrows",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "int": 3,
+      "type": "int"
+     }
+    },
+    {
+     "method": "colnames",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "list": [
+       {
+        "str": "id"
+       },
+       {
+        "str": "label"
+       },
+       {
+        "str": "gain"
+       },
+       {
+        "str": "spectrum"
+       },
+       {
+        "str": "vary"
+       },
+       {
+        "str": "meta"
+       },
+       {
+        "str": "arr"
+       },
+       {
+        "str": "b"
+       },
+       {
+        "str": "c"
+       },
+       {
+        "str": "i"
+       }
+      ]
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      {
+       "str": "id"
+      },
+      {
+       "int": 0,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "value": {
+      "int": 1,
+      "type": "int"
+     }
+    },
+    {
+     "method": "addrows",
+     "args": [
+      {
+       "int": 1,
+       "type": "int"
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::addRow; table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "addcols",
+     "args": [
+      {
+       "dict": [
+        [
+         "q",
+         {
+          "dict": [
+           [
+            "valueType",
+            {
+             "str": "double"
+            }
+           ]
+          ]
+         }
+        ]
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::addColumn; table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "removerows",
+     "args": [
+      {
+       "list": [
+        {
+         "int": 0,
+         "type": "int"
+        }
+       ]
+      }
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Invalid Table operation: Table::rowmoveRow; table <TABLE> is not writable"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
   }
  }
 }

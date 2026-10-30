@@ -522,6 +522,79 @@ MS_SLICES = [
     ["close", [], {}],
 ]
 
+#: Column descriptions, and adding and removing rows and columns, on the
+#: python fixture table. (CASA leaves the cells of an added array or complex
+#: column uninitialised, so they are never read here.)
+ROWS_COLUMNS = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["getcoldesc", ["id"], {}],
+    ["getcoldesc", ["label"], {}],
+    ["getcoldesc", ["spectrum"], {}],
+    ["getcoldesc", ["vary"], {}],
+    ["getcoldesc", ["meta"], {}],
+    ["getcoldesc", ["nosuchcolumn"], {}],
+    ["getdminfo", [], {}],
+    ["addrows", [2], {}],
+    ["nrows", [], {}],
+    ["getcol", ["label"], {}],
+    ["getcell", ["spectrum", 3], {}],
+    ["iscelldefined", ["spectrum", 3], {}],
+    ["iscelldefined", ["id", 3], {}],
+    ["getcell", ["id", 3], {}],
+    ["putcell", ["id", 3, 33], {}],
+    ["putcell", ["label", 4, "five"], {}],
+    ["addrows", [], {}],
+    ["nrows", [], {}],
+    ["addrows", [0], {}],
+    ["addrows", [-1], {}],
+    ["removerows", [[3, 4]], {}],
+    ["nrows", [], {}],
+    ["removerows", [[0]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 0], {}],
+    ["removerows", [[99]], {}],
+    ["removerows", [[]], {}],
+    ["removerows", [[0, 0]], {}],
+    ["nrows", [], {}],
+    ["addrows", [3], {}],
+    ["putcol", ["id", np.array([1, 2, 3])], {}],
+    ["putcol", ["label", ["a", "b", "c"]], {}],
+    ["addcols", [{"x": {"valueType": "double", "comment": "a new column"}}], {}],
+    ["ncols", [], {}],
+    ["colnames", [], {}],
+    ["getcoldesc", ["x"], {}],
+    ["getcol", ["x"], {}],
+    ["putcell", ["x", 0, 2.5], {}],
+    ["addcols", [{"arr": {"valueType": "float", "ndim": 2, "shape": [2, 3], "option": 4}}], {}],
+    ["getcoldesc", ["arr"], {}],
+    ["addcols", [{"s": {"valueType": "string"}, "b": {"valueType": "boolean"}, "i": {"valueType": "int"}, "c": {"valueType": "dcomplex"}}], {}],
+    ["colnames", [], {}],
+    ["getcell", ["s", 0], {}],
+    ["getcell", ["b", 0], {}],
+    ["getcell", ["i", 0], {}],
+    ["addcols", [{"x": {"valueType": "double"}}], {}],
+    ["addcols", [{"bad": {"valueType": "nosuchtype"}}], {}],
+    ["renamecol", ["x", "y"], {}],
+    ["colnames", [], {}],
+    ["getcell", ["y", 0], {}],
+    ["renamecol", ["nosuch", "z"], {}],
+    ["renamecol", ["y", "label"], {}],
+    ["removecols", [["y"]], {}],
+    ["colnames", [], {}],
+    ["removecols", [["nosuch"]], {}],
+    ["removecols", ["s"], {}],
+    ["colnames", [], {}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["nrows", [], {}],
+    ["colnames", [], {}],
+    ["getcell", ["id", 0], {}],
+    ["addrows", [1], {}],
+    ["addcols", [{"q": {"valueType": "double"}}], {}],
+    ["removerows", [[0]], {}],
+    ["close", [], {}],
+]
+
 #: The scenario the MeasurementSet gets: for each column of the main table,
 #: its description and, for the first rows, its cells. Built from the table
 #: itself, so a column is probed whatever the fixture holds.
@@ -656,6 +729,7 @@ def main():
     scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
     scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
     scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}
+    scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}
     names = arguments.only.split(",") if arguments.only else list(scenarios)
     if arguments.only and arguments.json.exists():
         record = json.loads(arguments.json.read_text(encoding="utf-8"))

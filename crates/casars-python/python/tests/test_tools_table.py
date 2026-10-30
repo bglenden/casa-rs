@@ -169,10 +169,10 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
         return {"error": {"type": type(error).__name__, "message": str(error).replace(path, PLACEHOLDER)}}
 
 
-#: Recorded from CASA but not implemented yet (slice 3 of #1028: `putcell`,
-#: `putcol`, `putvarcol` and the other cell writes); they leave this set as
-#: the methods land.
-PENDING: set[str] = set()
+#: Recorded from CASA but not implemented yet (`getcoldesc`, `getdminfo`,
+#: `addrows`, `removerows`, `addcols`, `renamecol`, `removecols`); a scenario
+#: leaves this set as its methods land.
+PENDING: set[str] = {"rows_columns"}
 
 REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
 
