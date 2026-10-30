@@ -23,6 +23,7 @@ mod values;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -75,14 +76,21 @@ impl PyTableTool {
     }
 }
 
-/// A required text argument (a column name).
-fn text(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    value.extract()
+/// A required text argument (a column name); CASA names the argument with
+/// a leading underscore.
+fn text(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<String> {
+    value
+        .extract()
+        .map_err(|_| PyTypeError::new_err(format!("argument _{argument} must be a string")))
 }
 
 /// An integer argument, or `default`.
-fn integer(value: Option<&Bound<'_, PyAny>>, default: i64) -> PyResult<i64> {
-    value.map_or(Ok(default), |value| value.extract())
+fn integer(value: Option<&Bound<'_, PyAny>>, argument: &str, default: i64) -> PyResult<i64> {
+    value.map_or(Ok(default), |value| {
+        value
+            .extract()
+            .map_err(|_| PyTypeError::new_err(format!("argument _{argument} must be an integer")))
+    })
 }
 
 /// A flag argument, or `default`.
@@ -96,22 +104,26 @@ fn row_selection(
     count: Option<&Bound<'_, PyAny>>,
     step: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<(i64, i64, i64)> {
-    Ok((integer(start, 0)?, integer(count, -1)?, integer(step, 1)?))
+    Ok((
+        integer(start, "startrow", 0)?,
+        integer(count, "nrow", -1)?,
+        integer(step, "rowincr", 1)?,
+    ))
 }
 
-/// A keyword argument: a name or a position; absent, `''` and `[]` name the
-/// whole record.
+/// A keyword argument: a name or a position; absent and `[]` name no
+/// keyword at all.
 fn keyword_ref(value: Option<&Bound<'_, PyAny>>) -> PyResult<KeywordRef> {
     let Some(value) = value else {
-        return Ok(KeywordRef::Name(String::new()));
+        return Ok(KeywordRef::Whole);
     };
     if let Ok(name) = value.extract::<String>() {
         return Ok(KeywordRef::Name(name));
     }
-    if let Ok(list) = value.cast::<PyList>() {
-        if list.is_empty() {
-            return Ok(KeywordRef::Name(String::new()));
-        }
+    if let Ok(list) = value.cast::<PyList>()
+        && list.is_empty()
+    {
+        return Ok(KeywordRef::Whole);
     }
     Ok(KeywordRef::Index(value.extract()?))
 }
@@ -159,7 +171,7 @@ impl PyTableTool {
         lockoptions: Option<&Bound<'_, PyAny>>,
         nomodify: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let name = tablename.map_or(Ok(String::new()), text)?;
+        let name = tablename.map_or(Ok(String::new()), |name| text(name, "tablename"))?;
         let request = lock_request(lockoptions)?;
         let writable = !flag(nomodify, true)?;
         self.call(py, move |state, _| {
@@ -250,7 +262,8 @@ impl PyTableTool {
         nattempts: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let write = flag(write, true)?;
-        let attempts = u32::try_from(integer(nattempts, 0)?.max(0)).unwrap_or(u32::MAX);
+        let attempts =
+            u32::try_from(integer(nattempts, "nattempts", 0)?.max(0)).unwrap_or(u32::MAX);
         self.call(py, move |state, log| {
             if state.open.is_none() {
                 state::no_table_specified(log);
@@ -273,28 +286,28 @@ impl PyTableTool {
     /// Whether a column holds one value per row (a record column does).
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn isscalarcol(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.isscalarcol(&column, log))
     }
 
     /// Whether a column's arrays vary in shape.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn isvarcol(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.isvarcol(&column, log))
     }
 
     /// A column's data type, in casacore's names.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn coldatatype(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.coldatatype(&column, log))
     }
 
     /// How an array column stores its cells.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn colarraytype(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.colarraytype(&column, log))
     }
 
@@ -306,8 +319,8 @@ impl PyTableTool {
         columnname: &Bound<'_, PyAny>,
         rownr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
-        let row = integer(rownr, 0)?;
+        let column = text(columnname, "columnname")?;
+        let row = integer(rownr, "rownr", 0)?;
         self.call(py, move |state, log| state.getcell(&column, row, log))
     }
 
@@ -321,7 +334,7 @@ impl PyTableTool {
         nrow: Option<&Bound<'_, PyAny>>,
         rowincr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
         self.call(py, move |state, log| state.getcol(&column, rows, log))
     }
@@ -336,7 +349,7 @@ impl PyTableTool {
         nrow: Option<&Bound<'_, PyAny>>,
         rowincr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
         self.call(py, move |state, log| state.getvarcol(&column, rows, log))
     }
@@ -351,7 +364,7 @@ impl PyTableTool {
         nrow: Option<&Bound<'_, PyAny>>,
         rowincr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         let rows = row_selection(startrow, nrow, rowincr)?;
         self.call(py, move |state, log| {
             state.getcolshapestring(&column, rows, log)
@@ -366,8 +379,8 @@ impl PyTableTool {
         columnname: &Bound<'_, PyAny>,
         rownr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
-        let row = integer(rownr, 0)?;
+        let column = text(columnname, "columnname")?;
+        let row = integer(rownr, "rownr", 0)?;
         self.call(py, move |state, log| state.iscelldefined(&column, row, log))
     }
 
@@ -413,14 +426,14 @@ impl PyTableTool {
         py: Python<'_>,
         columnname: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.colkeywordnames(&column, log))
     }
 
     /// All of a column's keywords.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn getcolkeywords(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         self.call(py, move |state, log| state.getcolkeywords(&column, log))
     }
 
@@ -432,7 +445,7 @@ impl PyTableTool {
         columnname: &Bound<'_, PyAny>,
         keyword: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         let key = keyword_ref(keyword)?;
         self.call(py, move |state, log| {
             state.getcolkeyword(&column, &key, log)
@@ -448,7 +461,7 @@ impl PyTableTool {
         columnname: &Bound<'_, PyAny>,
         keyword: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let column = text(columnname)?;
+        let column = text(columnname, "columnname")?;
         let key = keyword_ref(keyword)?;
         self.call(py, move |state, log| {
             state.colfieldnames(&column, &key, log)

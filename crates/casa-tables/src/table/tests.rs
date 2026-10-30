@@ -5570,6 +5570,27 @@ mod lock_tests {
         assert_eq!(reopened.row_count(), 2);
     }
 
+    /// A NoRead mode opens without a read lock, but an explicit request for
+    /// one takes it and it is held until released: casacore's
+    /// `PlainTable::lock` has no NoRead exception (probed in CASA 6.7.6.14
+    /// as `tb.haslock(write=False)` after `tb.lock(write=False)`).
+    #[test]
+    fn an_explicit_read_lock_is_taken_in_the_no_read_modes() {
+        for mode in [LockMode::AutoNoReadLocking, LockMode::UserNoReadLocking] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let mut table = Table::open_with_lock(opts, LockOptions::new(mode)).unwrap();
+            assert!(!table.has_lock(LockType::Read), "{mode:?} opens unlocked");
+
+            assert!(table.lock(LockType::Read, 1).unwrap());
+            assert!(table.has_lock(LockType::Read), "{mode:?} holds the lock");
+            assert!(!table.has_lock(LockType::Write));
+
+            table.unlock().unwrap();
+            assert!(!table.has_lock(LockType::Read), "{mode:?} released it");
+        }
+    }
+
     #[test]
     fn observation_owner_locked_modify_counter_tracks_one_write_unlock() {
         let tmp = tempfile::TempDir::new().unwrap();

@@ -101,13 +101,20 @@ def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     }
 
 
+def without_empty_widths(value: Any) -> Any:
+    """`value` with an empty string array's NumPy width dropped, wherever it is."""
+    if isinstance(value, dict):
+        if value.get("ndarray", "").startswith("<U") and value["data"] == []:
+            return {**value, "ndarray": "<U"}
+        return {key: without_empty_widths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [without_empty_widths(item) for item in value]
+    return value
+
+
 def same_value(got: Any, want: Any, where: str) -> None:
     """`got` equals the recorded `want`, up to the departures in the docstring."""
-    if isinstance(want, dict) and "ndarray" in want and want["data"] == [] and got["data"] == []:
-        assert got["ndarray"][:2] == want["ndarray"][:2], where
-        assert got["shape"] == want["shape"], where
-        return
-    assert got == want, where
+    assert without_empty_widths(got) == without_empty_widths(want), where
 
 
 def same_error(got: dict[str, str], want: dict[str, str], where: str) -> None:
@@ -171,13 +178,11 @@ def test_every_call_releases_the_gil(fixtures: dict[str, Path], tmp_path: Path) 
     thread.start()
     try:
         started = time.perf_counter()
-        for _ in range(200):
-            tool.getcol("DATA")
-        elapsed = time.perf_counter() - started
+        while time.perf_counter() - started < 0.2:
+            tool.getcol("TIME")
     finally:
         stop.set()
         thread.join()
     during = [tick for tick in ticks if tick >= started]
-    assert elapsed > 0.01
-    assert len(during) > 0, "the ticker thread never ran during the reads"
+    assert len(during) > 20, "the ticker thread starved while the tool read"
     tool.done()

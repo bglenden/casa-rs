@@ -148,11 +148,9 @@ impl Table {
                 operation: "lock".into(),
             })?;
 
-        // NoRead modes skip the file-level read lock entirely.
-        if lock_type == LockType::Read && state.options.mode.skip_read_lock() {
-            return Ok(true);
-        }
-
+        // The NoRead modes only spare a table the read lock it takes on
+        // open (`skip_read_lock`); an explicit request takes it, as
+        // casacore's `PlainTable::lock` does.
         // A table already locked needs no synchronization: no other process
         // can have written it (casacore's `PlainTable::lock`). Requesting a
         // read lock while holding the write lock keeps the write lock and

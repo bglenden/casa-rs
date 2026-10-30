@@ -1896,6 +1896,389 @@
     }
    ]
   },
+  "errors": {
+   "fixture": "table",
+   "steps": [
+    {
+     "method": "open",
+     "args": [
+      "<TABLE>"
+     ],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      "nosuchcolumn",
+      0
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      "id",
+      3
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn: row number 3 exceeds #rows 3 in table <TABLE>"
+     }
+    },
+    {
+     "method": "iscelldefined",
+     "args": [
+      "id",
+      -1
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableColumn: row number 18446744073709551615 exceeds #rows 3 in table <TABLE>"
+     }
+    },
+    {
+     "method": "coldatatype",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "colarraytype",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "isvarcol",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getColumn: column nosuchcolumn does not exist"
+     }
+    },
+    {
+     "method": "getcolshapestring",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getColumnShapeString: column nosuchcolumn does not exist"
+     }
+    },
+    {
+     "method": "getvarcol",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getVarColumn: column nosuchcolumn does not exist"
+     }
+    },
+    {
+     "method": "getvarcol",
+     "args": [
+      "vary"
+     ],
+     "kwargs": {
+      "startrow": 5
+     },
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getVarColumn: no such row"
+     }
+    },
+    {
+     "method": "getvarcol",
+     "args": [
+      "meta"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getColumn not possible for a column containing records"
+     }
+    },
+    {
+     "method": "colkeywordnames",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "getcolkeyword",
+     "args": [
+      "nosuchcolumn",
+      "unit"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "colfieldnames",
+     "args": [
+      "nosuchcolumn"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table column nosuchcolumn is unknown"
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      ""
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "RecordInterface::asValueHolder - unknown data type"
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      []
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getkeyword",
+     "args": [
+      5
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "RecordInterface::asValueHolder - unknown data type"
+     }
+    },
+    {
+     "method": "fieldnames",
+     "args": [
+      "nosuchkeyword"
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "RuntimeError",
+      "message": "Table keyword nosuchkeyword does not exist"
+     }
+    },
+    {
+     "method": "getcolkeyword",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {},
+     "value": {
+      "ndarray": "bool",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "label"
+     ],
+     "kwargs": {
+      "startrow": -1
+     },
+     "error": {
+      "type": "RuntimeError",
+      "message": "TableProxy::getColumn: no such row"
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "label"
+     ],
+     "kwargs": {
+      "startrow": 1,
+      "nrow": 5
+     },
+     "value": {
+      "ndarray": "<U5",
+      "shape": [
+       2
+      ],
+      "data": [
+       "beta",
+       "gamma"
+      ]
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "label"
+     ],
+     "kwargs": {
+      "startrow": 0,
+      "nrow": 2,
+      "rowincr": 0
+     },
+     "error": {
+      "type": "RuntimeError",
+      "message": "getColumn: rowincr<=0"
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "label"
+     ],
+     "kwargs": {
+      "startrow": 0,
+      "nrow": 2,
+      "rowincr": 2
+     },
+     "value": {
+      "ndarray": "<U5",
+      "shape": [
+       2
+      ],
+      "data": [
+       "alpha",
+       "gamma"
+      ]
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "label"
+     ],
+     "kwargs": {
+      "startrow": 0,
+      "nrow": 0
+     },
+     "value": {
+      "ndarray": "<U5",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getcol",
+     "args": [
+      "spectrum"
+     ],
+     "kwargs": {
+      "startrow": 0,
+      "nrow": 0
+     },
+     "value": {
+      "ndarray": "float64",
+      "shape": [
+       0
+      ],
+      "data": []
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      "label",
+      1.5
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "TypeError",
+      "message": "argument _rownr must be an integer"
+     }
+    },
+    {
+     "method": "getcell",
+     "args": [
+      5,
+      0
+     ],
+     "kwargs": {},
+     "error": {
+      "type": "TypeError",
+      "message": "argument _columnname must be a string"
+     }
+    },
+    {
+     "method": "close",
+     "args": [],
+     "kwargs": {},
+     "value": {
+      "bool": true
+     }
+    }
+   ]
+  },
   "closed": {
    "fixture": "table",
    "steps": [

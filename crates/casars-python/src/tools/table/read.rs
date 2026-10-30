@@ -19,12 +19,16 @@ use crate::tools::LogLine;
 type Reply = Result<CasaValue, Fail>;
 
 /// A keyword named by `getkeyword`: by name (a dotted name reaches into
-/// sub-records) or by position.
+/// sub-records) or by position; `Whole` is no argument or `[]`.
 #[derive(Debug, Clone)]
 pub(crate) enum KeywordRef {
+    Whole,
     Name(String),
     Index(i64),
 }
+
+/// What casacore says of a keyword position no record field has.
+const NO_SUCH_FIELD: &str = "RecordInterface::asValueHolder - unknown data type";
 
 /// What casatools returns for a call it could not serve: an empty `bool`
 /// array.
@@ -62,8 +66,9 @@ fn data_type_name(column: &ColumnSchema) -> &'static str {
     }
 }
 
-/// The rows `start`, `start + incr`, ... for `count` rows (`-1`: to the
-/// end), or `refusal` when they do not exist.
+/// The rows `start`, `start + incr`, ... for `count` rows (`-1`, or more
+/// than there are: to the end), or `refusal` when `start` is not a row. A
+/// step below one is refused as casacore's `getColumn` refuses it.
 fn rows(
     nrows: usize,
     start: i64,
@@ -71,26 +76,25 @@ fn rows(
     incr: i64,
     refusal: &str,
 ) -> Result<Vec<usize>, Fail> {
-    let (Ok(start), Ok(incr)) = (usize::try_from(start), usize::try_from(incr)) else {
+    if incr < 1 {
+        return runtime("getColumn: rowincr<=0".into());
+    }
+    let Ok(start) = usize::try_from(start) else {
         return runtime(refusal.into());
     };
-    if incr == 0 || (start >= nrows && !(start == 0 && nrows == 0)) {
+    if start >= nrows && !(start == 0 && nrows == 0) {
         return runtime(refusal.into());
     }
+    let incr = usize::try_from(incr).unwrap_or(usize::MAX);
     let available = nrows.saturating_sub(start).div_ceil(incr);
-    let count = match usize::try_from(count) {
-        Ok(count) => count,
-        Err(_) => available,
-    };
-    if count > available {
-        return runtime(refusal.into());
-    }
+    let count = usize::try_from(count).map_or(available, |count| count.min(available));
     Ok((0..count).map(|index| start + index * incr).collect())
 }
 
 /// The keyword `key` of `record`.
 fn keyword<'a>(record: &'a RecordValue, key: &KeywordRef) -> Option<&'a Value> {
     match key {
+        KeywordRef::Whole => None,
         KeywordRef::Index(index) => usize::try_from(*index)
             .ok()
             .and_then(|index| record.fields().get(index))
@@ -107,6 +111,12 @@ fn keyword<'a>(record: &'a RecordValue, key: &KeywordRef) -> Option<&'a Value> {
             Some(found)
         }
     }
+}
+
+/// A shape as `getcolshapestring` writes it: `[4, 64]`.
+fn shape_text(shape: &[usize]) -> String {
+    let parts: Vec<String> = shape.iter().map(ToString::to_string).collect();
+    format!("[{}]", parts.join(", "))
 }
 
 fn field_names(record: &RecordValue) -> CasaValue {
@@ -204,14 +214,16 @@ impl Open {
             ColumnType::Record => {
                 runtime("TableProxy::getColumn not possible for a column containing records".into())
             }
+            _ if rows.is_empty() => Ok(values::empty_column(schema.data_type())),
             ColumnType::Scalar => Ok(values::scalar_column(self.scalar_cells(column, &rows)?)),
-            ColumnType::Array(_) if rows.is_empty() => Ok(empty_array()),
             ColumnType::Array(_) => values::stack_rows(&self.array_cells(column, &rows)?),
         }
     }
 
     fn getvarcol(&self, column: &str, start: i64, count: i64, incr: i64) -> Reply {
-        let schema = self.known(column)?;
+        let schema = self.column(column, || {
+            format!("TableProxy::getVarColumn: column {column} does not exist")
+        })?;
         let rows = rows(
             self.table.row_count(),
             start,
@@ -222,7 +234,7 @@ impl Open {
         let cells = match schema.column_type() {
             ColumnType::Record => {
                 return runtime(
-                    "TableProxy::getVarColumn not possible for a column containing records".into(),
+                    "TableProxy::getColumn not possible for a column containing records".into(),
                 );
             }
             ColumnType::Scalar => self
@@ -244,11 +256,20 @@ impl Open {
     }
 
     fn getcolshapestring(&self, column: &str, start: i64, count: i64, incr: i64) -> Reply {
-        let schema = self.known(column)?;
-        if !matches!(schema.column_type(), ColumnType::Array(_)) {
-            return runtime(format!(
-                "Invalid Table operation: invalid shapeColumn() for column {column}; only valid for an array"
-            ));
+        let schema = self.column(column, || {
+            format!("TableProxy::getColumnShapeString: column {column} does not exist")
+        })?;
+        let contract = match schema.column_type() {
+            ColumnType::Array(contract) => contract,
+            _ => {
+                return runtime(format!(
+                    "Invalid Table operation: invalid shapeColumn() for column {column}; only valid for an array"
+                ));
+            }
+        };
+        // A column of one shape has one answer, whatever the rows asked for.
+        if let casa_tables::ArrayShapeContract::Fixed { shape } = contract {
+            return Ok(texts([shape_text(shape)]));
         }
         let rows = rows(
             self.table.row_count(),
@@ -263,20 +284,24 @@ impl Open {
                 .table
                 .array_shape(row, column)?
                 .ok_or_else(|| Self::undefined(row, column))?;
-            let parts: Vec<String> = shape.iter().map(ToString::to_string).collect();
-            shapes.push(format!("[{}]", parts.join(", ")));
+            shapes.push(shape_text(&shape));
         }
         Ok(texts(shapes))
     }
 
     fn iscelldefined(&self, column: &str, row: i64) -> Reply {
-        self.column(column, || {
-            format!("TableProxy::isCellDefined: column {column} does not exist")
-        })?;
+        self.known(column)?;
+        let nrows = self.table.row_count();
         let row = usize::try_from(row)
             .ok()
-            .filter(|row| *row < self.table.row_count())
-            .ok_or_else(|| Fail::Runtime("TableProxy::isCellDefined: no such row".into()))?;
+            .filter(|row| *row < nrows)
+            .ok_or_else(|| {
+                Fail::Runtime(format!(
+                    "TableColumn: row number {} exceeds #rows {nrows} in table {}",
+                    row as u64,
+                    self.name.display()
+                ))
+            })?;
         Ok(CasaValue::Bool(self.table.is_cell_defined(row, column)?))
     }
 
@@ -302,6 +327,7 @@ impl Open {
 
     fn keyword_names(record: &RecordValue, key: &KeywordRef, whose: &str) -> Reply {
         match key {
+            KeywordRef::Whole => Ok(field_names(record)),
             KeywordRef::Name(name) if name.is_empty() => Ok(field_names(record)),
             _ => match keyword(record, key) {
                 Some(Value::Record(inner)) => Ok(field_names(inner)),
@@ -513,10 +539,13 @@ impl State {
         };
         match keyword(open.table.keywords(), key) {
             Some(found) => Ok(values::value(found, &open.name)),
-            None => runtime(match key {
-                KeywordRef::Name(name) => format!("Table keyword {name} does not exist"),
-                KeywordRef::Index(index) => format!("Table keyword {index} does not exist"),
-            }),
+            None => match key {
+                KeywordRef::Whole => Ok(empty_array()),
+                KeywordRef::Name(name) if !name.is_empty() => {
+                    runtime(format!("Table keyword {name} does not exist"))
+                }
+                _ => runtime(NO_SUCH_FIELD.into()),
+            },
         }
     }
 
@@ -526,6 +555,7 @@ impl State {
             return Ok(texts([]));
         };
         let whose = match key {
+            KeywordRef::Whole => String::new(),
             KeywordRef::Name(name) => format!("Table keyword {name}"),
             KeywordRef::Index(index) => format!("Table keyword {index}"),
         };
@@ -575,14 +605,16 @@ impl State {
             .and_then(|record| keyword(record, key));
         match found {
             Some(found) => Ok(values::value(found, &open.name)),
-            None => runtime(match key {
+            None => match key {
+                KeywordRef::Whole => Ok(empty_array()),
                 KeywordRef::Name(name) => {
-                    format!("Keyword {name} in column {column} does not exist")
+                    runtime(format!("Keyword {name} in column {column} does not exist"))
                 }
-                KeywordRef::Index(index) => {
-                    format!("Keyword {index} in column {column} does not exist")
-                }
-            }),
+                KeywordRef::Index(_) => runtime(
+                    "TableRecordRep: Failed AlwaysAssert whichField >= 0 && whichField < Int(nused_p)"
+                        .into(),
+                ),
+            },
         }
     }
 

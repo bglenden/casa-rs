@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use casa_tables::add_directory;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex64;
 
@@ -82,6 +82,34 @@ pub(super) fn record(fields: &RecordValue, owner: &Path) -> CasaValue {
             .iter()
             .map(|field| (field.name.clone(), value(&field.value, owner))),
     )
+}
+
+/// A column of no rows: an empty array of the column's type, whatever its
+/// cells' shape.
+pub(super) fn empty_column(data_type: Option<PrimitiveType>) -> CasaValue {
+    let shape = vec![0];
+    match data_type {
+        Some(PrimitiveType::String) => CasaValue::TextArray {
+            shape,
+            values: Vec::new(),
+        },
+        Some(PrimitiveType::Complex32 | PrimitiveType::Complex64) => CasaValue::Complexes {
+            shape,
+            values: Vec::new(),
+        },
+        Some(PrimitiveType::Float32 | PrimitiveType::Float64) => CasaValue::Floats {
+            shape,
+            values: Vec::new(),
+        },
+        Some(PrimitiveType::Bool) | None => CasaValue::Bools {
+            shape,
+            values: Vec::new(),
+        },
+        Some(_) => CasaValue::Ints {
+            shape,
+            values: Vec::new(),
+        },
+    }
 }
 
 /// The scalar cells of a column as one array, as `getcol` returns them.
