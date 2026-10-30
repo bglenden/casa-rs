@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 517
+- Concepts: 542
 - Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 749
+- Surface bindings: 780
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 28 | <code>imager</code> | 83 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 29 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -213,87 +213,122 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>keepblanks</code> | <code>parameter.keepblanks@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Preserve blank source names |
 | <code>evlabands</code> | <code>parameter.evlabands@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Use EVLA band centers and bandwidths for band selection |
 
-<a id="surface-imager"></a>
+<a id="surface-tclean"></a>
 
-## Imager (<code>imager</code>)
+## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `28`
+- Contract version: `29`
 - Category: Imaging
 - Provider family: `imager`
-- Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
+- Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Context | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | no default; required | Products | Output CASA image prefix |
-| <code>imsize</code> | <code>image.geometry.imsize@r2</code> | <code>optional&lt;array&lt;integer&gt;&gt; (states: auto)</code> | <code>512</code>; optional | Stage Parameters | Image dimensions in pixels |
-| <code>cell</code> | <code>image.geometry.cell@r2</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>"1.0arcsec"</code>; optional | Stage Parameters | Image cell size in arcseconds<br><em>Surface:</em> Canonical cell maps to provider field cell_arcsec. |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Visibility data column used by the surface. |
-| <code>savemodel</code> | <code>parameter.savemodel@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
-| <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | CASA field selector. |
-| <code>phasecenter_field</code> | <code>parameter.phasecenter_field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | FIELD_ID used as the imaging phase center |
-| <code>ddid</code> | <code>parameter.ddid@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Restrict imaging to one DATA_DESC_ID |
-| <code>phasecenter</code> | <code>parameter.phasecenter@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Explicit CASA-style J2000 phase center |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
-| <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Context | Input MeasurementSet path or paths. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Context | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> False ignores the selection parameters, as CASA's tclean does. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Context | CASA field selector. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated OBSERVATION_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
+| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Context | Visibility data column used by the surface.<br><em>Surface:</em> 'corrected' images CORRECTED_DATA, or DATA when the MeasurementSet has no CORRECTED_DATA, as CASA's tclean does. |
+| <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | <code>""</code>; required | Products | Output CASA image prefix |
+| <code>imsize</code> | <code>image.geometry.imsize@r3</code> | <code>array&lt;integer&gt;</code> | <code>[100]</code>; optional | Stage Parameters | Image dimensions in pixels |
+| <code>cell</code> | <code>image.geometry.cell@r3</code> | <code>array&lt;quantity&lt;angle&gt; (canonical arcsec)&gt;; unit dimension: angle</code> | <code>[]</code>; optional | Stage Parameters | Image cell size<br><em>Surface:</em> Required in practice: CASA's tclean and casa-rs refuse an empty cell. A bare number is in arcseconds. |
+| <code>phasecenter</code> | <code>tclean.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
-| <code>specmode</code> | <code>parameter.specmode@r3</code> | <code>choice (4 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame |
-| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Cube-axis start channel, frequency, or velocity |
-| <code>width</code> | <code>imager.width@r2</code> | <code>optional&lt;string&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
-| <code>outframe</code> | <code>parameter.outframe@r2</code> | <code>choice (4 values)</code> | <code>"LSRK"</code>; optional | Stages | Spectral frame of a cube's output axis |
-| <code>veltype</code> | <code>parameter.veltype@r2</code> | <code>choice (3 values)</code> | <code>"RADIO"</code>; optional | Stages | Velocity convention of a cube's velocity start and axis |
-| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (2 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Stages | Spectral interpolation mode for cube gridding |
-| <code>restfreq</code> | <code>parameter.restfreq@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Rest frequency used for velocity-style cube axes |
-| <code>restoringbeam</code> | <code>parameter.restoringbeam@r1</code> | <code>choice (2 values)</code> | <code>"none"</code>; optional | Stages | Restored-beam policy for cube outputs |
-| <code>perchanweightdensity</code> | <code>parameter.perchanweightdensity@r1</code> | <code>bool</code> | <code>specmode="cube"→true; otherwise→false</code>; optional | Stages | Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata |
-| <code>dirty_only</code> | <code>parameter.dirty_only@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Skip CLEAN and only write dirty / residual products |
+| <code>projection</code> | <code>parameter.projection@r2</code> | <code>string</code> | <code>"SIN"</code>; optional | Stage Parameters | Spherical projection of the image's direction axes. |
+| <code>startmodel</code> | <code>parameter.startmodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Stage Parameters | CASA image in Jy/pixel that the model starts from |
+| <code>specmode</code> | <code>parameter.specmode@r4</code> | <code>choice (6 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame |
+| <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>""</code>; optional | Stages | Reference frequency. |
+| <code>nchan</code> | <code>regridms.nchan@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stages | Number of channels of the regridded spectral axis; -1 for all.<br><em>Surface:</em> Output channels of a cube; -1 for all. casa-rs's channel_count gives the same count when nchan is -1. |
+| <code>start</code> | <code>tclean.start@r1</code> | <code>string</code> | <code>""</code>; optional | Stages | First channel of a cube: a channel number, a frequency or a velocity; empty for the first selected channel. |
+| <code>width</code> | <code>imager.width@r3</code> | <code>string</code> | <code>""</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
+| <code>outframe</code> | <code>parameter.outframe@r3</code> | <code>string</code> | <code>"LSRK"</code>; optional | Stages | Spectral frame of a cube's output axis |
+| <code>veltype</code> | <code>parameter.veltype@r3</code> | <code>string</code> | <code>"radio"</code>; optional | Stages | Velocity convention of a cube's velocity start and axis |
+| <code>restfreq</code> | <code>tclean.restfreq@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Stages | Rest frequencies of a cube's velocity axis; empty for the source's. |
+| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (3 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Stages | Spectral interpolation mode for cube gridding |
+| <code>perchanweightdensity</code> | <code>parameter.perchanweightdensity@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Use per-output-channel density estimates for cube weighting; CASA defaults this on for specmode=cube and off for cubedata<br><em>Surface:</em> Used by the cube modes only, as CASA's tclean uses it. |
+| <code>gridder</code> | <code>parameter.gridder@r3</code> | <code>choice (14 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
+| <code>facets</code> | <code>parameter.facets@r3</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed. casa-rs's wproject takes one facet. |
+| <code>psfphasecenter</code> | <code>parameter.psfphasecenter@r2</code> | <code>string</code> | <code>""</code>; optional | Advanced Wide-Field | Phase centre the mosaic PSF is made at; empty for phasecenter. |
+| <code>wprojplanes</code> | <code>parameter.wprojplanes@r2</code> | <code>integer</code> | <code>1</code>; optional | Stages | Explicit wproject plane budget<br><em>Surface:</em> -1 derives the W planes from the selected W range; awproject takes CASA's 32-plane EVLA cache. |
+| <code>vptable</code> | <code>parameter.vptable@r2</code> | <code>string</code> | <code>""</code>; optional | Advanced Wide-Field | Voltage-pattern table of the primary beams; empty for the built-in models. |
+| <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Weigh the visibility density of each mosaic field on its own.<br><em>Surface:</em> casa-rs's mosaic weighs density over all fields (CASA's mosweight=False): with the mosaic gridder and density weighting, True is refused (#818). |
+| <code>aterm</code> | <code>parameter.aterm@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Include the antenna aperture illumination in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another aterm is refused. |
+| <code>psterm</code> | <code>parameter.psterm@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another psterm is refused. |
+| <code>wbawp</code> | <code>parameter.wbawp@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Use frequency-dependent A-terms in wideband AW projection.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another wbawp is refused. |
+| <code>conjbeams</code> | <code>parameter.conjbeams@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Grid with the beam at the conjugate frequency, removing the beam's spectral index.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another conjbeams is refused. |
+| <code>cfcache</code> | <code>parameter.cfcache@r3</code> | <code>path (directory)</code> | <code>""</code>; optional | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> awproject with aw_cf_source='casa-import' reads this existing CASA CFS_/WTCFS_ cache read-only; casa-rs never writes it. |
+| <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
+| <code>computepastep</code> | <code>parameter.computepastep@r2</code> | <code>float</code> | <code>360.0</code>; optional | Advanced Wide-Field | Parallactic-angle step, in degrees, between computed A-terms. |
+| <code>rotatepastep</code> | <code>parameter.rotatepastep@r2</code> | <code>float</code> | <code>360.0</code>; optional | Advanced Wide-Field | Parallactic-angle step, in degrees, between rotated A-terms. |
+| <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r2</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
+| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked |
+| <code>normtype</code> | <code>parameter.normtype@r3</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
+| <code>deconvolver</code> | <code>parameter.deconvolver@r2</code> | <code>choice (9 values)</code> | <code>"hogbom"</code>; optional | Stages | Minor-cycle algorithm used for deconvolution |
+| <code>scales</code> | <code>parameter.scales@r2</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Stages | Multiscale component sizes in pixels |
+| <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>2</code>; optional | Stages | Number of Taylor terms.<br><em>Surface:</em> Used by mtmfs only, as CASA's tclean uses it. |
+| <code>smallscalebias</code> | <code>parameter.smallscalebias@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stages | CASA multiscale bias in [-1, 1] |
+| <code>fusedthreshold</code> | <code>parameter.fusedthreshold@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Threshold, in Jy, below which deconvolver='asp' switches to Hogbom components.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223). |
+| <code>largestscale</code> | <code>parameter.largestscale@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Largest scale, in pixels, deconvolver='asp' fits; -1 for no limit.<br><em>Surface:</em> Used by deconvolver='asp' only, which casa-rs refuses (#223). |
+| <code>restoration</code> | <code>parameter.restoration@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Restore the model with the clean beam and write the restored image. |
+| <code>restoringbeam</code> | <code>parameter.restoringbeam@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Stages | Restoring beam: empty for each plane's fitted beam, 'common' for one beam over all planes, or a beam's axes and angle |
+| <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
+| <code>outlierfile</code> | <code>parameter.outlierfile@r1</code> | <code>path (image)</code> | <code>""</code>; optional | Products | CASA outlier-field definitions for supported MFS/Hogbom image sets |
+| <code>weighting</code> | <code>parameter.weighting@r2</code> | <code>choice (7 values)</code> | <code>"natural"</code>; optional | Stages | Visibility weighting policy |
+| <code>robust</code> | <code>parameter.robust@r1</code> | <code>float</code> | <code>0.5</code>; optional | Stages | Briggs robust parameter when weighting=briggs or briggsbwtaper |
+| <code>noise</code> | <code>parameter.noise@r1</code> | <code>string</code> | <code>"1.0Jy"</code>; optional | Stages | Noise per visibility of weighting='briggsabs'. |
+| <code>npixels</code> | <code>parameter.npixels@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Size, in pixels, of the uv cell of super-uniform and Briggs weighting; 0 for the default. |
+| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
 | <code>niter</code> | <code>parameter.niter@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Minor-cycle iteration budget; ignored when Dirty Only is enabled |
-| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>"0.0Jy"</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> Canonical threshold maps to provider field threshold_jy. |
-| <code>nmajor</code> | <code>parameter.nmajor@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Major-cycle limit; -1 keeps CASA's unlimited default |
 | <code>gain</code> | <code>parameter.gain@r1</code> | <code>float</code> | <code>0.1</code>; optional | Stage Parameters | Minor-cycle loop gain |
+| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>0.0</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> A bare number is in Jy, as CASA's tclean reads it. |
 | <code>nsigma</code> | <code>parameter.nsigma@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Robust-RMS stopping multiplier |
-| <code>psfcutoff</code> | <code>parameter.psfcutoff@r1</code> | <code>float</code> | <code>0.35</code>; optional | Stage Parameters | PSF beam-fit cutoff fraction |
-| <code>minor_cycle_length</code> | <code>parameter.minor_cycle_length@r1</code> | <code>integer</code> | <code>1000</code>; optional | Stage Parameters | Residual refresh cadence in component updates |
+| <code>cycleniter</code> | <code>parameter.cycleniter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Most minor-cycle iterations, per plane, before a major cycle; -1 for niter.<br><em>Surface:</em> -1 is niter, as CASA's tclean reads it. |
 | <code>cyclefactor</code> | <code>parameter.cyclefactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Stage Parameters | Scale factor used for cycle-threshold derivation |
-| <code>deconvolver</code> | <code>parameter.deconvolver@r1</code> | <code>choice (4 values)</code> | <code>"hogbom"</code>; optional | Stages | Minor-cycle algorithm used for deconvolution |
 | <code>minpsffraction</code> | <code>parameter.minpsffraction@r1</code> | <code>float</code> | <code>0.05</code>; optional | Stage Parameters | Lower clamp for the PSF-fraction controller term |
 | <code>maxpsffraction</code> | <code>parameter.maxpsffraction@r1</code> | <code>float</code> | <code>0.8</code>; optional | Stage Parameters | Upper clamp for the PSF-fraction controller term |
-| <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of Taylor terms. |
-| <code>hogbom_iteration_mode</code> | <code>parameter.hogbom_iteration_mode@r1</code> | <code>string</code> | <code>"strict"</code>; optional | Stage Parameters | Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons |
-| <code>scales</code> | <code>parameter.scales@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Comma-separated multiscale kernel sizes in pixels |
-| <code>smallscalebias</code> | <code>parameter.smallscalebias@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stages | CASA multiscale bias in [-1, 1] |
-| <code>usemask</code> | <code>parameter.usemask@r1</code> | <code>choice (2 values)</code> | <code>"user"</code>; optional | Stage Parameters | Clean-mask generation mode |
+| <code>interactive</code> | <code>parameter.interactive@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Interactive clean. |
+| <code>nmajor</code> | <code>parameter.nmajor@r1</code> | <code>integer</code> | <code>-1</code>; optional | Stage Parameters | Major-cycle limit; -1 keeps CASA's unlimited default |
+| <code>fullsummary</code> | <code>parameter.fullsummary@r2</code> | <code>bool</code> | <code>false</code>; optional | Stages | Return each minor cycle's full detail in the summary record.<br><em>Surface:</em> Adds the per-cycle detail of summaryminor to the returned record. |
+| <code>usemask</code> | <code>parameter.usemask@r2</code> | <code>choice (3 values)</code> | <code>"user"</code>; optional | Stage Parameters | Clean-mask generation mode |
+| <code>mask</code> | <code>tclean.mask@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Stage Parameters | Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.<br><em>Surface:</em> A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'. |
+| <code>pbmask</code> | <code>parameter.pbmask@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Primary-beam level of usemask='pb', and the bound of auto-multithresh's mask. |
 | <code>sidelobethreshold</code> | <code>parameter.sidelobethreshold@r1</code> | <code>float</code> | <code>3.0</code>; optional | Stage Parameters | Auto-multithresh sidelobe threshold factor |
 | <code>noisethreshold</code> | <code>parameter.noisethreshold@r1</code> | <code>float</code> | <code>5.0</code>; optional | Stage Parameters | Auto-multithresh noise threshold factor |
 | <code>lownoisethreshold</code> | <code>parameter.lownoisethreshold@r1</code> | <code>float</code> | <code>1.5</code>; optional | Stage Parameters | Auto-multithresh mask-growth threshold factor |
 | <code>negativethreshold</code> | <code>parameter.negativethreshold@r1</code> | <code>float</code> | <code>0.0</code>; optional | Stage Parameters | Auto-multithresh negative-feature threshold factor |
+| <code>smoothfactor</code> | <code>parameter.smoothfactor@r1</code> | <code>float</code> | <code>1.0</code>; optional | Stage Parameters | Smoothing of auto-multithresh's mask, in beams. |
 | <code>minbeamfrac</code> | <code>parameter.minbeamfrac@r1</code> | <code>float</code> | <code>0.3</code>; optional | Stage Parameters | Auto-multithresh pruning region size as a beam fraction |
+| <code>cutthreshold</code> | <code>parameter.cutthreshold@r1</code> | <code>float</code> | <code>0.01</code>; optional | Stage Parameters | Fraction of the smoothed mask's peak auto-multithresh keeps. |
 | <code>growiterations</code> | <code>parameter.growiterations@r1</code> | <code>integer</code> | <code>75</code>; optional | Stage Parameters | Auto-multithresh constrained mask-growth iterations |
-| <code>mask_box</code> | <code>parameter.mask_box@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stage Parameters | Inclusive clean mask box in pixel coordinates |
-| <code>weighting</code> | <code>parameter.weighting@r1</code> | <code>choice (4 values)</code> | <code>"natural"</code>; optional | Stages | Visibility weighting policy |
-| <code>mask_image</code> | <code>parameter.mask_image@r1</code> | <code>path (image)</code> | <code>"none"</code>; optional | Stage Parameters | CASA image mask whose non-zero pixels are cleanable |
-| <code>robust</code> | <code>parameter.robust@r1</code> | <code>float</code> | <code>0.5</code>; optional | Stages | Briggs robust parameter when weighting=briggs or briggsbwtaper |
-| <code>wprojplanes</code> | <code>parameter.wprojplanes@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Explicit wproject plane budget |
-| <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
-| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA |
-| <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
-| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked |
-| <code>gridder</code> | <code>parameter.gridder@r2</code> | <code>choice (4 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
-| <code>facets</code> | <code>parameter.facets@r3</code> | <code>integer</code> | <code>1</code>; optional | Stages | Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed. |
+| <code>dogrowprune</code> | <code>parameter.dogrowprune@r1</code> | <code>bool</code> | <code>true</code>; optional | Stage Parameters | Prune auto-multithresh's grown mask. |
+| <code>minpercentchange</code> | <code>parameter.minpercentchange@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Stage Parameters | Mask change, in percent, below which auto-multithresh stops updating a channel; -1 for never. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Stage Parameters | Verbose logging. |
+| <code>fastnoise</code> | <code>parameter.fastnoise@r1</code> | <code>bool</code> | <code>true</code>; optional | Stage Parameters | Estimate auto-multithresh's noise from the whole residual, unmasked. |
+| <code>restart</code> | <code>parameter.restart@r1</code> | <code>bool</code> | <code>true</code>; optional | Products | Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> casa-rs overwrites existing products: it never restarts from them (#944). |
+| <code>savemodel</code> | <code>parameter.savemodel@r2</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
+| <code>calcres</code> | <code>parameter.calcres@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the initial residual image. |
+| <code>calcpsf</code> | <code>parameter.calcpsf@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the PSF image. |
+| <code>psfcutoff</code> | <code>parameter.psfcutoff@r1</code> | <code>float</code> | <code>0.35</code>; optional | Stage Parameters | PSF beam-fit cutoff fraction |
 | <code>parallel</code> | <code>parameter.parallel@r2</code> | <code>bool</code> | <code>false</code>; optional | Stages | Image on the host's workers (the balanced resource policy); false images on one worker |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
-| <code>cfcache</code> | <code>parameter.cfcache@r2</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache. |
-| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r2</code> | <code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero. |
-| <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
-| <code>normtype</code> | <code>parameter.normtype@r2</code> | <code>choice (2 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
+| <code>ddid</code> | <code>parameter.ddid@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Restrict imaging to one DATA_DESC_ID |
+| <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
+| <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
+| <code>hogbom_iteration_mode</code> | <code>parameter.hogbom_iteration_mode@r1</code> | <code>string</code> | <code>"strict"</code>; optional | Stage Parameters | Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons |
+| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA |
 | <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |
 | <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial fit order. |
 | <code>save_continuum_residual</code> | <code>parameter.save_continuum_residual@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum Subtraction | Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged. |
+| <code>backend</code> | <code>parameter.backend@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Device the major-cycle passes grid on: auto, cpu or gpu |
+| <code>gridprecision</code> | <code>parameter.gridprecision@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>aw_cf_source</code> | <code>parameter.aw_cf_source@r1</code> | <code>choice (2 values)</code> | <code>"casa-import"</code>; optional | Advanced Wide-Field | Paired AW convolution-function source<br><em>Surface:</em> Exactly one read-only CASA import or frozen native EVLA source; there is no fallback. |
+| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r2</code> | <code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero. |
 | <code>native_cf_cache</code> | <code>parameter.native_cf_cache@r1</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Private native AW cache directory<br><em>Surface:</em> Native prepared-artifact cache; writable for generation actions and not readable by CASA. |
 | <code>evla_surface</code> | <code>parameter.evla_surface@r1</code> | <code>optional&lt;path (file)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | EVLA dish surface model<br><em>Surface:</em> Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery. |
 | <code>native_cf_policy</code> | <code>parameter.native_cf_policy@r1</code> | <code>choice (3 values)</code> | <code>"reuse-only"</code>; optional | Advanced Wide-Field | Native AW cache action<br><em>Surface:</em> reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells. |
@@ -301,13 +336,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>native_cf_oversampling</code> | <code>parameter.native_cf_oversampling@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW convolution oversampling<br><em>Surface:</em> Explicit integer convolution-plane oversampling; validated by the native application owner. |
 | <code>native_cf_cache_bytes</code> | <code>parameter.native_cf_cache_bytes@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory. |
 | <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
-| <code>backend</code> | <code>parameter.backend@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Device the major-cycle passes grid on: auto, cpu or gpu |
-| <code>gridprecision</code> | <code>parameter.gridprecision@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
 | <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner, prediction batch and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
-| <code>uvtaper</code> | <code>parameter.uvtaper@r2</code> | <code>array&lt;string&gt;</code> | <code>[""]</code>; optional | Stages | Gaussian taper of the imaging weights: [bmaj], [bmaj, bmin] or [bmaj, bmin, bpa]; [''] is none. |
-| <code>startmodel</code> | <code>parameter.startmodel@r2</code> | <code>path (image)</code> | <code>"none"</code>; optional | Stage Parameters | CASA image in Jy/pixel that the model starts from |
 
 <a id="surface-simobserve"></a>
 

@@ -23,7 +23,6 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 7 | 3 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 12 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
-| imager | tclean | no | 92 | 56 | 36 | 0 | 27 | 24 |
 | imhead | imhead | yes | 5 | 5 | 0 | 1 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
@@ -38,6 +37,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
+| tclean | tclean | yes | 92 | 92 | 0 | 24 | 22 | 0 |
 
 ## Tasks
 
@@ -159,52 +159,6 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `gaincurve_table`
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
-
-### imager (CASA's tclean)
-
-- CASA source: `casatasks/tclean.py`, 92 parameters
-- Implementation: `casatasks/private/task_tclean.py`, `tclean` (line 44): 11 return statements, 1 raise statements
-  - returns at line 193: `None`
-  - returns at line 211: `None`
-  - returns at line 231: `None`
-  - returns at line 239: `None`
-  - returns at line 254: `None`
-  - returns at line 263: `None`
-  - returns at line 272: `None`
-  - returns at line 380: `False`
-  - returns at line 391: `False`
-  - returns at line 434: `None`
-  - returns at line 706: `retrec`
-- Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
-- CASA's signature: not yet
-- CASA parameters casa-rs lacks: `selectdata`, `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `nchan`, `psfphasecenter`, `vptable`, `mosweight`, `aterm`, `psterm`, `wbawp`, `conjbeams`, `computepastep`, `rotatepastep`, `fusedthreshold`, `largestscale`, `restoration`, `noise`, `npixels`, `cycleniter`, `interactive`, `fullsummary`, `mask`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `restart`, `calcres`, `calcpsf`
-- casa-rs parameters CASA lacks: `phasecenter_field`, `ddid`, `channel_start`, `channel_count`, `dirty_only`, `minor_cycle_length`, `hogbom_iteration_mode`, `mask_box`, `mask_image`, `write_pb`, `cf_resident_mb`, `fitspw`, `fitorder`, `save_continuum_residual`, `aw_cf_source`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `backend`, `gridprecision`, `stage_timing`, `metal_stage_timing`, `science_trace`
-- Shared parameters: 56, in CASA's order: no
-- Defaults that differ (CASA, casa-rs):
-  - `vis`: `''`, `required`
-  - `field`: `''`, `none`
-  - `spw`: `''`, `none`
-  - `uvrange`: `''`, `none`
-  - `intent`: `''`, `none`
-  - `datacolumn`: `'corrected'`, `none`
-  - `imagename`: `''`, `required`
-  - `imsize`: `[100]`, `512`
-  - `cell`: `[]`, `1.0arcsec`
-  - `phasecenter`: `''`, `none`
-  - `startmodel`: `''`, `none`
-  - `start`: `''`, `none`
-  - `width`: `''`, `none`
-  - `veltype`: `'radio'`, `RADIO`
-  - `restfreq`: `[]`, `none`
-  - `perchanweightdensity`: `True`, `conditional (fallback False)`
-  - `wprojplanes`: `1`, `none`
-  - `cfcache`: `''`, `none`
-  - `pointingoffsetsigdev`: `[]`, `0`
-  - `scales`: `[]`, `none`
-  - `nterms`: `2`, `1`
-  - `restoringbeam`: `[]`, `none`
-  - `outlierfile`: `''`, `none`
-  - `threshold`: `0.0`, `0.0Jy`
 
 ### imhead
 
@@ -381,4 +335,28 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Accepted only at CASA's default until #978: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
+- Defaults that differ: none
+
+### tclean
+
+- CASA source: `casatasks/tclean.py`, 92 parameters
+- Implementation: `casatasks/private/task_tclean.py`, `tclean` (line 44): 11 return statements, 1 raise statements
+  - returns at line 193: `None`
+  - returns at line 211: `None`
+  - returns at line 231: `None`
+  - returns at line 239: `None`
+  - returns at line 254: `None`
+  - returns at line 263: `None`
+  - returns at line 272: `None`
+  - returns at line 380: `False`
+  - returns at line 391: `False`
+  - returns at line 434: `None`
+  - returns at line 706: `retrec`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #944: `restart`
+- Accepted only at CASA's default until #980: `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `restoration`, `noise`, `npixels`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `calcres`, `calcpsf`
+- casa-rs parameters CASA lacks: `ddid`, `channel_start`, `channel_count`, `hogbom_iteration_mode`, `write_pb`, `fitspw`, `fitorder`, `save_continuum_residual`, `backend`, `gridprecision`, `aw_cf_source`, `cf_resident_mb`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `stage_timing`, `metal_stage_timing`, `science_trace`
+- Shared parameters: 92, in CASA's order: yes
 - Defaults that differ: none

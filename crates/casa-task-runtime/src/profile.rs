@@ -132,7 +132,7 @@ pub fn resolve_profile(
             format!("unsupported profile format {}", profile.header.format),
         )]));
     }
-    if profile.header.surface != bundle.surface.id() {
+    if !bundle.surface.answers_to(&profile.header.surface) {
         let mut diagnostic = Diagnostic::error(
             DiagnosticCode::WrongSurface,
             format!(
@@ -165,18 +165,24 @@ pub fn resolve_profile(
             ),
         )]));
     }
-    if profile.header.contract < bundle.surface.contract_version()
-        && bundle.surface.migrations().is_empty()
-    {
-        let mut diagnostic = Diagnostic::error(
-            DiagnosticCode::UnsupportedContract,
-            format!(
-                "profile contract {} is not the current contract {} for surface {:?}",
-                profile.header.contract,
-                bundle.surface.contract_version(),
-                bundle.surface.id()
-            ),
+    // A surface's migration chain may start after contract 1 (the imager's
+    // became tclean's at 28): a profile older than its start cannot migrate.
+    let current = bundle.surface.contract_version();
+    let oldest = bundle
+        .surface
+        .migrations()
+        .first()
+        .map_or(current, |migration| migration.from_contract);
+    if profile.header.contract < oldest {
+        let mut message = format!(
+            "profile contract {} is not the current contract {current} for surface {:?}",
+            profile.header.contract,
+            bundle.surface.id()
         );
+        if oldest < current {
+            message.push_str(&format!("; profiles migrate from contract {oldest}"));
+        }
+        let mut diagnostic = Diagnostic::error(DiagnosticCode::UnsupportedContract, message);
         diagnostic.location = profile.header_locations.get("contract").copied();
         return Err(ProfileError::Diagnostics(vec![diagnostic]));
     }
@@ -875,6 +881,7 @@ mod tests {
                 summary: "Image".into(),
                 provider_family: "imager".into(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings,
                 migrations: Vec::new(),
@@ -959,7 +966,7 @@ cell = "0.0002777777777777778deg"
 
     #[test]
     fn frozen_vlass_single_and_all_field_profiles_round_trip_without_parameter_loss() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         for (label, source, expected_field) in [
             (
                 "single",

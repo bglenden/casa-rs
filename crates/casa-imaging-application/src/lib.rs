@@ -21,6 +21,7 @@ pub mod route_law;
 pub mod source_law;
 #[doc(hidden)]
 pub mod start_model_law;
+mod tclean;
 
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
@@ -37,6 +38,7 @@ pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
     InvalidRequest, NativeAwCachePolicy, SourceRoute, SpecMode, UseMask, Weighting,
 };
+pub use tclean::TcleanRefusal;
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
@@ -185,6 +187,23 @@ impl ImagingOutcome {
             .map(|member| member.name().to_string())
             .collect()
     }
+
+    /// The deconvolved planes, `[fields, channels, stokes]`: the main image
+    /// and each outlier, each with a cube's channels (one otherwise) and
+    /// its Stokes planes, as CASA's `summaryminor` keys them.
+    #[must_use]
+    pub fn plane_layout(&self) -> [usize; 3] {
+        let reconstruction = self.problem.reconstruction();
+        let channels = match reconstruction.basis() {
+            casa_imaging_model::ReconstructionBasis::ChannelLocal { channels } => channels,
+            _ => 1,
+        };
+        [
+            self.problem.geometry().domains().len(),
+            channels,
+            reconstruction.polarization().coordinates().len(),
+        ]
+    }
 }
 
 /// Stable application projection of the T21 owner evidence.
@@ -206,6 +225,8 @@ pub struct NativeMinorCycleOutcome {
     pub total_actual_iterations: usize,
     /// Cumulative absolute component flux accepted in this cycle.
     pub total_flux: f64,
+    /// Signed first-term component flux the cycle added to the model.
+    pub model_flux: f64,
     /// Normalized residual peak at entry to this cycle.
     pub initial_peak_flux: f64,
     /// Final normalized residual peak.

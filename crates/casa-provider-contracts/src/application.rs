@@ -189,10 +189,10 @@ mod tests {
     fn task_presentation_is_owned_by_the_referenced_surface() {
         let application = builtin_application_catalog()
             .unwrap()
-            .application("imager")
+            .application("tclean")
             .unwrap();
         let surface = application.surface_bundle().unwrap();
-        assert_eq!(surface.surface.display_name(), "Imager");
+        assert_eq!(surface.surface.display_name(), "Tclean");
         assert_eq!(surface.surface.category(), "Imaging");
         assert_eq!(application.protocol_family().unwrap(), "imager");
     }

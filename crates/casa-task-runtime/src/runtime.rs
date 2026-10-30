@@ -275,7 +275,7 @@ mod tests {
     fn missing_last_is_not_replaced_with_defaults() {
         let workspace = tempfile::tempdir().unwrap();
         let request = OpenSessionRequest {
-            bundle: builtin_surface_bundle("imager").unwrap(),
+            bundle: builtin_surface_bundle("tclean").unwrap(),
             workspace: workspace.path().to_path_buf(),
             source: BaseSource::Last,
             profile_text: None,

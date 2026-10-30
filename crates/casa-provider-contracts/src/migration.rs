@@ -37,8 +37,14 @@ pub enum MigrationStep {
         from: String,
         to: String,
     },
+    /// Remove `parameter`, or only when the profile's explicit overrides
+    /// satisfy `when`, a condition of explicit values as a `Set`'s is: the
+    /// old imager's `mask_image="none"` beside an explicit `mask_box`, both
+    /// renamed to `mask`, is the absence it was (#931).
     Remove {
         parameter: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<Predicate>,
     },
     ReplaceValue {
         parameter: String,
@@ -140,7 +146,13 @@ pub(super) fn validate_migrations(
         }
         return;
     }
-    let mut expected = 1;
+    // The chain may begin after contract 1: a profile older than its first
+    // migration is refused, as a current-only surface refuses every older
+    // one (`tclean` reads the imager's contract-28 profiles only).
+    let mut expected = surface
+        .migrations()
+        .first()
+        .map_or(1, |migration| migration.from_contract.max(1));
     let known = surface
         .bindings()
         .iter()
@@ -202,6 +214,10 @@ fn validate_step(
     match step {
         MigrationStep::Set {
             parameter, when, ..
+        }
+        | MigrationStep::Remove {
+            parameter,
+            when: Some(when),
         } => migration_set::validate_condition(surface, parameter, when, errors),
         MigrationStep::Broadcast { to_length_of, .. } if !known.contains(to_length_of.as_str()) => {
             errors.push(

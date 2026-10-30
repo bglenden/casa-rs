@@ -60,11 +60,11 @@ from casars import parameters, tasks
 p = parameters.load("profiles/target-imaging.toml", workspace="project")
 p.update(niter=20000, threshold="1mJy")
 
-result = tasks.run("imager", p)   # runs in the draft's workspace, project/
+result = tasks.run("tclean", p)   # runs in the draft's workspace, project/
 ```
 
 A loaded profile also runs through a CASA-named wrapper, in the current
-directory: `tasks.imager(**parameters.load("profiles/target-imaging.toml"))`.
+directory: `tasks.tclean(**parameters.load("profiles/target-imaging.toml"))`.
 
 The call saves no Last profile. `parameters.last(...)` reads the Last that a
 command-line run saved.
@@ -75,9 +75,10 @@ updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
 `casars.tasks` is generated from the 26 task definitions and supplies one
-CASA-named keyword wrapper and typing stub per task. Their signatures
-deliberately use an unset sentinel instead of copying catalog defaults into
-Python.
+CASA-named wrapper and typing stub per task. A task that mimics CASA's has
+CASA 6.7.6.14's signature, defaults and return value (#931); the casa-rs
+tasks (`calibrate`, `msexplore`) and `plotms` take keywords with an unset
+sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
 It carries task parameters, task results and MeasurementSet plot documents as

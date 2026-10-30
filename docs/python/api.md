@@ -2,8 +2,8 @@
 
 ## Common parameter API
 
-ADR-0006 defines this common surface for task profiles; ADR-0012 defines the
-current-only option used by imager:
+ADR-0006 defines this common surface for task profiles; ADR-0012 defines
+current-only surface evolution:
 
 ```python
 casars.parameters.defaults(surface, *, workspace=None)

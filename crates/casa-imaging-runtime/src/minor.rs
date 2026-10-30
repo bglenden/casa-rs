@@ -218,6 +218,9 @@ pub struct MinorCycleSummary {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
+    /// Sum of the components' signed first-term fluxes over every plane:
+    /// what the cycle adds to the model's flux.
+    pub model_flux: f64,
     /// Largest peak residual on entry.
     pub start_peak: f64,
     /// Largest peak residual magnitude of the planes that stopped on a rule
@@ -473,6 +476,7 @@ pub fn run_minor_cycle(
         iterations: 0,
         components: 0,
         absolute_flux: 0.0,
+        model_flux: 0.0,
         start_peak: 0.0,
         peak: 0.0,
         noise_rms: None,
@@ -489,6 +493,7 @@ pub fn run_minor_cycle(
         summary.iterations += outcome.iterations;
         summary.components += outcome.components;
         summary.absolute_flux += outcome.absolute_flux;
+        summary.model_flux += outcome.model_flux;
         summary.start_peak = summary.start_peak.max(outcome.start_peak);
         if outcome.stop != PlaneStop::ZeroMask {
             summary.peak = summary.peak.max(outcome.peak);

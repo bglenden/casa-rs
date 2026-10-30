@@ -27,9 +27,9 @@ designed to paste cleanly into Markdown:
 ```toml
 [casars]
 format = 1
-surface = "imager"
+surface = "tclean"
 kind = "task"
-contract = 27
+contract = 29
 
 [parameters]
 vis = "data/target.ms"
@@ -55,12 +55,16 @@ duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.
 
-The imager profile contract is current-only. Its `contract` must equal the
-current imager surface contract listed in the generated parameter reference,
-and `[parameters]` must use canonical names. Stale contracts and historical
-aliases are rejected rather than migrated or silently interpreted. Other
-surfaces retain older profiles only when their canonical definition publishes
-an explicit ordered migration chain.
+A surface retains older profiles only when its canonical definition publishes
+an explicit ordered migration chain; other stale contracts and historical
+aliases are rejected rather than silently interpreted. The imager surface
+became CASA's `tclean` at contract 29 (#931): a profile naming surface
+`imager` at contract 28, its last, migrates. Its casa-rs names move to
+CASA's (`phasecenter_field` to `phasecenter`, `mask_box` and `mask_image` to
+`mask`, `minor_cycle_length` to `cycleniter`, and `dirty_only = true` to
+`niter = 0`), its values to CASA's forms, and an omitted value whose default
+changed (`imsize`, `cell`, `cycleniter`, `nterms`) takes tclean's with a
+warning. Older imager contracts are refused.
 
 Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file
@@ -222,7 +226,7 @@ The Python API exposes the same profile model:
 ```python
 from casars import parameters, tasks
 
-p = parameters.defaults("imager", workspace="project")
+p = parameters.defaults("tclean", workspace="project")
 p.update(
     vis="data/target.ms",
     imagename="products/target",
@@ -232,7 +236,7 @@ p.update(
 p.save("profiles/target-imaging.toml")
 
 result = p.run()                          # in the draft's workspace
-result = tasks.run("imager", p, niter=0)  # the draft, with one more value
+result = tasks.run("tclean", p, niter=0)  # the draft, with one more value
 ```
 
 Companion constructors are `parameters.last(...)`,

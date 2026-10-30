@@ -17,12 +17,38 @@ pub fn normalize_value(
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
     reject_forbidden_strings(value, names_project(&concept.normalization))?;
-    let typed = normalize_domain(value, &concept.value_domain)?;
+    let value = if reads_numbers_as_text(&concept.normalization) {
+        number_as_text(value)
+    } else {
+        value.clone()
+    };
+    let typed = normalize_domain(&value, &concept.value_domain)?;
     let normalized = apply_rule(typed, &concept.normalization)?;
     validate_parameter_value(&normalized, &concept.value_domain)
         .map_err(NormalizationError::Type)?;
     validate_constraints(&normalized, &concept.base_constraints)?;
     Ok(normalized)
+}
+
+/// Whether `rule` reads a number given for text as its text.
+fn reads_numbers_as_text(rule: &NormalizationRule) -> bool {
+    match rule {
+        NormalizationRule::NumberAsText => true,
+        NormalizationRule::Sequence { rules } => rules.iter().any(reads_numbers_as_text),
+        _ => false,
+    }
+}
+
+/// `value` with each number, alone or in a list, as its text: `3` as `"3"`.
+fn number_as_text(value: &ParameterValue) -> ParameterValue {
+    match value {
+        ParameterValue::Integer(number) => ParameterValue::String(number.to_string()),
+        ParameterValue::Float(number) => ParameterValue::String(number.to_string()),
+        ParameterValue::Array(values) => {
+            ParameterValue::Array(values.iter().map(number_as_text).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Whether `rule` lets a value name the project as [`PROJECT_TOKEN`].
@@ -135,6 +161,15 @@ fn normalize_domain(
             }
             ParameterValue::String(value) => {
                 normalize_quantity(value, canonical_unit).map(ParameterValue::String)
+            }
+            // A bare number is in the canonical unit, as a bare numeric
+            // text is: CASA's `threshold=0.001` is 1 mJy, `cell=2.0` 2
+            // arcsec.
+            ParameterValue::Integer(number) => {
+                normalize_quantity(&number.to_string(), canonical_unit).map(ParameterValue::String)
+            }
+            ParameterValue::Float(number) if number.is_finite() => {
+                normalize_quantity(&number.to_string(), canonical_unit).map(ParameterValue::String)
             }
             _ => type_error(value, domain),
         },
@@ -262,6 +297,7 @@ fn apply_rule(
         NormalizationRule::Quantity { canonical_unit } => {
             map_strings(value, |value| normalize_quantity(value, canonical_unit))
         }
+        NormalizationRule::NumberAsText => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Sequence { rules } => {
             let mut value = value;
             for rule in rules {
@@ -691,12 +727,15 @@ pub enum NormalizationError {
 
 impl NormalizationError {
     /// What a refusal of a value for `binding` ends with: for a value of a
-    /// type the binding does not take, the CASA forms it does not take yet
-    /// and their issue (flagdata's per-field `timedev`, #978); otherwise
+    /// type, or a list of a length, the binding does not take, the CASA
+    /// forms it does not take yet and their issue (flagdata's per-field
+    /// `timedev`, #978; tclean's list of MeasurementSets, #980); otherwise
     /// nothing.
     pub fn binding_note(&self, binding: &SurfaceParameterBinding) -> String {
         match (self, &binding.unimplemented_forms) {
-            (Self::Type(_), Some(forms)) => format!("; {}", forms.refusal()),
+            (Self::Type(_) | Self::Cardinality { .. }, Some(forms)) => {
+                format!("; {}", forms.refusal())
+            }
             _ => String::new(),
         }
     }
@@ -867,8 +906,18 @@ mod tests {
         );
     }
 
+    /// `value` normalized and validated as `concept` with no refinements.
+    fn accepted(
+        value: ParameterValue,
+        concept: &ParameterConcept,
+    ) -> Result<ParameterValue, NormalizationError> {
+        let normalized = normalize_value(&value, concept)?;
+        validate_value(&normalized, concept, &[])?;
+        Ok(normalized)
+    }
+
     #[test]
-    fn every_builtin_imsize_binding_normalizes_scalar_to_the_same_pair() {
+    fn every_builtin_imsize_binding_takes_casas_forms() {
         let catalog = builtin_surface_catalog().unwrap();
         let mut surfaces = Vec::new();
         for surface in &catalog.surfaces {
@@ -879,21 +928,28 @@ mod tests {
             {
                 assert_eq!(binding.concept.id.as_str(), IMSIZE_CONCEPT_ID);
                 let concept = catalog.catalog.concept(&binding.concept).unwrap();
+                // tclean's `imsize=1024` is its one-element list, and both
+                // mean a square image.
                 let normalized = normalize_value(&ParameterValue::Integer(1024), concept).unwrap();
                 assert_eq!(
                     normalized,
-                    ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
+                    ParameterValue::Array(vec![ParameterValue::Integer(1024)])
                 );
                 validate_value(&normalized, concept, &binding.refinements).unwrap();
+                let pair = ParameterValue::Array(vec![
+                    ParameterValue::Integer(192),
+                    ParameterValue::Integer(128),
+                ]);
+                assert_eq!(normalize_value(&pair, concept).unwrap(), pair);
                 surfaces.push(surface.id().to_string());
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["imager"]);
+        assert_eq!(surfaces, ["tclean"]);
     }
 
     #[test]
-    fn builtin_imsize_rejects_a_nonpositive_element_and_accepts_auto() {
+    fn builtin_imsize_rejects_a_nonpositive_element_and_auto() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -901,10 +957,10 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == IMSIZE_CONCEPT_ID)
             .unwrap();
-        assert!(normalize_value(&ParameterValue::Integer(0), concept).is_err());
+        assert!(accepted(ParameterValue::Integer(0), concept).is_err());
         assert!(
-            normalize_value(
-                &ParameterValue::Array(vec![
+            accepted(
+                ParameterValue::Array(vec![
                     ParameterValue::Integer(512),
                     ParameterValue::Integer(0),
                 ]),
@@ -912,10 +968,8 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(
-            normalize_value(&ParameterValue::String("auto".into()), concept).unwrap(),
-            ParameterValue::String("auto".into())
-        );
+        // casa-rs's "auto" is not CASA's: tclean takes no automatic size.
+        assert!(accepted(ParameterValue::String("auto".into()), concept).is_err());
     }
 
     #[test]
@@ -950,25 +1004,35 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
+        // tclean's `cell='1arcsec'` is its one-element list.
         let scalar = ParameterValue::String("1arcsec".into());
+        let degrees = ParameterValue::Array(vec![ParameterValue::String(
+            "0.0002777777777777778deg".into(),
+        )]);
+        let one = ParameterValue::Array(vec![ParameterValue::String("1arcsec".into())]);
+        assert_eq!(normalize_value(&scalar, concept).unwrap(), one);
+        assert_eq!(normalize_value(&degrees, concept).unwrap(), one);
+        assert!(semantic_eq(&scalar, &degrees, concept).unwrap());
         let mixed_unit_pair = ParameterValue::Array(vec![
             ParameterValue::String("0.0002777777777777778deg".into()),
-            ParameterValue::String("1arcsec".into()),
+            ParameterValue::String("2arcsec".into()),
         ]);
-        let expected = ParameterValue::Array(vec![
-            ParameterValue::String("1arcsec".into()),
-            ParameterValue::String("1arcsec".into()),
-        ]);
-        assert_eq!(normalize_value(&scalar, concept).unwrap(), expected);
         assert_eq!(
             normalize_value(&mixed_unit_pair, concept).unwrap(),
-            expected
+            ParameterValue::Array(vec![
+                ParameterValue::String("1arcsec".into()),
+                ParameterValue::String("2arcsec".into()),
+            ])
         );
-        assert!(semantic_eq(&scalar, &mixed_unit_pair, concept).unwrap());
+        // A CASA float cell is in arcseconds.
+        assert_eq!(
+            normalize_value(&ParameterValue::Float(0.5), concept).unwrap(),
+            ParameterValue::Array(vec![ParameterValue::String("0.5arcsec".into())])
+        );
     }
 
     #[test]
-    fn builtin_cell_requires_positive_quantity_magnitudes_but_allows_auto() {
+    fn builtin_cell_requires_positive_quantity_magnitudes_and_refuses_auto() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -976,10 +1040,10 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
-        assert!(normalize_value(&ParameterValue::String("-1arcsec".into()), concept).is_err());
+        assert!(accepted(ParameterValue::String("-1arcsec".into()), concept).is_err());
         assert!(
-            normalize_value(
-                &ParameterValue::Array(vec![
+            accepted(
+                ParameterValue::Array(vec![
                     ParameterValue::String("1arcsec".into()),
                     ParameterValue::String("-0.1deg".into()),
                 ]),
@@ -988,13 +1052,10 @@ mod tests {
             .is_err()
         );
         assert_eq!(
-            normalize_value(&ParameterValue::String("0.1deg".into()), concept).unwrap(),
-            ParameterValue::Array(vec![ParameterValue::String("360arcsec".into()); 2])
+            accepted(ParameterValue::String("0.1deg".into()), concept).unwrap(),
+            ParameterValue::Array(vec![ParameterValue::String("360arcsec".into())])
         );
-        assert_eq!(
-            normalize_value(&ParameterValue::String("auto".into()), concept).unwrap(),
-            ParameterValue::Array(vec![ParameterValue::String("auto".into()); 2])
-        );
+        assert!(accepted(ParameterValue::String("auto".into()), concept).is_err());
     }
 
     #[test]

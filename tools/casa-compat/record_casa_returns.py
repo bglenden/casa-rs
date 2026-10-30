@@ -184,6 +184,24 @@ def cal_cases(root: Path) -> dict[str, Callable[[], Any]]:
         ),
         "applycal": lambda: ct.applycal(vis=vis, gaintable=[gain]),
         "gencal": lambda: ct.gencal(vis=vis, caltable=str(root / "o.cal"), caltype="opac", parameter=[0.05]),
+        **tclean_cases(root, vis),
+    }
+
+
+def tclean_cases(root: Path, vis: str) -> dict[str, Callable[[], Any]]:
+    """Each tclean case's name and call, imaging field FLUX of the
+    calibration MeasurementSet `vis` under `root`."""
+    import casatasks as ct
+
+    def tclean(name: str, **parameters: Any) -> Callable[[], Any]:
+        image = str(root / name)
+        return lambda: ct.tclean(vis=vis, imagename=image, imsize=[64], cell="2arcsec", field="0", **parameters)
+
+    return {
+        "tclean niter0": tclean("t0", niter=0),
+        "tclean niter100": tclean("t100", niter=100),
+        "tclean fullsummary": tclean("tfull", niter=100, fullsummary=True),
+        "tclean cube": tclean("tcube", niter=30, specmode="cube", nchan=3),
     }
 
 

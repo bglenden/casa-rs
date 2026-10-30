@@ -82,11 +82,12 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
         ],
     );
     let request = json!({
-        "surface": "imager",
+        "surface": "tclean",
         "values": {
             "vis": measurement_set,
             "imagename": "json",
-            "imsize": geometry.image_size,
+            // CASA's scalar imsize, as `--imsize 256` gives it.
+            "imsize": geometry.image_size[0],
             "cell": format!("{cell}arcsec"),
             "deconvolver": "hogbom",
             "niter": 200,
@@ -198,7 +199,7 @@ fn a_value_the_request_refuses_names_its_parameter_on_both_routes() {
     assert!(stderr.contains("parameter \"scales\""), "{stderr}");
 
     let request = json!({
-        "surface": "imager",
+        "surface": "tclean",
         "values": {"vis": "input.ms", "imagename": "out", "scales": "0,banana"},
     });
     let replied = run(&["--json-run", "-"], Some(&request.to_string()));

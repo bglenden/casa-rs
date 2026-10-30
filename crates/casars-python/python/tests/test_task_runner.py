@@ -532,13 +532,18 @@ def test_a_successful_process_with_a_malformed_result_is_rejected(
     monkeypatch.setenv("FAKE_TASK_RESULT", '"runner stdout"')
     monkeypatch.chdir(tmp_path)
     with pytest.raises(tasks.TaskResultError, match="successful but invalid result"):
-        tasks.imager(vis="input.ms", imagename="dirty")
+        tasks.tclean(vis="input.ms", imagename="dirty")
 
 
-def test_a_parameter_its_gridder_does_not_read_is_refused_before_process(
+def test_a_control_its_gridder_does_not_read_is_refused_before_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CASARS_IMAGER_BIN", str(tmp_path / "missing-imager"))
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(ValueError, match="wprojplanes"):
-        tasks.imager(vis="input.ms", imagename="products/image", wprojplanes=4)
+    # casa-rs's own AW control means nothing to the standard gridder.
+    with pytest.raises(ValueError, match="cf_resident_mb"):
+        tasks.tclean(vis="input.ms", imagename="products/image", cf_resident_mb=256)
+    # A CASA parameter its gridder ignores is ignored, as CASA's tclean
+    # does (#931 PR 4e): the call reaches the (missing) executable.
+    with pytest.raises(tasks.TaskBinaryNotFoundError):
+        tasks.tclean(vis="input.ms", imagename="products/image", wprojplanes=4)

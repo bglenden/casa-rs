@@ -162,7 +162,7 @@ from casars.parameters import TaskParameters
 
 suite = pathlib.Path(sys.argv[1]).resolve()
 assert casars.__version__
-for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impv", "imsubimage", "immath", "exportfits", "importfits"):
+for name in ("calibrate", "importvla", "msexplore", "tclean", "immoments", "impv", "imsubimage", "immath", "exportfits", "importfits"):
     assert callable(getattr(tasks, name))
 assert "vis" in inspect.signature(tasks.calibrate).parameters
 assert TaskParameters.defaults("calibrate").surface == "calibrate"

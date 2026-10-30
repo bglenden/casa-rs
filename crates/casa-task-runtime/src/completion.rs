@@ -332,7 +332,7 @@ mod tests {
         })
         .to_string();
         let completion = decode_task_completion(
-            &builtin_surface_bundle("imager").unwrap(),
+            &builtin_surface_bundle("tclean").unwrap(),
             &stdout,
             root.path(),
             &[],
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn malformed_managed_result_is_not_silently_discarded() {
         let error = decode_task_completion(
-            &builtin_surface_bundle("imager").unwrap(),
+            &builtin_surface_bundle("tclean").unwrap(),
             "{not-json}",
             Path::new("."),
             &[],
