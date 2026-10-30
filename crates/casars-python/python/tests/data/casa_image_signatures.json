@@ -1,0 +1,3147 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "adddegaxes": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectral"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabular"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "silent"
+      }
+    ],
+    "addnoise": [
+      {
+        "default": "'normal'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[0.0, 1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pars"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zero"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "seeds"
+      }
+    ],
+    "beamarea": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channel"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      }
+    ],
+    "beamforconvolvedsize": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "source"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "convolved"
+      }
+    ],
+    "boundingbox": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      }
+    ],
+    "boxcar": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "drop"
+      },
+      {
+        "default": "'copy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dmethod"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "brightnessunit": [],
+    "calc": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "calcmask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "asdefault"
+      }
+    ],
+    "close": [],
+    "collapse": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "function"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "commonbeam": [],
+    "continuumsub": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outline"
+      },
+      {
+        "default": "'continuumsub.im'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outcont"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channels"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pol"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "convertflux": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "major"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minor"
+      },
+      {
+        "default": "'Gaussian'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "topeak"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channel"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      }
+    ],
+    "convolve": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "kernel"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scale"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "convolve2d": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[0, 1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "'gaussian'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "'0deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "major"
+      },
+      {
+        "default": "'0deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minor"
+      },
+      {
+        "default": "'0deg'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pa"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scale"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "targetres"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "beam"
+      }
+    ],
+    "coordmeasures": [
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixel"
+      },
+      {
+        "default": "'cl'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dframe"
+      },
+      {
+        "default": "'cl'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sframe"
+      }
+    ],
+    "coordsys": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      }
+    ],
+    "crop": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantreturn"
+      }
+    ],
+    "decimate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "factor"
+      },
+      {
+        "default": "'copy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "decompose": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "simple"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "11",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ncontour"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minrange"
+      },
+      {
+        "default": "2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "naxis"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fit"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxrms"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxretry"
+      },
+      {
+        "default": "256",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxiter"
+      },
+      {
+        "default": "0.0001",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "convcriteria"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "deconvolvecomponentlist": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channel"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      }
+    ],
+    "deconvolvefrombeam": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "source"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "beam"
+      }
+    ],
+    "deviation": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "[1, 1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "grid"
+      },
+      {
+        "default": "'ref'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "anchor"
+      },
+      {
+        "default": "'1pix'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "xlength"
+      },
+      {
+        "default": "'1pix'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ylength"
+      },
+      {
+        "default": "'cubic'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interp"
+      },
+      {
+        "default": "'sigma'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stattype"
+      },
+      {
+        "default": "'classic'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "statalg"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zscore"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxiter"
+      }
+    ],
+    "dohistory": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable"
+      }
+    ],
+    "done": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "remove"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "fft": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "real"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imag"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "amp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phase"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complex"
+      }
+    ],
+    "findsources": [
+      {
+        "default": "20",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nmax"
+      },
+      {
+        "default": "0.1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cutoff"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "point"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "negfind"
+      }
+    ],
+    "fitcomponents": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "includepix"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "excludepix"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "estimates"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "logfile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "newestimates"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dooff"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "offset"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fixoffset"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rms"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "noisefwhm"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "summary"
+      }
+    ],
+    "fitprofile": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ngauss"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "poly"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "estimates"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minpts"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "multifit"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "amp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "amperr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "center"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "centererr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fwhm"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fwhmerr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "integral"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "integralerr"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "logresults"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pampest"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pcenterest"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pfwhmest"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pfix"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmncomps"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmampcon"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmcentercon"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmfwhmcon"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmampest"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmcenterest"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmfwhmest"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gmfix"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spxtype"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spxest"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spxfix"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "div"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spxsol"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spxerr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "logfile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pfunc"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "goodamprange"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "goodcenterrange"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "goodfwhmrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigma"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outsigma"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "planes"
+      }
+    ],
+    "fitsheader": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "retstr"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "exclude"
+      }
+    ],
+    "fromarray": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "'f'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "fromcomplist": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cl"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache"
+      }
+    ],
+    "fromfits": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichrep"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichhdu"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zeroblanks"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "fromimage": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "fromrecord": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "record"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      }
+    ],
+    "fromshape": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "'f'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "getchunk": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blc"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "trc"
+      },
+      {
+        "default": "[1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inc"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "getmask"
+      }
+    ],
+    "getprofile": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "'mean'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "function"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "'default'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectype"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "logfile"
+      }
+    ],
+    "getregion": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "getmask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "getslice": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "x"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "y"
+      },
+      {
+        "default": "[0, 1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "coord"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npts"
+      },
+      {
+        "default": "'linear'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      }
+    ],
+    "hanning": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "-10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "drop"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "'copy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dmethod"
+      }
+    ],
+    "haslock": [],
+    "histograms": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "25",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nbins"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "includepix"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cumu"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "history": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      }
+    ],
+    "imagecalc": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imagemd"
+      },
+      {
+        "default": "'float'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "prec"
+      }
+    ],
+    "imageconcat": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infiles"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "relax"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tempclose"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reorder"
+      },
+      {
+        "default": "'paged'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      }
+    ],
+    "insert": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "locate"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "isconform": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "other"
+      }
+    ],
+    "isopen": [],
+    "ispersistent": [],
+    "lock": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "writelock"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nattempts"
+      }
+    ],
+    "makearray": [
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "v"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      }
+    ],
+    "makecomplex": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imag"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "maketestimage": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "maskhandler": [
+      {
+        "default": "'default'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "op"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "maxfit": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "point"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "negfind"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      }
+    ],
+    "miscinfo": [],
+    "modify": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "subtract"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "moments": [
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "moments"
+      },
+      {
+        "default": "-10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothaxes"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothtypes"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothwidths"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "includepix"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "excludepix"
+      },
+      {
+        "default": "3.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "peaksnr"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stddev"
+      },
+      {
+        "default": "'RADIO'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothout"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "drop"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "name": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "strippath"
+      }
+    ],
+    "newimage": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      }
+    ],
+    "newimagefromarray": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "'f'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "newimagefromfile": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      }
+    ],
+    "newimagefromfits": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichrep"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichhdu"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zeroblanks"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "newimagefromimage": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "newimagefromshape": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "'f'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "open": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache"
+      }
+    ],
+    "pad": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npixels"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "padmask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantreturn"
+      }
+    ],
+    "pbcor": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pbimage"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "box"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "'divide'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cutoff"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "pixeltype": [],
+    "pixelvalue": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixel"
+      }
+    ],
+    "putchunk": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blc"
+      },
+      {
+        "default": "[1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inc"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "locking"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "replicate"
+      }
+    ],
+    "putregion": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixelmask"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usemask"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "locking"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "replicate"
+      }
+    ],
+    "pv": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "end"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "center"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "length"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pa"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "'arcsec'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chans"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantreturn"
+      }
+    ],
+    "rebin": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "crop"
+      }
+    ],
+    "regrid": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "'linear'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "decimate"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "replicate"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doref"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "force"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "asvelocity"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "remove": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "done"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "removefile": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "file"
+      }
+    ],
+    "rename": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "replacemaskedpixels": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "update"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "restoringbeam": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channel"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "'list'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mbret"
+      }
+    ],
+    "rotate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pa"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "'cubic'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "decimate"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "replicate"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "rotatebeam": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "angle"
+      }
+    ],
+    "sepconvolve": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "['']",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "types"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "widths"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scale"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "set": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixels"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixelmask"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      }
+    ],
+    "setbrightnessunit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unit"
+      }
+    ],
+    "setcoordsys": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      }
+    ],
+    "sethistory": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "origin"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "history"
+      }
+    ],
+    "setmiscinfo": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "info"
+      }
+    ],
+    "setrestoringbeam": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "major"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minor"
+      },
+      {
+        "default": "'Not specified'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pa"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "beam"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "remove"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "log"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "channel"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imagename"
+      }
+    ],
+    "shape": [],
+    "statistics": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "includepix"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "excludepix"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "force"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "disk"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "robust"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "logfile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "'classic'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "algorithm"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fence"
+      },
+      {
+        "default": "'mean'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "center"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lside"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zscore"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxiter"
+      },
+      {
+        "default": "'auto'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "clmethod"
+      },
+      {
+        "default": "3",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      }
+    ],
+    "subimage": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantreturn"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keepaxes"
+      }
+    ],
+    "summary": [
+      {
+        "default": "'RADIO'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixelorder"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "tofits": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "velocity"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "optical"
+      },
+      {
+        "default": "-32",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bitpix"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minpix"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxpix"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropdeg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "deglast"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dropstokes"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokeslast"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wavelength"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "airwavelength"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "history"
+      }
+    ],
+    "topixel": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "torecord": [],
+    "toworld": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "'n'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dovelocity"
+      }
+    ],
+    "transpose": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "order"
+      }
+    ],
+    "twopointcorrelation": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outfile"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axes"
+      },
+      {
+        "default": "'structurefunction'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "method"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stretch"
+      }
+    ],
+    "type": [],
+    "unlock": []
+  },
+  "tool": "image"
+}

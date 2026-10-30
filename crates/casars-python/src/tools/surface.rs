@@ -34,6 +34,8 @@ pub(crate) enum Kind {
     Ints,
     /// A sequence of `str`, or one `str`.
     Texts,
+    /// A sequence of `bool`, or one `bool`.
+    Bools,
     /// CASA's `any` read as a quantity.
     Quantity,
     /// CASA's `any` read as an epoch, direction or position measure.
@@ -63,6 +65,8 @@ pub(crate) enum CasaDefault {
     Ints(&'static [i64]),
     /// A list of `str`.
     Texts(&'static [&'static str]),
+    /// A list of `bool`.
+    Bools(&'static [bool]),
     /// `[]`, the default of every `any` parameter.
     Empty,
     /// `{}`, the default of record parameters.
@@ -84,6 +88,7 @@ impl CasaDefault {
             Self::Floats(values) => json!(values),
             Self::Ints(values) => json!(values),
             Self::Texts(values) => json!(values),
+            Self::Bools(values) => json!(values),
             Self::Empty => json!([]),
             Self::EmptyRecord => json!({}),
             Self::None => JsonValue::Null,
@@ -118,11 +123,16 @@ pub(crate) enum Returns {
     Floats,
     /// A NumPy array of integers.
     Ints,
+    /// Whatever CASA's binding returns, not described further: another
+    /// tool, an array of any type, or a value whose type depends on the
+    /// arguments.
+    Any,
 }
 
 impl Returns {
     fn schema(self) -> JsonValue {
         match self {
+            Self::Any => json!({}),
             Self::Bool => json!({"type": "boolean"}),
             Self::Int => json!({"type": "integer"}),
             Self::Float => json!({"type": "number"}),
@@ -328,6 +338,7 @@ fn kind_schema(kind: Kind) -> JsonValue {
         Kind::Floats => list_of(json!({"type": "number"})),
         Kind::Ints => list_of(json!({"type": "integer"})),
         Kind::Texts => list_of(json!({"type": "string"})),
+        Kind::Bools => list_of(json!({"type": "boolean"})),
         Kind::Quantity => json!({"$ref": "#/definitions/CasaQuantityArgument"}),
         Kind::Measure => json!({"$ref": "#/definitions/CasaMeasureArgument"}),
         Kind::Record => json!({"type": "object"}),

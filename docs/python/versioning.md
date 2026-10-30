@@ -89,7 +89,8 @@ and `casars.data.schema_bundle()` is currently:
 That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.
 
 The same bundle, still at protocol version 1, also describes the `casars.tools`
-classes (`simulator`, `measures`, `quanta`). The bundle's Python projection
+classes (`simulator`, `measures`, `quanta`, `componentlist`, `image`,
+`coordsys`, `table`, `msmetadata`, `ms`). The bundle's Python projection
 names `casars.data` as its module; a tool's projection entry names its own
 module (`casars.tools`) and class, and records the parameter order of its
 constructor's keyword-only controls and of each method, which the JSON Schema

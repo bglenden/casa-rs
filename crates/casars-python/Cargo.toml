@@ -30,7 +30,9 @@ casars-simulation = { path = "../casars-simulation" }
 ndarray.workspace = true
 num-complex.workspace = true
 numpy = "0.28"
-pyo3 = "0.28"
+# `multiple-pymethods`: a CASA tool's methods are declared across files, its
+# generated refusals apart from what it implements (#1025).
+pyo3 = { version = "0.28", features = ["multiple-pymethods"] }
 pythonize = "0.28"
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
