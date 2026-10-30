@@ -78,11 +78,11 @@ fn calibrate_defaults_to_apply_and_backs_up_flags_as_casa_does() {
 }
 
 #[test]
-fn applycal_reads_its_chain_and_selection() {
+fn calibrate_apply_reads_its_chain_and_selection() {
     let request = request(
-        "applycal",
+        "calibrate",
         &[
-            "--vis",
+            "--ms",
             "dataset.ms",
             "--gaintables",
             "phase.gcal,bandpass.bcal",
@@ -118,7 +118,7 @@ fn applycal_reads_its_chain_and_selection() {
 #[test]
 fn aligned_chain_lists_reach_each_table() {
     let request = request(
-        "applycal",
+        "calibrate",
         &[
             "--ms",
             "dataset.ms",
@@ -176,9 +176,7 @@ fn repeated_table_flags_name_every_table_in_order() {
         }
     };
     for (surface, mode) in [
-        ("applycal", &[][..]),
         ("calibrate", &[][..]),
-        ("gaincal", &["--refant", "0", "--out", "gain.gcal"][..]),
         (
             "calibrate",
             &[
@@ -226,7 +224,7 @@ fn a_table_list_reads_alike_from_a_list_or_one_string() {
         ]),
     ] {
         let mut session = casa_task_runtime::ParameterSession::defaults(
-            builtin_surface_bundle("applycal").unwrap(),
+            builtin_surface_bundle("calibrate").unwrap(),
         )
         .unwrap();
         session
@@ -252,7 +250,7 @@ fn a_table_list_reads_alike_from_a_list_or_one_string() {
 
 fn request_with_gainfield(gainfield: &str) -> Result<CalibrationTaskRequest, TaskFailure> {
     request(
-        "applycal",
+        "calibrate",
         &[
             "--ms",
             "dataset.ms",
@@ -271,7 +269,7 @@ fn a_callibrary_names_the_chain_alone() {
     std::fs::write(&callib, "caltable='phase.gcal' calwt=F tinterp='nearest'\n").expect("write");
     let callib = callib.to_str().expect("utf8");
     let CalibrationTaskRequest::ExecuteApply(apply) =
-        request("applycal", &["--ms", "dataset.ms", "--callib", callib]).expect("apply")
+        request("calibrate", &["--ms", "dataset.ms", "--callib", callib]).expect("apply")
     else {
         panic!("an apply");
     };
@@ -282,7 +280,7 @@ fn a_callibrary_names_the_chain_alone() {
     );
 
     let both = refusal(request(
-        "applycal",
+        "calibrate",
         &[
             "--ms",
             "dataset.ms",
@@ -293,7 +291,7 @@ fn a_callibrary_names_the_chain_alone() {
         ],
     ));
     assert!(both.message.contains("not both"), "{both:?}");
-    let none = refusal(request("applycal", &["--ms", "dataset.ms"]));
+    let none = refusal(request("calibrate", &["--ms", "dataset.ms"]));
     assert!(
         none.message.contains("requires calibration input"),
         "{none:?}"
@@ -447,18 +445,15 @@ const GAIN_ARGS: [&str; 26] = [
 ];
 
 #[test]
-fn gaincal_reads_every_parameter_it_declares() {
-    let mut args = GAIN_ARGS.to_vec();
-    args.push("--solnorm");
+fn calibrate_gain_solve_reads_every_parameter_it_emits() {
+    let mut args = vec!["--mode", "solve_gain", "--solnorm"];
+    args.extend(GAIN_ARGS);
     assert_eq!(
-        request("gaincal", &args).expect("gaincal"),
+        request("calibrate", &args).expect("calibrate"),
         CalibrationTaskRequest::SolveGain(gain_solve())
     );
-    // `calibrate`'s gain solve also takes `parang`, which gaincal leaves out.
-    let mut calibrate = vec!["--mode", "solve_gain", "--parang"];
-    calibrate.extend(&args);
-    let CalibrationTaskRequest::SolveGain(solve) =
-        request("calibrate", &calibrate).expect("calibrate")
+    args.push("--parang");
+    let CalibrationTaskRequest::SolveGain(solve) = request("calibrate", &args).expect("calibrate")
     else {
         panic!("a gain solve");
     };
@@ -471,10 +466,19 @@ fn gaincal_reads_every_parameter_it_declares() {
     );
     // CASA's gaincal default of four baselines per antenna.
     let CalibrationTaskRequest::SolveGain(defaults) = request(
-        "gaincal",
-        &["--ms", "dataset.ms", "--out", "g.gcal", "--refant", "0"],
+        "calibrate",
+        &[
+            "--mode",
+            "solve_gain",
+            "--ms",
+            "dataset.ms",
+            "--out",
+            "g.gcal",
+            "--refant",
+            "0",
+        ],
     )
-    .expect("gaincal") else {
+    .expect("calibrate") else {
         panic!("a gain solve");
     };
     assert_eq!(defaults.min_baselines_per_antenna, 4);
@@ -483,8 +487,10 @@ fn gaincal_reads_every_parameter_it_declares() {
 }
 
 #[test]
-fn bandpass_reads_every_parameter_it_declares() {
+fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
     let args = [
+        "--mode",
+        "solve_bandpass",
         "--ms",
         "dataset.ms",
         "--out",
@@ -506,7 +512,7 @@ fn bandpass_reads_every_parameter_it_declares() {
         "prior.gcal",
     ];
     assert_eq!(
-        request("bandpass", &args).expect("bandpass"),
+        request("calibrate", &args).expect("calibrate"),
         CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),
@@ -523,29 +529,34 @@ fn bandpass_reads_every_parameter_it_declares() {
             amplitude_degree: 5,
             phase_degree: 4,
             smodel: [3.0, 0.0, 0.0, 0.0],
+            cuts: None,
         })
     );
 }
 
 #[test]
-fn bandpass_refuses_a_min_snr_it_does_not_apply() {
-    let base = ["--ms", "dataset.ms", "--out", "b.bcal", "--refant", "0"];
-    let mut args = base.to_vec();
-    args.extend(["--minsnr", "2"]);
-    let refused = refusal(request("bandpass", &args));
-    assert_eq!(refused.parameter.as_deref(), Some("min_snr"));
-    let mut default = base.to_vec();
-    default.extend(["--minsnr", "3.0"]);
-    request("bandpass", &default).expect("the default is accepted");
+fn calibrate_bandpass_reads_no_min_snr() {
     // `calibrate`'s `min_snr` is its gain solve's; its bandpass reads none.
-    let mut calibrate = vec!["--mode", "solve_bandpass", "--minsnr", "2"];
-    calibrate.extend(base);
+    let calibrate = [
+        "--mode",
+        "solve_bandpass",
+        "--minsnr",
+        "2",
+        "--ms",
+        "dataset.ms",
+        "--out",
+        "b.bcal",
+        "--refant",
+        "0",
+    ];
     request("calibrate", &calibrate).expect("calibrate's bandpass");
 }
 
 #[test]
-fn fluxscale_reads_every_parameter_it_declares() {
+fn calibrate_fluxscale_reads_every_parameter_it_emits() {
     let args = [
+        "--mode",
+        "fluxscale",
         "--in",
         "gain.gcal",
         "--out",
@@ -561,7 +572,7 @@ fn fluxscale_reads_every_parameter_it_declares() {
         "--incremental",
     ];
     assert_eq!(
-        request("fluxscale", &args).expect("fluxscale"),
+        request("calibrate", &args).expect("fluxscale"),
         CalibrationTaskRequest::FluxScale(FluxScaleRequest {
             input_table: PathBuf::from("gain.gcal"),
             output_table: PathBuf::from("flux.gcal"),
@@ -573,8 +584,10 @@ fn fluxscale_reads_every_parameter_it_declares() {
         })
     );
     let CalibrationTaskRequest::FluxScale(defaults) = request(
-        "fluxscale",
+        "calibrate",
         &[
+            "--mode",
+            "fluxscale",
             "--in",
             "gain.gcal",
             "--out",
@@ -591,8 +604,10 @@ fn fluxscale_reads_every_parameter_it_declares() {
     assert!(defaults.refspwmap.is_empty());
 
     let bad = refusal(request(
-        "fluxscale",
+        "calibrate",
         &[
+            "--mode",
+            "fluxscale",
             "--in",
             "gain.gcal",
             "--out",
@@ -608,8 +623,10 @@ fn fluxscale_reads_every_parameter_it_declares() {
 }
 
 #[test]
-fn gencal_reads_every_parameter_it_declares() {
+fn calibrate_gencal_reads_every_parameter_it_emits() {
     let args = [
+        "--mode",
+        "gencal",
         "--ms",
         "tutorial.ms",
         "--out",
@@ -622,7 +639,7 @@ fn gencal_reads_every_parameter_it_declares() {
         "0.1,0.2",
     ];
     assert_eq!(
-        request("gencal", &args).expect("gencal"),
+        request("calibrate", &args).expect("gencal"),
         CalibrationTaskRequest::Gencal(GencalTaskRequest {
             measurement_set: PathBuf::from("tutorial.ms"),
             output_table: PathBuf::from("cal.tau"),
@@ -943,6 +960,8 @@ fn render_stats_and_solver_outputs_include_grouped_details() {
         field_ids: vec![0, 1],
         spectral_window_ids: vec![2],
         solution_row_count: 24,
+        selected_data: Default::default(),
+        solve_stats: Default::default(),
     });
     assert!(gain_text.contains("Gain Solve Report: phase.gcal"));
     assert!(gain_text.contains("solution_rows=24"));
@@ -955,6 +974,8 @@ fn render_stats_and_solver_outputs_include_grouped_details() {
         spectral_window_ids: vec![1, 2],
         solution_row_count: 8,
         channel_count: 64,
+        selected_data: Default::default(),
+        solve_stats: Default::default(),
     });
     assert!(bandpass_text.contains("Bandpass Solve Report: bandpass.bcal"));
     assert!(bandpass_text.contains("channel_count=64"));

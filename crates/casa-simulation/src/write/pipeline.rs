@@ -227,10 +227,16 @@ impl<'s> Pipeline<'s> {
             self.rows.compute_geometry(&mut next, rows)?;
             self.times.geometry += started.elapsed();
             let started = Instant::now();
-            let mut batch = writer.visibility_columns();
-            batch
-                .data
-                .resize(rows * self.rows.samples, Complex32::new(0.0, 0.0));
+            // The batch's buffers are taken in a span of their own, so a
+            // counting heap can tell the writer's batches, however many its
+            // pace leaves live, from what the stages hold (#1009).
+            let mut batch = tracing::trace_span!("visibility_batch").in_scope(|| {
+                let mut batch = writer.visibility_columns();
+                batch
+                    .data
+                    .resize(rows * self.rows.samples, Complex32::new(0.0, 0.0));
+                batch
+            });
             self.times.zero += started.elapsed();
             let runs = self.rows.segments(rows);
             let first = first_row as u64;

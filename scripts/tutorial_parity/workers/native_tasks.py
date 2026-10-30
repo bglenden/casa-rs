@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "imager", "split", "impbcor"}
+TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "tclean", "split", "impbcor"}
 
 
 def use_binaries(binary_dir: Path) -> None:
@@ -25,18 +25,9 @@ def use_binaries(binary_dir: Path) -> None:
 def python_parameters(task: str, raw: dict[str, Any]) -> dict[str, Any]:
     """Project provider CLI values into the generated CASA-named Python API.
 
-    The image tasks take CASA's values as they are (#931)."""
+    The tasks, tclean among them, take CASA's values as they are (#931)."""
     parameters = dict(raw)
     parameters.pop("json", None)
-    if task == "imager":
-        if "cell_arcsec" in parameters:
-            parameters["cell"] = f"{parameters.pop('cell_arcsec')}arcsec"
-        if "threshold_jy" in parameters:
-            parameters["threshold"] = f"{parameters.pop('threshold_jy')}Jy"
-        for name in ("field", "phasecenter_field"):
-            if name in parameters:
-                parameters[name] = str(parameters[name])
-        parameters.pop("overwrite", None)
     return parameters
 
 

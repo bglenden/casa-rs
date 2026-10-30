@@ -71,6 +71,11 @@ def image(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def calibrate() -> str:
+    return task_executable("gencal")
+
+
+@pytest.fixture
 def small_ms(tmp_path: Path) -> Path:
     with tarfile.open(SMALL_MS_ARCHIVE, "r:gz") as archive:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
@@ -136,6 +141,23 @@ def test_flagdata_returns_casas_summary_and_empty_dictionary(
 
     assert tasks.flagdata(vis=small_ms.name, mode="manual", action="") == {}
     assert tasks.flagdata(vis=small_ms.name, mode="summary")["flagged"] == summary["flagged"]
+
+
+def test_gencal_takes_casas_signature_and_returns_none(
+    calibrate: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #931 PR 4d: the calibration tasks take CASA's parameters; gencal
+    # returns None, as CASA's does, and writes its table.
+    monkeypatch.chdir(small_ms.parent)
+    assert (
+        tasks.gencal(small_ms.name, "opacity.cal", "opac", spw="1", parameter=[0.05]) is None
+    )
+    assert (small_ms.parent / "opacity.cal").is_dir()
+    # A CASA caltype casa-rs does not implement yet is refused naming #979.
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.gencal(vis=small_ms.name, caltable="amp.cal", caltype="amp", parameter=[2.0])
+    assert failure.value.completion.parameter == "caltype"
+    assert "#979" in str(failure.value)
 
 
 def test_a_real_refusal_names_its_parameter(

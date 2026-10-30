@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from casars import parameters, tasks
-from casars.tasks import _catalog, _runner
+from casars.tasks import _runner
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -36,21 +36,32 @@ def test_a_wrapper_takes_casas_parameters_and_no_runner_plumbing() -> None:
         ], name
 
 
-def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -> None:
+def _capture_runs(monkeypatch) -> dict[str, Any]:
+    """Fake the runner's `run`, which a CASA-signature wrapper calls; what
+    the last call sent."""
+
     captured: dict[str, Any] = {}
 
-    def fake_run(task: str, values: dict[str, Any]) -> object:
+    def fake_run(task: str, **values: Any) -> object:
         captured.update(task=task, overrides=values)
-        return object()
+        return SimpleNamespace(value={"iterdone": 0})
 
-    monkeypatch.setattr(_catalog, "_run", fake_run)
-    tasks.imager(
+    monkeypatch.setattr(_runner, "run", fake_run)
+    return captured
+
+
+def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -> None:
+    # tclean takes CASA's signature (#931 PR 4e): an argument left at, or
+    # given, CASA's default is not sent, and CASA's value comes back.
+    captured = _capture_runs(monkeypatch)
+    assert tasks.tclean(
         vis="target.ms",
         imagename="target",
         imsize=1024,
-    )
+        niter=0,
+    ) == {"iterdone": 0}
 
-    assert captured["task"] == "imager"
+    assert captured["task"] == "tclean"
     assert captured["overrides"] == {
         "vis": "target.ms",
         "imagename": "target",
@@ -75,15 +86,9 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
     assert captured["overrides"] == {"archivefiles": archivefiles}
 
 
-def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_run(task: str, values: dict[str, Any]) -> object:
-        captured.update(task=task, overrides=values)
-        return object()
-
-    monkeypatch.setattr(_catalog, "_run", fake_run)
-    tasks.imager(
+def test_generated_tclean_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:
+    captured = _capture_runs(monkeypatch)
+    tasks.tclean(
         vis="vlass.ms",
         imagename="vlass",
         field="1107~1127,1512~1532,1542~1562",
@@ -96,35 +101,33 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
         cfcache="cf-cache/vlass",
         cf_resident_mb=256,
         usepointing=True,
-        pointingoffsetsigdev="0",
+        pointingoffsetsigdev=[0.0],
+        conjbeams=True,
         normtype="flatnoise",
         deconvolver="mtmfs",
         nterms=2,
-        scales="0,5,12",
+        scales=[0, 5, 12],
         parallel=False,
         gridprecision="f64",
     )
 
-    assert captured["task"] == "imager"
+    assert captured["task"] == "tclean"
     overrides = captured["overrides"]
     assert overrides["field"] == "1107~1127,1512~1532,1542~1562"
-    assert overrides["stokes"] == "I"
+    # CASA's defaults, stokes='I' and parallel=False, are left for the task
+    # to resolve.
+    assert "stokes" not in overrides and "parallel" not in overrides
     assert overrides["gridder"] == "awproject"
     assert overrides["cfcache"] == "cf-cache/vlass"
     assert overrides["usepointing"] is True
-    assert overrides["parallel"] is False
+    assert overrides["conjbeams"] is True
+    assert overrides["scales"] == [0, 5, 12]
     assert overrides["gridprecision"] == "f64"
 
 
-def test_generated_imager_wrapper_preserves_explicit_native_evla_source(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_run(task: str, values: dict[str, Any]) -> object:
-        captured.update(task=task, overrides=values)
-        return object()
-
-    monkeypatch.setattr(_catalog, "_run", fake_run)
-    tasks.imager(
+def test_generated_tclean_wrapper_preserves_explicit_native_evla_source(monkeypatch) -> None:
+    captured = _capture_runs(monkeypatch)
+    tasks.tclean(
         vis="vlass.ms",
         imagename="native",
         gridder="awproject",
@@ -183,10 +186,10 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
                     ast.parse(explicit, mode="eval")
                 )
 
-    imager = _annotations(task_functions["imager"])
-    assert imager["imsize"] == "int | list[int] | tuple[int, ...] | Literal['auto']"
-    assert imager["cell"] == "str | list[str] | tuple[str, ...]"
-    assert imager["write_pb"] == "bool"
+    tclean = _annotations(task_functions["tclean"])
+    assert tclean["imsize"] == "int | list[int] | tuple[int, ...]"
+    assert tclean["cell"] == "str | list[str] | tuple[str, ...]"
+    assert tclean["write_pb"] == "bool"
 
     importvla = _annotations(task_functions["importvla"])
     assert importvla["archivefiles"] == "StrPath | list[StrPath] | tuple[StrPath, ...]"

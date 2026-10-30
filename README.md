@@ -118,10 +118,11 @@ Named wrappers take CASA's parameters and run in the current directory;
 any catalog task from a draft, in a chosen workspace. Each call resolves its
 parameters through the shared Rust contracts and starts the task's own
 executable, whose log reaches `sys.stderr` as it runs. They do not call CASA.
-A task whose surface names its CASA task (the image tasks, the MeasurementSet
-and flagging tasks and `simobserve` so far) has CASA's signature and returns
-CASA's value, such as `imstat`'s statistics dictionary or `flagdata`'s
-summary. A task that refuses its parameters raises
+A task whose surface names its CASA task (every CASA-named task but `plotms`,
+`tclean` among them) has CASA's signature and returns CASA's value, such as
+`imstat`'s statistics dictionary, `flagdata`'s summary, `fluxscale`'s flux
+densities or `tclean`'s summary record. A task that refuses its
+parameters raises
 `casars.tasks.TaskParameterError`, a `ValueError`; one that does not succeed
 raises `casars.tasks.TaskExecutionError`.
 Parameters can also be loaded, edited, validated, and saved as sparse TOML
@@ -132,7 +133,7 @@ from casars import parameters, tasks
 
 p = parameters.load("profiles/target-imaging.toml", workspace="project")
 p.update(niter=20000, threshold="1mJy")
-result = tasks.run("imager", p)
+result = tasks.run("tclean", p)
 ```
 
 A task's command line (each task executable, such as `calibrate gaincal

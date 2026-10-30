@@ -192,7 +192,7 @@ def rust(binary, cases):
         request = {RUST_NAMES.get(k, k): v for k, v in values.items()}
         request.update(RUST_FIXED, vis=vis, imagename=os.path.join(out, "image"))
         with open(os.path.join(out, "request.json"), "w") as handle:
-            json.dump({"surface": "imager", "values": request}, handle)
+            json.dump({"surface": "tclean", "values": request}, handle)
         run = subprocess.run([binary, "--json-run", os.path.join(out, "request.json")],
                              capture_output=True, text=True, cwd=out)
         with open(os.path.join(out, "run.log"), "w") as handle:

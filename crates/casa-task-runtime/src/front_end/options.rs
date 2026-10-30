@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn source_options_are_mutually_exclusive() {
-        let bundle = builtin_surface_bundle("imager").unwrap();
+        let bundle = builtin_surface_bundle("tclean").unwrap();
         let error =
             TaskCommandLine::parse(&bundle, &["--defaults".into(), "--last".into()]).unwrap_err();
         assert!(error.contains("mutually exclusive"));

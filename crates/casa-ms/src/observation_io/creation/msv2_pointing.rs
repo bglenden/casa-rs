@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! An MSv2 destination's `POINTING`: the samples the plan's reads gather
-//! through the boundary ([`Observation::pointing`], [`PointingPlan::reads`]),
-//! one row per sample, in (time, antenna) order as casacore's
-//! `MSPointingColumns::pointingIndex` expects it. An MSv4 source states no
+//! An MSv2 destination's `POINTING`: the samples each input's plan's reads
+//! gather through the boundary ([`Observation::pointing`],
+//! [`PointingPlan::reads`]), one row per sample, input after input, each
+//! input's in (time, antenna) order as casacore's
+//! `MSPointingColumns::pointingIndex` expects it and its antennas the
+//! output's. An MSv4 source states no
 //! interval, so its rows have `INTERVAL` 0 (which casacore reads as covering
 //! half the gap to the antenna's next row, and casa-rs's reader as covering
 //! nothing); it holds no target, so `TARGET` repeats the direction, as MSv2
@@ -38,6 +40,10 @@ struct Row {
     terms: usize,
 }
 
+/// About the bytes a `POINTING` row holds in the created MeasurementSet's
+/// table until it is saved (#950), as the counting laws measure it.
+pub(super) const TABLE_ROW_BYTES: usize = 2_560;
+
 /// The bytes the writer holds for `samples` gathered samples of
 /// `coefficients` coefficients in all: it reserves exactly that and
 /// removes repeats in place.
@@ -47,15 +53,95 @@ pub(super) fn gathered_bytes(samples: usize, coefficients: usize) -> usize {
         .saturating_add(coefficients.saturating_mul(size_of::<f64>()))
 }
 
-/// Write `observation`'s pointing, as `plan` carries it, into `ms`'s
-/// `POINTING`. Reads that hold the same sample (an MSv4's datasets each
-/// hold their antennas' pointing) write it once: a sample is the k-th at
-/// its antenna and time, and different samples there are refused.
+/// One input's pointing: its opening, the reads its plan carries, and the
+/// output's `ANTENNA` row of each of its antennas.
+pub(super) struct Pointed<'a> {
+    pub(super) observation: &'a dyn Observation,
+    pub(super) plan: &'a PointingPlan,
+    pub(super) antennas: &'a [i32],
+}
+
+/// One input's gathered rows and their coefficients.
+struct Gathered {
+    rows: Vec<Row>,
+    coefficients: Vec<f64>,
+}
+
+/// Write `inputs`' pointing, as their plans carry it, into `ms`'s
+/// `POINTING`, input after input, each input's antennas as the output
+/// numbers them. Reads of one input that hold the same sample (an MSv4's
+/// datasets each hold their antennas' pointing) write it once: a sample is
+/// the k-th at its antenna and time, and different samples there are
+/// refused. Samples of different inputs are all written. Every input's
+/// directions must be in one frame.
 pub(super) fn write(
     ms: &mut MeasurementSet,
-    observation: &dyn Observation,
-    plan: &PointingPlan,
+    inputs: &[Pointed<'_>],
 ) -> Result<(), ObservationError> {
+    let mut gathered = Vec::with_capacity(inputs.len());
+    let mut frame = None;
+    for input in inputs {
+        let (own, own_frame) = gather_input(input)?;
+        if let Some(own_frame) = own_frame {
+            if frame.is_some_and(|known| known != own_frame) {
+                return Err(ObservationError::Unsupported {
+                    what: "writing MSv2 pointing of inputs in different frames",
+                });
+            }
+            frame = Some(own_frame);
+        }
+        gathered.push(own);
+    }
+    let Some(frame) = frame else {
+        return Ok(());
+    };
+    let terms = gathered
+        .iter()
+        .flat_map(|own| own.rows.iter().map(|row| row.terms))
+        .max()
+        .unwrap_or(1);
+    let table = subtable_mut(ms, SubtableId::Pointing).map_err(storage)?;
+    if frame != DirectionRef::J2000 {
+        for column in ["DIRECTION", "TARGET"] {
+            TableMeasDesc::new_fixed(column, MeasureType::Direction, frame.as_str())
+                .write(table)
+                .map_err(storage)?;
+        }
+    }
+    for own in &gathered {
+        for row in &own.rows {
+            // `[2, terms]`, each axis's terms padded to the most any row has.
+            let mut direction = Vec::with_capacity(2 * terms);
+            for axis in 0..2 {
+                let start = row.start + axis * row.terms;
+                direction.extend_from_slice(&own.coefficients[start..start + row.terms]);
+                direction.extend(std::iter::repeat_n(0.0, terms - row.terms));
+            }
+            let direction = f64_array(&direction, vec![2, terms]);
+            let values = row_from_defs(
+                schema::pointing::REQUIRED_COLUMNS,
+                &[
+                    ("ANTENNA_ID", i(row.antenna.0 as i32)),
+                    ("TIME", f(f64::from_bits(row.time_bits))),
+                    ("INTERVAL", f(row.interval_s)),
+                    ("NAME", s("")),
+                    ("NUM_POLY", i(terms as i32 - 1)),
+                    ("TIME_ORIGIN", f(row.origin_s)),
+                    ("DIRECTION", direction.clone()),
+                    ("TARGET", direction),
+                    ("TRACKING", b(true)),
+                ],
+            );
+            table.add_row(values).map_err(storage)?;
+        }
+    }
+    Ok(())
+}
+
+/// One input's rows, in (time, antenna) order with its repeats removed and
+/// its antennas the output's, and their frame (`None` for no pointing).
+fn gather_input(input: &Pointed<'_>) -> Result<(Gathered, Option<DirectionRef>), ObservationError> {
+    let (observation, plan) = (input.observation, input.plan);
     let catalogue = observation.catalogue();
     let (samples, held) = plan.gathered();
     let mut rows = Vec::with_capacity(samples);
@@ -75,9 +161,6 @@ pub(super) fn write(
         let entry = catalogue.partition(read.partition);
         gather(&series, entry, &mut rows, &mut coefficients);
     }
-    let Some(frame) = frame else {
-        return Ok(());
-    };
     rows.sort_by(|a, b| {
         f64::from_bits(a.time_bits)
             .total_cmp(&f64::from_bits(b.time_bits))
@@ -100,41 +183,10 @@ pub(super) fn write(
         kept += 1;
     }
     rows.truncate(kept);
-    let terms = rows.iter().map(|row| row.terms).max().unwrap_or(1);
-    let table = subtable_mut(ms, SubtableId::Pointing).map_err(storage)?;
-    if frame != DirectionRef::J2000 {
-        for column in ["DIRECTION", "TARGET"] {
-            TableMeasDesc::new_fixed(column, MeasureType::Direction, frame.as_str())
-                .write(table)
-                .map_err(storage)?;
-        }
+    for row in &mut rows {
+        row.antenna = AntennaId(input.antennas[row.antenna.0 as usize] as u32);
     }
-    for row in rows {
-        // `[2, terms]`, each axis's terms padded to the most any row has.
-        let mut direction = Vec::with_capacity(2 * terms);
-        for axis in 0..2 {
-            let own = row.start + axis * row.terms;
-            direction.extend_from_slice(&coefficients[own..own + row.terms]);
-            direction.extend(std::iter::repeat_n(0.0, terms - row.terms));
-        }
-        let direction = f64_array(&direction, vec![2, terms]);
-        let values = row_from_defs(
-            schema::pointing::REQUIRED_COLUMNS,
-            &[
-                ("ANTENNA_ID", i(row.antenna.0 as i32)),
-                ("TIME", f(f64::from_bits(row.time_bits))),
-                ("INTERVAL", f(row.interval_s)),
-                ("NAME", s("")),
-                ("NUM_POLY", i(terms as i32 - 1)),
-                ("TIME_ORIGIN", f(row.origin_s)),
-                ("DIRECTION", direction.clone()),
-                ("TARGET", direction),
-                ("TRACKING", b(true)),
-            ],
-        );
-        table.add_row(values).map_err(storage)?;
-    }
-    Ok(())
+    Ok((Gathered { rows, coefficients }, frame))
 }
 
 /// Add `series`' samples (in `entry`'s time system) to `rows`, their

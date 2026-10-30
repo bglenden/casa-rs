@@ -3,17 +3,16 @@
 //! [`CalibrationTaskRequest`].
 //!
 //! The front end has resolved every value and checked it against its
-//! concept; these reads give each workflow the meaning the calibration
-//! parameters carry: comma-separated table and field lists, the
+//! concept; these reads give each `calibrate` workflow the meaning the
+//! calibration parameters carry: comma-separated table and field lists, the
 //! semicolon-separated per-table chain lists aligned to `gaintables`, and
-//! CASA's selection strings. On the `calibrate` surface a workflow reads the
-//! parameters the contract's provider projection emits for its `mode`, and
-//! no others; a CASA-named surface reads every parameter it declares.
+//! CASA's selection strings. A workflow reads the parameters the contract's
+//! provider projection emits for its `mode`, and no others. The CASA-named
+//! surfaces take CASA's own parameters, read by [`super::casa_read`].
 
 use std::path::PathBuf;
 
 use casa_ms::MsSelection;
-use casa_provider_contracts::DefaultSpec;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use crate::{
@@ -56,7 +55,10 @@ pub(super) fn report(task: &TaskInvocation<'_>) -> Result<Report, TaskFailure> {
 pub(super) fn task_request(
     task: &TaskInvocation<'_>,
 ) -> Result<CalibrationTaskRequest, TaskFailure> {
-    Ok(match mode(task)?.as_str() {
+    if task.surface() != "calibrate" {
+        return super::casa_read::task_request(task);
+    }
+    Ok(match task.required_text("mode")?.as_str() {
         "apply" => CalibrationTaskRequest::ExecuteApply(apply(task)?),
         "summary" => CalibrationTaskRequest::Summary(summary(task)?),
         "stats" => CalibrationTaskRequest::Stats(stats(task)?),
@@ -78,25 +80,6 @@ pub(super) fn task_request(
             );
         }
     })
-}
-
-/// The workflow `task` runs: `calibrate`'s `mode`, or the one a CASA-named
-/// surface stands for.
-fn mode(task: &TaskInvocation<'_>) -> Result<String, TaskFailure> {
-    let fixed = match task.surface() {
-        "calibrate" => return task.required_text("mode"),
-        "applycal" => "apply",
-        "gaincal" => "solve_gain",
-        "bandpass" => "solve_bandpass",
-        "fluxscale" => "fluxscale",
-        "gencal" => "gencal",
-        other => {
-            return Err(TaskFailure::validation(format!(
-                "calibrate runs no surface {other:?}"
-            )));
-        }
-    };
-    Ok(fixed.to_string())
 }
 
 fn apply(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
@@ -147,7 +130,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         combine: optional_parsed(task, "gain_combine", parse_gain_solve_combine)?,
         refant: parse_refant_selector(&task.required_text("refant")?),
         prior_calibration_tables: calibration_tables(task, Chain::Solve)?,
-        parang: declared_flag(task, "parang")?,
+        parang: task.flag("parang")?,
         model_source: parsed(task, "gain_model_source", parse_gain_solve_model_source)?,
         normalize_average_amplitude: task.flag("solnorm")?,
         min_snr,
@@ -157,28 +140,22 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
 }
 
 fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskFailure> {
-    // The bandpass surface takes CASA's `minsnr`, which the native solver
-    // does not apply yet; a value other than the default is refused, not
-    // ignored. `calibrate`'s `min_snr` is its gain solve's.
-    if task.surface() == "bandpass" && !takes_default(task, "min_snr") {
-        return Err(TaskFailure::validation(
-            "bandpass does not apply min_snr yet; leave it at its default",
-        )
-        .at("min_snr"));
-    }
     Ok(SolveBandpassTaskRequest {
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("out_table")?),
         refant: parse_refant_selector(&task.required_text("refant")?),
         prior_calibration_tables: calibration_tables(task, Chain::Solve)?,
-        parang: declared_flag(task, "parang")?,
+        parang: task.flag("parang")?,
         combine: optional_parsed(task, "bandpass_combine", parse_bandpass_combine)?,
         band_type: parsed(task, "bandtype", parse_bandpass_type)?,
         normalize_average_amplitude: task.flag("solnorm")?,
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,
+        // The native bandpass solves every antenna with a baseline and
+        // keeps every solution, as it always has.
+        cuts: None,
     })
 }
 
@@ -270,35 +247,8 @@ fn calibration_tables(
     }
 }
 
-/// `name`'s flag, or false on a surface that does not declare it, as
-/// gaincal and bandpass leave out `parang`.
-fn declared_flag(task: &TaskInvocation<'_>, name: &str) -> Result<bool, TaskFailure> {
-    let declared = task
-        .session()
-        .bundle()
-        .surface
-        .bindings()
-        .iter()
-        .any(|binding| binding.name == name);
-    if declared { task.flag(name) } else { Ok(false) }
-}
-
-/// Whether `name` holds its binding's default.
-fn takes_default(task: &TaskInvocation<'_>, name: &str) -> bool {
-    task.session()
-        .bundle()
-        .surface
-        .bindings()
-        .iter()
-        .find(|binding| binding.name == name)
-        .is_some_and(|binding| match &binding.default {
-            DefaultSpec::Literal { value } => task.value(name) == Some(value),
-            _ => false,
-        })
-}
-
 /// `name`, a non-negative integer.
-fn count(task: &TaskInvocation<'_>, name: &str) -> Result<usize, TaskFailure> {
+pub(super) fn count(task: &TaskInvocation<'_>, name: &str) -> Result<usize, TaskFailure> {
     let value = task.integer(name)?;
     usize::try_from(value).map_err(|_| {
         TaskFailure::validation(format!(
@@ -455,7 +405,7 @@ fn parse_bandpass_combine(value: &str) -> Result<BandpassSolveCombine, String> {
     Ok(combine)
 }
 
-fn parse_refant_selector(value: &str) -> RefAntSelector {
+pub(super) fn parse_refant_selector(value: &str) -> RefAntSelector {
     match value.parse::<i32>() {
         Ok(id) => RefAntSelector::AntennaId(id),
         Err(_) => RefAntSelector::AntennaName(value.to_string()),

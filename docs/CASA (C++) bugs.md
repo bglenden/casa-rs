@@ -74,6 +74,13 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
+Concatenation behaviours casa-rs does not follow:
+[a merged source record's time](#concat-leaves-a-merged-source-rows-time-unchanged),
+[source equivalence decided by its last column](#concats-source-equivalence-lets-its-last-optional-column-decide),
+[merged sources' numbering](#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle),
+[observation IDs after removing duplicates](#concat-leaves-gaps-in-observation-ids-after-removing-duplicates),
+[an input without states](#concat-drops-every-state-when-one-input-has-none),
+[writing into its inputs](#concat-writes-into-the-measurementsets-it-appends).
 ATM data errors casa-rs corrects (`tools/atmosphere/atm-corrections.patch`):
 [HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
 [sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
@@ -104,6 +111,7 @@ Flagging behaviours casa-rs does not follow:
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
+[a FITS date's time scale](#importfits-reads-every-fits-date-as-utc),
 [`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
@@ -2400,6 +2408,98 @@ project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.
 
+## `concat` leaves a merged SOURCE row's TIME unchanged
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`:
+  `sourceCol.interval().put(j, newTime)` before
+  `sourceCol.interval().put(j, newInterval)`)
+
+When two `SOURCE` rows of one window are equivalent, `updateSource` keeps the
+first and widens its validity to span both: it computes the union's centre
+and length, then writes the centre into `INTERVAL` and overwrites it with the
+length. `TIME` is never written, so the kept row is valid over an interval
+centred on its old time, which misses the end of the other row's validity.
+casa-rs centres the record on the union
+(`casa_observation::merge`, `sources.rs`, `widen`).
+
+## `concat`'s source equivalence lets its last optional column decide
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc`
+  (`sourceRowsEquivalent`)
+
+`sourceRowsEquivalent` compares the required columns with `&&`, then tests
+each optional column present (`POSITION`, `PULSAR_ID`, `REST_FREQUENCY`,
+`SYSVEL`, `TRANSITION`) by assigning its result to `areEquivalent`, so the last
+optional column tested decides: two rows with different rest frequencies but
+equal transitions are equivalent, and their lines are merged into one.
+casa-rs requires every member to be equal (an optional one stated by both or
+by neither).
+
+## `concat` renumbers merged sources so that one can split and fields dangle
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`, "renumber
+  consecutively"; `copyField`, `newSourceIndex2_p`)
+
+After removing redundant `SOURCE` rows, `updateSource` renumbers source IDs
+row by row: a row whose ID exceeds the count so far gets the next number. A
+source of several rows (one per window) after a removed ID therefore gets one
+number for its first row and another for the next, splitting it. The IDs it
+changes are applied to the fields `copyField` appends, not to the fields
+already in the output, which can then name a source ID no row has. casa-rs
+numbers merged sources in the order they first appear, every record of a
+source keeping its number, and maps every field
+(`casa_observation::merge`, `sources.rs`, `regroup`).
+
+## `concat` leaves gaps in observation IDs after removing duplicates
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`copyObservation`)
+
+`copyObservation` appends the incoming `OBSERVATION` rows, removes each row
+equivalent to an earlier one, and maps it to the last earlier equivalent. It
+does not shift the IDs of the rows after a removed one, as `copyProcessor`
+does with `removedSoFar`, so an input of several observations can have its
+rows mapped past the end of the table, or onto another observation, once a
+duplicate is removed. casa-rs maps each duplicate to its first equivalent and
+numbers the distinct observations consecutively, for processors and
+observations alike (`casa_observation::merge`, `distinct`).
+
+## `concat` drops every state when one input has none
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`concatenate`, "merge
+  STATE")
+
+When one of the two MeasurementSets has no `STATE` rows, `concatenate` writes
+no states at all: it deletes the first MeasurementSet's `STATE` rows and sets
+every row's `STATE_ID` to -1, so the intents of the input that had them are
+lost. casa-rs keeps them: the rows of an input without states have
+`STATE_ID` -1, and the others keep their merged states
+(`casa_observation::merge`, `states`).
+
+## `concat` writes into the MeasurementSets it appends
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casatools `src/tools/ms/ms_cmpt.cc` (`ms::concatenate`,
+  line 6497)
+
+After appending a MeasurementSet, `ms::concatenate` writes a `HISTORY` row
+("… appended to …", with its parameters) into the appended MeasurementSet,
+an input, rather than into the output; the inputs' own `HISTORY` is never
+copied. A task that reads several MeasurementSets to make another should
+leave them as they were. casa-rs never writes an input: the output's
+`HISTORY` holds what the creating task records of itself
+(`CreationOptions::history`), and the inputs' `HISTORY` is a declared loss.
+
 ## `tclean` reads a `uvtaper` with no unit as radians
 
 - Date noted: 2026-10-28
@@ -2496,6 +2596,25 @@ reads the input's world values at the pixels it was cut from. CASA's
 `imsubimage` ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
+
+## `importfits` reads every FITS date as UTC
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1017)
+- Affected code: casacore `coordinates/Coordinates/FITSCoordinateUtil.cc`
+  (`getObsInfo`, which reads `TIMESYS` from the header record, and the WCS
+  date wcslib holds)
+
+`exportfits` writes an image's observation date in the epoch's own time
+scale, `DATE-OBS` with `TIMESYS` naming the scale (`ObsInfo::toFITS`).
+`importfits` gives the date back with the same calendar value but labelled
+UTC, whatever `TIMESYS` says. An image observed at 2020-05-31 12:00 TAI
+exported by CASA 6.7.6 with `TIMESYS = 'TAI'` imports at 2020-05-31 12:00
+UTC, 37 seconds later. Where the scale is lost was not pinned down:
+`getObsInfo` reads `TIMESYS` from the header record and the date from
+wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
+when it names none (`casa_coordinates::fits::from_fits_header`), so the
+round trip keeps the date.
 
 ## `feather` fails on an image whose direction is not on its first two axes
 

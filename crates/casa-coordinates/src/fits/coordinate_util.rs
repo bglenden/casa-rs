@@ -25,7 +25,8 @@
 //! | `EQUINOX` | Equinox year |
 //! | `SPECSYS` | Spectral reference frame |
 //! | `RESTFRQ` | Rest frequency in Hz |
-//! | `TELESCOP`, `OBSERVER`, `DATE-OBS` | Observation metadata |
+//! | `TELESCOP`, `OBSERVER` | Observation metadata |
+//! | `DATE-OBS`, `TIMESYS` (`MJD-OBS` read first) | Observation date and its time scale |
 //!
 //! Corresponds to C++ `FITSCoordinateUtil`.
 
@@ -35,6 +36,7 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::header::{FitsHeader, FitsValue};
+use super::obs_date::{fits_date, obs_epoch};
 use crate::CoordinateSystem;
 use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
@@ -119,10 +121,9 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
         h.set("OBSERVER", FitsValue::String(obs.observer.clone()));
     }
     if let Some(ref epoch) = obs.date {
-        // Store as ISO date string (simplified: MJD as float in DATE-OBS
-        // is non-standard, so we emit a placeholder).
-        let mjd = epoch.value().as_mjd();
-        h.set("DATE-OBS", FitsValue::String(format!("MJD {mjd:.10}")));
+        let (date, timesys) = fits_date(epoch);
+        h.set("DATE-OBS", FitsValue::String(date));
+        h.set("TIMESYS", FitsValue::String(timesys));
     }
 
     h
@@ -387,6 +388,11 @@ pub fn from_fits_header(
     if let Some(obs_name) = header.get_string("OBSERVER") {
         obs.observer = obs_name.to_string();
     }
+    obs.date = obs_epoch(
+        header.get_float("MJD-OBS"),
+        header.get_string("DATE-OBS"),
+        header.get_string("TIMESYS"),
+    );
     *cs.obs_info_mut() = obs;
 
     Ok(cs)
@@ -740,7 +746,12 @@ mod tests {
         ]);
         cs.add_coordinate(stokes);
 
-        let obs = ObsInfo::new("ALMA").with_observer("Test Observer");
+        let obs = ObsInfo::new("ALMA")
+            .with_observer("Test Observer")
+            .with_date(casa_types::measures::epoch::MEpoch::from_mjd(
+                59_000.5,
+                casa_types::measures::EpochRef::TAI,
+            ));
         *cs.obs_info_mut() = obs;
 
         cs
@@ -791,9 +802,12 @@ mod tests {
         let w = stokes.to_world(&[3.0]).unwrap();
         assert_eq!(w[0] as i32, 4);
 
-        // Obs info
+        // Obs info, with the date in its own time scale (#1017).
         assert_eq!(cs2.obs_info().telescope, "ALMA");
         assert_eq!(cs2.obs_info().observer, "Test Observer");
+        let date = cs2.obs_info().date.as_ref().expect("observation date");
+        assert_eq!(date.refer(), casa_types::measures::EpochRef::TAI);
+        assert_eq!(date.value().as_mjd(), 59_000.5);
     }
 
     #[test]

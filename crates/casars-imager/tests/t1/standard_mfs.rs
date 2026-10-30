@@ -176,7 +176,7 @@ fn standard_mfs_facets_recover_the_analytic_sky() {
 #[test]
 fn standard_mfs_multiscale_recovers_the_extended_flux() {
     let mut multiscale = controls("multiscale");
-    multiscale["scales"] = json!("0,6,12");
+    multiscale["scales"] = json!([0, 6, 12]);
     let (_, _, products) = assert_recovers_the_point("standard-mfs-multiscale", multiscale);
     // The 41-pixel box holds the Gaussian's 0.5 Jy to 1e-7. Cleaning stops
     // at 5 mJy/beam, so up to ~30 mJy (six beams of source at the threshold)

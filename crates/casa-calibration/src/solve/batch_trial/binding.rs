@@ -508,6 +508,8 @@ pub(super) fn write_gain_table(
             .iter()
             .map(|&id| window(id))
             .collect(),
+        selected_data: crate::SelectedData::default(),
+        solve_stats: crate::SolveStats::default(),
     };
     write_gain_caltable_named(
         &namespace.subtables,

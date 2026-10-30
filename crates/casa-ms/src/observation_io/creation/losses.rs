@@ -3,16 +3,20 @@
 //! anything is written.
 //!
 //! The inventory is of whole tables and columns: an MSv2's `SIGMA`,
-//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s and `PROCESSOR_ID`s
-//! other than 0, a `PROCESSOR` of more than one row, `STATE` rows that say
-//! more than their intents, `FEED` receptors that vary in time (of which
-//! the catalogue keeps the last row, as casacore's `MSIter` does), MAIN
-//! columns outside the boundary's roles and subtables the catalogue does
-//! not carry (system calibration, weather, flag commands, history, Doppler,
-//! frequency offsets, sources, and any further subtable a keyword names);
-//! an MSv4's sub-datasets and main-dataset variables the writer does not
-//! write; and in either the data groups not selected; and, into an MSv4,
-//! antennas no partition's baselines name. What pointing carries is
+//! `FLAG_ROW` flags, `FLAG_CATEGORY` cells, `ARRAY_ID`s other than 0,
+//! `FEED` receptors that vary in time (of which the catalogue keeps the
+//! last row, as casacore's `MSIter` does), MAIN columns outside the
+//! boundary's roles and subtables the catalogue does not carry (system
+//! calibration, weather, flag commands, history, Doppler, frequency
+//! offsets, and any further subtable a keyword names), and into an MSv4,
+//! which holds less of them than the catalogue, its `SOURCE` rows,
+//! `PROCESSOR_ID`s other than 0, a `PROCESSOR` of more than one row and
+//! `STATE` rows that say more than their intents; an MSv4's sub-datasets
+//! and main-dataset variables the writer does not write; and in either the
+//! data groups not selected; and, into an MSv4, antennas no partition's
+//! baselines name. What an MSv2 destination's subtables write as MSv2's
+//! default is found by writing them ([`super::msv2_tables::rehearse`]).
+//! What pointing carries is
 //! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried, but an ephemeris
@@ -24,16 +28,20 @@
 use std::path::Path;
 
 use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
+use casa_tables::{
+    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
+};
 use casa_types::Value;
 
+use super::msv2_rows::sigma as derived_sigma;
 use super::{Loss, LossKind};
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
 
-/// The data groups to convert: `requested`, each present in every
-/// partition, or every group of the source with `base` first.
-pub(super) fn selected_groups(
+/// The data groups to convert into an MSv4: `requested`, each present in
+/// every partition, or every group of the source with `base` first.
+#[cfg(feature = "msv4")]
+pub(crate) fn selected_groups(
     catalogue: &Catalogue,
     requested: Option<&[String]>,
 ) -> Result<Vec<String>, ObservationError> {
@@ -81,7 +89,7 @@ pub(super) fn selected_groups(
 
 /// The store a conversion creates, which decides what it must refuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Destination {
+pub(crate) enum Store {
     /// An MSv2, which writes every catalogue field.
     Msv2,
     /// An MSv4, which writes the fields its datasets name.
@@ -90,11 +98,11 @@ pub(super) enum Destination {
 
 /// Everything `source` holds that converting `groups` into `destination`
 /// would not carry.
-pub(super) fn inventory(
+pub(crate) fn inventory(
     source: &Path,
     catalogue: &Catalogue,
     groups: &[String],
-    destination: Destination,
+    destination: Store,
 ) -> Result<Vec<Loss>, ObservationError> {
     let mut losses = Vec::new();
     for entry in &catalogue.partitions {
@@ -107,6 +115,10 @@ pub(super) fn inventory(
     }
     if source.join("zarr.json").is_file() {
         msv4(source, &mut losses)?;
+        // An MSv4 holds no sigma: an MSv2 destination states one.
+        if destination == Store::Msv2 {
+            losses.push(Loss::SigmaDerived);
+        }
     } else {
         msv2(source, catalogue, destination, &mut losses)?;
     }
@@ -115,10 +127,27 @@ pub(super) fn inventory(
     Ok(losses)
 }
 
+/// The most [`inventory`] holds reading an MSv2 of `catalogue`: a block of
+/// MAIN's row keys, and a block of `FLAG_CATEGORY` cells of three
+/// categories (casacore's `FLAG_CMD`, `ORIGINAL` and `USER`) of its widest
+/// partition.
+pub(super) fn scan_bytes(catalogue: &Catalogue) -> usize {
+    let keys = ROW_CHUNK * (size_of::<usize>() + size_of::<bool>() + 2 * size_of::<i32>());
+    let widest = |each: fn(&casa_observation::PartitionEntry) -> usize| {
+        catalogue.partitions.iter().map(each).max().unwrap_or(0)
+    };
+    let cell = widest(|entry| entry.frequencies_hz.len() * entry.correlations.len());
+    let categories = CATEGORY_CHUNK * (3 * cell + size_of::<Option<casa_types::ArrayValue>>());
+    let correlations = widest(|entry| entry.correlations.len());
+    let sigmas = SIGMA_CHUNK * (size_of::<usize>() + 2 * correlations * size_of::<f32>());
+    keys.max(categories).max(sigmas)
+}
+
 /// The antennas of `catalogue` that no partition's baselines name, as a
 /// loss when there are any: an MSv4 dataset holds only its baselines'
 /// antennas.
-pub(super) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
+#[cfg(feature = "msv4")]
+pub(crate) fn unused_antennas(catalogue: &Catalogue) -> Option<Loss> {
     let mut named = vec![false; catalogue.antennas.len()];
     for baseline in catalogue
         .partitions
@@ -155,7 +184,7 @@ pub(super) fn extrapolated(ephemeris: &FieldEphemeris) -> Option<Loss> {
 }
 
 /// Refuse the first of `losses` whose kind is not in `accept`.
-pub(super) fn refuse_unaccepted(
+pub(crate) fn refuse_unaccepted(
     losses: &[Loss],
     accept: &[LossKind],
 ) -> Result<(), ObservationError> {
@@ -206,7 +235,6 @@ const UNCARRIED_SUBTABLES: &[SubtableId] = &[
     SubtableId::History,
     SubtableId::Doppler,
     SubtableId::FreqOffset,
-    SubtableId::Source,
 ];
 
 /// Rows of `FLAG_ROW` read at a time.
@@ -215,7 +243,7 @@ const ROW_CHUNK: usize = 1 << 18;
 fn msv2(
     source: &Path,
     catalogue: &Catalogue,
-    destination: Destination,
+    destination: Store,
     losses: &mut Vec<Loss>,
 ) -> Result<(), ObservationError> {
     let ms = crate::MeasurementSet::open_retained_read(source).map_err(storage)?;
@@ -232,8 +260,22 @@ fn msv2(
                 .collect()
         })
         .unwrap_or_default();
+    if columns.iter().any(|name| name == "FLOAT_DATA") && !columns.iter().any(|name| name == "DATA")
+    {
+        return Err(ObservationError::Unsupported {
+            what: "converting single-dish data (FLOAT_DATA without DATA)",
+        });
+    }
+    let spectral = columns.iter().any(|name| name == "WEIGHT_SPECTRUM");
     for column in &columns {
         match column.as_str() {
+            "SIGMA" if destination == Store::Msv2 => {
+                // An MSv2 destination derives SIGMA from the weights it
+                // writes: from WEIGHT_SPECTRUM where it is held.
+                if spectral || !sigma_follows_weight(main)? {
+                    losses.extend([Loss::Sigma, Loss::SigmaDerived]);
+                }
+            }
             "SIGMA" | "SIGMA_SPECTRUM" => losses.push(Loss::Sigma),
             "FLAG_CATEGORY" => {
                 if flag_categories_held(main)? {
@@ -244,12 +286,15 @@ fn msv2(
             _ => {}
         }
     }
-    if columns.iter().any(|name| name == "WEIGHT_SPECTRUM") {
+    if destination == Store::Msv2 && !columns.iter().any(|name| name == "SIGMA") {
+        losses.push(Loss::SigmaDerived);
+    }
+    if spectral {
         losses.push(Loss::Column(
             "WEIGHT (the row summary beside WEIGHT_SPECTRUM)".to_string(),
         ));
     }
-    main_keys(main, losses)?;
+    main_keys(main, destination, losses)?;
     if crate::observation_io::msv2::catalogue::read_feeds(&ms)?
         .varying()
         .is_some()
@@ -260,14 +305,107 @@ fn msv2(
                 .to_string(),
         ));
     }
-    subtables(&ms, losses)
+    subtables(&ms, destination, losses)?;
+    if destination == Store::Msv2 {
+        super::preservation::inventory(&ms, losses);
+        unnamed_feeds(&ms, catalogue, losses)?;
+    }
+    Ok(())
+}
+
+/// Rows of `WEIGHT` and `SIGMA` compared at a time.
+const SIGMA_CHUNK: usize = 1 << 16;
+
+/// Whether every stored `SIGMA` is what an MSv2 destination derives from
+/// `WEIGHT` (`1/√WEIGHT`, and -1 where the weight is not positive) to
+/// within one unit in the last place, so that deriving it loses nothing.
+/// A MAIN whose cells cannot be read together (cells of several shapes) is
+/// taken as not following.
+fn sigma_follows_weight(main: &casa_tables::Table) -> Result<bool, ObservationError> {
+    let rows = main.row_count();
+    let weight = main.column_accessor("WEIGHT").map_err(storage)?;
+    let sigma = main.column_accessor("SIGMA").map_err(storage)?;
+    let (mut weights, mut sigmas) = (Vec::new(), Vec::new());
+    for start in (0..rows).step_by(SIGMA_CHUNK) {
+        let chunk: Vec<usize> = (start..rows.min(start + SIGMA_CHUNK)).collect();
+        weights.clear();
+        sigmas.clear();
+        let read = weight
+            .fill_array_cells_1d_typed_uncached(
+                &chunk,
+                SelectedArray1DCellsMut::Float32(&mut weights),
+            )
+            .and_then(|_| {
+                sigma.fill_array_cells_1d_typed_uncached(
+                    &chunk,
+                    SelectedArray1DCellsMut::Float32(&mut sigmas),
+                )
+            });
+        if read.is_err() || weights.len() != sigmas.len() {
+            return Ok(false);
+        }
+        if weights
+            .iter()
+            .zip(&sigmas)
+            .any(|(weight, sigma)| !within_one_ulp(*sigma, derived_sigma(*weight)))
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `a` and `b` are equal or adjacent `f32`s.
+fn within_one_ulp(a: f32, b: f32) -> bool {
+    a == b
+        || (a.is_finite()
+            && b.is_finite()
+            && a.is_sign_positive() == b.is_sign_positive()
+            && a.to_bits().abs_diff(b.to_bits()) <= 1)
+}
+
+/// The `FEED` rows of antennas no partition's baselines name, a table loss:
+/// an MSv2 destination writes the feeds its partitions' receptors need.
+fn unnamed_feeds(
+    ms: &crate::MeasurementSet,
+    catalogue: &Catalogue,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
+    let mut named = vec![false; catalogue.antennas.len()];
+    for baseline in catalogue
+        .partitions
+        .iter()
+        .flat_map(|entry| &entry.baselines)
+    {
+        for antenna in [baseline.antenna1, baseline.antenna2] {
+            if let Some(named) = named.get_mut(antenna.0 as usize) {
+                *named = true;
+            }
+        }
+    }
+    let feeds = ms.feed().map_err(storage)?;
+    let mut unnamed = 0;
+    for row in 0..feeds.row_count() {
+        let antenna = feeds.i32(row, "ANTENNA_ID").map_err(storage)?;
+        let used = usize::try_from(antenna)
+            .ok()
+            .and_then(|antenna| named.get(antenna).copied())
+            .unwrap_or(false);
+        unnamed += usize::from(!used);
+    }
+    if unnamed > 0 {
+        losses.push(Loss::Table(format!(
+            "FEED rows of antennas no baseline names ({unnamed})"
+        )));
+    }
+    Ok(())
 }
 
 /// The fields `destination` writes: every `FIELD` row into an MSv2, and
 /// into an MSv4 those `catalogue`'s partitions name (an MSv2 catalogue's
 /// fields are its `FIELD` rows).
-fn written_fields(catalogue: &Catalogue, destination: Destination, rows: usize) -> Vec<bool> {
-    let mut named = vec![destination == Destination::Msv2; rows];
+fn written_fields(catalogue: &Catalogue, destination: Store, rows: usize) -> Vec<bool> {
+    let mut named = vec![destination == Store::Msv2; rows];
     for field in catalogue.partitions.iter().flat_map(|entry| &entry.fields) {
         if let Some(named) = named.get_mut(field.0 as usize) {
             *named = true;
@@ -282,7 +420,7 @@ fn written_fields(catalogue: &Catalogue, destination: Destination, rows: usize) 
 fn refuse_polynomial_fields(
     ms: &crate::MeasurementSet,
     catalogue: &Catalogue,
-    destination: Destination,
+    destination: Store,
 ) -> Result<(), ObservationError> {
     let fields = ms.field().map_err(storage)?;
     let named = written_fields(catalogue, destination, fields.row_count());
@@ -306,7 +444,7 @@ fn ephemeris_tables(
     source: &Path,
     ms: &crate::MeasurementSet,
     catalogue: &Catalogue,
-    destination: Destination,
+    destination: Store,
     losses: &mut Vec<Loss>,
 ) -> Result<(), ObservationError> {
     let ids = crate::ephemeris::field_ephemeris_ids(ms).map_err(storage)?;
@@ -318,7 +456,7 @@ fn ephemeris_tables(
         .collect();
     followed.sort_unstable();
     followed.dedup();
-    if !followed.is_empty() && destination == Destination::Msv4 {
+    if !followed.is_empty() && destination == Store::Msv4 {
         losses.push(Loss::Column(
             "FIELD TIME of fields that follow an ephemeris (when an image without a phase \
              centre is centred on the body)"
@@ -357,7 +495,7 @@ fn ephemeris_tables(
             .map(|field| field.name.clone())
             .filter(|keyword| {
                 !super::msv2_ephemeris::KEYWORDS.contains(&keyword.as_str())
-                    || (destination == Destination::Msv4 && keyword == "NAME")
+                    || (destination == Store::Msv4 && keyword == "NAME")
             })
             .collect();
         keywords.sort();
@@ -371,11 +509,16 @@ fn ephemeris_tables(
     Ok(())
 }
 
-/// MAIN's keys the destination does not hold: a set `FLAG_ROW`, and an
-/// `ARRAY_ID` or `PROCESSOR_ID` above the 0 an MSv2 destination writes (an
-/// MSv4 has neither), read in row chunks. A negative id names nothing:
+/// MAIN's keys the destination does not hold: a set `FLAG_ROW`, an
+/// `ARRAY_ID` above the 0 an MSv2 destination writes, and into an MSv4,
+/// which has neither, a `PROCESSOR_ID` above 0 (an MSv2 destination writes
+/// each partition's), read in row chunks. A negative id names nothing:
 /// casacore's UVFITS filler writes `PROCESSOR_ID` -1 in every row.
-fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+fn main_keys(
+    main: &casa_tables::Table,
+    destination: Store,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
     let rows = main.row_count();
     let (mut flags, mut arrays, mut processors) = (Vec::new(), Vec::new(), Vec::new());
     let (mut flagged, mut array, mut processor) = (false, false, false);
@@ -413,23 +556,47 @@ fn main_keys(main: &casa_tables::Table, losses: &mut Vec<Loss>) -> Result<(), Ob
     if array {
         losses.push(Loss::Column("ARRAY_ID".to_string()));
     }
-    if processor {
+    if processor && destination == Store::Msv4 {
         losses.push(Loss::Column("PROCESSOR_ID".to_string()));
     }
     Ok(())
 }
 
 /// Subtables, and subtable content, the destination does not hold: the
-/// uncarried subtables with rows, any further table a keyword names, a
-/// `PROCESSOR` of more than one row or of another type than a correlator
-/// (an MSv2 destination writes one correlator), and `STATE` rows that say
-/// more than their `OBS_MODE` (an MSv2 destination writes `SIG`, and no
-/// sub-scan, calibration or load).
-fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), ObservationError> {
+/// uncarried subtables with rows, any further table a keyword names, and
+/// into an MSv4 (an MSv2 destination writes them from the catalogue)
+/// `SOURCE` rows, a `PROCESSOR` of more than one row or of another type
+/// than a correlator, and `STATE` rows that say more than their `OBS_MODE`.
+fn subtables(
+    ms: &crate::MeasurementSet,
+    destination: Store,
+    losses: &mut Vec<Loss>,
+) -> Result<(), ObservationError> {
     for id in UNCARRIED_SUBTABLES {
         if ms.subtable(*id).is_some_and(|table| table.row_count() > 0) {
             losses.push(Loss::Table(id.name().to_string()));
         }
+    }
+    let main = ms.main_table();
+    let standard: Vec<&str> = SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(UNCARRIED_SUBTABLES)
+        .chain(&[SubtableId::Pointing, SubtableId::Source])
+        .map(SubtableId::name)
+        .collect();
+    for field in main.keywords().fields() {
+        if matches!(field.value, Value::TableRef(_)) && !standard.contains(&field.name.as_str()) {
+            losses.push(Loss::Table(field.name.clone()));
+        }
+    }
+    if destination == Store::Msv2 {
+        return Ok(());
+    }
+    if ms
+        .subtable(SubtableId::Source)
+        .is_some_and(|table| table.row_count() > 0)
+    {
+        losses.push(Loss::Table(SubtableId::Source.name().to_string()));
     }
     let processors = ms.processor().map_err(storage)?;
     let correlator = |row| {
@@ -453,18 +620,6 @@ fn subtables(ms: &crate::MeasurementSet, losses: &mut Vec<Loss>) -> Result<(), O
                 "STATE SUB_SCAN, CAL, LOAD, SIG and REF".to_string(),
             ));
             break;
-        }
-    }
-    let main = ms.main_table();
-    let standard: Vec<&str> = SubtableId::ALL_REQUIRED
-        .iter()
-        .chain(UNCARRIED_SUBTABLES)
-        .chain(&[SubtableId::Pointing])
-        .map(SubtableId::name)
-        .collect();
-    for field in main.keywords().fields() {
-        if matches!(field.value, Value::TableRef(_)) && !standard.contains(&field.name.as_str()) {
-            losses.push(Loss::Table(field.name.clone()));
         }
     }
     Ok(())

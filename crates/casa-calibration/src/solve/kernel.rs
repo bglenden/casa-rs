@@ -110,7 +110,7 @@ impl SolveGraph {
     }
 
     /// Antennas with at least one positive-weight baseline.
-    fn antennas(&self) -> BTreeSet<i32> {
+    pub(crate) fn antennas(&self) -> BTreeSet<i32> {
         self.weights
             .iter()
             .filter(|((antenna1, antenna2), weight)| {
@@ -330,7 +330,7 @@ pub(crate) fn solve_graphs(
 /// with data once antennas below the threshold, and their baselines, are
 /// removed in turn (`SolvableVisCal::verifyConstraints`). A baseline counts
 /// when any receptor has weight on it.
-fn baseline_constrained_antennas(
+pub(crate) fn baseline_constrained_antennas(
     graphs: &[SolveGraph],
     min_baselines_per_antenna: usize,
 ) -> BTreeSet<i32> {

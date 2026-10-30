@@ -17,7 +17,7 @@ def test_catalog_and_definition_are_projected_from_rust() -> None:
     assert len(catalog["surfaces"]) == 26
     assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}
 
-    imager = parameters.definition("imager")
+    imager = parameters.definition("tclean")
     assert imager["kind"] == "task"
     assert {binding["name"] for binding in imager["bindings"]} >= {
         "vis",
@@ -25,7 +25,7 @@ def test_catalog_and_definition_are_projected_from_rust() -> None:
         "imsize",
         "cell",
     }
-    embedded = parameters.contract_bundle("imager")
+    embedded = parameters.contract_bundle("tclean")
     referenced = {
         binding["concept"]["id"] for binding in embedded["surface"]["bindings"]
     }
@@ -196,19 +196,19 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
     name: str,
     overrides: dict[str, object],
 ) -> None:
-    values = TaskParameters.defaults("imager", workspace=tmp_path)
+    values = TaskParameters.defaults("tclean", workspace=tmp_path)
     values.set_many(
         {"vis": f"{name}.ms", "imagename": f"products/{name}", **overrides}
     )
     before = values.provider_invocation()
     profile = values.save(tmp_path / f"{name}.toml")
-    after = TaskParameters.load("imager", profile, workspace=tmp_path).provider_invocation()
+    after = TaskParameters.load("tclean", profile, workspace=tmp_path).provider_invocation()
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
     assert before.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
     request = json.loads(before.stdin or "null")
-    assert request["surface"] == "imager"
+    assert request["surface"] == "tclean"
     values = request["values"]
     assert values["vis"] == [f"{name}.ms"]
     for parameter, value in overrides.items():

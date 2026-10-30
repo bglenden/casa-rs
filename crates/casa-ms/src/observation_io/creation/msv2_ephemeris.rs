@@ -243,6 +243,23 @@ pub(super) fn mark_fields(
     Ok(())
 }
 
+/// Bytes a table row holds in memory before the table is saved: its record
+/// of five fields, their names and values.
+const ROW_BYTES: usize = 1 << 10;
+
+/// The most writing the ephemeris tables of `catalogue`'s fields holds:
+/// the largest table, its rows ([`ROW_BYTES`]) and its grid, held until it
+/// is saved, one table at a time.
+pub(super) fn tables_bytes(catalogue: &Catalogue) -> usize {
+    followed(catalogue)
+        .0
+        .into_iter()
+        .filter_map(|ephemeris| table_grid(ephemeris))
+        .map(|grid| grid.rows.len() * (ROW_BYTES + size_of::<Option<usize>>()))
+        .max()
+        .unwrap_or(0)
+}
+
 /// Write each ephemeris [`followed`] numbers as its table in the MSv2 at
 /// `root`, stamped `creation_date` (ISO 8601).
 ///

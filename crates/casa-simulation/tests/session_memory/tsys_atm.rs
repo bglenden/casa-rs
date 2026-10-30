@@ -14,10 +14,11 @@
 //! `close` then draws each row's noise channel by channel from each
 //! antenna's scales, which it works out once a batch for each antenna and
 //! integration the batch reaches, and admits with the batch. At 4,096
-//! channels a batch's scales hold megabytes, and what `close` holds more for
-//! `tsys-atm` than for `tsys-manual` is within what it is admitted more
-//! (without that admission the law fails: 4.8 MB more held, none
-//! admitted); so it is at one channel with 65,544 entries in a batch. The
+//! channels a batch's scales hold megabytes, and what `close` holds apart
+//! from the write batches more for `tsys-atm` than for `tsys-manual` is
+//! within what it is admitted more (without that admission the law fails:
+//! 4.8 MB more held, none admitted); so it is at one channel with 65,544
+//! entries in a batch. The
 //! first law's base and ten-times-the-rows cases with
 //! `tsys-atm` noise hold their admission, and ten times the rows no more
 //! beyond it but a little ([`super::tsys`]'s law), as does the patch of an
@@ -29,10 +30,12 @@
 use casa_simulation::{AtmosphereSpec, NoiseSpec, ObserveSpec, SpectralWindowSpec, TsysParameters};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
+use num_complex::Complex32;
 
 use super::{
-    ATM_NOISE, EXCESS, LIVE, Ordering, PEAK, REFERENCE_MJD, ReservationWindow, alone,
-    charge_process_caches, configured, excess_now, reserved_memory, resources, scan,
+    ATM_NOISE, BATCH_ALLOCATED, EXCESS, LIVE, OWN_LIVE, OWN_PEAK, Ordering, PEAK, REFERENCE_MJD,
+    ReservationWindow, alone, charge_process_caches, configured, excess_now, reserved_memory,
+    resources, scan,
 };
 
 /// The session's budget beside the process caches: ample for the
@@ -151,29 +154,35 @@ const WIDE_BUDGET: u64 = 1 << 30;
 /// scales take at [`CHANNELS`] channels.
 const CLOSE_ALLOWANCE_BYTES: i64 = 512 * 1024;
 
-/// Measured `close`s of each noise mode, of which the least peak is
-/// compared, as one run's timing can hold a write batch more.
+/// Measured `close`s of each noise mode: written in batches, `tsys-atm`'s
+/// worst is compared with `tsys-manual`'s least; in one, the least of each.
 const CLOSE_RUNS: usize = 3;
 
 /// What one measured `close` held.
 struct Closed {
     /// The heap's peak beyond what was live before.
     peak: u64,
+    /// The peak, beyond what was live before, of the blocks that are not a
+    /// write batch's ([`super::heap`]).
+    own: u64,
     /// The most the reservations held at once beyond what they held before.
     admitted: u64,
     /// The most the heap went beyond the reservations, at any allocation.
     beyond: i64,
     batches: u64,
     batch_rows: u64,
+    /// Bytes allocated as the write batches'.
+    batch_bytes: u64,
 }
 
 /// `close` admits each batch's antenna scales. At [`CHANNELS`] channels a
 /// batch's table holds megabytes, which the writer's reservation could hide
 /// (its plan keeps room for batches it does not always hold), so the law
 /// compares `tsys-atm` with `tsys-manual`, whose rows need the same
-/// geometry: what `close` holds more for `tsys-atm`, on the least of
-/// [`CLOSE_RUNS`] runs, is within what it is admitted more, and the heap is
-/// within the reservations at every allocation of either.
+/// geometry: what `close` holds apart from the write batches more for
+/// `tsys-atm`, on the worst of [`CLOSE_RUNS`] runs against `tsys-manual`'s
+/// least, is within what it is admitted more, and the heap with the
+/// batches is within the reservations at every allocation of either.
 #[test]
 fn close_admits_each_batchs_antenna_scales() {
     if !alone("tsys_atm::close_admits_each_batchs_antenna_scales") {
@@ -204,10 +213,13 @@ fn close_admits_a_narrow_batchs_many_antenna_scales() {
 
 /// `close` of sessions of `channels` channels and `integrations` (warmed,
 /// measured) integrations of `integration_s`, with `tsys-atm` noise and
-/// then `tsys-manual`: what it holds more for `tsys-atm`, on the least of
-/// [`CLOSE_RUNS`] runs, is within what it is admitted more, and the heap is
-/// within the reservations at every allocation of either. `batched`: the
-/// measured sessions are written in several batches.
+/// then `tsys-manual`: what it holds more for `tsys-atm` is within what it
+/// is admitted more, and the heap is within the reservations at every
+/// allocation of either. `batched`: the measured sessions are written in
+/// several batches, of which the writer's pace leaves one to three live at
+/// the peak, so what `close` holds apart from them is compared, on
+/// `tsys-atm`'s worst of [`CLOSE_RUNS`] runs against `tsys-manual`'s least.
+/// Written in one batch, the heap's least peaks are compared.
 fn close_holds_what_it_is_admitted_more(
     (channels, integration_s): (usize, f64),
     [warm, measured]: [usize; 2],
@@ -235,6 +247,9 @@ fn close_holds_what_it_is_admitted_more(
         let unset = reserved_memory();
         let baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
+        let own = OWN_LIVE.load(Ordering::Relaxed);
+        OWN_PEAK.store(own, Ordering::Relaxed);
+        let batch_bytes = BATCH_ALLOCATED.load(Ordering::Relaxed);
         let window = ReservationWindow::open();
         let before = excess_now();
         EXCESS.store(before, Ordering::Relaxed);
@@ -242,10 +257,12 @@ fn close_holds_what_it_is_admitted_more(
         let pass = pass.expect("the pass summary");
         let closed = Closed {
             peak: PEAK.load(Ordering::Relaxed) - baseline,
+            own: OWN_PEAK.load(Ordering::Relaxed) - own,
             admitted: window.close() - unset,
             beyond: EXCESS.load(Ordering::Relaxed) - before,
             batches: pass.batches,
             batch_rows: pass.batch_rows,
+            batch_bytes: BATCH_ALLOCATED.load(Ordering::Relaxed) - batch_bytes,
         };
         drop(window);
         closed
@@ -255,18 +272,19 @@ fn close_holds_what_it_is_admitted_more(
     // the process's before anything is measured.
     close("warm-manual.ms", &manual, warm);
     close("warm-atm.ms", &tsys_atm(), warm);
-    let mut least = [u64::MAX; 2];
+    let (mut least, mut most) = ([u64::MAX; 2], [0; 2]);
     let mut admitted = [0; 2];
     for run in 0..CLOSE_RUNS {
         for (index, noise) in [&manual, &tsys_atm()].into_iter().enumerate() {
             let closed = close(&format!("{run}-{index}.ms"), noise, measured);
             println!(
-                "{}: {} batches of {} at {channels} channels: heap peak {}, admitted {}, at \
-                 most {} beyond",
+                "{}: {} batches of {} at {channels} channels: heap peak {}, {} apart from the \
+                 batches, admitted {}, at most {} beyond",
                 noise.mode,
                 closed.batches,
                 closed.batch_rows,
                 closed.peak,
+                closed.own,
                 closed.admitted,
                 closed.beyond
             );
@@ -280,11 +298,21 @@ fn close_holds_what_it_is_admitted_more(
                 noise.mode,
                 closed.beyond
             );
-            least[index] = least[index].min(closed.peak);
+            let batch_data = closed.batch_rows * (2 * channels * size_of::<Complex32>()) as u64;
+            assert!(
+                closed.batch_bytes >= batch_data,
+                "{}: the write batches are told apart ({} bytes, a batch's DATA {batch_data})",
+                noise.mode,
+                closed.batch_bytes
+            );
+            let compared = if batched { closed.own } else { closed.peak };
+            least[index] = least[index].min(compared);
+            most[index] = most[index].max(compared);
             admitted[index] = closed.admitted;
         }
     }
-    let held = least[1] as i64 - least[0] as i64;
+    let atm = if batched { most[1] } else { least[1] };
+    let held = atm as i64 - least[0] as i64;
     let charged = admitted[1] as i64 - admitted[0] as i64;
     println!("tsys-atm - tsys-manual: held {held}, admitted {charged}");
     assert!(

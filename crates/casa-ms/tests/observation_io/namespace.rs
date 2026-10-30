@@ -54,7 +54,12 @@ fn an_msv4s_namespace_is_its_conversions() {
     let converted = root.path().join("converted.ms");
     let options = ConversionOptions {
         data_groups: None,
-        accept: vec![LossKind::Sigma, LossKind::Tables, LossKind::Columns],
+        accept: vec![
+            LossKind::Sigma,
+            LossKind::Tables,
+            LossKind::Columns,
+            LossKind::Defaulted,
+        ],
         batch_bytes: 1 << 20,
         workers: 1,
         chunks: [5, 0, 0, 0],
