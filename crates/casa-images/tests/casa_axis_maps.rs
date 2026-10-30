@@ -298,6 +298,30 @@ fn regions_and_impv_take_the_direction_wherever_its_axes_are() {
     let stats = casa_images::imstat(&input, None, Some(polygon), None, None).unwrap();
     assert_eq!((stats.npts, stats.sum), (40.0, expected));
 
+    // The same box and polygon in world coordinates: RA and Dec are world
+    // axes 1 and 2, as the pixel axes are.
+    let image = PagedImage::<f32>::open(&input).unwrap();
+    let sky = |x: f64, y: f64| {
+        let world = image.coordinates().to_world(&[0.0, x, y, 0.0]).unwrap();
+        format!("{:.15}rad,{:.15}rad", world[1], world[2])
+    };
+    let world_box = format!("box[[{}],[{}]]", sky(1.0, 0.0), sky(2.0, 1.0));
+    let stats = casa_images::imstat(&input, None, Some(&world_box), None, None).unwrap();
+    assert_eq!((stats.npts, stats.sum), (40.0, expected), "{world_box}");
+    assert_eq!(
+        (stats.blc.as_slice(), stats.trc.as_slice()),
+        (&[0, 1, 0, 0][..], &[1, 2, 1, 4][..])
+    );
+    let world_polygon = format!(
+        "poly [[{}],[{}],[{}],[{}]]",
+        sky(1.0, 0.0),
+        sky(3.0, 0.0),
+        sky(3.0, 2.0),
+        sky(1.0, 2.0)
+    );
+    let stats = casa_images::imstat(&input, None, Some(&world_polygon), None, None).unwrap();
+    assert_eq!((stats.npts, stats.sum), (40.0, expected), "{world_polygon}");
+
     let outfile = scratch.path().join("box.image");
     imsubimage(&ImsubimageRequest {
         imagename: input.clone(),
