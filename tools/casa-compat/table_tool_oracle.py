@@ -389,6 +389,72 @@ SCENARIOS = {
     ],
 }
 
+#: Cell and column writes on the python fixture table (more steps are added
+#: to `SCENARIOS` below this dict's definition, and read back after a reopen).
+CELL_WRITES = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["putcell", ["id", 0, 99], {}],
+    ["getcell", ["id", 0], {}],
+    ["putcell", ["id", 1, np.int32(98)], {}],
+    ["putcell", ["id", 2, 7.0], {}],
+    ["putcell", ["id", 2, 7.5], {}],
+    ["putcell", ["id", 2, "text"], {}],
+    ["putcell", ["label", 1, "new"], {}],
+    ["putcell", ["label", 1, 5], {}],
+    ["putcell", ["gain", 2, 5 + 1j], {}],
+    ["putcell", ["gain", 0, 3.0], {}],
+    ["putcell", ["spectrum", 0, np.arange(4.0).reshape(2, 2)], {}],
+    ["putcell", ["spectrum", 1, np.arange(4, dtype=np.int32).reshape(2, 2)], {}],
+    ["putcell", ["spectrum", 2, np.arange(6.0).reshape(2, 3)], {}],
+    ["putcell", ["spectrum", 2, 5.0], {}],
+    ["putcell", ["vary", 1, np.array([1.0, 2.0, 3.0, 4.0])], {}],
+    ["putcell", ["vary", 0, 5.0], {}],
+    ["putcell", ["meta", 0, {"label": "zzz", "weight": 7}], {}],
+    ["putcell", ["meta", 1, 5], {}],
+    ["putcell", ["id", 3, 1], {}],
+    ["putcell", ["id", -1, 1], {}],
+    ["putcell", ["nosuchcolumn", 0, 1], {}],
+    ["getcol", ["id"], {}],
+    ["getcol", ["label"], {}],
+    ["getcol", ["gain"], {}],
+    ["getcol", ["spectrum"], {}],
+    ["getvarcol", ["vary"], {}],
+    ["getcell", ["meta", 0], {}],
+    ["putcol", ["id", np.array([7, 8, 9])], {}],
+    ["getcol", ["id"], {}],
+    ["putcol", ["id", np.array([1, 2])], {}],
+    ["putcol", ["id", np.array([4, 5, 6, 7])], {}],
+    ["putcol", ["id", np.array([11, 12])], {"startrow": 1, "nrow": 2}],
+    ["getcol", ["id"], {}],
+    ["putcol", ["id", np.array([20, 30])], {"startrow": 0, "nrow": 2, "rowincr": 2}],
+    ["getcol", ["id"], {}],
+    ["putcol", ["label", np.array(["a", "bb", "ccc"])], {}],
+    ["getcol", ["label"], {}],
+    ["putcol", ["label", ["p", "q", "r"]], {}],
+    ["getcol", ["label"], {}],
+    ["putcol", ["gain", np.array([1 + 1j, 2 + 2j, 3 + 3j])], {}],
+    ["getcol", ["gain"], {}],
+    ["putcol", ["spectrum", np.arange(12.0).reshape(2, 2, 3)], {}],
+    ["getcol", ["spectrum"], {}],
+    ["putcol", ["spectrum", np.arange(12.0).reshape(3, 2, 2)], {}],
+    ["putcol", ["id", 5], {}],
+    ["putcol", ["nosuchcolumn", np.array([1, 2, 3])], {}],
+    ["putvarcol", ["vary", {"r1": np.array([1.0]), "r2": np.array([2.0, 3.0]), "r3": np.array([4.0, 5.0, 6.0])}], {}],
+    ["putvarcol", ["vary", {"r1": np.array([[1.0]]), "r2": np.array([[2.0], [3.0]]), "r3": np.array([[4.0], [5.0], [6.0]])}], {}],
+    ["getvarcol", ["vary"], {}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["getcol", ["id"], {}],
+    ["getcol", ["label"], {}],
+    ["getcol", ["gain"], {}],
+    ["getcol", ["spectrum"], {}],
+    ["getvarcol", ["vary"], {}],
+    ["getcell", ["meta", 0], {}],
+    ["putcell", ["id", 0, 1], {}],
+    ["putcol", ["id", np.array([1, 2, 3])], {}],
+    ["close", [], {}],
+]
+
 #: The scenario the MeasurementSet gets: for each column of the main table,
 #: its description and, for the first rows, its cells. Built from the table
 #: itself, so a column is probed whatever the fixture holds.
@@ -420,6 +486,55 @@ def ms_steps(source):
             steps.append(["getcolshapestring", [column], {"startrow": 0, "nrow": MS_ROWS}])
     steps += [["keywordnames", [], {}], ["getkeywords", [], {}], ["info", [], {}]]
     return steps
+
+
+#: Cell and column writes on the MeasurementSet's main table, whose columns
+#: are of int, double, bool, float and complex-float types.
+MS_CELL_WRITES = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["putcell", ["ANTENNA1", 0, 5], {}],
+    ["putcell", ["ANTENNA1", 1, np.int64(6)], {}],
+    ["putcell", ["ANTENNA1", 2, 7.0], {}],
+    ["getcol", ["ANTENNA1"], {"nrow": 3}],
+    ["putcell", ["TIME", 1, 1.5e9], {}],
+    ["putcell", ["TIME", 2, np.float32(2.5)], {}],
+    ["putcell", ["TIME", 0, 5], {}],
+    ["getcol", ["TIME"], {"nrow": 3}],
+    ["putcell", ["FLAG_ROW", 0, False], {}],
+    ["putcell", ["FLAG_ROW", 1, 0], {}],
+    ["getcol", ["FLAG_ROW"], {"nrow": 3}],
+    ["putcell", ["WEIGHT", 0, np.array([1.0, 2.0, 3.0, 4.0])], {}],
+    ["putcell", ["WEIGHT", 1, np.array([1.0, 2.0])], {}],
+    ["getcell", ["WEIGHT", 0], {}],
+    ["getcell", ["WEIGHT", 1], {}],
+    ["putcell", ["UVW", 0, np.array([1.0, 2.0, 3.0])], {}],
+    ["putcell", ["UVW", 1, np.array([1.0, 2.0])], {}],
+    ["getcell", ["UVW", 0], {}],
+    ["putcell", ["DATA", 0, np.ones((4, 64), dtype=np.complex128) * (1 + 2j)], {}],
+    ["putcell", ["DATA", 1, np.ones((4, 64))], {}],
+    ["putcell", ["DATA", 2, np.ones((4, 63), dtype=np.complex128)], {}],
+    ["getcell", ["DATA", 0], {}],
+    ["getcell", ["DATA", 1], {}],
+    ["putcell", ["FLAG", 0, np.zeros((4, 64), dtype=bool)], {}],
+    ["putcell", ["FLAG", 1, np.zeros((4, 64), dtype=np.int32)], {}],
+    ["getcell", ["FLAG", 0], {}],
+    ["putcol", ["ANTENNA1", np.array([1, 2, 3])], {"startrow": 0, "nrow": 3}],
+    ["getcol", ["ANTENNA1"], {"nrow": 3}],
+    ["putcol", ["TIME", [1.0, 2.0, 3.0]], {"startrow": 0, "nrow": 3}],
+    ["getcol", ["TIME"], {"nrow": 3}],
+    ["putcol", ["WEIGHT", np.ones((4, 3))], {"startrow": 0, "nrow": 3}],
+    ["getcol", ["WEIGHT"], {"nrow": 3}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["getcol", ["ANTENNA1"], {"nrow": 3}],
+    ["getcol", ["TIME"], {"nrow": 3}],
+    ["getcell", ["DATA", 0], {}],
+    ["getcell", ["FLAG", 1], {}],
+    ["getcell", ["UVW", 0], {}],
+    ["getcol", ["WEIGHT"], {"nrow": 3}],
+    ["nrows", [], {}],
+    ["close", [], {}],
+]
 
 
 def run_scenario(steps, source):
@@ -459,22 +574,31 @@ def main():
     parser.add_argument("fixture", type=Path)
     parser.add_argument("ms", type=Path)
     parser.add_argument("--json", type=Path, required=True)
+    parser.add_argument(
+        "--only",
+        help="comma-separated scenario names: record just these, merged into --json if it exists "
+        "(a scenario that crashes CASA then costs only itself)",
+    )
     arguments = parser.parse_args()
     scenarios = {
         name: {"fixture": "table", "steps": steps, "source": arguments.fixture}
         for name, steps in SCENARIOS.items()
     }
+    scenarios["cells_write"] = {"fixture": "table", "steps": CELL_WRITES, "source": arguments.fixture}
     scenarios["ms"] = {"fixture": "ms", "steps": ms_steps(arguments.ms), "source": arguments.ms}
-    record = {
-        "casa_version": ".".join(str(part) for part in casatools.version()[:4]),
-        "scenarios": {
-            name: {
-                "fixture": scenario["fixture"],
-                "steps": run_scenario(scenario["steps"], scenario["source"]),
-            }
-            for name, scenario in scenarios.items()
-        },
-    }
+    scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
+    names = arguments.only.split(",") if arguments.only else list(scenarios)
+    if arguments.only and arguments.json.exists():
+        record = json.loads(arguments.json.read_text(encoding="utf-8"))
+    else:
+        record = {"scenarios": {}}
+    record["casa_version"] = ".".join(str(part) for part in casatools.version()[:4])
+    for name in names:
+        scenario = scenarios[name]
+        record["scenarios"][name] = {
+            "fixture": scenario["fixture"],
+            "steps": run_scenario(scenario["steps"], scenario["source"]),
+        }
     arguments.json.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
 
 

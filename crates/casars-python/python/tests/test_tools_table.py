@@ -167,7 +167,12 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
         return {"error": {"type": type(error).__name__, "message": str(error).replace(path, PLACEHOLDER)}}
 
 
-REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"})
+#: Recorded from CASA but not implemented yet (slice 3 of #1028: `putcell`,
+#: `putcol`, `putvarcol` and the other cell writes); they leave this set as
+#: the methods land.
+PENDING = {"cells_write", "ms_cells_write"}
+
+REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
 
 
 @pytest.mark.parametrize("scenario", REPLAYED)
