@@ -376,7 +376,7 @@ const METHODS: &[Method] = &[
             param("thevalue", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcellslice",
@@ -401,7 +401,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolkeyword",
@@ -464,7 +464,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "query",

@@ -12,7 +12,7 @@
 //! opened with `permanent` locking holds it. A table opened read-only
 //! refuses. With no table open a write logs and returns `False`.
 
-use casa_tables::{LockType, Table, TableOptions};
+use casa_tables::{LockType, Table, TableError, TableOptions};
 use casa_types::{RecordField, RecordValue, Value};
 
 use super::keyword_value::Incoming;
@@ -25,10 +25,21 @@ type Reply = Result<CasaValue, Fail>;
 /// What a write changes; it names the refusal of a table not open for
 /// update.
 #[derive(Clone, Copy)]
-enum Target {
+pub(super) enum Target {
     TableKeywords,
     ColumnKeywords,
     Info,
+    /// Cells: a table not open for update answers `False`, not an error.
+    Cells,
+}
+
+/// What a change leaves to write to the disk.
+pub(super) enum Persist {
+    /// The table's keywords and info.
+    Metadata,
+    /// The cells of `rows` in `column`, in place in the column's storage
+    /// manager.
+    Rows { column: String, rows: Vec<usize> },
 }
 
 /// What `putinfo` changes: the fields its record has.
@@ -177,13 +188,29 @@ impl State {
         log: &mut Vec<crate::tools::LogLine>,
         change: impl FnOnce(&mut Table) -> Result<(), Fail>,
     ) -> Reply {
+        self.write_with(target, log, move |table| {
+            change(table).map(|()| Persist::Metadata)
+        })
+    }
+
+    /// As [`write`](Self::write), for a change that says what to persist.
+    pub(super) fn write_with(
+        &mut self,
+        target: Target,
+        log: &mut Vec<crate::tools::LogLine>,
+        change: impl FnOnce(&mut Table) -> Result<Persist, Fail>,
+    ) -> Reply {
         let Some(open) = self.open.as_mut() else {
             no_table(log);
             return Ok(CasaValue::Bool(false));
         };
         let name = open.name.display().to_string();
         if !open.writable {
+            if matches!(target, Target::Cells) {
+                return Ok(CasaValue::Bool(false));
+            }
             return runtime(match target {
+                Target::Cells => String::new(),
                 Target::TableKeywords => {
                     format!("Table::rwKeywordSet cannot be used: table {name} is not writable")
                 }
@@ -205,10 +232,37 @@ impl State {
                 "ColumnSet::doLock: table {name} should be locked when using UserLocking"
             ));
         }
-        let saved = change(&mut open.table).and_then(|()| {
-            open.table
+        let saved = change(&mut open.table).and_then(|persist| match persist {
+            Persist::Metadata => open
+                .table
                 .save_metadata_only(TableOptions::new(&open.name))
-                .map_err(Fail::from)
+                .map_err(Fail::from),
+            Persist::Rows { column, rows } => {
+                let partial = open
+                    .table
+                    .prepare_write()
+                    .save_selected_rows(&[column.as_str()], &rows);
+                match partial {
+                    // StManAipsIO keeps its table in one file and writes it
+                    // in full, as casacore does: for a table all of whose
+                    // managers are StManAipsIO that is the same layout. Any
+                    // other table must not be rewritten (it would lose its
+                    // managers), so the refusal stands.
+                    Err(TableError::Storage(message))
+                        if message.starts_with("partial in-place save does not support")
+                            && open
+                                .table
+                                .data_manager_info()
+                                .iter()
+                                .all(|manager| manager.dm_type == "StManAipsIO") =>
+                    {
+                        open.table
+                            .save(TableOptions::new(&open.name))
+                            .map_err(Fail::from)
+                    }
+                    other => other.map_err(Fail::from),
+                }
+            }
         });
         // A table that holds the write lock and has changes it has not
         // flushed is written in full, as StManAipsIO, when it is closed or

@@ -27,7 +27,7 @@ use super::state::Fail;
 
 /// The elements of a value, in the widest type of their kind.
 #[derive(Debug, Clone)]
-enum Data {
+pub(super) enum Data {
     Bools(Vec<bool>),
     Ints(Vec<i64>),
     /// Reals, and whether they came as single precision.
@@ -40,8 +40,8 @@ enum Data {
 /// A scalar (`shape` is `None`) or an array of `shape` in C order.
 #[derive(Debug, Clone)]
 pub(super) struct Wide {
-    shape: Option<Vec<usize>>,
-    data: Data,
+    pub(super) shape: Option<Vec<usize>>,
+    pub(super) data: Data,
 }
 
 /// A keyword value as Python gave it.
@@ -327,7 +327,7 @@ fn element_kind(old: &Value) -> Kind {
 /// A scalar from the one element of `values`, or an array of `shape` (in C
 /// order: element `[i, j]` of a NumPy array is element `(i, j)` of the
 /// casacore array).
-fn build<T>(
+pub(super) fn build<T>(
     shape: Option<Vec<usize>>,
     mut values: Vec<T>,
     scalar: fn(T) -> ScalarValue,

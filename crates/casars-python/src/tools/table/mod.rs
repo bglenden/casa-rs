@@ -15,6 +15,7 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod cell_value;
 mod keyword_value;
 mod read;
 mod state;
@@ -22,6 +23,7 @@ mod stubs;
 pub(crate) mod surface;
 mod values;
 mod write;
+mod write_cells;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -606,5 +608,54 @@ impl PyTableTool {
     fn addreadmeline(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let line = text(value, "value")?;
         self.call(py, move |state, log| state.addreadmeline(line, log))
+    }
+
+    /// Write one cell, coerced to the column's type.
+    #[pyo3(signature = (columnname, rownr, thevalue = None), text_signature = "($self, columnname, rownr, thevalue=[])")]
+    fn putcell(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        rownr: &Bound<'_, PyAny>,
+        thevalue: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let row = integer(Some(rownr), "rownr", 0)?;
+        let value = keyword_value(py, thevalue)?;
+        self.call(py, move |state, log| state.putcell(column, row, value, log))
+    }
+
+    /// Write rows of a column, the rows last in an array column's values.
+    #[pyo3(signature = (columnname, value = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], startrow=0, nrow=-1, rowincr=1)")]
+    fn putcol(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        value: Option<&Bound<'_, PyAny>>,
+        startrow: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+        rowincr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let value = keyword_value(py, value)?;
+        let rows = row_selection(startrow, nrow, rowincr)?;
+        self.call(py, move |state, log| state.putcol(column, value, rows, log))
+    }
+
+    /// Write the rows of a column given as a record of `r1`, `r2`, ....
+    #[pyo3(signature = (columnname, value, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value, startrow=0, nrow=-1, rowincr=1)")]
+    fn putvarcol(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        value: &Bound<'_, PyAny>,
+        startrow: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+        rowincr: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let fields = record_fields(value)?;
+        row_selection(startrow, nrow, rowincr)?;
+        self.call(py, move |state, log| state.putvarcol(column, fields, log))
     }
 }

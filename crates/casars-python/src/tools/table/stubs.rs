@@ -248,17 +248,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, thevalue = None), text_signature = "($self, columnname, rownr, thevalue=[])")]
-    fn putcell(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        thevalue: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcell")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnname, rownr, value = None, blc = None, trc = None, incr = None), text_signature = "($self, columnname, rownr, value=[], blc=[], trc=[], incr=[1])")]
     fn putcellslice(
         &self,
@@ -270,19 +259,6 @@ impl PyTableTool {
         incr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("putcellslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], startrow=0, nrow=-1, rowincr=1)")]
-    fn putcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcol")
     }
 
     /// Not yet implemented in casa-rs.
@@ -299,19 +275,6 @@ impl PyTableTool {
         rowincr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("putcolslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value, startrow=0, nrow=-1, rowincr=1)")]
-    fn putvarcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putvarcol")
     }
 
     /// Not yet implemented in casa-rs.

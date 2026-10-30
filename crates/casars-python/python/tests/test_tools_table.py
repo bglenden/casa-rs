@@ -170,7 +170,7 @@ def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
 #: Recorded from CASA but not implemented yet (slice 3 of #1028: `putcell`,
 #: `putcol`, `putvarcol` and the other cell writes); they leave this set as
 #: the methods land.
-PENDING = {"cells_write", "ms_cells_write"}
+PENDING: set[str] = set()
 
 REPLAYED = sorted(set(RECORD["scenarios"]) - {"casa_bugs"} - PENDING)
 
@@ -315,6 +315,39 @@ def test_a_write_leaves_the_storage_managers_alone_however_the_table_ends(
     assert reader.getcolkeyword("TIME", "note") == "x"
     assert reader.nrows() == 1058
     reader.done()
+
+
+@pytest.mark.parametrize("option", ["auto", "permanent", "user"])
+@pytest.mark.parametrize(
+    ("column", "write"),
+    [
+        ("ANTENNA1", lambda tool: tool.putcell("ANTENNA1", 0, 5)),
+        ("TIME", lambda tool: tool.putcell("TIME", 1, 1.5e9)),
+        ("DATA", lambda tool: tool.putcell("DATA", 0, np.ones((4, 64), dtype=np.complex128))),
+        ("FLAG", lambda tool: tool.putcell("FLAG", 0, np.zeros((4, 64), dtype=bool))),
+        ("WEIGHT", lambda tool: tool.putcol("WEIGHT", np.ones((4, 3)), 0, 3)),
+    ],
+)
+def test_a_cell_write_changes_only_its_columns_storage_manager_file(
+    option: str, column: str, write: Any, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A MeasurementSet's cell write is made in place: `table.dat` and the one
+    file of the storage manager that holds the column change, and nothing is
+    added or removed, in every lock mode (#1025)."""
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert write(tool)
+    assert tool.close()
+    after = table_files(path)
+    assert set(after) == set(before), column
+    changed = {name for name in before if before[name] != after[name]}
+    assert "table.dat" in changed
+    assert len(changed - {"table.dat"}) == 1, (column, sorted(changed))
 
 
 def test_an_int_beyond_32_bits_is_kept_where_casa_truncates_it(

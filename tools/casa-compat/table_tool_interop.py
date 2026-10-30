@@ -20,6 +20,12 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
     type (a Boolean array was the one CASA refused until #1025), column
     keywords, the info, removals.
 
+`cells-write KIND SOURCE OUT_TABLE OUT_JSON`
+    KIND is `table` (the python fixture) or `ms` (the small MeasurementSet).
+    Copies SOURCE to OUT_TABLE, replays on it the recorded cell writes
+    (`cells_write` or `ms_cells_write`) through `casars.tools.table`, and
+    writes what casa-rs reads of the cells (`cells-dump` form) to OUT_JSON.
+
 `rsread TABLE OUT_JSON`
     What casa-rs reads of any table (the same dump `write` ends with), for a
     table CASA wrote.
@@ -35,6 +41,10 @@ on the Mac mini; copy this file and `table_tool_oracle.py` side by side):
 
 `opens DIR`
     Which of the `v_*.table` tables CASA opens and reads (`OK`/`FAIL`).
+
+`cells-read KIND TABLE OUT_JSON`
+    What CASA reads of the cells a `cells-write` table holds, in the same
+    form, to `compare` with the `cells-write` dump.
 
 `write-bools TABLE`
     CASA writes Boolean-array keywords into TABLE (a copy of the fixture);
@@ -94,6 +104,72 @@ def command_write(fixture, out_table, out_json):
     reader.open(path)
     write_json(out_json, dump(reader, path))
     reader.done()
+
+
+CELL_READS = {
+    "table": [
+        *[("getcell", [column, row]) for column in ("id", "label", "gain", "spectrum", "meta") for row in range(3)],
+        ("getvarcol", ["vary"]),
+        ("getcol", ["label"]),
+        ("getcol", ["gain"]),
+        ("getcol", ["spectrum"]),
+    ],
+    "ms": [
+        ("getcol", ["ANTENNA1", 0, 3]),
+        ("getcol", ["TIME", 0, 3]),
+        ("getcol", ["FLAG_ROW", 0, 3]),
+        ("getcol", ["WEIGHT", 0, 3]),
+        ("getcell", ["WEIGHT", 1]),
+        ("getcell", ["UVW", 0]),
+        ("getcell", ["DATA", 0]),
+        ("getcell", ["DATA", 1]),
+        ("getcell", ["FLAG", 0]),
+        ("getcell", ["FLAG", 1]),
+    ],
+}
+
+
+def cell_dump(tool, kind, path):
+    """What the tool reads of the cells the recorded writes touch."""
+    result = {}
+    for index, (method, args) in enumerate(CELL_READS[kind]):
+        key = f"{index}:{method}{args}"
+        try:
+            result[key] = encode(getattr(tool, method)(*args), path)
+        except Exception as error:  # noqa: BLE001 - CASA cannot read an int64 column's getcol
+            result[key] = {"error": str(error).splitlines()[0][:80]}
+    return result
+
+
+def command_cells_write(kind, source, out_table, out_json):
+    sys.path.insert(0, str(RECORD))
+    import test_tools_table as replay  # noqa: PLC0415
+    from casars import tools  # noqa: PLC0415
+
+    out_table = Path(out_table)
+    shutil.rmtree(out_table, ignore_errors=True)
+    shutil.copytree(source, out_table)
+    path = str(out_table.resolve())
+    tool = tools.table()
+    name = "cells_write" if kind == "table" else "ms_cells_write"
+    for step in replay.RECORD["scenarios"][name]["steps"]:
+        if step["method"] == "close":
+            break
+        replay.run_step(tool, step, path)
+    tool.done()
+    reader = tools.table()
+    reader.open(path)
+    write_json(out_json, cell_dump(reader, kind, path))
+    reader.done()
+
+
+def command_cells_read(kind, table_path, out_json):
+    from casatools import table  # noqa: PLC0415
+
+    tool = table()
+    tool.open(table_path)
+    write_json(out_json, cell_dump(tool, kind, table_path))
+    tool.done()
 
 
 def command_rsread(table_path, out_json):
@@ -215,6 +291,8 @@ COMMANDS = {
     "opens": (command_opens, 1),
     "write-bools": (command_write_bools, 1),
     "rsread": (command_rsread, 2),
+    "cells-write": (command_cells_write, 4),
+    "cells-read": (command_cells_read, 3),
 }
 
 

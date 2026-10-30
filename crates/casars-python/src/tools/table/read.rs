@@ -69,7 +69,7 @@ fn data_type_name(column: &ColumnSchema) -> &'static str {
 /// The rows `start`, `start + incr`, ... for `count` rows (`-1`, or more
 /// than there are: to the end), or `refusal` when `start` is not a row. A
 /// step below one is refused as casacore's `getColumn` refuses it.
-fn rows(
+pub(super) fn rows(
     nrows: usize,
     start: i64,
     count: i64,
