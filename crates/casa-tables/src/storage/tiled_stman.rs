@@ -6993,27 +6993,8 @@ impl StreamingTiledShapeWriter {
         let mut default_tile_shape = Vec::new();
         let mut working_set = ShapeCubeWorkingSet::default();
 
+        // Each layout's extents are checked as its cube is created.
         for (cube_index, layout) in layouts.into_iter().enumerate() {
-            if layout.row_count == 0 {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape layout {:?} has no rows",
-                    layout.cell_shape
-                )));
-            }
-            if layout.cell_shape.is_empty() || layout.cell_shape.contains(&0) {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape cell dimensions must be positive: {:?}",
-                    layout.cell_shape
-                )));
-            }
-            if layout.tile_shape.len() != layout.cell_shape.len() + 1
-                || layout.tile_shape.contains(&0)
-            {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape tile rank must be cell rank + row axis; cell={:?} tile={:?}",
-                    layout.cell_shape, layout.tile_shape
-                )));
-            }
             match cell_rank {
                 Some(rank) if rank != layout.cell_shape.len() => {
                     return Err(StorageError::FormatMismatch(
@@ -7069,17 +7050,13 @@ impl StreamingTiledShapeWriter {
             )));
         }
         // Each cube assembles its bands in memory when they fit the budget
-        // beside the working set and the largest row map the rows can need.
+        // beside the working set and the largest row map the rows can need
+        // ([`Self::resident_bytes`]).
         let band_bytes = cubes
             .iter()
             .map(DirectShapeCubeWriter::band_bytes)
             .sum::<usize>();
-        let largest_row_map = row_count.saturating_mul(3 * std::mem::size_of::<u32>());
-        if working_bytes
-            .saturating_add(band_bytes)
-            .saturating_add(largest_row_map)
-            <= memory_budget_bytes
-        {
+        if shape_cube::buffered_bytes(working_bytes, band_bytes, row_count) <= memory_budget_bytes {
             cubes
                 .iter_mut()
                 .for_each(DirectShapeCubeWriter::buffer_bands);

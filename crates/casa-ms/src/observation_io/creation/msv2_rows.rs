@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MAIN's rows of an MSv2 a conversion creates: one per sample, padding a
-//! flagged row, or one per acquisition with padding omitted, in batch
-//! order. A sample's array cells go to the variable-shape creation writers
-//! as they are read; its keys are gathered per batch and pushed to the
-//! scalar columns a column at a time.
+//! MAIN's rows of an MSv2 a plan creates: one per sample, padding a flagged
+//! row, or one per acquisition with padding omitted, input after input and
+//! in batch order. A sample's array cells go to the variable-shape creation
+//! writers as they are read; its keys are gathered per batch and pushed to
+//! the scalar columns a column at a time. Each input's identities are
+//! written as the output's through its [`RowMap`].
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_observation::{Catalogue, ObservationError, VisibilityBatch};
+use casa_observation::{Catalogue, ObservationError, PartitionId, VisibilityBatch};
 use casa_tables::{ColumnOverrides, StreamedScalarValues, StreamedTiledShapeValueType};
 use casa_types::ScalarValue;
 use casa_types::measures::MjdHighPrec;
@@ -17,23 +18,24 @@ use num_complex::Complex32;
 
 use super::PaddingRows;
 use super::msv2_tables::Layout;
-use crate::MeasurementSet;
+use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    ScalarColumnId, standard_main_scalar_column_plans,
+    MeasurementSetWritePlan, MeasurementSetWriteSession, ScalarColumnId,
+    standard_main_scalar_column_plans,
 };
+use crate::{MeasurementSet, initial_model_visibility};
 
-/// The array columns every converted MSv2 holds besides its data columns.
+/// The array columns every created MSv2 holds besides its data columns.
 const ARRAY_COLUMNS: [&str; 5] = ["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"];
 
-/// The rows each partition will hold, from its grid.
+/// The rows each output partition will hold, from its inputs' grids.
 pub(super) struct Occupancy {
-    /// Rows of each partition: its grid's cells, or with padding omitted
-    /// its acquisitions (samples that are not padding).
+    /// Rows of each output partition: its inputs' grid cells, or with
+    /// padding omitted their acquisitions (samples that are not padding).
     pub(super) rows: Vec<usize>,
-    /// Each partition's grid interval, a padded row's `INTERVAL`.
+    /// Each output partition's grid interval, a padded row's `INTERVAL`.
     pub(super) intervals: Vec<f64>,
     /// The times the grids span.
     pub(super) spans: Spans,
@@ -50,6 +52,65 @@ pub(super) struct Spans {
     /// Each catalogue field's first time in any grid, MJD seconds; `None`
     /// for a field no grid names.
     pub(super) field_first: Vec<Option<f64>>,
+}
+
+/// Where a data column's values come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ColumnSource {
+    /// The read data group of this index.
+    Group(usize),
+    /// CASA's initial model (`VisSetUtil::initScrCols`): 1 on the parallel
+    /// hands and 0 on the cross hands, as `initial_model_visibility` gives.
+    InitialModel,
+}
+
+/// The `STATE_ID` an input partition's rows are written with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum StateIds {
+    /// One for every row: a merged state, or -1 for none.
+    One(i32),
+    /// The output partition's state of intents, written for partitions
+    /// that state intents but no state.
+    Intents,
+    /// Each row's own (an MSv2's rows of one `OBS_MODE` holding several),
+    /// as the merged state [`RowMap::states`] gives it, -1 for -1 and a
+    /// state beyond the input's `STATE`; the merged states they use.
+    PerRow(Vec<i32>),
+}
+
+/// Where one input partition's rows go, and what they are written with.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Placement {
+    /// The output partition.
+    pub(super) output: usize,
+    /// `STATE_ID`.
+    pub(super) state: StateIds,
+    /// `PROCESSOR_ID`, -1 for none.
+    pub(super) processor: i32,
+    /// Added to the input's scan numbers.
+    pub(super) scan_offset: i32,
+    /// The data groups read, the first with every role.
+    pub(super) groups: Vec<String>,
+    /// Each data column's source, in data-column order.
+    pub(super) columns: Vec<ColumnSource>,
+}
+
+/// One input's identities in the output, and its weights' scale.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RowMap {
+    /// `ANTENNA` row of each of the input's antennas.
+    pub(super) antennas: Vec<i32>,
+    /// `FIELD` row of each of the input's fields.
+    pub(super) fields: Vec<i32>,
+    /// `SCAN_NUMBER` of each of the input's scans, before its partition's
+    /// offset.
+    pub(super) scans: Vec<i32>,
+    /// `STATE` row of each of the input's states.
+    pub(super) states: Vec<i32>,
+    /// Each of the input's partitions.
+    pub(super) partitions: Vec<Placement>,
+    /// The factor every acquisition's weights are multiplied by.
+    pub(super) weight_scale: f32,
 }
 
 /// Whether a sample's weights (`[channel, correlation]`) are an
@@ -82,13 +143,21 @@ pub(super) fn acquired(weights: ArrayView2<'_, f32>) -> Result<bool, Observation
 
 /// CASA's `SIGMA` for a weight, as `mstransform` derives it
 /// (`weightToSigma`): `1/√w`, and -1 where `w` is not positive.
-fn sigma(weight: f32) -> f32 {
+pub(super) fn sigma(weight: f32) -> f32 {
     if weight > f32::MIN_POSITIVE {
         1.0 / weight.sqrt()
     } else {
         -1.0
     }
 }
+
+/// One sample's cells as a batch holds them: each data column's values
+/// (`None` for the initial model), the flags and the weights.
+type Cells<'a, 'b> = (
+    &'a [Option<ArrayView3<'b, Complex32>>],
+    ArrayView3<'b, bool>,
+    ArrayView2<'b, f32>,
+);
 
 /// The scalar columns, resolved once.
 struct Scalars {
@@ -100,10 +169,13 @@ struct Scalars {
     centroid: ScalarColumnId,
     interval: ScalarColumnId,
     exposure: ScalarColumnId,
-    /// Columns constant over a partition: `ARRAY_ID`, `DATA_DESC_ID`,
-    /// `FEED1`, `FEED2`, `FLAG_ROW`, `OBSERVATION_ID`, `PROCESSOR_ID`,
-    /// `STATE_ID`.
-    constant: [ScalarColumnId; 8],
+    /// Columns constant over an input partition: `ARRAY_ID`,
+    /// `DATA_DESC_ID`, `FEED1`, `FEED2`, `FLAG_ROW`, `OBSERVATION_ID`,
+    /// `PROCESSOR_ID`.
+    constant: [ScalarColumnId; 7],
+    /// `STATE_ID`, constant over an input partition unless its rows'
+    /// states are written row by row ([`StateIds::PerRow`]).
+    state: ScalarColumnId,
 }
 
 /// One batch's keys, gathered for the scalar columns.
@@ -113,6 +185,8 @@ struct Keys {
     antenna2: Vec<i32>,
     field: Vec<i32>,
     scan: Vec<i32>,
+    /// Gathered only where states are written row by row.
+    state: Vec<i32>,
     time: Vec<f64>,
     centroid: Vec<f64>,
     interval: Vec<f64>,
@@ -125,6 +199,7 @@ impl Keys {
         self.antenna2.clear();
         self.field.clear();
         self.scan.clear();
+        self.state.clear();
         self.time.clear();
         self.centroid.clear();
         self.interval.clear();
@@ -132,23 +207,76 @@ impl Keys {
     }
 }
 
+/// Each sample's `STATE_ID` in an MSv2 input's batches, read from its
+/// MAIN where an input partition's rows are written row by row
+/// ([`StateIds::PerRow`]); one input partition's batches in turn.
+#[derive(Default)]
+pub(super) struct RowStates {
+    /// The input partition's times the batches so far hold.
+    times: usize,
+    rows: Vec<usize>,
+    states: Vec<i32>,
+}
+
+impl RowStates {
+    /// Start an input partition's batches.
+    pub(super) fn restart(&mut self) {
+        self.times = 0;
+    }
+
+    /// Each sample's input `STATE_ID` in `batch`, the next of partition
+    /// `id` of `observation`.
+    ///
+    /// # Errors
+    ///
+    /// A batch that is not its grid's next times, or a failed read.
+    pub(super) fn of(
+        &mut self,
+        observation: &Msv2Observation,
+        id: PartitionId,
+        batch: &VisibilityBatch<'_>,
+    ) -> Result<&[i32], ObservationError> {
+        let times = batch.samples() / batch.samples_per_time().max(1);
+        observation.cell_states_into(
+            id,
+            self.times..self.times + times,
+            (&mut self.rows, &mut self.states),
+        )?;
+        if self.states.len() != batch.samples() {
+            return Err(request_error(
+                "a batch's samples are not its grid's cells at its times",
+            ));
+        }
+        self.times += times;
+        Ok(&self.states)
+    }
+}
+
 /// Cells copied when a view is not contiguous: an MSv2 source's weights
 /// (one per correlation, a zero stride along channels) and any strided
-/// payload.
+/// payload; and a batch's initial-model cell.
 #[derive(Default)]
 struct Scratch {
     values: Vec<Complex32>,
     flags: Vec<bool>,
     weights: Vec<f32>,
     sigmas: Vec<f32>,
+    model: Vec<Complex32>,
 }
 
-/// The creation session of a converted MSv2's MAIN.
+/// What every row of an output partition shares.
+struct Output {
+    observation: i32,
+    feeds: [i32; 2],
+    /// The grid interval, a padded row's `INTERVAL`.
+    interval: f64,
+}
+
+/// The creation session of a created MSv2's MAIN.
 pub(super) struct MainRows {
     session: MeasurementSetWriteSession,
     layout: Layout,
-    /// Each partition's grid interval.
-    intervals: Vec<f64>,
+    outputs: Vec<Output>,
     padding: PaddingRows,
     data_columns: Vec<&'static str>,
     scalars: Scalars,
@@ -159,12 +287,13 @@ pub(super) struct MainRows {
 }
 
 impl MainRows {
-    /// Plan and start MAIN's writers at `staging` for the `occupancy` of
-    /// `catalogue`'s partitions, with `data_columns` (`DATA`,
-    /// `CORRECTED_DATA`, `MODEL_DATA`), the subtables' `layout` and the
-    /// `padding` policy the occupancy was counted under.
+    /// Start MAIN's writers at `staging` under `plan` ([`write_plan`]) for
+    /// the `occupancy` of `catalogue`'s (output) partitions, with
+    /// `data_columns` (`DATA`, `CORRECTED_DATA`, `MODEL_DATA`), the
+    /// subtables' `layout` and the `padding` policy the occupancy was
+    /// counted under.
     pub(super) fn start(
-        staging: &Path,
+        (staging, plan): (&Path, MeasurementSetWritePlan),
         catalogue: &Catalogue,
         data_columns: Vec<&'static str>,
         occupancy: &Occupancy,
@@ -172,7 +301,6 @@ impl MainRows {
         padding: PaddingRows,
     ) -> Result<Self, ObservationError> {
         let planned = occupancy.rows.iter().sum();
-        let plan = plan(catalogue, &data_columns, &occupancy.rows, planned)?;
         let session = MeasurementSetWriteSession::start(staging, plan).map_err(storage)?;
         let id = |name: &str| session.scalar_column(name).map_err(storage);
         let scalars = Scalars {
@@ -192,13 +320,26 @@ impl MainRows {
                 id("FLAG_ROW")?,
                 id("OBSERVATION_ID")?,
                 id("PROCESSOR_ID")?,
-                id("STATE_ID")?,
             ],
+            state: id("STATE_ID")?,
         };
+        let outputs = catalogue
+            .partitions
+            .iter()
+            .zip(&occupancy.intervals)
+            .map(|(entry, interval)| {
+                let [feed1, feed2] = entry.feeds.unwrap_or([0, 0]);
+                Output {
+                    observation: entry.observation.0 as i32,
+                    feeds: [feed1 as i32, feed2 as i32],
+                    interval: *interval,
+                }
+            })
+            .collect();
         Ok(Self {
             session,
             layout,
-            intervals: occupancy.intervals.clone(),
+            outputs,
             padding,
             data_columns,
             scalars,
@@ -210,9 +351,16 @@ impl MainRows {
     }
 
     /// Write a row for every sample of `batches` (every acquisition, with
-    /// padding omitted), one batch per data column of the same times, the
-    /// first with every role.
-    pub(super) fn push(&mut self, batches: &[VisibilityBatch<'_>]) -> Result<(), ObservationError> {
+    /// padding omitted), one batch per group the partition reads, of the
+    /// same times, the first with every role; the input's identities
+    /// written as `map` gives them, and each sample's input `STATE_ID`
+    /// as `states` give them where they are written row by row.
+    pub(super) fn push(
+        &mut self,
+        map: &RowMap,
+        batches: &[VisibilityBatch<'_>],
+        states: Option<&[i32]>,
+    ) -> Result<(), ObservationError> {
         let batch = &batches[0];
         let missing = |role: &str| request_error(format!("a converted batch carries its {role}"));
         let weights = batch.group.weights.ok_or_else(|| missing("weights"))?;
@@ -231,13 +379,38 @@ impl MainRows {
                 "a further group's batch is not the first's partition and times",
             ));
         }
-        let values = batches
+        let placement = &map.partitions[batch.partition.0 as usize];
+        if matches!(placement.state, StateIds::PerRow(_)) != states.is_some() {
+            return Err(request_error(
+                "a batch's row states are given exactly where they are written row by row",
+            ));
+        }
+        let values = placement
+            .columns
             .iter()
-            .map(|each| each.group.values.ok_or_else(|| missing("visibilities")))
+            .map(|source| match source {
+                ColumnSource::Group(index) => batches[*index]
+                    .group
+                    .values
+                    .map(Some)
+                    .ok_or_else(|| missing("visibilities")),
+                ColumnSource::InitialModel => Ok(None),
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let shape = [batch.correlations.len(), batch.channel_count()];
+        if placement.columns.contains(&ColumnSource::InitialModel) {
+            self.scratch.model.clear();
+            for _ in 0..shape[1] {
+                self.scratch.model.extend(
+                    batch
+                        .correlations
+                        .iter()
+                        .map(|correlation| initial_model_visibility(correlation.casacore_code())),
+                );
+            }
+        }
         let origin = MjdHighPrec::new(0.0, 0.0);
-        let interval = self.intervals[batch.partition.0 as usize];
+        let interval = self.outputs[placement.output].interval;
         self.keys.clear();
         for sample in 0..batch.samples() {
             let sample_weights = weights.index_axis(Axis(0), sample);
@@ -245,7 +418,12 @@ impl MainRows {
             if !acquisition && self.padding == PaddingRows::Omitted {
                 continue;
             }
-            self.push_cells(sample, shape, &values, flags, sample_weights, acquisition)?;
+            self.push_cells(
+                sample,
+                shape,
+                (&values, flags, sample_weights),
+                (acquisition, map.weight_scale),
+            )?;
             self.session
                 .push_f64_row("UVW", &[3], &uvw.metres_at(sample))
                 .map_err(storage)?;
@@ -255,10 +433,19 @@ impl MainRows {
                 .time
                 .seconds_since(sample / batch.samples_per_time(), origin);
             let keys = &mut self.keys;
-            keys.antenna1.push(coordinate.baseline.antenna1.0 as i32);
-            keys.antenna2.push(coordinate.baseline.antenna2.0 as i32);
-            keys.field.push(coordinate.field.0 as i32);
-            keys.scan.push(self.layout.scan_number[scan.0 as usize]);
+            keys.antenna1
+                .push(map.antennas[coordinate.baseline.antenna1.0 as usize]);
+            keys.antenna2
+                .push(map.antennas[coordinate.baseline.antenna2.0 as usize]);
+            keys.field.push(map.fields[coordinate.field.0 as usize]);
+            keys.scan
+                .push(map.scans[scan.0 as usize] + placement.scan_offset);
+            if let Some(states) = states {
+                let state = usize::try_from(states[sample])
+                    .ok()
+                    .and_then(|state| map.states.get(state));
+                keys.state.push(state.copied().unwrap_or(-1));
+            }
             keys.time.push(time);
             if acquisition {
                 keys.centroid.push(centroid.seconds_since(sample, origin));
@@ -280,26 +467,29 @@ impl MainRows {
                 keys.exposure.push(0.0);
             }
         }
-        self.push_keys(batch.partition.0 as usize, batch)
+        self.push_keys(placement)
     }
 
     /// One sample's visibility, flag, weight and sigma cells; padding's
-    /// flagged throughout with NaN weights, padding's one mark.
+    /// flagged throughout with NaN weights, padding's one mark. An
+    /// acquisition's weights are multiplied by `scale`, and its sigmas
+    /// derived from the scaled weights, so `SIGMA` is `1/√(W·w)`.
     fn push_cells(
         &mut self,
         sample: usize,
         shape: [usize; 2],
-        values: &[ArrayView3<'_, Complex32>],
-        flags: ArrayView3<'_, bool>,
-        weights: ArrayView2<'_, f32>,
-        acquisition: bool,
+        (values, flags, weights): Cells<'_, '_>,
+        (acquisition, scale): (bool, f32),
     ) -> Result<(), ObservationError> {
         // A sample's `[channel, correlation]` cells, correlation fastest,
         // are an MSv2 cell of shape `[correlation, channel]` as casacore
         // stores it.
         let scratch = &mut self.scratch;
         for (column, values) in self.data_columns.iter().zip(values) {
-            let cell = contiguous(values.index_axis(Axis(0), sample), &mut scratch.values);
+            let cell = match values {
+                Some(values) => contiguous(values.index_axis(Axis(0), sample), &mut scratch.values),
+                None => &scratch.model,
+            };
             self.session
                 .push_complex32_row(column, &shape, cell)
                 .map_err(storage)?;
@@ -319,7 +509,9 @@ impl MainRows {
             .map_err(storage)?;
         scratch.weights.clear();
         if acquisition {
-            scratch.weights.extend(weights.row(0).iter().copied());
+            scratch
+                .weights
+                .extend(weights.row(0).iter().map(|weight| weight * scale));
         } else {
             scratch.weights.resize(shape[0], f32::NAN);
         }
@@ -336,12 +528,8 @@ impl MainRows {
             .map_err(storage)
     }
 
-    /// The batch's gathered keys, and its partition's constant ones.
-    fn push_keys(
-        &mut self,
-        partition: usize,
-        batch: &VisibilityBatch<'_>,
-    ) -> Result<(), ObservationError> {
+    /// The batch's gathered keys, and its input partition's constant ones.
+    fn push_keys(&mut self, placement: &Placement) -> Result<(), ObservationError> {
         let keys = &self.keys;
         let count = keys.antenna1.len();
         let scalars = &self.scalars;
@@ -374,23 +562,38 @@ impl MainRows {
                 .push_scalar_column(column, values)
                 .map_err(storage)?;
         }
-        let entry = &batch.catalogue.partitions[partition];
-        let [feed1, feed2] = entry.feeds.unwrap_or([0, 0]);
+        let output = placement.output;
+        let [feed1, feed2] = self.outputs[output].feeds;
         let constants = [
             ScalarValue::Int32(0),
-            ScalarValue::Int32(self.layout.data_description[partition]),
-            ScalarValue::Int32(feed1 as i32),
-            ScalarValue::Int32(feed2 as i32),
+            ScalarValue::Int32(self.layout.data_description[output]),
+            ScalarValue::Int32(feed1),
+            ScalarValue::Int32(feed2),
             ScalarValue::Bool(false),
-            ScalarValue::Int32(entry.observation.0 as i32),
-            ScalarValue::Int32(0),
-            ScalarValue::Int32(self.layout.state[partition]),
+            ScalarValue::Int32(self.outputs[output].observation),
+            ScalarValue::Int32(placement.processor),
         ];
         for (column, value) in scalars.constant.iter().zip(constants) {
             self.session
                 .push_repeated_scalar(*column, Some(value), count)
                 .map_err(storage)?;
         }
+        let state = match placement.state {
+            StateIds::One(state) => Some(state),
+            StateIds::Intents => Some(self.layout.intent_states[output].unwrap_or(-1)),
+            StateIds::PerRow(_) => None,
+        };
+        match state {
+            Some(state) => self.session.push_repeated_scalar(
+                scalars.state,
+                Some(ScalarValue::Int32(state)),
+                count,
+            ),
+            None => self
+                .session
+                .push_scalar_column(scalars.state, StreamedScalarValues::Int32(&keys.state)),
+        }
+        .map_err(storage)?;
         self.rows += count;
         Ok(())
     }
@@ -399,7 +602,7 @@ impl MainRows {
     ///
     /// # Errors
     ///
-    /// Fewer rows than planned (the source changed between the passes), or
+    /// Fewer rows than planned (an input changed between the passes), or
     /// a write failure.
     pub(super) fn finish(self, ms: &mut MeasurementSet) -> Result<usize, ObservationError> {
         if self.rows != self.planned {
@@ -432,14 +635,49 @@ fn contiguous<'a, T: Copy>(view: ArrayView2<'a, T>, scratch: &'a mut Vec<T>) -> 
     }
 }
 
-/// The variable-shape creation plan: one hypercube per visibility shape
-/// and per correlation count, sized by the rows each holds.
-fn plan(
+/// MAIN's variable-shape creation plan for the `occupancy` of
+/// `catalogue`'s partitions with `data_columns`, each array column's writer
+/// given `column_bytes` ([`array_columns`]).
+pub(super) fn write_plan(
+    columns: Vec<MeasurementSetArrayColumnPlan>,
+    occupancy: &Occupancy,
+    column_bytes: usize,
+) -> Result<MeasurementSetWritePlan, ObservationError> {
+    let scalars = standard_main_scalar_column_plans();
+    let resources = MeasurementSetWritePlan::variable_array_creation_resources(
+        columns.len(),
+        scalars.len(),
+        column_bytes,
+    )
+    .ok_or_else(|| request_error("the MAIN writers' memory overflows"))?;
+    MeasurementSetWritePlan::variable_array_creation(
+        occupancy.rows.iter().sum(),
+        columns,
+        scalars,
+        resources,
+    )
+    .map_err(storage)
+}
+
+/// What one batch's rows hold in [`MainRows`] beside the writers: the keys
+/// of `samples` samples with the reading of their states ([`RowStates`]),
+/// and a cell of `cell` elements of each kind.
+pub(super) fn held_bytes(samples: usize, cell: usize) -> usize {
+    let keys = 5 * size_of::<i32>() + 4 * size_of::<f64>();
+    let states = size_of::<usize>() + size_of::<i32>();
+    let scratch = 2 * size_of::<Complex32>() + size_of::<bool>() + 2 * size_of::<f32>();
+    samples * (keys + states) + cell * scratch
+}
+
+/// MAIN's array columns for the `occupancy` of `catalogue`'s partitions
+/// with `data_columns`: one hypercube per visibility shape and per
+/// correlation count, sized by the rows each holds.
+pub(super) fn array_columns(
     catalogue: &Catalogue,
     data_columns: &[&'static str],
-    rows: &[usize],
-    total: usize,
-) -> Result<MeasurementSetWritePlan, ObservationError> {
+    occupancy: &Occupancy,
+) -> Result<Vec<MeasurementSetArrayColumnPlan>, ObservationError> {
+    let (rows, total) = (&occupancy.rows, occupancy.rows.iter().sum::<usize>());
     if total == 0 {
         return Err(request_error(
             "the source holds nothing to write as an MSv2 row",
@@ -536,14 +774,7 @@ fn plan(
             shaped,
         ),
     ]);
-    let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(storage)?;
-    MeasurementSetWritePlan::variable_array_creation(
-        total,
-        columns,
-        standard_main_scalar_column_plans(),
-        resources,
-    )
-    .map_err(storage)
+    Ok(columns)
 }
 
 #[cfg(test)]

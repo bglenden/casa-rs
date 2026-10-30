@@ -20,8 +20,14 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::fixture;
 
-/// The losses converting the fixtures takes.
-const ACCEPT: [LossKind; 3] = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
+/// The losses converting the fixtures takes: an MSv2 written from an MSv4
+/// also writes MSv2's default where the MSv4 states nothing.
+const ACCEPT: [LossKind; 4] = [
+    LossKind::Sigma,
+    LossKind::Tables,
+    LossKind::Columns,
+    LossKind::Defaulted,
+];
 
 /// Seconds a day.
 const DAY_S: f64 = 86_400.0;

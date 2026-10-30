@@ -947,7 +947,9 @@ grids, batches) and create the destination from those alone.
   - in either, unselected data groups;
   - into an MSv4, antennas no partition's baselines name
     (`Loss::UnusedAntennas`, below);
-  - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below).
+  - into an MSv2, `SIGMA` itself (`Loss::SigmaDerived`, below), unless
+    the source's stored `SIGMA` is already `1/√WEIGHT` to within one unit
+    in the last place and it holds no `WEIGHT_SPECTRUM` (#937 PR B).
 
   Columns of the subtables the catalogue does carry (an antenna's offset,
   a field's delay direction) are not inventoried, but an ephemeris
@@ -960,7 +962,7 @@ grids, batches) and create the destination from those alone.
 - **Lockstep groups.** A partition's selected groups are read by one
   traversal each, sized to the same whole times per batch (the first with
   every role, the others their visibilities only), so a destination writes
-  every variable of a time range together (`convert/lockstep.rs`).
+  every variable of a time range together (`creation/lockstep.rs`).
   Batches align to the destination's chunk or, for an MSv2, to the
   source's natural time block.
 
@@ -1010,18 +1012,23 @@ datasets other intents. Either way the datasets numbered after the
 first difference can hold other data than XRADIO's of the same name.
 Partitions are converted `workers` at a time.
 
-**To MSv2.** A new MeasurementSet through production's creation path:
+**To MSv2.** A new MeasurementSet through production's creation path, a
+`CreationPlan` over one input (#937 PR B):
 
-- subtables from the catalogue: an antenna and a feed per antenna, a field
-  per field, a source per source in each spectral window, an observation
-  per session whose `TIME_RANGE` spans its integrations edge to edge,
-  polarizations whose products name receptors by their place in the
-  feeds (which must agree), and
-  spectral windows, polarizations, data descriptions and states shared by
-  partitions of equal content (`convert/msv2_tables.rs`). A data
-  description is shared only by partitions whose state or observation
-  differs, since an MSv2 keys partitions by data description, state and
-  observation and would read two alike back as one.
+- subtables from the catalogue (`creation/msv2_tables.rs`,
+  `msv2_identity.rs`, `msv2_sources.rs`): an antenna per antenna, the
+  feeds the partitions' receptors need, and a field, observation, state,
+  processor and source record per catalogue entry, with every member the
+  catalogue states (contract §2's descriptive metadata); a spectral window
+  per catalogue window a partition uses; and polarizations whose products
+  name receptors by their place in the feeds (which must agree). A member
+  the catalogue leaves unstated (an MSv4's IF chain, flags, a session
+  whose extent is not stated, which then spans its integrations edge to
+  edge) is written as MSv2's default and listed as `Loss::Defaulted`; a
+  window no partition uses, and its source records, are table losses. A
+  data description is shared only by partitions whose `OBS_MODE` or
+  observation differs, since an MSv2 keys partitions by data description,
+  `OBS_MODE` and observation and would read two alike back as one.
 - MAIN rows through the variable-shape creation writers
   (`MeasurementSetWritePlan::variable_array_creation`), one hypercube per
   visibility shape, partition after partition, in time and baseline order.
@@ -1051,7 +1058,22 @@ Partitions are converted `workers` at a time.
   data become data (`weightToSigma`): `1/√w`, and −1 where `w` is not
   positive. This is reported as `Loss::SigmaDerived` and must be accepted,
   since no batch carries sigma; right for weights never recalibrated,
-  wrong for the others (finding 6).
+  wrong for the others (finding 6). An MSv2 source whose stored `SIGMA`
+  is already that, to within one unit in the last place, and which holds
+  no `WEIGHT_SPECTRUM`, loses nothing, and no loss is reported.
+- **Memory is admitted before it is allocated**
+  (`CreationOptions::memory_bytes`, `to_msv2` takes the host's usual
+  eighth of physical memory): the `HISTORY` rows copied, each opening's
+  tables, loaded subtable rows, index and catalogue as it asks for them,
+  the merged and written catalogues (bounds first, trimmed once built),
+  the scans, grids and weights batches of planning, and writing's
+  subtables, `HISTORY`, `POINTING` table, pointing reads, MAIN writers and
+  one batch, which must hold one integration of every selected group
+  (`CreationPlan::charges`; the counting law `creation_plan_memory.rs`,
+  which also holds refused plans, megabytes of `HISTORY`, long strings, a
+  long `POINTING` and an MSv4 input to their charges). The MAIN writers
+  assemble their tile bands in memory when the budget holds them and
+  otherwise write each tile row in place.
 - Refused before anything is written: times in a scale other than UTC,
   feeds other than 0, units that differ between partitions of one column,
   fields in a frame other than J2000, a scan without a casacore number,
@@ -1229,12 +1251,14 @@ Commands: `ms_trial_convert`, `ms_trial_read_passes`,
 **Not done:** an MSv2 `WEIGHT_SPECTRUM` or `FLAG_CATEGORY` written; feeds
 other than 0; the MSv4 `processor_info` (written empty, where XRADIO
 writes the `PROCESSOR` row's type and sub-type, so a lone correlator's
-sub-type is not carried; `to_msv2` writes one correlator); fields whose direction is a
-polynomial in time, refused in either direction since the MSv2 adapter's
-catalogue would hold a constant term as the phase centre; an ephemeris's
-optional columns (`NP_ang`, `DiskLong`, ...: reported as losses); MSv2 subtable rows beyond the catalogue (an MSv2 → MSv2
-conversion drops `SOURCE` detail, `HISTORY` and `POINTING`'s `NAME`,
-`TARGET` and `TRACKING`, as reported);
+sub-type is not carried; `to_msv2` writes the catalogue's processors);
+fields whose direction is a polynomial in time, refused in either
+direction since the MSv2 adapter's catalogue would hold a constant term as
+the phase centre; fields that follow an ephemeris in a creation from
+several inputs; an ephemeris's optional columns (`NP_ang`, `DiskLong`,
+...: reported as losses); MSv2 subtable rows beyond the catalogue (an
+MSv2 → MSv2 conversion drops `HISTORY` and `POINTING`'s `NAME`, `TARGET`
+and `TRACKING`, as reported);
 a loss inventory at subtable-column level; a v4 → v2 reference converter
 to compare with (XRADIO has none; casacore read-back stands in); MSv2
 creation from parallel workers.
@@ -1443,7 +1467,7 @@ ways:
   window 0's rows only: #943).
 
 What a conversion carries of the pointing is planned before anything is
-written (`convert/pointing_plan.rs`):
+written (`creation/pointing_plan.rs`):
 - **Into an MSv4**, each partition's rows within its times (as XRADIO takes
   rows within each dataset's times) and each antenna's nearest either side,
   each as its direction at its own time. MSv4 states no interval or target
