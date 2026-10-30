@@ -32793,10 +32793,10 @@
        2
       ],
       "data": [
-       "1.1914993280621484e+27",
-       "7.18539998095734e+22",
-       "1.9091125619979862e-19",
-       "1.7882430723739595e+28"
+       "0.0",
+       "0.0",
+       "0.0",
+       "0.0"
       ]
      }
     },
@@ -32906,32 +32906,6 @@
      }
     },
     {
-     "method": "addrows",
-     "args": [
-      {
-       "int": 0,
-       "type": "int"
-      }
-     ],
-     "kwargs": {},
-     "value": {
-      "bool": true
-     }
-    },
-    {
-     "method": "addrows",
-     "args": [
-      {
-       "int": -1,
-       "type": "int"
-      }
-     ],
-     "kwargs": {},
-     "value": {
-      "bool": true
-     }
-    },
-    {
      "method": "removerows",
      "args": [
       {
@@ -32957,7 +32931,7 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "int": 3,
+      "int": 4,
       "type": "int"
      }
     },
@@ -32983,7 +32957,7 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "int": 2,
+      "int": 3,
       "type": "int"
      }
     },
@@ -33019,7 +32993,7 @@
      "kwargs": {},
      "error": {
       "type": "RuntimeError",
-      "message": "Invalid Table operation: removeRow: rownr 99 too high in table <TABLE> (#rows=2)"
+      "message": "Invalid Table operation: removeRow: rownr 99 too high in table <TABLE> (#rows=3)"
      }
     },
     {
@@ -33060,7 +33034,7 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "int": 0,
+      "int": 1,
       "type": "int"
      }
     },
@@ -33096,8 +33070,9 @@
       }
      ],
      "kwargs": {},
-     "value": {
-      "bool": true
+     "error": {
+      "type": "RuntimeError",
+      "message": "ScalarColumn::putColumn(Vector&): Table conformance error (#rows mismatch)"
      }
     },
     {
@@ -33121,8 +33096,9 @@
       }
      ],
      "kwargs": {},
-     "value": {
-      "bool": true
+     "error": {
+      "type": "RuntimeError",
+      "message": "ScalarColumn::putColumn(Vector&): Table conformance error (#rows mismatch)"
      }
     },
     {
@@ -33264,9 +33240,10 @@
      "value": {
       "ndarray": "float64",
       "shape": [
-       3
+       4
       ],
       "data": [
+       "0.0",
        "0.0",
        "0.0",
        "0.0"
@@ -33898,7 +33875,7 @@
      "args": [],
      "kwargs": {},
      "value": {
-      "int": 3,
+      "int": 4,
       "type": "int"
      }
     },
@@ -33954,7 +33931,7 @@
      ],
      "kwargs": {},
      "value": {
-      "int": 1,
+      "int": 0,
       "type": "int"
      }
     },

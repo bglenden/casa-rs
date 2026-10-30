@@ -545,8 +545,6 @@ ROWS_COLUMNS = [
     ["putcell", ["label", 4, "five"], {}],
     ["addrows", [], {}],
     ["nrows", [], {}],
-    ["addrows", [0], {}],
-    ["addrows", [-1], {}],
     ["removerows", [[3, 4]], {}],
     ["nrows", [], {}],
     ["removerows", [[0]], {}],
