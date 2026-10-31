@@ -11,11 +11,16 @@
 //! WARN messages at WARNING.
 
 pub(crate) mod componentlist;
+pub(crate) mod coordsys;
+pub(crate) mod image;
 pub(crate) mod measures;
+pub(crate) mod ms;
+pub(crate) mod msmetadata;
 pub(crate) mod quanta;
 pub(crate) mod simulator;
 pub(crate) mod simutil;
 pub(crate) mod surface;
+pub(crate) mod table;
 
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
@@ -24,11 +29,16 @@ use pyo3::prelude::*;
 /// bundle builds every tool entry from this one list
 /// (`crate::object_contract`). `casars.simutil` is not a CASA tool and is
 /// not listed.
-pub(crate) const TOOLS: [&surface::ToolSurface; 4] = [
+pub(crate) const TOOLS: [&surface::ToolSurface; 9] = [
     &simulator::surface::SURFACE,
     &measures::surface::SURFACE,
     &quanta::surface::SURFACE,
     &componentlist::surface::SURFACE,
+    &image::surface::SURFACE,
+    &coordsys::surface::SURFACE,
+    &table::surface::SURFACE,
+    &msmetadata::surface::SURFACE,
+    &ms::surface::SURFACE,
 ];
 
 /// A Python logging level for a CASA log message.
@@ -94,5 +104,13 @@ pub(crate) fn emit(py: Python<'_>, logger: &str, lines: &[LogLine]) -> PyResult<
 pub(crate) fn not_yet_implemented<T>(tool: &str, method: &str) -> PyResult<T> {
     Err(PyNotImplementedError::new_err(format!(
         "{tool}.{method} is not yet implemented in casa-rs"
+    )))
+}
+
+/// A method of `tool` casa-rs does not implement yet, refused naming the
+/// issue that records it (#1025).
+pub(crate) fn not_yet_implemented_in<T>(tool: &str, method: &str, issue: u32) -> PyResult<T> {
+    Err(PyNotImplementedError::new_err(format!(
+        "{tool}.{method} is not yet implemented in casa-rs (#{issue})"
     )))
 }

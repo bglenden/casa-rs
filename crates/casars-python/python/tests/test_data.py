@@ -41,7 +41,10 @@ def test_data_schema_bundle_reports_object_surface() -> None:
 
     objects = {entry["name"]: entry for entry in bundle["semantic"]["objects"]}
     # The CASA tools of casars.tools share the bundle (test_tools_*.py).
-    assert set(objects) == {"Image", "Table", "simulator", "measures", "quanta", "componentlist"}
+    assert set(objects) == {
+        "Image", "Table", "simulator", "measures", "quanta", "componentlist",
+        "image", "coordsys", "table", "msmetadata", "ms",
+    }
     assert {prop["name"] for prop in objects["Image"]["properties"]} == {
         "shape",
         "pixel_type",

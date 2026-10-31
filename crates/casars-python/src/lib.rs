@@ -1004,6 +1004,11 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tools::measures::PyMeasures>()?;
     module.add_class::<tools::quanta::PyQuanta>()?;
     module.add_class::<tools::componentlist::PyComponentList>()?;
+    module.add_class::<tools::image::PyImageTool>()?;
+    module.add_class::<tools::coordsys::PyCoordsys>()?;
+    module.add_class::<tools::table::PyTableTool>()?;
+    module.add_class::<tools::msmetadata::PyMsMetadata>()?;
+    module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::simutil::PySimutil>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
