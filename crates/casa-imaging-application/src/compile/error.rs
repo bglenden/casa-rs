@@ -20,6 +20,22 @@ use casa_types::measures::{
 /// action can cause is a bug and panics with the invariant it broke.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
+    /// Existing products require CASA restart, which is not implemented yet.
+    #[error(
+        "existing image product {path:?}: CASA restart is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
+    )]
+    ExistingImageProduct {
+        /// The occupied scientific product path.
+        path: PathBuf,
+    },
+    /// The output namespace could not be inspected before a run.
+    #[error("cannot inspect output directory {path:?}: {source}")]
+    InspectOutputDirectory {
+        /// The directory containing the output prefix.
+        path: PathBuf,
+        /// The filesystem failure.
+        source: std::io::Error,
+    },
     /// The MeasurementSet, or one of its subtables or columns, could not be
     /// read.
     #[error(transparent)]

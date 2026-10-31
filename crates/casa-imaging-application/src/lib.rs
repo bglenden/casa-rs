@@ -15,6 +15,7 @@ pub mod geometry_law;
 mod imaging;
 mod native;
 mod request;
+mod restart;
 #[doc(hidden)]
 pub mod route_law;
 #[doc(hidden)]
@@ -296,10 +297,16 @@ impl NativeMinorCycleStopReason {
 /// caller asked for the record and would otherwise read its absence as a
 /// run that never ended. A run that fails returns its own error, which
 /// matters more, and only logs a summary it cannot write.
+/// An occupied scientific output namespace is refused before preparation,
+/// preserving its previous summary and products until restart is implemented.
 pub fn execute(
     request: &ImagingRequest,
     context: RunContext,
 ) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    // Until CASA restart is implemented, a second run must not silently
+    // replace its model, mask or products (#944). Do this before even the
+    // summary is opened, preserving the previous run's record as well.
+    restart::check(request).map_err(ApplicationDispatchError::Preparation)?;
     // The device is resolved once the problem is compiled; until then the
     // summary names the one asked for, and for `auto` the CPU.
     let asked = match request.backend {

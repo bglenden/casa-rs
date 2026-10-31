@@ -25,7 +25,7 @@ const POINT: Component = Component {
 };
 
 /// `casars-imager --json-run -` with tclean `values`, in `directory`.
-fn json_run(directory: &Path, values: Value) -> TaskReply {
+pub(super) fn json_run(directory: &Path, values: Value) -> TaskReply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
         .args(["--json-run", "-"])
         .current_dir(directory)

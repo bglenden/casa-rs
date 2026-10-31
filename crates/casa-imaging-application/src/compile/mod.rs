@@ -92,6 +92,18 @@ struct Surveyed<'a> {
     spectral: &'a PreparedSpectralAxis,
 }
 
+/// Check outlier output prefixes with the same parser compile uses (#944).
+pub(crate) fn check_outlier_outputs(
+    path: &std::path::Path,
+    size: [usize; 2],
+    cell: [f64; 2],
+) -> Result<(), PrepareError> {
+    for domain in outliers::read_outlier_domains(path, size, cell)? {
+        crate::restart::check_prefix(&domain.output)?;
+    }
+    Ok(())
+}
+
 /// Compile `request` against its MeasurementSet.
 ///
 /// What compile reads is admitted, not compile itself: the walks of the
