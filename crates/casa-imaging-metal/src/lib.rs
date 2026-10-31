@@ -50,18 +50,6 @@ pub use unavailable::MetalBackend;
 /// source stream: the producer's fill time and the pass's waits for it.
 pub const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
-/// Extra host bytes beside f32 grid storage for the local #991 partial-sum
-/// experiment. A partial's f64 master holds two times the grid's bytes and
-/// is released before finishing; ordinary builds retain no extra storage.
-#[must_use]
-pub const fn partial_grid_bytes(grid_bytes: u64) -> u64 {
-    if cfg!(feature = "partial-f32-prototype") {
-        grid_bytes.saturating_mul(2)
-    } else {
-        0
-    }
-}
-
 /// Ring slots of one backend: the host prepares one while the device runs
 /// the others. Twice the sub-blocks of one apply ([`SPLIT`]), so that an
 /// apply whose grid work is left in flight

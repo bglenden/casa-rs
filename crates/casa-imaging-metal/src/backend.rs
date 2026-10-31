@@ -4,9 +4,6 @@
 
 use std::ops::Range;
 
-#[cfg(feature = "partial-f32-prototype")]
-mod partial_sum;
-
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CfKey, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
     DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
@@ -624,22 +621,9 @@ impl<'cf> MetalBackend<'cf> {
             !reads_back || parts.len() == 1,
             "work read back is one block's"
         );
-        let defer = self.defer_grid
-            && !reads_back
-            && cells.is_some()
-            && !cfg!(feature = "partial-f32-prototype");
+        let defer = self.defer_grid && !reads_back && cells.is_some();
         let samples = parts.iter().map(SampleBlock::len).sum::<usize>();
         let sub = samples.div_ceil(SPLIT).clamp(MIN_SUB, MAX_SUB);
-        // Deliberately small for the approved #991 discrimination. A retained
-        // bound needs its rounding argument and performance evidence.
-        #[cfg(feature = "partial-f32-prototype")]
-        let sub = if cells.is_some() { 256 } else { sub };
-        #[cfg(feature = "partial-f32-prototype")]
-        // SAFETY: every run with grid cells is called while its caller holds
-        // the accumulator exclusively. Existing deferred writes settle in
-        // new; each merge follows retirement, and all paths drain below
-        // before the master restores f32 storage on drop.
-        let mut partial = cells.map(|cells| unsafe { partial_sum::PartialGrid::new(cells) });
         self.usage.applies += 1;
         self.usage.samples += samples as u64;
         if matches!(kernel, Kernel::Predict | Kernel::PredictNative) {
@@ -695,16 +679,11 @@ impl<'cf> MetalBackend<'cf> {
                     start..start + count,
                 )?;
                 self.ring[slot].reads_back = reads_back;
-                #[cfg(feature = "partial-f32-prototype")]
-                if let Some(partial) = partial.as_mut() {
-                    self.retire(slot, &parts[0], &mut readback)?;
-                    partial.merge_and_clear();
-                }
                 start += count;
             }
             Ok::<_, OperatorError>(())
         }));
-        if leave_running && cells.is_none() && matches!(dispatched, Ok(Ok(()))) {
+        if leave_running && matches!(dispatched, Ok(Ok(()))) {
             return Ok(());
         }
         if defer && matches!(dispatched, Ok(Ok(()))) {

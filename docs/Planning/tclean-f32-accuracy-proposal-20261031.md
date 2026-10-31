@@ -1,12 +1,37 @@
 # Bounded proposal: repair dense-cell f32 gridding accuracy
 
-Truth class: approved experiment
+Truth class: retired experiment
 Work issue: #991, under the tclean-first work in #980.
 
 Owner approval, 2026-10-31: the bounded prototype is approved. The owner also
 authorized future local experiments with new performance algorithms and
 ideas without renewed permission, while preserving fundamental correctness.
 The shared operating rule is recorded in `AGENTS.md` (also imported by Claude).
+
+## Outcome: retired for cost
+
+The exact prototype is preserved at
+`fe9303b46be3bced29d8ebd8d8de961a0547dc6d`, enabled by its experimental
+Cargo feature. Both small cases met their recorded NRMS, masks, finite-value,
+beam and sumwt checks. Compact-array PSF NRMS improved from 0.0188361 to
+4.4328e-6. However, its major cycle took 8.90285 s against the same-source
+control's 0.307545 s (about 29 times the cost); task-process wall was 9.4267 s
+against 0.8571 s. These are single paired observations, not statistical
+timings. The ordinary small case's major cycle also increased, from 0.00490
+to 0.00680 s, though task startup noise hid it in total wall time.
+
+The full-grid conversion/clear and synchronization after every 256 samples
+are too costly. The candidate is retired, its source changes removed, and
+the normal executable restored. No memory counting-law pass, representative
+acceptance or production adoption is claimed. The f64 master was per apply,
+so this also did not establish a full-pass error bound.
+
+The compact receipt is
+`resources/casa-compat/evidence/tclean-partial-grid-experiment-20261031.json`.
+The next investigation follows the existing weight-image contribution
+reducer: sum identical gridding contributions before stamping them, reducing
+both repeated work and f32 additions. This is a new bounded hypothesis,
+not tuning or retaining the rejected whole-grid merge.
 
 The current small compact-array case is outside scientific acceptance.
 CASA is an oracle only; the proposed computation stays native Rust.

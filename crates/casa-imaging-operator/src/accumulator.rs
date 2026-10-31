@@ -401,21 +401,6 @@ impl DeviceCells {
     pub fn owner(&self) -> &(dyn std::any::Any + Send + Sync) {
         self.owner.as_ref()
     }
-
-    /// The original writable allocation pointer for a backend's host access,
-    /// after settling deferred device work. Unlike casting a shared slice,
-    /// this retains the allocation pointer's write provenance.
-    ///
-    /// # Safety
-    ///
-    /// The backend must exclusively own the enclosing accumulator until its
-    /// last use of this pointer. Each host access requires completed device
-    /// work and no other live host access to the same cells; later device work
-    /// must follow the normal exclusive-access/deferred-work contract.
-    pub unsafe fn backend_pointer(&self) -> std::ptr::NonNull<Complex32> {
-        self.settle();
-        self.cells
-    }
 }
 
 impl std::fmt::Debug for DeviceCells {

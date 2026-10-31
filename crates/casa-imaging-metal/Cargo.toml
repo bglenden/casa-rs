@@ -10,10 +10,6 @@ publish = false
 [lints]
 workspace = true
 
-[features]
-# Local #991 experiment; production adoption needs the affected gates/review.
-partial-f32-prototype = []
-
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-numerics = { path = "../casa-numerics" }
