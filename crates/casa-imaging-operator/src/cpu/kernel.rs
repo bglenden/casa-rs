@@ -20,8 +20,9 @@ use crate::geometry::CellLocation;
 /// Add `value · tap'` over the support into `grid` through Mueller plane
 /// `mueller`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn spread<T: GridScalar>(
+pub(super) fn spread<T: GridScalar, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     tile: Tile,
     location: CellLocation,
     taps: &TapLayout<'_>,
@@ -47,8 +48,26 @@ pub(super) fn spread<T: GridScalar>(
             let ry = &rows[usize::from(location.oy) * support..][..support];
             let (x0, y0) = block_origin(tile, location, [support / 2, support / 2]);
             match support {
-                7 => spread_separable::<T, 7>(grid, tile.shape[0], x0, y0, rx, ry, value),
-                _ => spread_separable_dyn(grid, tile.shape[0], x0, y0, rx, ry, value),
+                7 => spread_separable::<T, 7, COMPENSATED>(
+                    grid,
+                    correction,
+                    tile.shape[0],
+                    x0,
+                    y0,
+                    rx,
+                    ry,
+                    value,
+                ),
+                _ => spread_separable_dyn::<T, COMPENSATED>(
+                    grid,
+                    correction,
+                    tile.shape[0],
+                    x0,
+                    y0,
+                    rx,
+                    ry,
+                    value,
+                ),
             }
         }
         TapLayout::Dense {
@@ -76,8 +95,16 @@ pub(super) fn spread<T: GridScalar>(
                 conjugate,
             };
             match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
-                Some(ramp) => spread_dense::<T, true>(grid, &block, ramp, value),
-                None => spread_dense::<T, false>(grid, &block, PointingRamp::NONE, value),
+                Some(ramp) => {
+                    spread_dense::<T, true, COMPENSATED>(grid, correction, &block, ramp, value)
+                }
+                None => spread_dense::<T, false, COMPENSATED>(
+                    grid,
+                    correction,
+                    &block,
+                    PointingRamp::NONE,
+                    value,
+                ),
             }
         }
     }
@@ -196,8 +223,10 @@ fn block_origin(tile: Tile, location: CellLocation, half: [usize; 2]) -> (usize,
     (x0 as usize, y0 as usize)
 }
 
-fn spread_separable<T: GridScalar, const S: usize>(
+#[allow(clippy::too_many_arguments)]
+fn spread_separable<T: GridScalar, const S: usize, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     nx: usize,
     x0: usize,
     y0: usize,
@@ -214,8 +243,13 @@ fn spread_separable<T: GridScalar, const S: usize>(
         let row: &mut [Complex<T>; S] = (&mut grid[(y0 + iy) * nx + x0..][..S])
             .try_into()
             .expect("row has S cells");
-        for (cell, tap) in row.iter_mut().zip(&taps_x) {
-            *cell = *cell + scaled * *tap;
+        for (ix, (cell, tap)) in row.iter_mut().zip(&taps_x).enumerate() {
+            crate::compensation::add::<T, COMPENSATED>(
+                cell,
+                correction,
+                (y0 + iy) * nx + x0 + ix,
+                scaled * *tap,
+            );
         }
     }
 }
@@ -270,8 +304,10 @@ fn gather_separable_dyn<T: GridScalar>(
     sum
 }
 
-fn spread_separable_dyn<T: GridScalar>(
+#[allow(clippy::too_many_arguments)]
+fn spread_separable_dyn<T: GridScalar, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     nx: usize,
     x0: usize,
     y0: usize,
@@ -283,8 +319,13 @@ fn spread_separable_dyn<T: GridScalar>(
     for (iy, wy) in ry.iter().enumerate() {
         let scaled = value * T::from_f32(*wy);
         let row = &mut grid[(y0 + iy) * nx + x0..][..support];
-        for (cell, tap) in row.iter_mut().zip(rx) {
-            *cell = *cell + scaled * T::from_f32(*tap);
+        for (ix, (cell, tap)) in row.iter_mut().zip(rx).enumerate() {
+            crate::compensation::add::<T, COMPENSATED>(
+                cell,
+                correction,
+                (y0 + iy) * nx + x0 + ix,
+                scaled * T::from_f32(*tap),
+            );
         }
     }
 }
@@ -457,8 +498,9 @@ fn oriented(tap: Complex32, conjugate: bool) -> Complex64 {
 /// Add `value · tap'` over `block`, each tap times `ramp` when `RAMPED`:
 /// a row segment's value carries the ramp at its first tap, and each tap
 /// its table factor ([`PointingRamp`]).
-fn spread_dense<T: GridScalar, const RAMPED: bool>(
+fn spread_dense<T: GridScalar, const RAMPED: bool, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     block: &DenseBlock<'_>,
     mut ramp: PointingRamp,
     value: Complex<T>,
@@ -470,17 +512,33 @@ fn spread_dense<T: GridScalar, const RAMPED: bool>(
         let row = &mut grid[(y0 + iy) * block.nx + x0..][..sx];
         let taps = &block.taps[iy * sx..][..sx];
         let Some(table) = &table else {
-            for (cell, tap) in row.iter_mut().zip(taps) {
+            for (ix, (cell, tap)) in row.iter_mut().zip(taps).enumerate() {
                 let tap = oriented(*tap, block.conjugate);
-                *cell = *cell + value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
+                crate::compensation::add::<T, COMPENSATED>(
+                    cell,
+                    correction,
+                    (y0 + iy) * block.nx + x0 + ix,
+                    value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im)),
+                );
             }
             continue;
         };
         let mut start = wide * ramp.row;
-        for (cells, taps) in row.chunks_mut(RAMP_SEGMENT).zip(taps.chunks(RAMP_SEGMENT)) {
-            for ((cell, tap), factor) in cells.iter_mut().zip(taps).zip(&table.factors) {
+        for (segment, (cells, taps)) in row
+            .chunks_mut(RAMP_SEGMENT)
+            .zip(taps.chunks(RAMP_SEGMENT))
+            .enumerate()
+        {
+            for (ix, ((cell, tap), factor)) in
+                cells.iter_mut().zip(taps).zip(&table.factors).enumerate()
+            {
                 let added = start * (oriented(*tap, block.conjugate) * *factor);
-                *cell = *cell + Complex::new(T::from_f64(added.re), T::from_f64(added.im));
+                crate::compensation::add::<T, COMPENSATED>(
+                    cell,
+                    correction,
+                    (y0 + iy) * block.nx + x0 + segment * RAMP_SEGMENT + ix,
+                    Complex::new(T::from_f64(added.re), T::from_f64(added.im)),
+                );
             }
             start *= ramp.segment;
         }
@@ -624,8 +682,9 @@ mod tests {
 
         let value = Complex::new(T::from_f64(0.6), T::from_f64(-1.3));
         let mut spread_grid = vec![Complex::<T>::default(); tile.shape[0] * tile.shape[1]];
-        spread::<T>(
+        spread::<T, false>(
             &mut spread_grid,
+            &mut [],
             tile,
             location,
             &taps,
@@ -748,3 +807,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "compensated-f32-prototype"))]
+#[path = "correction_laws.rs"]
+mod correction_laws;

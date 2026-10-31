@@ -10,6 +10,10 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# Local accuracy experiment for #991; off in normal builds.
+compensated-f32-prototype = []
+
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }

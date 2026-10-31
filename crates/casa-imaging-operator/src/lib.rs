@@ -35,6 +35,7 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod compensation;
 mod continuum;
 mod convolution;
 mod cpu;

@@ -402,18 +402,38 @@ impl WaveDemand<'_> {
                 .accumulator_layout(one, tile, modes)
                 .bytes(precision) as u64
         };
-        let accumulator = layout(None, self.modes) * planes_u64;
+        // Host f32 corrections belong to gridding owners, never model grids.
+        let cpu_extra = |tile| {
+            casa_imaging_operator::GridAccumulator::cpu_correction_bytes(
+                operator.accumulator_layout(one, tile, self.modes).cells() as u64,
+                precision,
+            )
+        };
+        let owner_layout = |tile| {
+            layout(tile, self.modes)
+                + if self.backend == BackendChoice::Metal {
+                    0
+                } else {
+                    cpu_extra(tile)
+                }
+        };
+        // Region merges always create a host accumulator, including Metal.
+        let accumulator = owner_layout(None) * planes_u64;
         let (tiles, merging) = match &domain.partition {
             Partition::Planes { .. } => (accumulator, accumulator),
             Partition::Regions { regions, .. } => {
                 let tiles = regions
                     .iter()
-                    .map(|region| layout(Some(region.tile), self.modes))
+                    .map(|region| owner_layout(Some(region.tile)))
                     .sum::<u64>()
                     * planes_u64;
                 // One owner's tile is the whole grid, which the wave
                 // finishes as it is: both key on the owner count.
-                let merged = if regions.len() > 1 { accumulator } else { 0 };
+                let merged = if regions.len() > 1 {
+                    (layout(None, self.modes) + cpu_extra(None)) * planes_u64
+                } else {
+                    0
+                };
                 (tiles, tiles + merged)
             }
         };
@@ -488,7 +508,18 @@ impl WaveDemand<'_> {
         DomainStages {
             held,
             gridding: tiles + extra,
-            finishing: merging.max(accumulator + images) + extra,
+            finishing: merging.max(
+                accumulator
+                    + images
+                    + if self.backend == BackendChoice::Metal
+                        && domain.partition.owners() > 1
+                        && matches!(domain.partition, Partition::Regions { .. })
+                    {
+                        cpu_extra(None) * planes_u64
+                    } else {
+                        0
+                    },
+            ) + extra,
             appending: 2 * images + normal,
         }
     }

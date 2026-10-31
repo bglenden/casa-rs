@@ -6,7 +6,9 @@ pub(crate) mod kernel;
 
 use num_complex::{Complex, Complex32, Complex64};
 
-use crate::accumulator::{AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, Mode};
+use crate::accumulator::{
+    AccumulatorLayout, CpuGridParts, GridAccumulator, GridPrecision, GridScalar, Mode,
+};
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::{CellHold, ConvolutionFunctionSet, KernelNormalisation, TapLayout};
 use crate::error::OperatorError;
@@ -88,14 +90,19 @@ impl CpuBackend {
         (samples * npol * size_of::<Complex32>()) as u64
     }
 
-    fn grid<T: GridScalar>(
+    fn grid<T: GridScalar, const COMPENSATED: bool>(
         &mut self,
         block: &SampleBlock<'_>,
         cf: &dyn ConvolutionFunctionSet,
         mode: Mode,
         acc: &mut GridAccumulator,
     ) -> Result<(), OperatorError> {
-        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
+        let CpuGridParts {
+            layout,
+            cells,
+            correction,
+            mut sumwt,
+        } = acc.parts_mut::<T>();
         let terms = layout
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
@@ -121,9 +128,10 @@ impl CpuBackend {
                 continue;
             }
             spectral_powers(powers, placement.spectral, terms.len());
-            spread_sample(
+            spread_sample::<T, COMPENSATED>(
                 layout,
                 cells,
+                correction,
                 sumwt.as_deref_mut(),
                 cf,
                 rule,
@@ -158,7 +166,7 @@ impl CpuBackend {
         }
     }
 
-    fn residual<T: GridScalar>(
+    fn residual<T: GridScalar, const COMPENSATED: bool>(
         &mut self,
         block: &SampleBlock<'_>,
         cf: &dyn ConvolutionFunctionSet,
@@ -171,7 +179,12 @@ impl CpuBackend {
             assert_eq!(out.len(), block.len() * npol, "residual output length");
         }
         let rule = cf.normalisation();
-        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
+        let CpuGridParts {
+            layout,
+            cells,
+            correction,
+            mut sumwt,
+        } = acc.parts_mut::<T>();
         let terms = layout
             .term_range(Mode::Data)
             .expect("residual gridding needs the data terms");
@@ -207,9 +220,10 @@ impl CpuBackend {
                 .geometry()
                 .locate(placement.u, placement.v, taps.oversampling());
             spectral_powers(powers, placement.spectral, terms.len());
-            spread_sample(
+            spread_sample::<T, COMPENSATED>(
                 layout,
                 cells,
+                correction,
                 sumwt.as_deref_mut(),
                 cf,
                 rule,
@@ -334,8 +348,11 @@ impl GridBackend for CpuBackend {
         );
         let result = match work {
             Work::Grid { mode, acc } => match acc.precision() {
-                GridPrecision::F32 => self.grid::<f32>(block, cf, mode, acc),
-                GridPrecision::F64 => self.grid::<f64>(block, cf, mode, acc),
+                GridPrecision::F32 => self
+                    .grid::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
+                        block, cf, mode, acc,
+                    ),
+                GridPrecision::F64 => self.grid::<f64, false>(block, cf, mode, acc),
             },
             Work::Predict { model, out } => {
                 match model.precision() {
@@ -356,10 +373,16 @@ impl GridBackend for CpuBackend {
                 );
                 match acc.precision() {
                     GridPrecision::F32 => {
-                        self.residual::<f32>(block, cf, model, acc, residual_out);
+                        self.residual::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
+                            block,
+                            cf,
+                            model,
+                            acc,
+                            residual_out,
+                        );
                     }
                     GridPrecision::F64 => {
-                        self.residual::<f64>(block, cf, model, acc, residual_out);
+                        self.residual::<f64, false>(block, cf, model, acc, residual_out);
                     }
                 }
                 Ok(())
@@ -431,8 +454,14 @@ impl CpuBackend {
             ..*block
         };
         let result = match acc.precision() {
-            GridPrecision::F32 => self.grid::<f32>(&residual, cf, Mode::Data, acc),
-            GridPrecision::F64 => self.grid::<f64>(&residual, cf, Mode::Data, acc),
+            GridPrecision::F32 => self
+                .grid::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
+                    &residual,
+                    cf,
+                    Mode::Data,
+                    acc,
+                ),
+            GridPrecision::F64 => self.grid::<f64, false>(&residual, cf, Mode::Data, acc),
         };
         self.batch = values;
         result
@@ -447,9 +476,10 @@ impl CpuBackend {
 /// Mueller plane share its taps (both correlations of Stokes I), so their
 /// values are summed and spread once; `sumwt` still adds each one's weight.
 #[allow(clippy::too_many_arguments)]
-fn spread_sample<T: GridScalar>(
+fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
     layout: &AccumulatorLayout,
     cells: &mut [Complex<T>],
+    correction: &mut [Complex32],
     mut sumwt: Option<&mut [f64]>,
     cf: &dyn ConvolutionFunctionSet,
     rule: KernelNormalisation,
@@ -514,8 +544,13 @@ fn spread_sample<T: GridScalar>(
                 let value =
                     Complex::new(T::from_f64(base.re * power), T::from_f64(base.im * power));
                 let offset = layout.block_offset(plane, gpol, term);
-                kernel::spread::<T>(
+                kernel::spread::<T, COMPENSATED>(
                     &mut cells[offset..offset + block_cells],
+                    if COMPENSATED {
+                        &mut correction[offset..offset + block_cells]
+                    } else {
+                        &mut []
+                    },
                     layout.tile(),
                     location,
                     taps,
