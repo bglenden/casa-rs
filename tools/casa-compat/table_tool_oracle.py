@@ -522,6 +522,111 @@ MS_SLICES = [
     ["close", [], {}],
 ]
 
+#: Adding and removing rows on the python fixture table.
+ROWS = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["nrows", [], {}],
+    ["addrows", [2], {}],
+    ["nrows", [], {}],
+    ["getcol", ["label"], {}],
+    # (CASA leaves the cells of an added array uninitialised: not read.)
+    ["iscelldefined", ["spectrum", 3], {}],
+    ["iscelldefined", ["vary", 3], {}],
+    ["iscelldefined", ["id", 3], {}],
+    ["getcell", ["id", 3], {}],
+    ["getcell", ["meta", 3], {}],
+    ["putcell", ["id", 3, 33], {}],
+    ["putcell", ["label", 4, "five"], {}],
+    ["addrows", [], {}],
+    ["nrows", [], {}],
+    ["removerows", [[3, 4]], {}],
+    ["nrows", [], {}],
+    ["removerows", [[0]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 0], {}],
+    ["getcell", ["label", 0], {}],
+    ["removerows", [[99]], {}],
+    ["removerows", [[]], {}],
+    ["removerows", [[0, 0]], {}],
+    ["nrows", [], {}],
+    ["addrows", [0], {}],
+    ["nrows", [], {}],
+    ["addrows", [3], {}],
+    ["putcol", ["id", np.array([1, 2, 3])], {}],
+    ["putcol", ["label", ["a", "b", "c"]], {}],
+    ["addrows", [3], {}],
+    *[["putcell", ["id", row, 10 + row], {}] for row in range(7)],
+    # Rows out of order; a bad row number alone, and among good ones.
+    ["removerows", [[5, 1]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 1], {}],
+    ["getcell", ["id", 3], {}],
+    ["removerows", [[-1]], {}],
+    ["nrows", [], {}],
+    ["removerows", [[1, 99]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 1], {}],
+    ["removerows", [[2, 3, 50, 60]], {}],
+    ["nrows", [], {}],
+    ["removerows", [3], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 3], {}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 0], {}],
+    ["getcell", ["id", 2], {}],
+    ["addrows", [1], {}],
+    ["removerows", [[0]], {}],
+    ["nrows", [], {}],
+    ["close", [], {}],
+]
+
+#: Renaming and removing columns of the python fixture table, and what the
+#: table says of them after a reopen.
+COLUMNS = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["getcoldesc", ["id"], {}],
+    ["getcoldesc", ["label"], {}],
+    ["getcoldesc", ["spectrum"], {}],
+    ["getcoldesc", ["vary"], {}],
+    ["getcoldesc", ["meta"], {}],
+    ["getcoldesc", ["nosuchcolumn"], {}],
+    ["renamecol", ["label", "name"], {}],
+    ["colnames", [], {}],
+    ["getcell", ["name", 0], {}],
+    ["getcoldesc", ["name"], {}],
+    ["renamecol", ["nosuch", "z"], {}],
+    ["renamecol", ["name", "id"], {}],
+    ["renamecol", ["spectrum", "cube"], {}],
+    ["getcell", ["cube", 0], {}],
+    ["getcolkeywords", ["cube"], {}],
+    ["getcoldesc", ["cube"], {}],
+    ["getcoldesc", ["spectrum"], {}],
+    ["removecols", [["gain"]], {}],
+    ["colnames", [], {}],
+    ["removecols", [["nosuch"]], {}],
+    # A list with a missing column among them removes none of them.
+    ["removecols", [["vary", "nosuch"]], {}],
+    ["removecols", [["nosuch", "vary"]], {}],
+    ["colnames", [], {}],
+    ["removecols", ["meta"], {}],
+    ["removecols", [[]], {}],
+    ["colnames", [], {}],
+    ["ncols", [], {}],
+    ["getcell", ["id", 1], {}],
+    ["close", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["colnames", [], {}],
+    ["getcell", ["name", 0], {}],
+    ["getcell", ["cube", 0], {}],
+    ["getcolkeywords", ["cube"], {}],
+    ["getcell", ["id", 1], {}],
+    ["renamecol", ["id", "ident"], {}],
+    ["removecols", [["id"]], {}],
+    ["close", [], {}],
+]
+
 #: Column descriptions, and adding and removing rows and columns, on the
 #: python fixture table. (CASA leaves the cells of an added array or complex
 #: column uninitialised, so they are never read here.)
@@ -582,6 +687,41 @@ ROWS_COLUMNS = [
     ["removecols", [["nosuch"]], {}],
     ["removecols", ["s"], {}],
     ["colnames", [], {}],
+    # A list with a missing column among them: do the others go?
+    ["removecols", [["b", "nosuch"]], {}],
+    ["colnames", [], {}],
+    ["removecols", [["nosuch", "c"]], {}],
+    ["colnames", [], {}],
+    ["removecols", [[]], {}],
+    # An array column with neither shape nor dimension.
+    ["addcols", [{"free": {"valueType": "float"}}], {}],
+    ["getcoldesc", ["free"], {}],
+    ["addcols", [{"two": {"valueType": "float", "ndim": 2}}], {}],
+    ["getcoldesc", ["two"], {}],
+    # Rows out of order; a bad row number alone; a row number alone.
+    ["addrows", [3], {}],
+    ["putcell", ["id", 0, 10], {}],
+    ["putcell", ["id", 1, 11], {}],
+    ["putcell", ["id", 2, 12], {}],
+    ["putcell", ["id", 3, 13], {}],
+    ["putcell", ["id", 4, 14], {}],
+    ["putcell", ["id", 5, 15], {}],
+    ["putcell", ["id", 6, 16], {}],
+    ["removerows", [[5, 1]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 1], {}],
+    ["getcell", ["id", 3], {}],
+    ["removerows", [[-1]], {}],
+    ["nrows", [], {}],
+    # Atomic: a bad row number among good ones removes none.
+    ["removerows", [[1, 99]], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 1], {}],
+    ["removerows", [[2, 3, 50, 60]], {}],
+    ["nrows", [], {}],
+    ["removerows", [3], {}],
+    ["nrows", [], {}],
+    ["getcell", ["id", 3], {}],
     ["close", [], {}],
     ["open", [PLACEHOLDER], {}],
     ["nrows", [], {}],
@@ -590,6 +730,8 @@ ROWS_COLUMNS = [
     ["addrows", [1], {}],
     ["addcols", [{"q": {"valueType": "double"}}], {}],
     ["removerows", [[0]], {}],
+    ["renamecol", ["id", "ident"], {}],
+    ["removecols", [["id"]], {}],
     ["close", [], {}],
 ]
 
@@ -747,6 +889,23 @@ REVIEW_SCENARIOS = {
         ["open", [PLACEHOLDER], {}],
         *[["getcell", ["id", row], {}] for row in range(3)],
         ["getcol", ["label"], {}],
+        ["close", [], {}],
+    ]),
+    # addrows with a negative count takes the count as a huge unsigned number
+    # and the row count wraps: addrows(-1) removes a row. casa-rs refuses.
+    "addrows_negative": ("table", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["nrows", [], {}],
+        ["addrows", [-1], {}],
+        ["nrows", [], {}],
+        ["getcell", ["id", 0], {}],
+        ["getcell", ["label", 1], {}],
+        ["addrows", [-2], {}],
+        ["nrows", [], {}],
+        ["close", [], {}],
+        ["open", [PLACEHOLDER], {}],
+        ["nrows", [], {}],
+        ["getcell", ["id", 0], {}],
         ["close", [], {}],
     ]),
     # A floating value written to a Bool column is true when it is not zero;
@@ -1001,6 +1160,8 @@ def main():
     scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
     scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
     scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}
+    scenarios["rows"] = {"fixture": "table", "steps": ROWS, "source": arguments.fixture}
+    scenarios["columns"] = {"fixture": "table", "steps": COLUMNS, "source": arguments.fixture}
     scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}
     for name, (fixture, steps) in REVIEW_SCENARIOS.items():
         source = arguments.ms if fixture == "ms" else arguments.fixture

@@ -31,6 +31,9 @@ pub(super) enum Target {
     Info,
     /// Cells: a table not open for update answers `False`, not an error.
     Cells,
+    /// The table's rows or columns, as the casacore operation named here
+    /// refuses a table not open for update.
+    Structure(&'static str),
 }
 
 /// What a change leaves to write to the disk.
@@ -42,6 +45,9 @@ pub(super) enum Persist {
     Rows { column: String, rows: Vec<usize> },
     /// Nothing: the call selected no cell.
     Nothing,
+    /// The change has written itself to the disk (a structural change in
+    /// place, or a table written in full).
+    Done,
 }
 
 /// What `putinfo` changes: the fields its record has.
@@ -222,6 +228,9 @@ impl State {
                     )
                 }
                 Target::Info => format!("Table {name} is not writable"),
+                Target::Structure(operation) => {
+                    format!("Invalid Table operation: {operation}; table {name} is not writable")
+                }
             });
         }
         let automatic = open.lock.automatic();
@@ -234,8 +243,14 @@ impl State {
                 "ColumnSet::doLock: table {name} should be locked when using UserLocking"
             ));
         }
+        // Whether the change wrote itself and the handle holds what it wrote.
+        let mut written = false;
         let saved = change(&mut open.table).and_then(|persist| match persist {
             Persist::Nothing => Ok(()),
+            Persist::Done => {
+                written = true;
+                Ok(())
+            }
             Persist::Metadata => open
                 .table
                 .save_metadata_only(TableOptions::new(&open.name))
@@ -277,8 +292,12 @@ impl State {
         // drop. An automatic table releases through
         // `unlock_metadata_only_or_discard`, which does the same when the
         // release fails. The release comes last whatever else went wrong,
-        // so an error never leaves the write lock held with changes.
-        let reloaded = if saved.is_err() || !automatic {
+        // so an error never leaves the write lock held with changes. A
+        // change that wrote itself needs no reload: the handle is what it
+        // wrote (a full save marks it flushed), and a reload under the lock
+        // would read the row count last published, which a removal of rows
+        // has lowered.
+        let reloaded = if saved.is_err() || (!automatic && !written) {
             open.table.resync_or_discard().map_err(Fail::from)
         } else {
             Ok(())

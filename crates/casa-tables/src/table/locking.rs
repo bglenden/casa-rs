@@ -104,7 +104,7 @@ impl Table {
             options: lock_opts,
             data_manager: options.data_manager,
             endian_format: options.endian_format,
-            flushed_generation: table.inner.generation(),
+            flushed_generation: std::sync::atomic::AtomicU64::new(table.inner.generation()),
             unpublished_write: std::sync::atomic::AtomicBool::new(false),
             table_dat_before_write: std::sync::OnceLock::new(),
         });
@@ -202,7 +202,10 @@ impl Table {
                 // on disk, so there is nothing to flush.
                 if let Some(s) = self.lock_state.as_mut() {
                     s.sync_data = new_sync;
-                    s.flushed_generation = self.inner.generation();
+                    s.flushed_generation.store(
+                        self.inner.generation(),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
             }
         }
@@ -289,7 +292,9 @@ impl Table {
         if reloaded.is_err() {
             let generation = self.inner.generation();
             if let Some(state) = self.lock_state.as_mut() {
-                state.flushed_generation = generation;
+                state
+                    .flushed_generation
+                    .store(generation, std::sync::atomic::Ordering::Relaxed);
             }
         }
         reloaded
@@ -336,7 +341,9 @@ impl Table {
             }
             let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
-            state.flushed_generation = generation;
+            state
+                .flushed_generation
+                .store(generation, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Publish every write this lock period made to the disk, describing

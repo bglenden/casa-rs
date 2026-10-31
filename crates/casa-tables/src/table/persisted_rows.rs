@@ -93,7 +93,10 @@ impl Table {
     }
 
     /// Record a successful full save to `path`: when that is the table's own
-    /// directory, its rows on disk now match this handle's.
+    /// directory, its rows on disk now match this handle's, and so does all
+    /// else it holds, so the release of a write lock has nothing to flush
+    /// (a flush after a save that removed rows would raise `table.dat`'s
+    /// counts back to the rows last published).
     pub(super) fn note_full_save(&self, path: &Path) {
         if self
             .source_path
@@ -101,6 +104,13 @@ impl Table {
             .is_some_and(|source| locking::same_directory(source, path))
         {
             self.inner.note_rows_persisted();
+            #[cfg(unix)]
+            if let Some(state) = self.lock_state.as_ref() {
+                state.flushed_generation.store(
+                    self.inner.generation(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
         }
     }
 }

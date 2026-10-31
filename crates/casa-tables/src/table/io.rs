@@ -1646,7 +1646,10 @@ impl Table {
         // a write already persisted under it stays to be published.
         #[cfg(unix)]
         if let Some(state) = self.lock_state.as_mut() {
-            state.flushed_generation = self.inner.generation();
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         Ok(())
     }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use pyo3::PyErr;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError};
 
 use crate::tools::LogLine;
 
@@ -18,6 +18,8 @@ pub(crate) enum Fail {
     Runtime(String),
     /// A `TypeError`.
     Type(String),
+    /// A `NotImplementedError`: casa-rs cannot do what CASA does here yet.
+    Unsupported(String),
 }
 
 impl From<TableError> for Fail {
@@ -31,6 +33,7 @@ impl From<Fail> for PyErr {
         match fail {
             Fail::Runtime(message) => PyRuntimeError::new_err(message),
             Fail::Type(message) => PyTypeError::new_err(message),
+            Fail::Unsupported(message) => PyNotImplementedError::new_err(message),
         }
     }
 }

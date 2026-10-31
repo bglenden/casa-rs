@@ -21,6 +21,7 @@ use super::{
 
 #[cfg(unix)]
 mod stale_rows;
+mod structure;
 
 /// `schema` as `manager` stores it: IncrementalStMan stores Direct
 /// fixed-shape arrays only, so its fixed-shape arrays become Direct.
@@ -2177,8 +2178,9 @@ fn cell_slices_of_a_lazy_table_load_no_rows() {
 /// The manager's name is what the table on disk says it is
 /// (`DataManager::dataManagerName()`): for `StandardStMan` and
 /// `IncrementalStMan` the name in the manager's blob of `table.dat`, which
-/// casa-rs writes as the manager's type tag (casacore writes the group), for
-/// the others the group the columns were saved with.
+/// casa-rs writes as the manager's type tag (casacore writes the group); for
+/// `StManAipsIO` the name in the header of its file, which casa-rs writes
+/// empty; for the others the group the columns were saved with.
 #[test]
 fn a_data_manager_info_names_the_manager_as_the_table_on_disk_does() {
     let schema = TableSchema::new(vec![
@@ -2187,7 +2189,7 @@ fn a_data_manager_info_names_the_manager_as_the_table_on_disk_does() {
     ])
     .expect("schema");
     for (kind, name) in [
-        (DataManagerKind::StManAipsIO, "MyGroup"),
+        (DataManagerKind::StManAipsIO, ""),
         (DataManagerKind::StandardStMan, "SSM"),
         (DataManagerKind::IncrementalStMan, "ISM"),
     ] {

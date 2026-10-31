@@ -25,6 +25,7 @@ pub(crate) mod surface;
 mod values;
 mod write;
 mod write_cells;
+mod write_structure;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -124,6 +125,18 @@ fn row_numbers(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<Vec<i64>> {
     value.extract::<Vec<i64>>().map_err(|_| {
         PyTypeError::new_err(format!(
             "argument _{argument} must be an integer or a list of integers"
+        ))
+    })
+}
+
+/// A column name argument that may also be a list of them (`removecols`).
+fn column_names(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<Vec<String>> {
+    if let Ok(name) = value.extract::<String>() {
+        return Ok(vec![name]);
+    }
+    value.extract::<Vec<String>>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "argument _{argument} must be a string or a list of strings"
         ))
     })
 }
@@ -669,6 +682,40 @@ impl PyTableTool {
     fn addreadmeline(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let line = text(value, "value")?;
         self.call(py, move |state, log| state.addreadmeline(line, log))
+    }
+
+    /// Add rows of default values at the end.
+    #[pyo3(signature = (nrow = None), text_signature = "($self, nrow=1)")]
+    fn addrows(&self, py: Python<'_>, nrow: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
+        let count = integer(nrow, "nrow", 1)?;
+        self.call(py, move |state, log| state.addrows(count, log))
+    }
+
+    /// Remove rows, by number.
+    #[pyo3(signature = (rownrs), text_signature = "($self, rownrs)")]
+    fn removerows(&self, py: Python<'_>, rownrs: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let rows = row_numbers(rownrs, "rownrs")?;
+        self.call(py, move |state, log| state.removerows(rows, log))
+    }
+
+    /// Rename a column.
+    #[pyo3(signature = (oldname, newname), text_signature = "($self, oldname, newname)")]
+    fn renamecol(
+        &self,
+        py: Python<'_>,
+        oldname: &Bound<'_, PyAny>,
+        newname: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let old = text(oldname, "oldname")?;
+        let new = text(newname, "newname")?;
+        self.call(py, move |state, log| state.renamecol(old, new, log))
+    }
+
+    /// Remove columns, by name.
+    #[pyo3(signature = (columnames), text_signature = "($self, columnames)")]
+    fn removecols(&self, py: Python<'_>, columnames: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let columns = column_names(columnames, "columnames")?;
+        self.call(py, move |state, log| state.removecols(columns, log))
     }
 
     /// Write one cell, coerced to the column's type.

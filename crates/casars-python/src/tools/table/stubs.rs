@@ -25,12 +25,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (nrow = None), text_signature = "($self, nrow=1)")]
-    fn addrows(&self, nrow: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("addrows")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn browse(&self) -> PyResult<Py<PyAny>> {
         stub("browse")
@@ -224,28 +218,6 @@ impl PyTableTool {
         style: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("query")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnames), text_signature = "($self, columnames)")]
-    fn removecols(&self, columnames: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removecols")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (rownrs), text_signature = "($self, rownrs)")]
-    fn removerows(&self, rownrs: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removerows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (oldname, newname), text_signature = "($self, oldname, newname)")]
-    fn renamecol(
-        &self,
-        oldname: &Bound<'_, PyAny>,
-        newname: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("renamecol")
     }
 
     /// Not yet implemented in casa-rs.

@@ -2151,7 +2151,7 @@ impl CompositeStorage {
         let table_info = load_table_info(table_path);
 
         // Build DM info from table.dat entries.
-        let dm_info = extract_dm_info(table_dat);
+        let dm_info = extract_dm_info(table_path, table_dat);
 
         if let Some(requested_columns) = requested_columns {
             for row in &mut rows {
@@ -3615,7 +3615,7 @@ impl CompositeStorage {
         }
 
         let row_count = table_dat.nrrow.max(table_dat.column_set.nrrow) as usize;
-        let dm_info = extract_dm_info(&table_dat);
+        let dm_info = extract_dm_info(table_path, &table_dat);
         let retained_read_metadata = Some(RetainedTableReadMetadata::open(table_path, table_dat)?);
 
         Ok(StorageSnapshot {
@@ -5317,7 +5317,10 @@ fn load_table_info(table_path: &Path) -> TableInfo {
 }
 
 /// Build [`DataManagerInfo`] from the parsed table.dat contents.
-fn extract_dm_info(table_dat: &table_control::TableDatContents) -> Vec<DataManagerInfo> {
+fn extract_dm_info(
+    table_path: &Path,
+    table_dat: &table_control::TableDatContents,
+) -> Vec<DataManagerInfo> {
     table_dat
         .column_set
         .data_managers
@@ -5333,15 +5336,18 @@ fn extract_dm_info(table_dat: &table_control::TableDatContents) -> Vec<DataManag
             };
             let columns: Vec<String> = members().map(|(_, pc)| pc.original_name.clone()).collect();
             // StandardStMan and IncrementalStMan keep their name in their
-            // blob; the others are named by the group their columns declare
-            // (the column set lists its columns in the table description's
-            // order).
-            let blob_name = match dm.type_name.as_str() {
+            // blob and StManAipsIO in the header of its file; the others are
+            // named by the group their columns declare (the column set lists
+            // its columns in the table description's order).
+            let stored_name = match dm.type_name.as_str() {
                 "StandardStMan" => standard_stman::dm_name_from_blob(&dm.data),
                 "IncrementalStMan" => incremental_stman::dm_name_from_blob(&dm.data),
+                "StManAipsIO" => stman_aipsio::name_from_file(
+                    &table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
+                ),
                 _ => None,
             };
-            let name = blob_name.unwrap_or_else(|| {
+            let name = stored_name.unwrap_or_else(|| {
                 members()
                     .find_map(|(index, _)| table_dat.table_desc.columns.get(index))
                     .map(|desc| desc.data_manager_group.clone())
