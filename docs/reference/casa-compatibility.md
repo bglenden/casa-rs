@@ -365,7 +365,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `53b434e4b780cae98d4fe50c5d5a3aed4afbf15c`. Status counts: Default only: 24, Implemented: 29, Not implemented: 0, Partial: 39, Unassessed: 0.
+Audit baseline: `68a45e10747edfcddcc1319e3ff2747bd7d91e56`. Status counts: Default only: 24, Implemented: 29, Not implemented: 0, Partial: 39, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -561,12 +561,12 @@ Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-a
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [lifecycle](#tclean-evidence-lifecycle), [reader](#tclean-evidence-reader).
 
-##### inherited-startmodel-and-taper: Unfinished
+##### inherited-startmodel-and-taper: Proposed
 
 - Inputs: Unitless uvtaper or startmodel with a different Stokes coordinate.
 - CASA: Unitless taper is interpreted as radians despite documented lambda; its startmodel regrid can copy a different single Stokes plane.
 - casa-rs: Refuses those inputs, as recorded by #970 and the CASA bugs reference.
-- Rationale: Avoid zero-weight images and mislabeled polarization. Verify the exact inherited owner-agreement scope before counting these as accepted deviations.
+- Rationale: Recommend retaining explicit-unit and matching-Stokes requirements; owner agreement has been requested. Existing implementation is preserved while pending.
 - User impact: Explicit taper units and matching model Stokes are required. Merging the implementation alone is not proof of an owner-approved exception.
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [additions](#tclean-evidence-additions), [reader](#tclean-evidence-reader).
@@ -580,27 +580,27 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Signature/default inventory — recorded.** CASA 6.7.6.14 names/defaults/XML domains only; not scientific behavior.
 
-- [resources/casa-compat/casa-6.7.6.14/tasks/tclean.json](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/resources/casa-compat/casa-6.7.6.14/tasks/tclean.json)
+- [resources/casa-compat/casa-6.7.6.14/tasks/tclean.json](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/resources/casa-compat/casa-6.7.6.14/tasks/tclean.json)
 
 <a id="tclean-evidence-reader"></a>
 ##### reader
 
 **Source audit — inspected.** Runtime mapping, reader refusals, typed validation, availability, publication preflight and summary gaps at the audit baseline plus this bounded work. Source/test definitions do not establish executed acceptance.
 
-- [crates/casa-imaging-application/src/tclean.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casa-imaging-application/src/tclean.rs)
-- [crates/casa-imaging-application/src/request.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casa-imaging-application/src/request.rs)
-- [crates/casa-imaging-application/src/availability.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casa-imaging-application/src/availability.rs)
-- [crates/casa-imaging-application/src/restart.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casa-imaging-application/src/restart.rs)
-- [crates/casars-imager/src/casa_return.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casars-imager/src/casa_return.rs)
-- [crates/casa-imaging-application/src/compile/outliers.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casa-imaging-application/src/compile/outliers.rs)
+- [crates/casa-imaging-application/src/tclean.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casa-imaging-application/src/tclean.rs)
+- [crates/casa-imaging-application/src/request.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casa-imaging-application/src/request.rs)
+- [crates/casa-imaging-application/src/availability.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casa-imaging-application/src/availability.rs)
+- [crates/casa-imaging-application/src/restart.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casa-imaging-application/src/restart.rs)
+- [crates/casars-imager/src/casa_return.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casars-imager/src/casa_return.rs)
+- [crates/casa-imaging-application/src/compile/outliers.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casa-imaging-application/src/compile/outliers.rs)
 
 <a id="tclean-evidence-returns"></a>
 ##### returns
 
 **Return structure — recorded.** Four CASA cases: dirty, CLEAN, fullsummary and cube. Values are deliberately not recorded; numeric summaries remain unverified.
 
-- [resources/casa-compat/casa-6.7.6.14/returns.json](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/resources/casa-compat/casa-6.7.6.14/returns.json)
-- [tools/casa-compat/record_casa_returns.py](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/tools/casa-compat/record_casa_returns.py)
+- [resources/casa-compat/casa-6.7.6.14/returns.json](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/resources/casa-compat/casa-6.7.6.14/returns.json)
+- [tools/casa-compat/record_casa_returns.py](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/tools/casa-compat/record_casa_returns.py)
 
 <a id="tclean-evidence-additions"></a>
 ##### additions
@@ -608,16 +608,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **CASA-paired small fixtures — historical reported pass.** Merged #970 reports CASA 6.7.6.14 against 75ec3c9c5d: rectangular geometry, taper and scoped start models; exact mask agreement and sumwt, per-product NRMS/beam measurements. This is scoped historical evidence, not a current full-task pass.
 
 - [https://github.com/bglenden/casa-rs/pull/970](https://github.com/bglenden/casa-rs/pull/970)
-- [tools/imaging/t15_imager_additions.py](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/tools/imaging/t15_imager_additions.py)
+- [tools/imaging/t15_imager_additions.py](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/tools/imaging/t15_imager_additions.py)
 
 <a id="tclean-evidence-representative"></a>
 ##### representative
 
 **Imaging acceptance framework — not run in this slice.** Reuse the representative-science matrix and applicable identity-bound receipts. T1/T1.5/T2/resource/persistence tiers and approved per-mode limits stay distinct; no blanket current pass is claimed.
 
-- [TESTING.md](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/TESTING.md)
-- [resources/imaging-architecture/representative-science-matrix.json](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/resources/imaging-architecture/representative-science-matrix.json)
-- [docs/agent-reference.md](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/docs/agent-reference.md)
+- [TESTING.md](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/TESTING.md)
+- [resources/imaging-architecture/representative-science-matrix.json](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/resources/imaging-architecture/representative-science-matrix.json)
+- [docs/agent-reference.md](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/docs/agent-reference.md)
 
 <a id="tclean-evidence-lifecycle"></a>
 ##### lifecycle
@@ -625,7 +625,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Paired lifecycle probe and refusal regression — not run.** Planned fresh CASA 6.7.6.14 continuation, numbering and startmodel-conflict probes; native sequential rerun/outlier refusal must preserve previous bytes. This does not establish implemented restart.
 
 - [https://github.com/bglenden/casa-rs/issues/944](https://github.com/bglenden/casa-rs/issues/944)
-- [crates/casars-imager/tests/t1/restart.rs](https://github.com/bglenden/casa-rs/blob/53b434e4b780cae98d4fe50c5d5a3aed4afbf15c/crates/casars-imager/tests/t1/restart.rs)
+- [crates/casars-imager/tests/t1/restart.rs](https://github.com/bglenden/casa-rs/blob/68a45e10747edfcddcc1319e3ff2747bd7d91e56/crates/casars-imager/tests/t1/restart.rs)
 
 <a id="tclean-evidence-mvc-decision"></a>
 ##### mvc-decision

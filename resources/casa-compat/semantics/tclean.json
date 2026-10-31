@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "tclean",
   "casa_version": "6.7.6.14",
-  "audit_revision": "53b434e4b780cae98d4fe50c5d5a3aed4afbf15c",
+  "audit_revision": "68a45e10747edfcddcc1319e3ff2747bd7d91e56",
   "parameters": {
     "vis": {
       "status": "Partial",
@@ -1128,11 +1128,11 @@
     },
     {
       "id": "inherited-startmodel-and-taper",
-      "state": "Unfinished",
+      "state": "Proposed",
       "inputs": "Unitless uvtaper or startmodel with a different Stokes coordinate.",
       "casa": "Unitless taper is interpreted as radians despite documented lambda; its startmodel regrid can copy a different single Stokes plane.",
       "ours": "Refuses those inputs, as recorded by #970 and the CASA bugs reference.",
-      "rationale": "Avoid zero-weight images and mislabeled polarization. Verify the exact inherited owner-agreement scope before counting these as accepted deviations.",
+      "rationale": "Recommend retaining explicit-unit and matching-Stokes requirements; owner agreement has been requested. Existing implementation is preserved while pending.",
       "impact": "Explicit taper units and matching model Stokes are required. Merging the implementation alone is not proof of an owner-approved exception.",
       "evidence": [
         "additions",

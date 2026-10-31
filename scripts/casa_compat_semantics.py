@@ -10,6 +10,8 @@ promotes an evidence item into a successful scientific comparison.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -168,4 +170,20 @@ def render(data: dict[str, Any], record: dict[str, Any], surface: dict[str, Any]
 
 
 def load(root: Path, task: str) -> dict[str, Any]:
-    return json.loads((root / "resources/casa-compat/semantics" / f"{task}.json").read_text())
+    data = json.loads((root / "resources/casa-compat/semantics" / f"{task}.json").read_text())
+    validate_source_links(root, data)
+    return data
+
+
+def validate_source_links(root: Path, data: dict[str, Any]) -> None:
+    revision = data["audit_revision"]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("semantic source links need an exact commit")
+    paths = sorted({link for item in data["evidence"].values() for link in item["links"] if not link.startswith("https://")})
+    result = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input="".join(f"{revision}:{path}\n" for path in paths),
+        text=True, capture_output=True, check=True,
+    )
+    if any(line.endswith(" missing") for line in result.stdout.splitlines()):
+        raise ValueError("semantic evidence links a file absent at its pinned revision")

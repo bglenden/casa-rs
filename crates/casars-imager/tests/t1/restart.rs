@@ -93,10 +93,13 @@ fn outlier_preflight_preserves_a_trailing_slash_and_does_not_allocate_its_mask()
     // This support would be enormous if the preflight compiled pixel masks.
     fs::write(&outliers, "imagename=outlier/\nimsize=1000000000\nphasecenter=J2000 0deg -30deg\nmask=circle[[5pix,5pix],2pix]\n").unwrap();
     let before = snapshot(directory.path());
-    let reply = json_run(directory.path(), json!({
-        "vis": "absent.ms", "imagename": directory.path().join("main"),
-        "cell": "1arcsec", "outlierfile": outliers, "backend": "cpu",
-    }));
+    let reply = json_run(
+        directory.path(),
+        json!({
+            "vis": "absent.ms", "imagename": directory.path().join("main"),
+            "cell": "1arcsec", "outlierfile": outliers, "backend": "cpu",
+        }),
+    );
     match reply {
         TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
         reply => panic!("occupied outlier should fail without compiling a mask: {reply:?}"),

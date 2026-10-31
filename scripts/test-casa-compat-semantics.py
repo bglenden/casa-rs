@@ -56,6 +56,11 @@ class SemanticReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "owner decision"):
             semantics.validate(self.data, self.record, self.surface)
 
+    def test_evidence_sources_must_exist_at_the_pinned_revision(self):
+        self.data["evidence"]["reader"]["links"].append("does-not-exist.rs")
+        with self.assertRaisesRegex(ValueError, "absent at its pinned revision"):
+            semantics.validate_source_links(ROOT, self.data)
+
 
 if __name__ == "__main__":
     unittest.main()
