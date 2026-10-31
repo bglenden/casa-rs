@@ -2,21 +2,21 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! One batch packed into a native block: each selected sample's geometry,
 <a href=#3 id=3 data-nosnippet>3</a>//! values, weights and flags, copied once.
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_model::{
-<a href=#6 id=6 data-nosnippet>6</a>    AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
-<a href=#7 id=7 data-nosnippet>7</a>    FiniteValuePolicy,
-<a href=#8 id=8 data-nosnippet>8</a>};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_imaging_operator::RowContext;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_imaging_runtime::pass::{
-<a href=#11 id=11 data-nosnippet>11</a>    BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
-<a href=#12 id=12 data-nosnippet>12</a>};
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_observation::{Correlation, PartitionEntry, VisibilityBatch};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_types::measures::MjdHighPrec;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>num_complex::Complex32;
-<a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">super</span>::selection::{PartitionSelection, SelectedPartition};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">crate</span>::imaging::source::{antenna_types, pointing_offset};
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_deconvolution::direction_world_to_pixel;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#7 id=7 data-nosnippet>7</a>    AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
+<a href=#8 id=8 data-nosnippet>8</a>    FiniteValuePolicy, SelectedAntennaResponses, SkyDirection,
+<a href=#9 id=9 data-nosnippet>9</a>};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_imaging_operator::RowContext;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_imaging_runtime::pass::{
+<a href=#12 id=12 data-nosnippet>12</a>    BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
+<a href=#13 id=13 data-nosnippet>13</a>};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_observation::{Correlation, PartitionEntry, VisibilityBatch};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_types::measures::MjdHighPrec;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>num_complex::Complex32;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">super</span>::selection::{PartitionSelection, SelectedPartition};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">crate</span>::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// The block layout of one partition's batches in one wave: which of a
 <a href=#22 id=22 data-nosnippet>22</a>/// batch's channels and correlations a block holds.
@@ -193,8 +193,8 @@
 <a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl </span>Packer&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// Pack `batch`'s samples `keep` names into `out` under `layout`, with
 <a href=#195 id=195 data-nosnippet>195</a>    /// `geometry` applied to those samples. Unread visibilities are zero.
-<a href=#196 id=196 data-nosnippet>196</a>    /// A non-finite input fails the run as the selected-observation route
-<a href=#197 id=197 data-nosnippet>197</a>    /// fails it ([`FiniteValuePolicy`]), naming the sample.
+<a href=#196 id=196 data-nosnippet>196</a>    /// A non-finite input fails the run under [`FiniteValuePolicy`], naming
+<a href=#197 id=197 data-nosnippet>197</a>    /// the sample.
 <a href=#198 id=198 data-nosnippet>198</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>pack(
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#200 id=200 data-nosnippet>200</a>        (batch, partition, layout): (<span class="kw-2">&amp;</span>VisibilityBatch&lt;<span class="lifetime">'_</span>&gt;, <span class="kw-2">&amp;</span>SelectedPartition, <span class="kw-2">&amp;</span>Layout),
@@ -380,57 +380,107 @@
 <a href=#380 id=380 data-nosnippet>380</a>    }
 <a href=#381 id=381 data-nosnippet>381</a>}
 <a href=#382 id=382 data-nosnippet>382</a>
-<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// The error for a non-finite `what` at `at`, naming the remedy, as the
-<a href=#384 id=384 data-nosnippet>384</a>/// selected-observation route words it.
-<a href=#385 id=385 data-nosnippet>385</a></span><span class="kw">fn </span>nonfinite_input(what: <span class="kw-2">&amp;</span>str, at: <span class="kw-2">&amp;</span>str) -&gt; SourceError {
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="macro">format!</span>(
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="string">"an unflagged {what} at {at} is not finite; CASA would image it as NaN everywhere. \
-<a href=#388 id=388 data-nosnippet>388</a>         Flag the non-finite data (CASA `flagdata`) and run again"
-<a href=#389 id=389 data-nosnippet>389</a>    </span>)
-<a href=#390 id=390 data-nosnippet>390</a>    .into()
-<a href=#391 id=391 data-nosnippet>391</a>}
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a><span class="doccomment">/// Write one sample's selected values, weights and flags in channel and
-<a href=#394 id=394 data-nosnippet>394</a>/// correlation order. A non-finite value or weight in an unflagged sample
-<a href=#395 id=395 data-nosnippet>395</a>/// fails the row; in a flagged one it is ignored, unless `reject_flagged`;
-<a href=#396 id=396 data-nosnippet>396</a>/// either way its flag is set.
-<a href=#397 id=397 data-nosnippet>397</a></span><span class="kw">fn </span>fill_samples(
-<a href=#398 id=398 data-nosnippet>398</a>    row: <span class="kw-2">&amp;</span>Row&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;,
-<a href=#399 id=399 data-nosnippet>399</a>    (arrays, row_weights, routed, layout): (<span class="kw-2">&amp;</span>Arrays&lt;<span class="lifetime">'_</span>&gt;, <span class="kw-2">&amp;</span>[f32], <span class="kw-2">&amp;</span>[usize], <span class="kw-2">&amp;</span>Layout),
-<a href=#400 id=400 data-nosnippet>400</a>    (values, weights, flags): (<span class="kw-2">&amp;mut </span>[Complex32], <span class="kw-2">&amp;mut </span>[f32], <span class="kw-2">&amp;mut </span>[bool]),
-<a href=#401 id=401 data-nosnippet>401</a>    reject_flagged: bool,
-<a href=#402 id=402 data-nosnippet>402</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SourceError&gt; {
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>stride = arrays.correlations;
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="kw">let </span>base = row.sample * arrays.channels * stride;
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">let </span><span class="kw-2">mut </span>cell = <span class="number">0</span>;
-<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">for </span>(ordinal, channel) <span class="kw">in </span>layout.channels.iter().enumerate() {
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span>start = base + channel * stride;
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">for </span>(k, product) <span class="kw">in </span>routed.iter().enumerate() {
-<a href=#409 id=409 data-nosnippet>409</a>            <span class="kw">let </span>index = start + product;
-<a href=#410 id=410 data-nosnippet>410</a>            <span class="kw">let </span>sample = arrays
-<a href=#411 id=411 data-nosnippet>411</a>                .values
-<a href=#412 id=412 data-nosnippet>412</a>                .map_or(Complex32::default(), |values| values[index]);
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw">let </span>weight = arrays
-<a href=#414 id=414 data-nosnippet>414</a>                .weights
-<a href=#415 id=415 data-nosnippet>415</a>                .map_or_else(|| row_weights[<span class="kw-2">*</span>product], |weights| weights[index]);
-<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">let </span>flagged = arrays.flags[index];
-<a href=#417 id=417 data-nosnippet>417</a>            <span class="kw">let </span>finite_value = sample.re.is_finite() &amp;&amp; sample.im.is_finite();
-<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">let </span>nonfinite = !(finite_value &amp;&amp; weight.is_finite());
-<a href=#419 id=419 data-nosnippet>419</a>            <span class="kw">if </span>nonfinite &amp;&amp; (reject_flagged || !flagged) {
-<a href=#420 id=420 data-nosnippet>420</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(nonfinite_input(
-<a href=#421 id=421 data-nosnippet>421</a>                    <span class="kw">if </span>finite_value { <span class="string">"weight" </span>} <span class="kw">else </span>{ <span class="string">"visibility" </span>},
-<a href=#422 id=422 data-nosnippet>422</a>                    <span class="kw-2">&amp;</span>row.at(<span class="prelude-val">Some</span>((
-<a href=#423 id=423 data-nosnippet>423</a>                        layout.channel_indices[ordinal],
-<a href=#424 id=424 data-nosnippet>424</a>                        layout.correlations[k],
-<a href=#425 id=425 data-nosnippet>425</a>                    ))),
-<a href=#426 id=426 data-nosnippet>426</a>                ));
-<a href=#427 id=427 data-nosnippet>427</a>            }
-<a href=#428 id=428 data-nosnippet>428</a>            values[cell] = sample;
-<a href=#429 id=429 data-nosnippet>429</a>            weights[cell] = weight;
-<a href=#430 id=430 data-nosnippet>430</a>            flags[cell] = flagged || nonfinite;
-<a href=#431 id=431 data-nosnippet>431</a>            cell += <span class="number">1</span>;
-<a href=#432 id=432 data-nosnippet>432</a>        }
-<a href=#433 id=433 data-nosnippet>433</a>    }
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="prelude-val">Ok</span>(())
-<a href=#435 id=435 data-nosnippet>435</a>}
+<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// The error for a non-finite `what` at `at`, naming the remedy.
+<a href=#384 id=384 data-nosnippet>384</a></span><span class="kw">fn </span>nonfinite_input(what: <span class="kw-2">&amp;</span>str, at: <span class="kw-2">&amp;</span>str) -&gt; SourceError {
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="macro">format!</span>(
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="string">"an unflagged {what} at {at} is not finite; CASA would image it as NaN everywhere. \
+<a href=#387 id=387 data-nosnippet>387</a>         Flag the non-finite data (CASA `flagdata`) and run again"
+<a href=#388 id=388 data-nosnippet>388</a>    </span>)
+<a href=#389 id=389 data-nosnippet>389</a>    .into()
+<a href=#390 id=390 data-nosnippet>390</a>}
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a><span class="doccomment">/// Write one sample's selected values, weights and flags in channel and
+<a href=#393 id=393 data-nosnippet>393</a>/// correlation order. A non-finite value or weight in an unflagged sample
+<a href=#394 id=394 data-nosnippet>394</a>/// fails the row; in a flagged one it is ignored, unless `reject_flagged`;
+<a href=#395 id=395 data-nosnippet>395</a>/// either way its flag is set.
+<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">fn </span>fill_samples(
+<a href=#397 id=397 data-nosnippet>397</a>    row: <span class="kw-2">&amp;</span>Row&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;,
+<a href=#398 id=398 data-nosnippet>398</a>    (arrays, row_weights, routed, layout): (<span class="kw-2">&amp;</span>Arrays&lt;<span class="lifetime">'_</span>&gt;, <span class="kw-2">&amp;</span>[f32], <span class="kw-2">&amp;</span>[usize], <span class="kw-2">&amp;</span>Layout),
+<a href=#399 id=399 data-nosnippet>399</a>    (values, weights, flags): (<span class="kw-2">&amp;mut </span>[Complex32], <span class="kw-2">&amp;mut </span>[f32], <span class="kw-2">&amp;mut </span>[bool]),
+<a href=#400 id=400 data-nosnippet>400</a>    reject_flagged: bool,
+<a href=#401 id=401 data-nosnippet>401</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SourceError&gt; {
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span>stride = arrays.correlations;
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>base = row.sample * arrays.channels * stride;
+<a href=#404 id=404 data-nosnippet>404</a>    <span class="kw">let </span><span class="kw-2">mut </span>cell = <span class="number">0</span>;
+<a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">for </span>(ordinal, channel) <span class="kw">in </span>layout.channels.iter().enumerate() {
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>start = base + channel * stride;
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">for </span>(k, product) <span class="kw">in </span>routed.iter().enumerate() {
+<a href=#408 id=408 data-nosnippet>408</a>            <span class="kw">let </span>index = start + product;
+<a href=#409 id=409 data-nosnippet>409</a>            <span class="kw">let </span>sample = arrays
+<a href=#410 id=410 data-nosnippet>410</a>                .values
+<a href=#411 id=411 data-nosnippet>411</a>                .map_or(Complex32::default(), |values| values[index]);
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="kw">let </span>weight = arrays
+<a href=#413 id=413 data-nosnippet>413</a>                .weights
+<a href=#414 id=414 data-nosnippet>414</a>                .map_or_else(|| row_weights[<span class="kw-2">*</span>product], |weights| weights[index]);
+<a href=#415 id=415 data-nosnippet>415</a>            <span class="kw">let </span>flagged = arrays.flags[index];
+<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">let </span>finite_value = sample.re.is_finite() &amp;&amp; sample.im.is_finite();
+<a href=#417 id=417 data-nosnippet>417</a>            <span class="kw">let </span>nonfinite = !(finite_value &amp;&amp; weight.is_finite());
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">if </span>nonfinite &amp;&amp; (reject_flagged || !flagged) {
+<a href=#419 id=419 data-nosnippet>419</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(nonfinite_input(
+<a href=#420 id=420 data-nosnippet>420</a>                    <span class="kw">if </span>finite_value { <span class="string">"weight" </span>} <span class="kw">else </span>{ <span class="string">"visibility" </span>},
+<a href=#421 id=421 data-nosnippet>421</a>                    <span class="kw-2">&amp;</span>row.at(<span class="prelude-val">Some</span>((
+<a href=#422 id=422 data-nosnippet>422</a>                        layout.channel_indices[ordinal],
+<a href=#423 id=423 data-nosnippet>423</a>                        layout.correlations[k],
+<a href=#424 id=424 data-nosnippet>424</a>                    ))),
+<a href=#425 id=425 data-nosnippet>425</a>                ));
+<a href=#426 id=426 data-nosnippet>426</a>            }
+<a href=#427 id=427 data-nosnippet>427</a>            values[cell] = sample;
+<a href=#428 id=428 data-nosnippet>428</a>            weights[cell] = weight;
+<a href=#429 id=429 data-nosnippet>429</a>            flags[cell] = flagged || nonfinite;
+<a href=#430 id=430 data-nosnippet>430</a>            cell += <span class="number">1</span>;
+<a href=#431 id=431 data-nosnippet>431</a>        }
+<a href=#432 id=432 data-nosnippet>432</a>    }
+<a href=#433 id=433 data-nosnippet>433</a>    <span class="prelude-val">Ok</span>(())
+<a href=#434 id=434 data-nosnippet>434</a>}
+<a href=#435 id=435 data-nosnippet>435</a>
+<a href=#436 id=436 data-nosnippet>436</a><span class="doccomment">/// The mosaic dish index of each antenna of a row: its aperture class's
+<a href=#437 id=437 data-nosnippet>437</a>/// position in the selection's `classes`, the order
+<a href=#438 id=438 data-nosnippet>438</a>/// [`crate::imaging::measurement::domain_operator`] lists the dishes in; a row
+<a href=#439 id=439 data-nosnippet>439</a>/// without response classes (every problem without an instrument model)
+<a href=#440 id=440 data-nosnippet>440</a>/// is on the first dish.
+<a href=#441 id=441 data-nosnippet>441</a></span><span class="kw">fn </span>antenna_types(
+<a href=#442 id=442 data-nosnippet>442</a>    responses: <span class="prelude-ty">Option</span>&lt;SelectedAntennaResponses&gt;,
+<a href=#443 id=443 data-nosnippet>443</a>    classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
+<a href=#444 id=444 data-nosnippet>444</a>) -&gt; [u8; <span class="number">2</span>] {
+<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">let </span>index = |class: AntennaResponseClass| {
+<a href=#446 id=446 data-nosnippet>446</a>        classes
+<a href=#447 id=447 data-nosnippet>447</a>            .iter()
+<a href=#448 id=448 data-nosnippet>448</a>            .position(|known| <span class="kw-2">*</span>known == class)
+<a href=#449 id=449 data-nosnippet>449</a>            .map_or(<span class="number">0</span>, |index| u8::try_from(index).expect(<span class="string">"few dish classes"</span>))
+<a href=#450 id=450 data-nosnippet>450</a>    };
+<a href=#451 id=451 data-nosnippet>451</a>    responses.map_or([<span class="number">0</span>, <span class="number">0</span>], |responses| {
+<a href=#452 id=452 data-nosnippet>452</a>        [index(responses.antenna1), index(responses.antenna2)]
+<a href=#453 id=453 data-nosnippet>453</a>    })
+<a href=#454 id=454 data-nosnippet>454</a>}
+<a href=#455 id=455 data-nosnippet>455</a>
+<a href=#456 id=456 data-nosnippet>456</a><span class="doccomment">/// The offset of a row's pointing from `direction`'s reference pixel as
+<a href=#457 id=457 data-nosnippet>457</a>/// direction cosines along the image axes: the A-projection pointing pixel
+<a href=#458 id=458 data-nosnippet>458</a>/// when the selection evaluated one, else the antenna-1 pointing direction
+<a href=#459 id=459 data-nosnippet>459</a>/// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
+<a href=#460 id=460 data-nosnippet>460</a>/// buffer's first `direction1`; under tclean `usepointing=False` the
+<a href=#461 id=461 data-nosnippet>461</a>/// selection evaluates it as the field's phase-tracking centre).
+<a href=#462 id=462 data-nosnippet>462</a></span><span class="kw">fn </span>pointing_offset(
+<a href=#463 id=463 data-nosnippet>463</a>    direction: DirectionCoordinateSpec,
+<a href=#464 id=464 data-nosnippet>464</a>    aw_pixel: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
+<a href=#465 id=465 data-nosnippet>465</a>    pointing: SkyDirection,
+<a href=#466 id=466 data-nosnippet>466</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], SourceError&gt; {
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>pixel = <span class="kw">match </span>aw_pixel {
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="prelude-val">Some</span>(pixel) =&gt; pixel,
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="prelude-val">None </span>=&gt; {
+<a href=#470 id=470 data-nosnippet>470</a>            <span class="kw">if </span>pointing.frame() != direction.reference_direction().frame() {
+<a href=#471 id=471 data-nosnippet>471</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"a row's pointing direction is not in the image frame"</span>.into());
+<a href=#472 id=472 data-nosnippet>472</a>            }
+<a href=#473 id=473 data-nosnippet>473</a>            direction_world_to_pixel(
+<a href=#474 id=474 data-nosnippet>474</a>                direction,
+<a href=#475 id=475 data-nosnippet>475</a>                [pointing.longitude_rad(), pointing.latitude_rad()],
+<a href=#476 id=476 data-nosnippet>476</a>            )<span class="question-mark">?
+<a href=#477 id=477 data-nosnippet>477</a>        </span>}
+<a href=#478 id=478 data-nosnippet>478</a>    };
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>reference = direction.reference_pixel();
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span>increment = direction.increment_rad();
+<a href=#481 id=481 data-nosnippet>481</a>    <span class="prelude-val">Ok</span>([
+<a href=#482 id=482 data-nosnippet>482</a>        (pixel[<span class="number">0</span>] - reference[<span class="number">0</span>]) * increment[<span class="number">0</span>],
+<a href=#483 id=483 data-nosnippet>483</a>        (pixel[<span class="number">1</span>] - reference[<span class="number">1</span>]) * increment[<span class="number">1</span>],
+<a href=#484 id=484 data-nosnippet>484</a>    ])
+<a href=#485 id=485 data-nosnippet>485</a>}
 </code></pre></div></section></main></body></html>

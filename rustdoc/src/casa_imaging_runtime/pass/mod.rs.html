@@ -443,182 +443,180 @@
 <a href=#443 id=443 data-nosnippet>443</a><span class="doccomment">/// Bytes the passes hold for a source whose largest block is `block`: the
 <a href=#444 id=444 data-nosnippet>444</a>/// native blocks a pass's stream double-buffers and the model visibilities
 <a href=#445 id=445 data-nosnippet>445</a>/// of one block, which a pass with a model predicts. They grow with the
-<a href=#446 id=446 data-nosnippet>446</a>/// source's block, so the source's admission holds them
-<a href=#447 id=447 data-nosnippet>447</a>/// ([`crate::finalize_source_access`]).
-<a href=#448 id=448 data-nosnippet>448</a></span><span class="attr">#[must_use]
-<a href=#449 id=449 data-nosnippet>449</a></span><span class="kw">pub const fn </span>source_block_bytes(block: BlockShape) -&gt; u64 {
-<a href=#450 id=450 data-nosnippet>450</a>    stream::bytes(block) + wave::prediction_bytes(block)
-<a href=#451 id=451 data-nosnippet>451</a>}
-<a href=#452 id=452 data-nosnippet>452</a>
-<a href=#453 id=453 data-nosnippet>453</a><span class="doccomment">/// Row chunks per worker of a density pass.
-<a href=#454 id=454 data-nosnippet>454</a></span><span class="kw">const </span>DENSITY_CHUNKS_PER_WORKER: usize = <span class="number">4</span>;
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a><span class="doccomment">/// Placements a row chunk takes at once by default. A pass places each
-<a href=#457 id=457 data-nosnippet>457</a>/// block in slices of chunks this size, so its sample buffers have one bound
-<a href=#458 id=458 data-nosnippet>458</a>/// whatever rows the source puts in a block, while a slice still spans most
-<a href=#459 id=459 data-nosnippet>459</a>/// of a large block and its workers meet once per slice.
-<a href=#460 id=460 data-nosnippet>460</a></span><span class="kw">pub const </span>CHUNK_PLACEMENTS: usize = <span class="number">1 </span>&lt;&lt; <span class="number">15</span>;
-<a href=#461 id=461 data-nosnippet>461</a>
-<a href=#462 id=462 data-nosnippet>462</a><span class="doccomment">/// The larger chunks a pass whose grid is split among several region
-<a href=#463 id=463 data-nosnippet>463</a>/// owners takes when memory allows, largest first
-<a href=#464 id=464 data-nosnippet>464</a>/// ([`WaveDemand::plan_chunks`]). The owners grid each slice and
-<a href=#465 id=465 data-nosnippet>465</a>/// then meet, and a block's rows run baseline by baseline, so a slice of a
-<a href=#466 id=466 data-nosnippet>466</a>/// few baselines' tracks falls mostly on one owner's strip while the others
-<a href=#467 id=467 data-nosnippet>467</a>/// wait. Larger slices hold more baselines, so the owners wait less; past
-<a href=#468 id=468 data-nosnippet>468</a>/// 2^18 they cost memory and gain nothing (#736 records the measurement).
-<a href=#469 id=469 data-nosnippet>469</a></span><span class="kw">const </span>REGION_CHUNK_PLACEMENTS: [usize; <span class="number">3</span>] = [<span class="number">1 </span>&lt;&lt; <span class="number">18</span>, <span class="number">1 </span>&lt;&lt; <span class="number">17</span>, <span class="number">1 </span>&lt;&lt; <span class="number">16</span>];
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a><span class="doccomment">/// Placements a row chunk of a major-cycle pass takes at once, from a cap of
-<a href=#472 id=472 data-nosnippet>472</a>/// `placements`, when each image domain has at most `owners` owners. Each
-<a href=#473 id=473 data-nosnippet>473</a>/// owner's buffer in a chunk can take every placement of the chunk, and a
-<a href=#474 id=474 data-nosnippet>474</a>/// pass has four chunks per worker, so past four owners a chunk takes
-<a href=#475 id=475 data-nosnippet>475</a>/// proportionally fewer: the chunks' storage then grows linearly with the
-<a href=#476 id=476 data-nosnippet>476</a>/// workers rather than as their square, and a slice places as many samples
-<a href=#477 id=477 data-nosnippet>477</a>/// whatever the workers.
-<a href=#478 id=478 data-nosnippet>478</a></span><span class="kw">const fn </span>chunk_placements(placements: usize, owners: usize) -&gt; usize {
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">if </span>owners &lt;= <span class="number">4 </span>{
-<a href=#480 id=480 data-nosnippet>480</a>        placements
-<a href=#481 id=481 data-nosnippet>481</a>    } <span class="kw">else </span>{
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="number">4 </span>* placements / owners
-<a href=#483 id=483 data-nosnippet>483</a>    }
-<a href=#484 id=484 data-nosnippet>484</a>}
-<a href=#485 id=485 data-nosnippet>485</a>
-<a href=#486 id=486 data-nosnippet>486</a><span class="doccomment">/// Rows a row chunk places at once, for rows of `row` placements each in
-<a href=#487 id=487 data-nosnippet>487</a>/// blocks of at most `block_rows` rows split among `chunks` chunks taking
-<a href=#488 id=488 data-nosnippet>488</a>/// `placements` placements each: as many as fit, at least one, and no more
-<a href=#489 id=489 data-nosnippet>489</a>/// than a block's share.
-<a href=#490 id=490 data-nosnippet>490</a></span><span class="kw">const fn </span>chunk_rows(row: usize, block_rows: usize, chunks: usize, placements: usize) -&gt; usize {
-<a href=#491 id=491 data-nosnippet>491</a>    <span class="kw">let </span>fitting = placements / <span class="kw">if </span>row == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ row };
-<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">let </span>share = block_rows.div_ceil(<span class="kw">if </span>chunks == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ chunks });
-<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">let </span>rows = <span class="kw">if </span>fitting &lt; share { fitting } <span class="kw">else </span>{ share };
-<a href=#494 id=494 data-nosnippet>494</a>    <span class="kw">if </span>rows == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ rows }
-<a href=#495 id=495 data-nosnippet>495</a>}
-<a href=#496 id=496 data-nosnippet>496</a>
-<a href=#497 id=497 data-nosnippet>497</a><span class="doccomment">/// The most samples one native row produces in a major-cycle pass.
-<a href=#498 id=498 data-nosnippet>498</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-<a href=#499 id=499 data-nosnippet>499</a></span><span class="kw">pub struct </span>RowSamples {
-<a href=#500 id=500 data-nosnippet>500</a>    <span class="doccomment">/// Samples it places on the grid
-<a href=#501 id=501 data-nosnippet>501</a>    /// ([`SpectralResampler::samples_per_row`]).
-<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="kw">pub </span>placed: usize,
-<a href=#503 id=503 data-nosnippet>503</a>    <span class="doccomment">/// Samples its model prediction degrids
-<a href=#504 id=504 data-nosnippet>504</a>    /// ([`SpectralResampler::prediction_samples_per_row`]).
-<a href=#505 id=505 data-nosnippet>505</a>    </span><span class="kw">pub </span>predicted: usize,
-<a href=#506 id=506 data-nosnippet>506</a>}
-<a href=#507 id=507 data-nosnippet>507</a>
-<a href=#508 id=508 data-nosnippet>508</a><span class="doccomment">/// An upper bound of the bytes a pass's row chunks hold per row of the
-<a href=#509 id=509 data-nosnippet>509</a>/// source's block, for rows of `layout` that each produce at most `row`
-<a href=#510 id=510 data-nosnippet>510</a>/// samples on `workers` workers, while a chunk's rows are a block's share
-<a href=#511 id=511 data-nosnippet>511</a>/// rather than its placement cap: each owner's buffer and the weight
-<a href=#512 id=512 data-nosnippet>512</a>/// owner's can take every placement of a row with its native endpoints, and
-<a href=#513 id=513 data-nosnippet>513</a>/// the chunk's prediction batch every degridded sample and the row's native
-<a href=#514 id=514 data-nosnippet>514</a>/// terms. The source sizes its blocks with it
-<a href=#515 id=515 data-nosnippet>515</a>/// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
-<a href=#516 id=516 data-nosnippet>516</a>/// chunks exactly.
-<a href=#517 id=517 data-nosnippet>517</a></span><span class="attr">#[must_use]
-<a href=#518 id=518 data-nosnippet>518</a></span><span class="kw">pub const fn </span>chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -&gt; u64 {
-<a href=#519 id=519 data-nosnippet>519</a>    (workers <span class="kw">as </span>u64 + <span class="number">1</span>) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)
-<a href=#520 id=520 data-nosnippet>520</a>        + PredictionScratch::bytes(layout.correlations, row.predicted, <span class="number">0</span>, layout.channels())
-<a href=#521 id=521 data-nosnippet>521</a>        + size_of::&lt;PlacedRow&gt;() <span class="kw">as </span>u64
-<a href=#522 id=522 data-nosnippet>522</a>}
-<a href=#523 id=523 data-nosnippet>523</a>
-<a href=#524 id=524 data-nosnippet>524</a><span class="doccomment">/// The slices of a block of `rows` rows split among `chunks` chunks of at
-<a href=#525 id=525 data-nosnippet>525</a>/// most `chunk_rows` rows each, in row order.
-<a href=#526 id=526 data-nosnippet>526</a></span><span class="kw">fn </span>slices(
-<a href=#527 id=527 data-nosnippet>527</a>    rows: usize,
-<a href=#528 id=528 data-nosnippet>528</a>    chunks: usize,
-<a href=#529 id=529 data-nosnippet>529</a>    chunk_rows: usize,
-<a href=#530 id=530 data-nosnippet>530</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = std::ops::Range&lt;usize&gt;&gt; {
-<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">let </span>step = chunks * chunk_rows;
-<a href=#532 id=532 data-nosnippet>532</a>    (<span class="number">0</span>..rows)
-<a href=#533 id=533 data-nosnippet>533</a>        .step_by(step)
-<a href=#534 id=534 data-nosnippet>534</a>        .map(<span class="kw">move </span>|start| start..(start + step).min(rows))
-<a href=#535 id=535 data-nosnippet>535</a>}
-<a href=#536 id=536 data-nosnippet>536</a>
-<a href=#537 id=537 data-nosnippet>537</a><span class="doccomment">/// The chunks of `slice` among at most `chunks` chunks, in row order.
-<a href=#538 id=538 data-nosnippet>538</a></span><span class="kw">fn </span>chunk_ranges(
-<a href=#539 id=539 data-nosnippet>539</a>    slice: std::ops::Range&lt;usize&gt;,
-<a href=#540 id=540 data-nosnippet>540</a>    chunks: usize,
-<a href=#541 id=541 data-nosnippet>541</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = std::ops::Range&lt;usize&gt;&gt; {
-<a href=#542 id=542 data-nosnippet>542</a>    <span class="kw">let </span>rows = slice.len();
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">let </span>count = chunks.min(rows.max(<span class="number">1</span>));
-<a href=#544 id=544 data-nosnippet>544</a>    (<span class="number">0</span>..count).map(<span class="kw">move </span>|index| {
-<a href=#545 id=545 data-nosnippet>545</a>        slice.start + index * rows / count..slice.start + (index + <span class="number">1</span>) * rows / count
-<a href=#546 id=546 data-nosnippet>546</a>    })
-<a href=#547 id=547 data-nosnippet>547</a>}
-<a href=#548 id=548 data-nosnippet>548</a>
-<a href=#549 id=549 data-nosnippet>549</a><span class="doccomment">/// Bytes a density pass over blocks of `block` on `workers` workers holds:
-<a href=#550 id=550 data-nosnippet>550</a>/// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
-<a href=#551 id=551 data-nosnippet>551</a>/// its row chunks' sample buffers, which it frees. The stream's native
-<a href=#552 id=552 data-nosnippet>552</a>/// blocks are the source's ([`source_block_bytes`]).
-<a href=#553 id=553 data-nosnippet>553</a></span><span class="attr">#[must_use]
-<a href=#554 id=554 data-nosnippet>554</a></span><span class="kw">pub fn </span>density_pass_bytes(
-<a href=#555 id=555 data-nosnippet>555</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
-<a href=#556 id=556 data-nosnippet>556</a>    shape: <span class="kw-2">&amp;</span>DensityGridShape,
-<a href=#557 id=557 data-nosnippet>557</a>    block: BlockShape,
-<a href=#558 id=558 data-nosnippet>558</a>    workers: usize,
-<a href=#559 id=559 data-nosnippet>559</a>) -&gt; u64 {
-<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span>chunks = workers * DENSITY_CHUNKS_PER_WORKER;
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(shape, block.spectrum);
-<a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">let </span>placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
-<a href=#563 id=563 data-nosnippet>563</a>    shape.bytes() + chunks <span class="kw">as </span>u64 * SampleBuffer::bytes(<span class="number">1</span>, placements)
-<a href=#564 id=564 data-nosnippet>564</a>}
-<a href=#565 id=565 data-nosnippet>565</a>
-<a href=#566 id=566 data-nosnippet>566</a><span class="doccomment">/// Accumulate the weight-density grid of `shape` over one traversal of the
-<a href=#567 id=567 data-nosnippet>567</a>/// first image domain's projection: each row is placed with
-<a href=#568 id=568 data-nosnippet>568</a>/// [`SpectralResampler::place_density`] on row chunks and the chunks are
-<a href=#569 id=569 data-nosnippet>569</a>/// added in row order. It holds [`density_pass_bytes`] while it runs.
-<a href=#570 id=570 data-nosnippet>570</a>///
-<a href=#571 id=571 data-nosnippet>571</a>/// The traversal reads flags and weights only
-<a href=#572 id=572 data-nosnippet>572</a>/// ([`SampleContent::FlagsAndWeights`]): a density placement carries the
-<a href=#573 id=573 data-nosnippet>573</a>/// sample's weight and no value.
-<a href=#574 id=574 data-nosnippet>574</a></span><span class="kw">pub fn </span>run_density_pass(
-<a href=#575 id=575 data-nosnippet>575</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#576 id=576 data-nosnippet>576</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
-<a href=#577 id=577 data-nosnippet>577</a>    shape: DensityGridShape,
-<a href=#578 id=578 data-nosnippet>578</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
-<a href=#579 id=579 data-nosnippet>579</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#580 id=580 data-nosnippet>580</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#581 id=581 data-nosnippet>581</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGrid, PassError&gt; {
-<a href=#582 id=582 data-nosnippet>582</a>    source
-<a href=#583 id=583 data-nosnippet>583</a>        .begin(
-<a href=#584 id=584 data-nosnippet>584</a>            PlaneRange::new(<span class="number">0</span>, operator.basis().planes()),
-<a href=#585 id=585 data-nosnippet>585</a>            <span class="bool-val">false</span>,
-<a href=#586 id=586 data-nosnippet>586</a>            SampleContent::FlagsAndWeights,
-<a href=#587 id=587 data-nosnippet>587</a>        )
-<a href=#588 id=588 data-nosnippet>588</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
-<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = DensityGrid::new(shape);
-<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">let </span>maximum = source.maximum_block();
-<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">let </span>count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
-<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(<span class="kw-2">&amp;</span>shape, maximum.spectrum);
-<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span>rows_per_chunk = chunk_rows(row, maximum.rows, count, CHUNK_PLACEMENTS);
-<a href=#594 id=594 data-nosnippet>594</a>    <span class="kw">let </span>placements = rows_per_chunk * row;
-<a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
-<a href=#596 id=596 data-nosnippet>596</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, SampleBuffer::with_capacity(<span class="number">1</span>, placements)))
-<a href=#597 id=597 data-nosnippet>597</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#598 id=598 data-nosnippet>598</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
-<a href=#599 id=599 data-nosnippet>599</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, rows_per_chunk) {
-<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
-<a href=#602 id=602 data-nosnippet>602</a>                <span class="kw-2">*</span>range = rows;
-<a href=#603 id=603 data-nosnippet>603</a>                used += <span class="number">1</span>;
-<a href=#604 id=604 data-nosnippet>604</a>            }
-<a href=#605 id=605 data-nosnippet>605</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, buffer)| {
-<a href=#606 id=606 data-nosnippet>606</a>                buffer.clear();
-<a href=#607 id=607 data-nosnippet>607</a>                <span class="kw">for </span>row <span class="kw">in </span>range.clone() {
-<a href=#608 id=608 data-nosnippet>608</a>                    resampler.place_density(operator, <span class="kw-2">&amp;</span>block.row(<span class="number">0</span>, row), <span class="kw-2">&amp;</span>shape, buffer)<span class="question-mark">?</span>;
-<a href=#609 id=609 data-nosnippet>609</a>                }
-<a href=#610 id=610 data-nosnippet>610</a>                <span class="macro">debug_assert!</span>(
-<a href=#611 id=611 data-nosnippet>611</a>                    buffer.capacity_bytes() == SampleBuffer::bytes(<span class="number">1</span>, placements),
-<a href=#612 id=612 data-nosnippet>612</a>                    <span class="string">"a density chunk places within the placements it was allocated for"
-<a href=#613 id=613 data-nosnippet>613</a>                </span>);
-<a href=#614 id=614 data-nosnippet>614</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#615 id=615 data-nosnippet>615</a>            })<span class="question-mark">?</span>;
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">for </span>(<span class="kw">_</span>, buffer) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
-<a href=#617 id=617 data-nosnippet>617</a>                grid.accumulate(<span class="kw-2">&amp;</span>buffer.block());
-<a href=#618 id=618 data-nosnippet>618</a>            }
-<a href=#619 id=619 data-nosnippet>619</a>        }
-<a href=#620 id=620 data-nosnippet>620</a>        <span class="prelude-val">Ok</span>(())
-<a href=#621 id=621 data-nosnippet>621</a>    })<span class="question-mark">?</span>;
-<a href=#622 id=622 data-nosnippet>622</a>    <span class="prelude-val">Ok</span>(grid)
-<a href=#623 id=623 data-nosnippet>623</a>}
+<a href=#446 id=446 data-nosnippet>446</a>/// source's block, so the source's admission holds them.
+<a href=#447 id=447 data-nosnippet>447</a></span><span class="attr">#[must_use]
+<a href=#448 id=448 data-nosnippet>448</a></span><span class="kw">pub const fn </span>source_block_bytes(block: BlockShape) -&gt; u64 {
+<a href=#449 id=449 data-nosnippet>449</a>    stream::bytes(block) + wave::prediction_bytes(block)
+<a href=#450 id=450 data-nosnippet>450</a>}
+<a href=#451 id=451 data-nosnippet>451</a>
+<a href=#452 id=452 data-nosnippet>452</a><span class="doccomment">/// Row chunks per worker of a density pass.
+<a href=#453 id=453 data-nosnippet>453</a></span><span class="kw">const </span>DENSITY_CHUNKS_PER_WORKER: usize = <span class="number">4</span>;
+<a href=#454 id=454 data-nosnippet>454</a>
+<a href=#455 id=455 data-nosnippet>455</a><span class="doccomment">/// Placements a row chunk takes at once by default. A pass places each
+<a href=#456 id=456 data-nosnippet>456</a>/// block in slices of chunks this size, so its sample buffers have one bound
+<a href=#457 id=457 data-nosnippet>457</a>/// whatever rows the source puts in a block, while a slice still spans most
+<a href=#458 id=458 data-nosnippet>458</a>/// of a large block and its workers meet once per slice.
+<a href=#459 id=459 data-nosnippet>459</a></span><span class="kw">pub const </span>CHUNK_PLACEMENTS: usize = <span class="number">1 </span>&lt;&lt; <span class="number">15</span>;
+<a href=#460 id=460 data-nosnippet>460</a>
+<a href=#461 id=461 data-nosnippet>461</a><span class="doccomment">/// The larger chunks a pass whose grid is split among several region
+<a href=#462 id=462 data-nosnippet>462</a>/// owners takes when memory allows, largest first
+<a href=#463 id=463 data-nosnippet>463</a>/// ([`WaveDemand::plan_chunks`]). The owners grid each slice and
+<a href=#464 id=464 data-nosnippet>464</a>/// then meet, and a block's rows run baseline by baseline, so a slice of a
+<a href=#465 id=465 data-nosnippet>465</a>/// few baselines' tracks falls mostly on one owner's strip while the others
+<a href=#466 id=466 data-nosnippet>466</a>/// wait. Larger slices hold more baselines, so the owners wait less; past
+<a href=#467 id=467 data-nosnippet>467</a>/// 2^18 they cost memory and gain nothing (#736 records the measurement).
+<a href=#468 id=468 data-nosnippet>468</a></span><span class="kw">const </span>REGION_CHUNK_PLACEMENTS: [usize; <span class="number">3</span>] = [<span class="number">1 </span>&lt;&lt; <span class="number">18</span>, <span class="number">1 </span>&lt;&lt; <span class="number">17</span>, <span class="number">1 </span>&lt;&lt; <span class="number">16</span>];
+<a href=#469 id=469 data-nosnippet>469</a>
+<a href=#470 id=470 data-nosnippet>470</a><span class="doccomment">/// Placements a row chunk of a major-cycle pass takes at once, from a cap of
+<a href=#471 id=471 data-nosnippet>471</a>/// `placements`, when each image domain has at most `owners` owners. Each
+<a href=#472 id=472 data-nosnippet>472</a>/// owner's buffer in a chunk can take every placement of the chunk, and a
+<a href=#473 id=473 data-nosnippet>473</a>/// pass has four chunks per worker, so past four owners a chunk takes
+<a href=#474 id=474 data-nosnippet>474</a>/// proportionally fewer: the chunks' storage then grows linearly with the
+<a href=#475 id=475 data-nosnippet>475</a>/// workers rather than as their square, and a slice places as many samples
+<a href=#476 id=476 data-nosnippet>476</a>/// whatever the workers.
+<a href=#477 id=477 data-nosnippet>477</a></span><span class="kw">const fn </span>chunk_placements(placements: usize, owners: usize) -&gt; usize {
+<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">if </span>owners &lt;= <span class="number">4 </span>{
+<a href=#479 id=479 data-nosnippet>479</a>        placements
+<a href=#480 id=480 data-nosnippet>480</a>    } <span class="kw">else </span>{
+<a href=#481 id=481 data-nosnippet>481</a>        <span class="number">4 </span>* placements / owners
+<a href=#482 id=482 data-nosnippet>482</a>    }
+<a href=#483 id=483 data-nosnippet>483</a>}
+<a href=#484 id=484 data-nosnippet>484</a>
+<a href=#485 id=485 data-nosnippet>485</a><span class="doccomment">/// Rows a row chunk places at once, for rows of `row` placements each in
+<a href=#486 id=486 data-nosnippet>486</a>/// blocks of at most `block_rows` rows split among `chunks` chunks taking
+<a href=#487 id=487 data-nosnippet>487</a>/// `placements` placements each: as many as fit, at least one, and no more
+<a href=#488 id=488 data-nosnippet>488</a>/// than a block's share.
+<a href=#489 id=489 data-nosnippet>489</a></span><span class="kw">const fn </span>chunk_rows(row: usize, block_rows: usize, chunks: usize, placements: usize) -&gt; usize {
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="kw">let </span>fitting = placements / <span class="kw">if </span>row == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ row };
+<a href=#491 id=491 data-nosnippet>491</a>    <span class="kw">let </span>share = block_rows.div_ceil(<span class="kw">if </span>chunks == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ chunks });
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">let </span>rows = <span class="kw">if </span>fitting &lt; share { fitting } <span class="kw">else </span>{ share };
+<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">if </span>rows == <span class="number">0 </span>{ <span class="number">1 </span>} <span class="kw">else </span>{ rows }
+<a href=#494 id=494 data-nosnippet>494</a>}
+<a href=#495 id=495 data-nosnippet>495</a>
+<a href=#496 id=496 data-nosnippet>496</a><span class="doccomment">/// The most samples one native row produces in a major-cycle pass.
+<a href=#497 id=497 data-nosnippet>497</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+<a href=#498 id=498 data-nosnippet>498</a></span><span class="kw">pub struct </span>RowSamples {
+<a href=#499 id=499 data-nosnippet>499</a>    <span class="doccomment">/// Samples it places on the grid
+<a href=#500 id=500 data-nosnippet>500</a>    /// ([`SpectralResampler::samples_per_row`]).
+<a href=#501 id=501 data-nosnippet>501</a>    </span><span class="kw">pub </span>placed: usize,
+<a href=#502 id=502 data-nosnippet>502</a>    <span class="doccomment">/// Samples its model prediction degrids
+<a href=#503 id=503 data-nosnippet>503</a>    /// ([`SpectralResampler::prediction_samples_per_row`]).
+<a href=#504 id=504 data-nosnippet>504</a>    </span><span class="kw">pub </span>predicted: usize,
+<a href=#505 id=505 data-nosnippet>505</a>}
+<a href=#506 id=506 data-nosnippet>506</a>
+<a href=#507 id=507 data-nosnippet>507</a><span class="doccomment">/// An upper bound of the bytes a pass's row chunks hold per row of the
+<a href=#508 id=508 data-nosnippet>508</a>/// source's block, for rows of `layout` that each produce at most `row`
+<a href=#509 id=509 data-nosnippet>509</a>/// samples on `workers` workers, while a chunk's rows are a block's share
+<a href=#510 id=510 data-nosnippet>510</a>/// rather than its placement cap: each owner's buffer and the weight
+<a href=#511 id=511 data-nosnippet>511</a>/// owner's can take every placement of a row with its native endpoints, and
+<a href=#512 id=512 data-nosnippet>512</a>/// the chunk's prediction batch every degridded sample and the row's native
+<a href=#513 id=513 data-nosnippet>513</a>/// terms. The source sizes its blocks with it; [`WaveDemand::bytes`]
+<a href=#514 id=514 data-nosnippet>514</a>/// charges the chunks exactly.
+<a href=#515 id=515 data-nosnippet>515</a></span><span class="attr">#[must_use]
+<a href=#516 id=516 data-nosnippet>516</a></span><span class="kw">pub const fn </span>chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -&gt; u64 {
+<a href=#517 id=517 data-nosnippet>517</a>    (workers <span class="kw">as </span>u64 + <span class="number">1</span>) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)
+<a href=#518 id=518 data-nosnippet>518</a>        + PredictionScratch::bytes(layout.correlations, row.predicted, <span class="number">0</span>, layout.channels())
+<a href=#519 id=519 data-nosnippet>519</a>        + size_of::&lt;PlacedRow&gt;() <span class="kw">as </span>u64
+<a href=#520 id=520 data-nosnippet>520</a>}
+<a href=#521 id=521 data-nosnippet>521</a>
+<a href=#522 id=522 data-nosnippet>522</a><span class="doccomment">/// The slices of a block of `rows` rows split among `chunks` chunks of at
+<a href=#523 id=523 data-nosnippet>523</a>/// most `chunk_rows` rows each, in row order.
+<a href=#524 id=524 data-nosnippet>524</a></span><span class="kw">fn </span>slices(
+<a href=#525 id=525 data-nosnippet>525</a>    rows: usize,
+<a href=#526 id=526 data-nosnippet>526</a>    chunks: usize,
+<a href=#527 id=527 data-nosnippet>527</a>    chunk_rows: usize,
+<a href=#528 id=528 data-nosnippet>528</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = std::ops::Range&lt;usize&gt;&gt; {
+<a href=#529 id=529 data-nosnippet>529</a>    <span class="kw">let </span>step = chunks * chunk_rows;
+<a href=#530 id=530 data-nosnippet>530</a>    (<span class="number">0</span>..rows)
+<a href=#531 id=531 data-nosnippet>531</a>        .step_by(step)
+<a href=#532 id=532 data-nosnippet>532</a>        .map(<span class="kw">move </span>|start| start..(start + step).min(rows))
+<a href=#533 id=533 data-nosnippet>533</a>}
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a><span class="doccomment">/// The chunks of `slice` among at most `chunks` chunks, in row order.
+<a href=#536 id=536 data-nosnippet>536</a></span><span class="kw">fn </span>chunk_ranges(
+<a href=#537 id=537 data-nosnippet>537</a>    slice: std::ops::Range&lt;usize&gt;,
+<a href=#538 id=538 data-nosnippet>538</a>    chunks: usize,
+<a href=#539 id=539 data-nosnippet>539</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = std::ops::Range&lt;usize&gt;&gt; {
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="kw">let </span>rows = slice.len();
+<a href=#541 id=541 data-nosnippet>541</a>    <span class="kw">let </span>count = chunks.min(rows.max(<span class="number">1</span>));
+<a href=#542 id=542 data-nosnippet>542</a>    (<span class="number">0</span>..count).map(<span class="kw">move </span>|index| {
+<a href=#543 id=543 data-nosnippet>543</a>        slice.start + index * rows / count..slice.start + (index + <span class="number">1</span>) * rows / count
+<a href=#544 id=544 data-nosnippet>544</a>    })
+<a href=#545 id=545 data-nosnippet>545</a>}
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a><span class="doccomment">/// Bytes a density pass over blocks of `block` on `workers` workers holds:
+<a href=#548 id=548 data-nosnippet>548</a>/// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
+<a href=#549 id=549 data-nosnippet>549</a>/// its row chunks' sample buffers, which it frees. The stream's native
+<a href=#550 id=550 data-nosnippet>550</a>/// blocks are the source's ([`source_block_bytes`]).
+<a href=#551 id=551 data-nosnippet>551</a></span><span class="attr">#[must_use]
+<a href=#552 id=552 data-nosnippet>552</a></span><span class="kw">pub fn </span>density_pass_bytes(
+<a href=#553 id=553 data-nosnippet>553</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
+<a href=#554 id=554 data-nosnippet>554</a>    shape: <span class="kw-2">&amp;</span>DensityGridShape,
+<a href=#555 id=555 data-nosnippet>555</a>    block: BlockShape,
+<a href=#556 id=556 data-nosnippet>556</a>    workers: usize,
+<a href=#557 id=557 data-nosnippet>557</a>) -&gt; u64 {
+<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">let </span>chunks = workers * DENSITY_CHUNKS_PER_WORKER;
+<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(shape, block.spectrum);
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span>placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
+<a href=#561 id=561 data-nosnippet>561</a>    shape.bytes() + chunks <span class="kw">as </span>u64 * SampleBuffer::bytes(<span class="number">1</span>, placements)
+<a href=#562 id=562 data-nosnippet>562</a>}
+<a href=#563 id=563 data-nosnippet>563</a>
+<a href=#564 id=564 data-nosnippet>564</a><span class="doccomment">/// Accumulate the weight-density grid of `shape` over one traversal of the
+<a href=#565 id=565 data-nosnippet>565</a>/// first image domain's projection: each row is placed with
+<a href=#566 id=566 data-nosnippet>566</a>/// [`SpectralResampler::place_density`] on row chunks and the chunks are
+<a href=#567 id=567 data-nosnippet>567</a>/// added in row order. It holds [`density_pass_bytes`] while it runs.
+<a href=#568 id=568 data-nosnippet>568</a>///
+<a href=#569 id=569 data-nosnippet>569</a>/// The traversal reads flags and weights only
+<a href=#570 id=570 data-nosnippet>570</a>/// ([`SampleContent::FlagsAndWeights`]): a density placement carries the
+<a href=#571 id=571 data-nosnippet>571</a>/// sample's weight and no value.
+<a href=#572 id=572 data-nosnippet>572</a></span><span class="kw">pub fn </span>run_density_pass(
+<a href=#573 id=573 data-nosnippet>573</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#574 id=574 data-nosnippet>574</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
+<a href=#575 id=575 data-nosnippet>575</a>    shape: DensityGridShape,
+<a href=#576 id=576 data-nosnippet>576</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
+<a href=#577 id=577 data-nosnippet>577</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#578 id=578 data-nosnippet>578</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#579 id=579 data-nosnippet>579</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGrid, PassError&gt; {
+<a href=#580 id=580 data-nosnippet>580</a>    source
+<a href=#581 id=581 data-nosnippet>581</a>        .begin(
+<a href=#582 id=582 data-nosnippet>582</a>            PlaneRange::new(<span class="number">0</span>, operator.basis().planes()),
+<a href=#583 id=583 data-nosnippet>583</a>            <span class="bool-val">false</span>,
+<a href=#584 id=584 data-nosnippet>584</a>            SampleContent::FlagsAndWeights,
+<a href=#585 id=585 data-nosnippet>585</a>        )
+<a href=#586 id=586 data-nosnippet>586</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
+<a href=#587 id=587 data-nosnippet>587</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = DensityGrid::new(shape);
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">let </span>maximum = source.maximum_block();
+<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">let </span>count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(<span class="kw-2">&amp;</span>shape, maximum.spectrum);
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">let </span>rows_per_chunk = chunk_rows(row, maximum.rows, count, CHUNK_PLACEMENTS);
+<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">let </span>placements = rows_per_chunk * row;
+<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
+<a href=#594 id=594 data-nosnippet>594</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, SampleBuffer::with_capacity(<span class="number">1</span>, placements)))
+<a href=#595 id=595 data-nosnippet>595</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#596 id=596 data-nosnippet>596</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
+<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, rows_per_chunk) {
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+<a href=#600 id=600 data-nosnippet>600</a>                <span class="kw-2">*</span>range = rows;
+<a href=#601 id=601 data-nosnippet>601</a>                used += <span class="number">1</span>;
+<a href=#602 id=602 data-nosnippet>602</a>            }
+<a href=#603 id=603 data-nosnippet>603</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, buffer)| {
+<a href=#604 id=604 data-nosnippet>604</a>                buffer.clear();
+<a href=#605 id=605 data-nosnippet>605</a>                <span class="kw">for </span>row <span class="kw">in </span>range.clone() {
+<a href=#606 id=606 data-nosnippet>606</a>                    resampler.place_density(operator, <span class="kw-2">&amp;</span>block.row(<span class="number">0</span>, row), <span class="kw-2">&amp;</span>shape, buffer)<span class="question-mark">?</span>;
+<a href=#607 id=607 data-nosnippet>607</a>                }
+<a href=#608 id=608 data-nosnippet>608</a>                <span class="macro">debug_assert!</span>(
+<a href=#609 id=609 data-nosnippet>609</a>                    buffer.capacity_bytes() == SampleBuffer::bytes(<span class="number">1</span>, placements),
+<a href=#610 id=610 data-nosnippet>610</a>                    <span class="string">"a density chunk places within the placements it was allocated for"
+<a href=#611 id=611 data-nosnippet>611</a>                </span>);
+<a href=#612 id=612 data-nosnippet>612</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#613 id=613 data-nosnippet>613</a>            })<span class="question-mark">?</span>;
+<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw">for </span>(<span class="kw">_</span>, buffer) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
+<a href=#615 id=615 data-nosnippet>615</a>                grid.accumulate(<span class="kw-2">&amp;</span>buffer.block());
+<a href=#616 id=616 data-nosnippet>616</a>            }
+<a href=#617 id=617 data-nosnippet>617</a>        }
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="prelude-val">Ok</span>(())
+<a href=#619 id=619 data-nosnippet>619</a>    })<span class="question-mark">?</span>;
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="prelude-val">Ok</span>(grid)
+<a href=#621 id=621 data-nosnippet>621</a>}
 </code></pre></div></section></main></body></html>

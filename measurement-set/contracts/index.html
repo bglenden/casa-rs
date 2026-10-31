@@ -1820,11 +1820,19 @@ scratch for it, and binding fails when one time does not fit.</p>
 <p><strong>Weights from sigmas.</strong> The weight role reads the stored weights
 (<code>WeightRequest::Stored</code>) or the weights CASA's solvers use, 1/σ² of the
 stored sigmas (<code>WeightRequest::InverseSigmaSquared</code>), 0 where σ is not
-positive or is NaN (<code>VisBufferImpl2::resetWeightsUsingSigma</code>). An MSv2 reads
-<code>SIGMA_SPECTRUM</code> when MAIN's <code>WEIGHT_SPECTRUM</code> and <code>SIGMA_SPECTRUM</code> both hold
-content, else <code>SIGMA</code> broadcast over channels, as <code>VisBufferImpl2</code> does by
-casacore's <code>hasContent</code> (the first cell defined, no axis empty: a column added
-and never filled holds none, and the stored weights are then <code>WEIGHT</code>); the
+positive or is NaN (<code>VisBufferImpl2::resetWeightsUsingSigma</code>). An MSv2's
+stored weights are a partition's <code>WEIGHT_SPECTRUM</code> when the first of its rows
+in time order holds content by casacore's <code>hasContent</code> (the cell defined, no
+axis empty: a column added and never filled holds none), else <code>WEIGHT</code>
+broadcast over channels: CASA's iterator asks again at each new spectral
+window, on the first row it meets there
+(<code>VisibilityIteratorImpl2::weightSpectrumExists</code>). The two agree wherever a
+window's rows agree. Where they do not, CASA's one answer for the window
+depends on the order it iterates in, and reading a cell without content
+fails; the adapter answers per partition instead. It reads <code>SIGMA_SPECTRUM</code>
+when the partition's weights are <code>WEIGHT_SPECTRUM</code> and MAIN's first row
+holds <code>SIGMA_SPECTRUM</code> content, which CASA asks once per MeasurementSet
+(<code>sigmaSpectrumExists</code>), else <code>SIGMA</code> broadcast over channels; the
 value is made a weight
 before padding is spread, so padding stays NaN. An MSv4 holds no sigmas, so
 the request names its fallback: refuse a traversal that reads weights

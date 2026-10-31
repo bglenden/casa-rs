@@ -3700,6 +3700,10 @@ equal.</p>
 <td><code>WEIGHT_SPECTRUM</code> and <code>SIGMA_SPECTRUM</code> added and never filled hold no content (casacore's <code>hasContent</code>): the stored weights are <code>WEIGHT</code> and the sigmas <code>SIGMA</code>, and with only <code>SIGMA_SPECTRUM</code> filled still <code>SIGMA</code>.</td>
 </tr>
 <tr>
+<td><code>each_partition_reads_weight_spectrum_by_its_first_row</code></td>
+<td>With <code>WEIGHT_SPECTRUM</code> filled for one of two partitions (two sessions of one window), that partition's stored weights are its cells and the other's its <code>WEIGHT</code>, whether or not it holds MAIN's first row. CASA asks again at each new spectral window (<code>weightSpectrumExists</code>), so it answers once for these two.</td>
+</tr>
+<tr>
 <td><code>sigma_weighted_batch_solves_equal_the_production_gaincal</code></td>
 <td>Example B with <code>SIGMA</code> not 1/√<code>WEIGHT</code> (casa-calibration): the batch-fed solve reading 1/σ² equals production to 1.3e-7 in weight; the one reading <code>WEIGHT</code> differs by 2,500×.</td>
 </tr>

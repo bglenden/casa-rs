@@ -645,76 +645,87 @@
 <a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">let </span>per_time = <span class="self">self</span>.baselines.len();
 <a href=#646 id=646 data-nosnippet>646</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.cells[times.start * per_time..times.end * per_time]
 <a href=#647 id=647 data-nosnippet>647</a>    }
-<a href=#648 id=648 data-nosnippet>648</a>}
-<a href=#649 id=649 data-nosnippet>649</a>
-<a href=#650 id=650 data-nosnippet>650</a><span class="doccomment">/// Record `value` at a time, which every row of that time must share.
-<a href=#651 id=651 data-nosnippet>651</a></span><span class="kw">fn </span>one_per_time&lt;T: Copy + PartialEq&gt;(
-<a href=#652 id=652 data-nosnippet>652</a>    slot: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;T&gt;,
-<a href=#653 id=653 data-nosnippet>653</a>    value: T,
-<a href=#654 id=654 data-nosnippet>654</a>    what: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#655 id=655 data-nosnippet>655</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#656 id=656 data-nosnippet>656</a>    <span class="kw">if </span>slot.is_some_and(|known| known != value) {
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported { what });
+<a href=#648 id=648 data-nosnippet>648</a>
+<a href=#649 id=649 data-nosnippet>649</a>    <span class="doccomment">/// The first of its rows in time order, as CASA's iteration meets them:
+<a href=#650 id=650 data-nosnippet>650</a>    /// the lowest MAIN row of its first time.
+<a href=#651 id=651 data-nosnippet>651</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>first_time_row(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="self">self</span>.cells(<span class="number">0</span>..<span class="number">1</span>)
+<a href=#653 id=653 data-nosnippet>653</a>            .iter()
+<a href=#654 id=654 data-nosnippet>654</a>            .copied()
+<a href=#655 id=655 data-nosnippet>655</a>            .filter(|cell| <span class="kw-2">*</span>cell != NO_ROW)
+<a href=#656 id=656 data-nosnippet>656</a>            .min()
+<a href=#657 id=657 data-nosnippet>657</a>            .expect(<span class="string">"a partition's first time holds a row"</span>) <span class="kw">as </span>usize
 <a href=#658 id=658 data-nosnippet>658</a>    }
-<a href=#659 id=659 data-nosnippet>659</a>    <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(value);
-<a href=#660 id=660 data-nosnippet>660</a>    <span class="prelude-val">Ok</span>(())
-<a href=#661 id=661 data-nosnippet>661</a>}
-<a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a><span class="attr">#[cfg(all(test, unix))]
-<a href=#664 id=664 data-nosnippet>664</a></span><span class="kw">mod </span>tests {
-<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">use </span>std::fs::File;
-<a href=#666 id=666 data-nosnippet>666</a>    <span class="kw">use </span>std::path::Path;
-<a href=#667 id=667 data-nosnippet>667</a>
-<a href=#668 id=668 data-nosnippet>668</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">use </span><span class="kw">crate</span>::MeasurementSet;
-<a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>    <span class="doccomment">/// The index does not depend on how many rows each chunk reads, with
-<a href=#672 id=672 data-nosnippet>672</a>    /// either partition scheme: one row, a ragged last chunk, or all of
-<a href=#673 id=673 data-nosnippet>673</a>    /// MAIN at once.
-<a href=#674 id=674 data-nosnippet>674</a>    </span><span class="attr">#[test]
-<a href=#675 id=675 data-nosnippet>675</a>    </span><span class="kw">fn </span>the_index_does_not_depend_on_the_chunk_size() {
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>archive =
-<a href=#678 id=678 data-nosnippet>678</a>            Path::new(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>)).join(<span class="string">"tests/fixtures/ms_trial/ms_trial.ms.tgz"</span>);
-<a href=#679 id=679 data-nosnippet>679</a>        tar::Archive::new(flate2::read::GzDecoder::new(
-<a href=#680 id=680 data-nosnippet>680</a>            File::open(archive).expect(<span class="string">"fixture"</span>),
-<a href=#681 id=681 data-nosnippet>681</a>        ))
-<a href=#682 id=682 data-nosnippet>682</a>        .unpack(root.path())
-<a href=#683 id=683 data-nosnippet>683</a>        .expect(<span class="string">"unpack"</span>);
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>ms = MeasurementSet::open_retained_read(root.path().join(<span class="string">"ms_trial.ms"</span>)).expect(<span class="string">"open"</span>);
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>modes = catalogue::read_state_modes(<span class="kw-2">&amp;</span>ms).expect(<span class="string">"modes"</span>);
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span>ephemerides = catalogue::fields_and_uvw(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>BTreeMap::new())
-<a href=#687 id=687 data-nosnippet>687</a>            .expect(<span class="string">"fields"</span>)
-<a href=#688 id=688 data-nosnippet>688</a>            .ephemerides;
-<a href=#689 id=689 data-nosnippet>689</a>        <span class="kw">let </span>main = ms.main_table();
-<a href=#690 id=690 data-nosnippet>690</a>        <span class="macro">assert!</span>(main.row_count() &gt; <span class="number">64</span>, <span class="string">"several chunks of 7 and 64"</span>);
-<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">for </span>scheme <span class="kw">in </span>[
-<a href=#692 id=692 data-nosnippet>692</a>            PartitionScheme::default(),
-<a href=#693 id=693 data-nosnippet>693</a>            PartitionScheme {
-<a href=#694 id=694 data-nosnippet>694</a>                fields: <span class="bool-val">true</span>,
-<a href=#695 id=695 data-nosnippet>695</a>                scans: <span class="bool-val">true</span>,
-<a href=#696 id=696 data-nosnippet>696</a>            },
-<a href=#697 id=697 data-nosnippet>697</a>        ] {
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>build = |rows_per_chunk| {
-<a href=#699 id=699 data-nosnippet>699</a>                Index::build(
-<a href=#700 id=700 data-nosnippet>700</a>                    main,
-<a href=#701 id=701 data-nosnippet>701</a>                    scheme,
-<a href=#702 id=702 data-nosnippet>702</a>                    (<span class="kw-2">&amp;</span>modes, <span class="kw-2">&amp;</span>ephemerides),
-<a href=#703 id=703 data-nosnippet>703</a>                    rows_per_chunk,
-<a href=#704 id=704 data-nosnippet>704</a>                    <span class="kw-2">&amp;mut </span>|<span class="kw">_</span>| <span class="prelude-val">Ok</span>(()),
-<a href=#705 id=705 data-nosnippet>705</a>                )
-<a href=#706 id=706 data-nosnippet>706</a>                .expect(<span class="string">"index"</span>)
-<a href=#707 id=707 data-nosnippet>707</a>            };
-<a href=#708 id=708 data-nosnippet>708</a>            <span class="kw">let </span>whole = build(usize::MAX);
-<a href=#709 id=709 data-nosnippet>709</a>            <span class="macro">assert!</span>(!whole.partitions.is_empty() &amp;&amp; !whole.scans.is_empty());
-<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">for </span>rows_per_chunk <span class="kw">in </span>[<span class="number">1</span>, <span class="number">7</span>, <span class="number">64</span>] {
-<a href=#711 id=711 data-nosnippet>711</a>                <span class="macro">assert_eq!</span>(
-<a href=#712 id=712 data-nosnippet>712</a>                    build(rows_per_chunk),
-<a href=#713 id=713 data-nosnippet>713</a>                    whole,
-<a href=#714 id=714 data-nosnippet>714</a>                    <span class="string">"{scheme:?}, {rows_per_chunk} rows"
-<a href=#715 id=715 data-nosnippet>715</a>                </span>);
-<a href=#716 id=716 data-nosnippet>716</a>            }
-<a href=#717 id=717 data-nosnippet>717</a>        }
-<a href=#718 id=718 data-nosnippet>718</a>    }
-<a href=#719 id=719 data-nosnippet>719</a>}
+<a href=#659 id=659 data-nosnippet>659</a>}
+<a href=#660 id=660 data-nosnippet>660</a>
+<a href=#661 id=661 data-nosnippet>661</a><span class="doccomment">/// Record `value` at a time, which every row of that time must share.
+<a href=#662 id=662 data-nosnippet>662</a></span><span class="kw">fn </span>one_per_time&lt;T: Copy + PartialEq&gt;(
+<a href=#663 id=663 data-nosnippet>663</a>    slot: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;T&gt;,
+<a href=#664 id=664 data-nosnippet>664</a>    value: T,
+<a href=#665 id=665 data-nosnippet>665</a>    what: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#666 id=666 data-nosnippet>666</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">if </span>slot.is_some_and(|known| known != value) {
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported { what });
+<a href=#669 id=669 data-nosnippet>669</a>    }
+<a href=#670 id=670 data-nosnippet>670</a>    <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(value);
+<a href=#671 id=671 data-nosnippet>671</a>    <span class="prelude-val">Ok</span>(())
+<a href=#672 id=672 data-nosnippet>672</a>}
+<a href=#673 id=673 data-nosnippet>673</a>
+<a href=#674 id=674 data-nosnippet>674</a><span class="attr">#[cfg(all(test, unix))]
+<a href=#675 id=675 data-nosnippet>675</a></span><span class="kw">mod </span>tests {
+<a href=#676 id=676 data-nosnippet>676</a>    <span class="kw">use </span>std::fs::File;
+<a href=#677 id=677 data-nosnippet>677</a>    <span class="kw">use </span>std::path::Path;
+<a href=#678 id=678 data-nosnippet>678</a>
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">use </span><span class="kw">crate</span>::MeasurementSet;
+<a href=#681 id=681 data-nosnippet>681</a>
+<a href=#682 id=682 data-nosnippet>682</a>    <span class="doccomment">/// The index does not depend on how many rows each chunk reads, with
+<a href=#683 id=683 data-nosnippet>683</a>    /// either partition scheme: one row, a ragged last chunk, or all of
+<a href=#684 id=684 data-nosnippet>684</a>    /// MAIN at once.
+<a href=#685 id=685 data-nosnippet>685</a>    </span><span class="attr">#[test]
+<a href=#686 id=686 data-nosnippet>686</a>    </span><span class="kw">fn </span>the_index_does_not_depend_on_the_chunk_size() {
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"root"</span>);
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>archive =
+<a href=#689 id=689 data-nosnippet>689</a>            Path::new(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>)).join(<span class="string">"tests/fixtures/ms_trial/ms_trial.ms.tgz"</span>);
+<a href=#690 id=690 data-nosnippet>690</a>        tar::Archive::new(flate2::read::GzDecoder::new(
+<a href=#691 id=691 data-nosnippet>691</a>            File::open(archive).expect(<span class="string">"fixture"</span>),
+<a href=#692 id=692 data-nosnippet>692</a>        ))
+<a href=#693 id=693 data-nosnippet>693</a>        .unpack(root.path())
+<a href=#694 id=694 data-nosnippet>694</a>        .expect(<span class="string">"unpack"</span>);
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>ms = MeasurementSet::open_retained_read(root.path().join(<span class="string">"ms_trial.ms"</span>)).expect(<span class="string">"open"</span>);
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>modes = catalogue::read_state_modes(<span class="kw-2">&amp;</span>ms).expect(<span class="string">"modes"</span>);
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>ephemerides = catalogue::fields_and_uvw(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>BTreeMap::new())
+<a href=#698 id=698 data-nosnippet>698</a>            .expect(<span class="string">"fields"</span>)
+<a href=#699 id=699 data-nosnippet>699</a>            .ephemerides;
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>main = ms.main_table();
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="macro">assert!</span>(main.row_count() &gt; <span class="number">64</span>, <span class="string">"several chunks of 7 and 64"</span>);
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">for </span>scheme <span class="kw">in </span>[
+<a href=#703 id=703 data-nosnippet>703</a>            PartitionScheme::default(),
+<a href=#704 id=704 data-nosnippet>704</a>            PartitionScheme {
+<a href=#705 id=705 data-nosnippet>705</a>                fields: <span class="bool-val">true</span>,
+<a href=#706 id=706 data-nosnippet>706</a>                scans: <span class="bool-val">true</span>,
+<a href=#707 id=707 data-nosnippet>707</a>            },
+<a href=#708 id=708 data-nosnippet>708</a>        ] {
+<a href=#709 id=709 data-nosnippet>709</a>            <span class="kw">let </span>build = |rows_per_chunk| {
+<a href=#710 id=710 data-nosnippet>710</a>                Index::build(
+<a href=#711 id=711 data-nosnippet>711</a>                    main,
+<a href=#712 id=712 data-nosnippet>712</a>                    scheme,
+<a href=#713 id=713 data-nosnippet>713</a>                    (<span class="kw-2">&amp;</span>modes, <span class="kw-2">&amp;</span>ephemerides),
+<a href=#714 id=714 data-nosnippet>714</a>                    rows_per_chunk,
+<a href=#715 id=715 data-nosnippet>715</a>                    <span class="kw-2">&amp;mut </span>|<span class="kw">_</span>| <span class="prelude-val">Ok</span>(()),
+<a href=#716 id=716 data-nosnippet>716</a>                )
+<a href=#717 id=717 data-nosnippet>717</a>                .expect(<span class="string">"index"</span>)
+<a href=#718 id=718 data-nosnippet>718</a>            };
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw">let </span>whole = build(usize::MAX);
+<a href=#720 id=720 data-nosnippet>720</a>            <span class="macro">assert!</span>(!whole.partitions.is_empty() &amp;&amp; !whole.scans.is_empty());
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="kw">for </span>rows_per_chunk <span class="kw">in </span>[<span class="number">1</span>, <span class="number">7</span>, <span class="number">64</span>] {
+<a href=#722 id=722 data-nosnippet>722</a>                <span class="macro">assert_eq!</span>(
+<a href=#723 id=723 data-nosnippet>723</a>                    build(rows_per_chunk),
+<a href=#724 id=724 data-nosnippet>724</a>                    whole,
+<a href=#725 id=725 data-nosnippet>725</a>                    <span class="string">"{scheme:?}, {rows_per_chunk} rows"
+<a href=#726 id=726 data-nosnippet>726</a>                </span>);
+<a href=#727 id=727 data-nosnippet>727</a>            }
+<a href=#728 id=728 data-nosnippet>728</a>        }
+<a href=#729 id=729 data-nosnippet>729</a>    }
+<a href=#730 id=730 data-nosnippet>730</a>}
 </code></pre></div></section></main></body></html>

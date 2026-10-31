@@ -215,15 +215,15 @@
 <a href=#215 id=215 data-nosnippet>215</a>        + plain(scans)
 <a href=#216 id=216 data-nosnippet>216</a>        + plain(baselines)
 <a href=#217 id=217 data-nosnippet>217</a>        + entries(data_groups, group_bytes)
-<a href=#218 id=218 data-nosnippet>218</a>        + receptors.values().map(receptors_bytes).sum::&lt;usize&gt;()
-<a href=#219 id=219 data-nosnippet>219</a>        + plain(states)
-<a href=#220 id=220 data-nosnippet>220</a>}
-<a href=#221 id=221 data-nosnippet>221</a>
-<a href=#222 id=222 data-nosnippet>222</a><span class="doccomment">/// The heap one antenna's receptors hold in a partition's map, its entry
-<a href=#223 id=223 data-nosnippet>223</a>/// included.
+<a href=#218 id=218 data-nosnippet>218</a>        + casa_types::memory::btree_node_bytes::&lt;AntennaId, Receptors&gt;(receptors.len())
+<a href=#219 id=219 data-nosnippet>219</a>        + receptors.values().map(receptors_bytes).sum::&lt;usize&gt;()
+<a href=#220 id=220 data-nosnippet>220</a>        + plain(states)
+<a href=#221 id=221 data-nosnippet>221</a>}
+<a href=#222 id=222 data-nosnippet>222</a>
+<a href=#223 id=223 data-nosnippet>223</a><span class="doccomment">/// The heap one antenna's receptor values own, excluding their map's nodes.
 <a href=#224 id=224 data-nosnippet>224</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>receptors_bytes(receptors: <span class="kw-2">&amp;</span>Receptors) -&gt; usize {
 <a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>Receptors { types, angles } = receptors;
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="number">2 </span>* size_of::&lt;(AntennaId, Receptors)&gt;() + strings(types) + entries(angles, quantity)
+<a href=#226 id=226 data-nosnippet>226</a>    strings(types) + entries(angles, quantity)
 <a href=#227 id=227 data-nosnippet>227</a>}
 <a href=#228 id=228 data-nosnippet>228</a>
 <a href=#229 id=229 data-nosnippet>229</a><span class="doccomment">/// The heap a data group's entry holds.
