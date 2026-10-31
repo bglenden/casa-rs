@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::{
     casa_return::json_run,
-    fixture::{Component, Observation},
+    fixture::{Component, Observation, Setup},
 };
 
 #[test]
@@ -44,4 +44,48 @@ fn a_default_dirty_run_writes_a_readable_pb_and_an_explicit_opt_out_does_not() {
             assert_eq!(&pb.shape()[..2], &geometry.image_size);
         }
     }
+}
+
+#[test]
+fn alma_labelled_seven_metre_dishes_write_the_aca_primary_beam_by_default() {
+    let point = Component {
+        offset_px: [0, 0],
+        flux_jy: 1.0,
+        fwhm_px: None,
+        spectral_index: 0.0,
+    };
+    let mut beams = Vec::new();
+    for telescope in ["ALMA", "ACA"] {
+        let mut setup = Setup::vla_q_band(2);
+        setup.telescope = telescope.to_string();
+        for antenna in &mut setup.antennas {
+            antenna.dish_diameter_m = 7.0;
+        }
+        let observation = Observation::synthesise_setup(setup, &[("point", point)]);
+        let directory = observation.scratch("seven-metre");
+        std::fs::create_dir_all(&directory).unwrap();
+        let geometry = observation.geometry();
+        let values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join("image"),
+            "niter": 0, "backend": "cpu", "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        });
+        let reply = json_run(&directory, values);
+        assert!(
+            matches!(reply, TaskReply::Succeeded { .. }),
+            "{telescope}: {reply:?}"
+        );
+        beams.push(
+            PagedImage::<f32>::open(directory.join("image.pb"))
+                .unwrap()
+                .get()
+                .unwrap(),
+        );
+    }
+    assert_eq!(beams[0].shape(), beams[1].shape());
+    let worst = beams[0]
+        .iter()
+        .zip(&beams[1])
+        .fold(0.0_f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(worst <= 1e-6, "ALMA/ACA 7 m PB difference {worst:e}");
 }

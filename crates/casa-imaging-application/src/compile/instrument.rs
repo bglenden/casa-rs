@@ -42,7 +42,16 @@ pub(super) fn standard_primary_beam_model(
         .collect::<Vec<_>>()
         .as_slice()
     {
-        ["ALMA"] => homogeneous_dishes(ms, 10.0..13.0, AnalyticPrimaryBeamModel::CasaAlma12mAiry),
+        ["ALMA"] => {
+            let antenna = ms.antenna()?;
+            // SynthesisImager::makePBImage selects ACA for an ALMA-labelled
+            // observation whose first dish is smaller than 12 m.
+            if antenna.row_count() > 0 && antenna.dish_diameter(0)? < 12.0 {
+                homogeneous_dishes(ms, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry)
+            } else {
+                homogeneous_dishes(ms, 10.0..13.0, AnalyticPrimaryBeamModel::CasaAlma12mAiry)
+            }
+        }
         ["ACA"] => homogeneous_dishes(ms, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry),
         _ => analytic_primary_beam_model_for_telescopes(&telescopes),
     }
