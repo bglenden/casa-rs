@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Do not mutate any MeasurementSet.
 <a href=#17 id=17 data-nosnippet>17</a>    </span>Disabled,
 <a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// Replace the selected `MODEL_DATA` cells for every snapshot source.
-<a href=#19 id=19 data-nosnippet>19</a>    </span>SelectedRows,
+<a href=#19 id=19 data-nosnippet>19</a>    </span>SelectedSamples,
 <a href=#20 id=20 data-nosnippet>20</a>}
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Whether a compiled imaging run persists transformed observations to `CORRECTED_DATA`.
@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>        };
 <a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">let </span><span class="kw-2">mut </span>visibility_columns = Vec::new();
 <a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">for </span>source <span class="kw">in </span>snapshot.sources() {
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">if </span>requirements.model_column_write == ModelColumnWrite::SelectedRows {
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">if </span>requirements.model_column_write == ModelColumnWrite::SelectedSamples {
 <a href=#208 id=208 data-nosnippet>208</a>            visibility_columns.push(SelectedVisibilityWriteAccess {
 <a href=#209 id=209 data-nosnippet>209</a>                measurement_set: source.input_ordinal(),
 <a href=#210 id=210 data-nosnippet>210</a>                column: MsColumnKind::ModelData,
@@ -261,25 +261,24 @@
 <a href=#261 id=261 data-nosnippet>261</a>        })
 <a href=#262 id=262 data-nosnippet>262</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 <a href=#263 id=263 data-nosnippet>263</a>    <span class="prelude-val">Ok</span>(ObservationSelection::new(
-<a href=#264 id=264 data-nosnippet>264</a>        selected.rows().clone(),
+<a href=#264 id=264 data-nosnippet>264</a>        selected.samples(),
 <a href=#265 id=265 data-nosnippet>265</a>        selected.rows_filter().clone(),
-<a href=#266 id=266 data-nosnippet>266</a>        selected.data_descriptions().to_vec(),
+<a href=#266 id=266 data-nosnippet>266</a>        selected.partitions().to_vec(),
 <a href=#267 id=267 data-nosnippet>267</a>        spectral_windows,
-<a href=#268 id=268 data-nosnippet>268</a>        selected.correlations().to_vec(),
-<a href=#269 id=269 data-nosnippet>269</a>    ))
-<a href=#270 id=270 data-nosnippet>270</a>}
-<a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a><span class="doccomment">/// Failure to compile a requested MeasurementSet side effect.
-<a href=#273 id=273 data-nosnippet>273</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-<a href=#274 id=274 data-nosnippet>274</a></span><span class="kw">pub enum </span>ObservationTransactionCompileError {
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// Residual persistence is meaningful only for a compiled continuum transform.
-<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires continuum subtraction"</span>)]
-<a href=#277 id=277 data-nosnippet>277</a>    </span>CorrectedDataRequiresContinuumTransform,
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="doccomment">/// The MeasurementSet has no `CORRECTED_DATA` column to write.
-<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires an existing CORRECTED_DATA column"</span>)]
-<a href=#280 id=280 data-nosnippet>280</a>    </span>MissingCorrectedDataDestination,
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="doccomment">/// The transform must expose at least one output-role channel for each selected SPW.
-<a href=#282 id=282 data-nosnippet>282</a>    </span><span class="attr">#[error(<span class="string">"continuum transform selected no CORRECTED_DATA output-role channels"</span>)]
-<a href=#283 id=283 data-nosnippet>283</a>    </span>EmptyOutputRoleSelection,
-<a href=#284 id=284 data-nosnippet>284</a>}
+<a href=#268 id=268 data-nosnippet>268</a>    ))
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// Failure to compile a requested MeasurementSet side effect.
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">pub enum </span>ObservationTransactionCompileError {
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// Residual persistence is meaningful only for a compiled continuum transform.
+<a href=#275 id=275 data-nosnippet>275</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires continuum subtraction"</span>)]
+<a href=#276 id=276 data-nosnippet>276</a>    </span>CorrectedDataRequiresContinuumTransform,
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// The MeasurementSet has no `CORRECTED_DATA` column to write.
+<a href=#278 id=278 data-nosnippet>278</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires an existing CORRECTED_DATA column"</span>)]
+<a href=#279 id=279 data-nosnippet>279</a>    </span>MissingCorrectedDataDestination,
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// The transform must expose at least one output-role channel for each selected SPW.
+<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="attr">#[error(<span class="string">"continuum transform selected no CORRECTED_DATA output-role channels"</span>)]
+<a href=#282 id=282 data-nosnippet>282</a>    </span>EmptyOutputRoleSelection,
+<a href=#283 id=283 data-nosnippet>283</a>}
 </code></pre></div></section></main></body></html>

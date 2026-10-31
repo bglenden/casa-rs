@@ -1311,9 +1311,9 @@ cutover, and the owner decided both (2026-10-29, on #995):
   (native-aw-evla runs without it); instrumenting CASA's epochs is #957.</p>
 <h3 id="23-selection">2.3 Selection<a class="headerlink" href="#23-selection" title="Permanent link">&para;</a></h3>
 <p>The imager's selection is resolved once (<code>RowSelection</code>,
-<code>casa-imaging-model/src/observation.rs:188</code>): fields, a UV-distance
-interval (in wavelengths per window) and scan intents. A compiled predicate
-applies it per MAIN row (<code>selected_observation/row_selection.rs:20</code>).
+<code>casa-imaging-model/src/observation.rs</code>): fields, a UV-distance interval (in
+wavelengths per window) and scan intents. Today's route applied it per MAIN
+row through a compiled predicate.
 Windows, channels, correlations and times already map onto <code>AccessRequest</code>.
 On a batch:
 - field and intent are per time;
@@ -1350,6 +1350,53 @@ chunks) and the estimate answer what compile walks MAIN for today:
 <p>Three walks become one index built at opening. The index's cost is the
 trial's measured opening time; the baseline (section 5) must show the sum
 does not regress.</p>
+<p><strong>As landed (step 6b).</strong> Compile names the partitions the request selects
+from the catalogue (<code>compile/partitions.rs</code>): a partition's data description
+must be selected, its fields must include a selected one and, under an
+intent selection, its <code>OBS_MODE</code> must be a selected state's. One traversal
+of them (<code>compile/survey.rs</code>) reads no visibilities. Without a UV-distance
+interval it reads only the times and fields of each batch, and the estimate
+counts the selected samples: times × baselines less the padding
+(<code>PartitionEstimate::padded_fraction</code>). With one, or for a W-projecting
+gridder's W range, it reads UVW and tests each sample. A partition holding
+no selected sample is dropped. The survey's batches and the epochs it keeps
+are admitted before it reads (<code>observation survey</code>). Native AW's first
+cross-correlation sample comes from a second traversal, the same reads,
+which asks the MSv2 adapter for each cross-correlation sample's <code>FLAG_ROW</code>
+(<code>Msv2Observation::row_flagged</code>) and stops at the first sample found.</p>
+<p>The model's <code>ObservationSelection</code> is partition-shaped: the selected sample
+count, the per-sample predicates, the partitions (<code>PartitionSelection</code>: the
+window and the correlation products of each) and the windows' channels.
+<code>SelectedRows</code>, the data-description and polarization selections and
+<code>ModelColumnWrite::SelectedRows</code> are gone; the write scope is
+<code>ModelColumnWrite::SelectedSamples</code>.</p>
+<p>What the survey keeps per window is its epochs: the distinct (time, field)
+pairs of its selected samples, ascending in time. The continuum envelope and
+the cube's density padding convert at them (<code>compile/envelope.rs</code>), with
+CASA's algorithms carried over from the deleted layer. Two things differ
+from the MAIN walk, each by a rounding or a reordering of what CASA reads,
+and a third reads what CASA reads by another path:
+- <strong>The anchor.</strong> The spectral frame's anchor and the image's observation
+  date are the earliest selected time, not the first selected MAIN row's.
+  The two agree for a MeasurementSet in time order.
+- <strong>The envelope's epochs.</strong> CASA keys them by <code>TIME·(DATA_DESC_ID+1)</code>,
+  each the earliest row of its key, and converts a window's at its data
+  descriptions' keys in key order through one <code>MFrequency::Convert</code>. A
+  window's samples at one time towards one field are one epoch here. For a
+  window of one data description and one field per time the epochs and
+  their order are CASA's.
+- <strong>The first cross-correlation sample.</strong> CASA's AW projection takes the
+  first row of the first buffer that is a cross-correlation and not
+  row-flagged (<code>getPA</code>), whatever its cell flags. The survey takes the
+  earliest selected cross-correlation sample whose MAIN row's <code>FLAG_ROW</code> is
+  false, padding having no row: the same row's time, field and
+  observation. The batches fold <code>FLAG_ROW</code> into every value's flag, so the
+  survey asks the adapter for the row flag itself; a row whose every flag
+  is set but whose <code>FLAG_ROW</code> is not still counts, as in CASA.</p>
+<p>PR 6b keeps compile reading the MeasurementSet's subtables beside the
+catalogue (<code>SPECTRAL_WINDOW</code>, <code>FIELD</code>, <code>OBSERVATION</code>, <code>STATE</code>,
+<code>DATA_DESCRIPTION</code>) and its frames through <code>MsCalEngine</code>; 6c moves them to the
+catalogue, so an MSv4 compiles.</p>
 <h3 id="25-weights-weightcache-errors">2.5 Weights, <code>WeightCache</code>, errors<a class="headerlink" href="#25-weights-weightcache-errors" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Weight slots.</strong> <code>WeightCache</code> keeps one slot per delivered sample, in
@@ -1498,6 +1545,22 @@ first removes today's route:
 <p>The plan put all of these in one PR. Between the two, <code>casa-ms</code>'s
 selected-observation layer is called only by compile's survey. The imaging
 dependency checker's grandfathered lists shrink with the second.</p>
+<p>As landed, the second removes <code>casa-ms</code>'s <code>selected_observation</code>,
+<code>selected_observation_buffer</code> and <code>observation_owner</code> modules, MAIN's row
+walk (<code>ms/main_rows.rs</code>) and their memory laws; the model's
+<code>selected_numeric</code> and <code>selected_observation_sample</code> modules; and the
+<code>casa-ms → casa-imaging-model</code> edge. What of them the rest still used moves:
+- the phase-centre ephemeris (<code>PhaseCentreEphemeris</code>, with an
+  <code>EphemerisBudget</code>) stays in <code>casa-ms</code> for compile's centre;
+- the antennas' response classes and pointing directions
+  (<code>sample_antennas</code>) move to the model, beside the batch geometry;
+- the write's scratch-column rules stay in <code>scratch_columns</code>, which the
+  update session calls; the deleted writer's tests, the CASA scratch
+  columns test and the C++ <code>MODEL_DATA</code> interop tests now run through the
+  update session;
+- the T41 <code>TRACKFIELD</code> oracle compares the batch geometry's pointing at
+  three row times with CASA's (<code>store_law::row_pointing</code>), and the engine's
+  <code>girar</code> reference values test the model's projection.</p>
 <h3 id="28-cutover-decisions-2026-10-29">2.8 Cutover decisions (2026-10-29)<a class="headerlink" href="#28-cutover-decisions-2026-10-29" title="Permanent link">&para;</a></h3>
 <p>The batch route refused four things today's route read. The owner asked
 for them to be decided without waiting (2026-10-29). Each decision is
@@ -1599,11 +1662,14 @@ stated; and MSv4 imaging is part of the cutover's acceptance.</p>
      observation the run reads, once. The four decisions of section 2.8
      land with it. The blocking comparison must pass, and the PR needs an
      independent review of the persistence and the hot loop.</li>
-<li><strong>6b.</strong> Compile reads the catalogue and the opening's index, not MAIN
-     (section 2.4), and the rest of section 2.7 is removed.</li>
-<li><strong>6c.</strong> MSv4 imaging, the acceptance of decision 5: compile and the
-     run open an MSv4 through the same <code>&amp;dyn Observation</code>, and T1 runs on
-     the trial's MSv4 conversions.</li>
+<li><strong>6b.</strong> Compile reads the catalogue and one survey of the observation,
+     not MAIN (section 2.4), and the rest of section 2.7 is removed. The
+     window frequencies, fields and frames still come from the
+     MeasurementSet's subtables.</li>
+<li><strong>6c.</strong> MSv4 imaging, the acceptance of decision 5: compile reads
+     those from the catalogue, compile and the run open an MSv4 through the
+     same <code>&amp;dyn Observation</code>, and T1 runs on the trial's MSv4
+     conversions.</li>
 </ol>
 <p>The plan had 2.4 before the cutover, keeping both routes equal at each
    step. Removing today's route first leaves 2.4 one route to serve; the

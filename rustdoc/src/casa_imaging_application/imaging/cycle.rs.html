@@ -1132,7 +1132,7 @@
 <a href=#1132 id=1132 data-nosnippet>1132</a>        .observation()
 <a href=#1133 id=1133 data-nosnippet>1133</a>        .sources()
 <a href=#1134 id=1134 data-nosnippet>1134</a>        .iter()
-<a href=#1135 id=1135 data-nosnippet>1135</a>        .map(|source| source.selection().rows().selected_row_count())
+<a href=#1135 id=1135 data-nosnippet>1135</a>        .map(|source| source.selection().samples())
 <a href=#1136 id=1136 data-nosnippet>1136</a>        .sum::&lt;u64&gt;();
 <a href=#1137 id=1137 data-nosnippet>1137</a>    <span class="kw">let </span>samples = usize::try_from(rows).ok()<span class="question-mark">?</span>.checked_mul(channels)<span class="question-mark">?</span>;
 <a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="kw">let </span>bytes = WeightCache::bytes(samples);

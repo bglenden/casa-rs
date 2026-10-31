@@ -4,92 +4,89 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_model::{CompiledProblem, SpectralWindowSelection};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_operator::RowSpectrum;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_ms::SelectedObservationContentBudget;
-<a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::pass::BlockShape;
-<a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// Relative allowance for the Doppler factor between the frame of a
-<a href=#12 id=12 data-nosnippet>12</a>/// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
-<a href=#13 id=13 data-nosnippet>13</a>/// passes in: 3,000 km/s.
-<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">pub const </span>FRAME_MARGIN: f64 = <span class="number">0.01</span>;
-<a href=#15 id=15 data-nosnippet>15</a>
-<a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// One row of the blocks `problem`'s source delivers: the most channels any
-<a href=#17 id=17 data-nosnippet>17</a>/// selected spectral window gives a row and their frequencies' extent, the
-<a href=#18 id=18 data-nosnippet>18</a>/// most correlations any selection routes, and the image domains each row
-<a href=#19 id=19 data-nosnippet>19</a>/// is projected on; no rows.
-<a href=#20 id=20 data-nosnippet>20</a></span><span class="attr">#[must_use]
-<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub fn </span>row_layout(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; BlockShape {
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">let </span>sources = problem.observation_transaction().read_set().sources();
-<a href=#23 id=23 data-nosnippet>23</a>    BlockShape {
-<a href=#24 id=24 data-nosnippet>24</a>        rows: <span class="number">0</span>,
-<a href=#25 id=25 data-nosnippet>25</a>        spectrum: row_spectrum(
-<a href=#26 id=26 data-nosnippet>26</a>            sources
-<a href=#27 id=27 data-nosnippet>27</a>                .iter()
-<a href=#28 id=28 data-nosnippet>28</a>                .flat_map(|source| source.selection().spectral_windows()),
-<a href=#29 id=29 data-nosnippet>29</a>        ),
-<a href=#30 id=30 data-nosnippet>30</a>        correlations: sources
-<a href=#31 id=31 data-nosnippet>31</a>            .iter()
-<a href=#32 id=32 data-nosnippet>32</a>            .flat_map(|source| source.selection().correlations())
-<a href=#33 id=33 data-nosnippet>33</a>            .map(|selection| selection.products().len())
-<a href=#34 id=34 data-nosnippet>34</a>            .max()
-<a href=#35 id=35 data-nosnippet>35</a>            .unwrap_or(<span class="number">0</span>),
-<a href=#36 id=36 data-nosnippet>36</a>        <span class="comment">// One projection per pass domain: each facet of a faceted image
-<a href=#37 id=37 data-nosnippet>37</a>        // domain is one (#664).
-<a href=#38 id=38 data-nosnippet>38</a>        </span>domains: problem
-<a href=#39 id=39 data-nosnippet>39</a>            .geometry()
-<a href=#40 id=40 data-nosnippet>40</a>            .domains()
-<a href=#41 id=41 data-nosnippet>41</a>            .iter()
-<a href=#42 id=42 data-nosnippet>42</a>            .map(|domain| domain.facets().len())
-<a href=#43 id=43 data-nosnippet>43</a>            .sum(),
-<a href=#44 id=44 data-nosnippet>44</a>    }
-<a href=#45 id=45 data-nosnippet>45</a>}
-<a href=#46 id=46 data-nosnippet>46</a>
-<a href=#47 id=47 data-nosnippet>47</a><span class="doccomment">/// What bounds the samples a row of `windows` places: its most selected
-<a href=#48 id=48 data-nosnippet>48</a>/// channels, and from the storage owner's `CHAN_FREQ` the smallest first
-<a href=#49 id=49 data-nosnippet>49</a>/// separation and the widest span of any window's selected channels,
-<a href=#50 id=50 data-nosnippet>50</a>/// widened by [`FRAME_MARGIN`]. A window without a catalog leaves its rows
-<a href=#51 id=51 data-nosnippet>51</a>/// evenly spaced ([`RowSpectrum::evenly_spaced`]); the storage owner binds
-<a href=#52 id=52 data-nosnippet>52</a>/// one to every MeasurementSet selection.
-<a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">fn </span>row_spectrum&lt;<span class="lifetime">'a</span>&gt;(windows: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SpectralWindowSelection&gt;) -&gt; RowSpectrum {
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">let </span><span class="kw-2">mut </span>spectrum = RowSpectrum::evenly_spaced(<span class="number">0</span>);
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">let </span><span class="kw-2">mut </span>known = <span class="bool-val">true</span>;
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">for </span>window <span class="kw">in </span>windows {
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>channels = window.channel_indices();
-<a href=#58 id=58 data-nosnippet>58</a>        spectrum.channels = spectrum.channels.max(channels.len());
-<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">let </span>frequency = |index: usize| {
-<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">let </span>catalog = window.coordinate_catalog()<span class="question-mark">?</span>;
-<a href=#61 id=61 data-nosnippet>61</a>            catalog.channel_frequency_hz(<span class="kw-2">*</span>channels.get(index)<span class="question-mark">? </span><span class="kw">as </span>usize)
-<a href=#62 id=62 data-nosnippet>62</a>        };
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">if </span>channels.len() &lt; <span class="number">2 </span>{
-<a href=#64 id=64 data-nosnippet>64</a>            <span class="kw">continue</span>;
-<a href=#65 id=65 data-nosnippet>65</a>        }
-<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(second), <span class="prelude-val">Some</span>(last)) =
-<a href=#67 id=67 data-nosnippet>67</a>            (frequency(<span class="number">0</span>), frequency(<span class="number">1</span>), frequency(channels.len() - <span class="number">1</span>))
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">else </span>{
-<a href=#69 id=69 data-nosnippet>69</a>            known = <span class="bool-val">false</span>;
-<a href=#70 id=70 data-nosnippet>70</a>            <span class="kw">continue</span>;
-<a href=#71 id=71 data-nosnippet>71</a>        };
-<a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">let </span>spacing = (second - first).abs() * (<span class="number">1.0 </span>- FRAME_MARGIN);
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if </span>spacing &gt; <span class="number">0.0
-<a href=#74 id=74 data-nosnippet>74</a>            </span>&amp;&amp; (spectrum.first_spacing_hz == <span class="number">0.0 </span>|| spacing &lt; spectrum.first_spacing_hz)
-<a href=#75 id=75 data-nosnippet>75</a>        {
-<a href=#76 id=76 data-nosnippet>76</a>            spectrum.first_spacing_hz = spacing;
-<a href=#77 id=77 data-nosnippet>77</a>        }
-<a href=#78 id=78 data-nosnippet>78</a>        spectrum.span_hz = spectrum
-<a href=#79 id=79 data-nosnippet>79</a>            .span_hz
-<a href=#80 id=80 data-nosnippet>80</a>            .max((last - first).abs() * (<span class="number">1.0 </span>+ FRAME_MARGIN));
-<a href=#81 id=81 data-nosnippet>81</a>    }
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">if </span>known {
-<a href=#83 id=83 data-nosnippet>83</a>        spectrum
-<a href=#84 id=84 data-nosnippet>84</a>    } <span class="kw">else </span>{
-<a href=#85 id=85 data-nosnippet>85</a>        RowSpectrum::evenly_spaced(spectrum.channels)
-<a href=#86 id=86 data-nosnippet>86</a>    }
-<a href=#87 id=87 data-nosnippet>87</a>}
-<a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// The budget that bounds source inspection before the compiled problem
-<a href=#90 id=90 data-nosnippet>90</a>/// can quote its complete initialization and traversal requirements.
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="attr">#[must_use]
-<a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">pub const fn </span>bootstrap_source_budget() -&gt; SelectedObservationContentBudget {
-<a href=#93 id=93 data-nosnippet>93</a>    SelectedObservationContentBudget::new(<span class="number">64 </span>&lt;&lt; <span class="number">20</span>, <span class="number">2</span>, <span class="number">4</span>)
-<a href=#94 id=94 data-nosnippet>94</a>}
+<a href=#7 id=7 data-nosnippet>7</a>
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::pass::BlockShape;
+<a href=#9 id=9 data-nosnippet>9</a>
+<a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// Relative allowance for the Doppler factor between the frame of a
+<a href=#11 id=11 data-nosnippet>11</a>/// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
+<a href=#12 id=12 data-nosnippet>12</a>/// passes in: 3,000 km/s.
+<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">pub const </span>FRAME_MARGIN: f64 = <span class="number">0.01</span>;
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="doccomment">/// One row of the blocks `problem`'s source delivers: the most channels any
+<a href=#16 id=16 data-nosnippet>16</a>/// selected spectral window gives a row and their frequencies' extent, the
+<a href=#17 id=17 data-nosnippet>17</a>/// most correlations any selection routes, and the image domains each row
+<a href=#18 id=18 data-nosnippet>18</a>/// is projected on; no rows.
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="attr">#[must_use]
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub fn </span>row_layout(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; BlockShape {
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span>sources = problem.observation_transaction().read_set().sources();
+<a href=#22 id=22 data-nosnippet>22</a>    BlockShape {
+<a href=#23 id=23 data-nosnippet>23</a>        rows: <span class="number">0</span>,
+<a href=#24 id=24 data-nosnippet>24</a>        spectrum: row_spectrum(
+<a href=#25 id=25 data-nosnippet>25</a>            sources
+<a href=#26 id=26 data-nosnippet>26</a>                .iter()
+<a href=#27 id=27 data-nosnippet>27</a>                .flat_map(|source| source.selection().spectral_windows()),
+<a href=#28 id=28 data-nosnippet>28</a>        ),
+<a href=#29 id=29 data-nosnippet>29</a>        correlations: sources
+<a href=#30 id=30 data-nosnippet>30</a>            .iter()
+<a href=#31 id=31 data-nosnippet>31</a>            .flat_map(|source| source.selection().partitions())
+<a href=#32 id=32 data-nosnippet>32</a>            .map(|partition| partition.products().len())
+<a href=#33 id=33 data-nosnippet>33</a>            .max()
+<a href=#34 id=34 data-nosnippet>34</a>            .unwrap_or(<span class="number">0</span>),
+<a href=#35 id=35 data-nosnippet>35</a>        <span class="comment">// One projection per pass domain: each facet of a faceted image
+<a href=#36 id=36 data-nosnippet>36</a>        // domain is one (#664).
+<a href=#37 id=37 data-nosnippet>37</a>        </span>domains: problem
+<a href=#38 id=38 data-nosnippet>38</a>            .geometry()
+<a href=#39 id=39 data-nosnippet>39</a>            .domains()
+<a href=#40 id=40 data-nosnippet>40</a>            .iter()
+<a href=#41 id=41 data-nosnippet>41</a>            .map(|domain| domain.facets().len())
+<a href=#42 id=42 data-nosnippet>42</a>            .sum(),
+<a href=#43 id=43 data-nosnippet>43</a>    }
+<a href=#44 id=44 data-nosnippet>44</a>}
+<a href=#45 id=45 data-nosnippet>45</a>
+<a href=#46 id=46 data-nosnippet>46</a><span class="doccomment">/// What bounds the samples a row of `windows` places: its most selected
+<a href=#47 id=47 data-nosnippet>47</a>/// channels, and from the storage owner's `CHAN_FREQ` the smallest first
+<a href=#48 id=48 data-nosnippet>48</a>/// separation and the widest span of any window's selected channels,
+<a href=#49 id=49 data-nosnippet>49</a>/// widened by [`FRAME_MARGIN`]. A window without a catalog leaves its rows
+<a href=#50 id=50 data-nosnippet>50</a>/// evenly spaced ([`RowSpectrum::evenly_spaced`]); the storage owner binds
+<a href=#51 id=51 data-nosnippet>51</a>/// one to every MeasurementSet selection.
+<a href=#52 id=52 data-nosnippet>52</a></span><span class="kw">fn </span>row_spectrum&lt;<span class="lifetime">'a</span>&gt;(windows: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SpectralWindowSelection&gt;) -&gt; RowSpectrum {
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">let </span><span class="kw-2">mut </span>spectrum = RowSpectrum::evenly_spaced(<span class="number">0</span>);
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">let </span><span class="kw-2">mut </span>known = <span class="bool-val">true</span>;
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">for </span>window <span class="kw">in </span>windows {
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>channels = window.channel_indices();
+<a href=#57 id=57 data-nosnippet>57</a>        spectrum.channels = spectrum.channels.max(channels.len());
+<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">let </span>frequency = |index: usize| {
+<a href=#59 id=59 data-nosnippet>59</a>            <span class="kw">let </span>catalog = window.coordinate_catalog()<span class="question-mark">?</span>;
+<a href=#60 id=60 data-nosnippet>60</a>            catalog.channel_frequency_hz(<span class="kw-2">*</span>channels.get(index)<span class="question-mark">? </span><span class="kw">as </span>usize)
+<a href=#61 id=61 data-nosnippet>61</a>        };
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">if </span>channels.len() &lt; <span class="number">2 </span>{
+<a href=#63 id=63 data-nosnippet>63</a>            <span class="kw">continue</span>;
+<a href=#64 id=64 data-nosnippet>64</a>        }
+<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(second), <span class="prelude-val">Some</span>(last)) =
+<a href=#66 id=66 data-nosnippet>66</a>            (frequency(<span class="number">0</span>), frequency(<span class="number">1</span>), frequency(channels.len() - <span class="number">1</span>))
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">else </span>{
+<a href=#68 id=68 data-nosnippet>68</a>            known = <span class="bool-val">false</span>;
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="kw">continue</span>;
+<a href=#70 id=70 data-nosnippet>70</a>        };
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">let </span>spacing = (second - first).abs() * (<span class="number">1.0 </span>- FRAME_MARGIN);
+<a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">if </span>spacing &gt; <span class="number">0.0
+<a href=#73 id=73 data-nosnippet>73</a>            </span>&amp;&amp; (spectrum.first_spacing_hz == <span class="number">0.0 </span>|| spacing &lt; spectrum.first_spacing_hz)
+<a href=#74 id=74 data-nosnippet>74</a>        {
+<a href=#75 id=75 data-nosnippet>75</a>            spectrum.first_spacing_hz = spacing;
+<a href=#76 id=76 data-nosnippet>76</a>        }
+<a href=#77 id=77 data-nosnippet>77</a>        spectrum.span_hz = spectrum
+<a href=#78 id=78 data-nosnippet>78</a>            .span_hz
+<a href=#79 id=79 data-nosnippet>79</a>            .max((last - first).abs() * (<span class="number">1.0 </span>+ FRAME_MARGIN));
+<a href=#80 id=80 data-nosnippet>80</a>    }
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">if </span>known {
+<a href=#82 id=82 data-nosnippet>82</a>        spectrum
+<a href=#83 id=83 data-nosnippet>83</a>    } <span class="kw">else </span>{
+<a href=#84 id=84 data-nosnippet>84</a>        RowSpectrum::evenly_spaced(spectrum.channels)
+<a href=#85 id=85 data-nosnippet>85</a>    }
+<a href=#86 id=86 data-nosnippet>86</a>}
+<a href=#87 id=87 data-nosnippet>87</a>
+<a href=#88 id=88 data-nosnippet>88</a><span class="doccomment">/// The bytes that bound what the source reads before the compiled problem
+<a href=#89 id=89 data-nosnippet>89</a>/// quotes its own requirements: how far its batches grow beyond one time,
+<a href=#90 id=90 data-nosnippet>90</a>/// and what a phase centre's ephemeris table may hold.
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub const </span>BOOTSTRAP_SOURCE_BYTES: usize = <span class="number">64 </span>&lt;&lt; <span class="number">20</span>;
 </code></pre></div></section></main></body></html>

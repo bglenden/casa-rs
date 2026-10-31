@@ -12,7 +12,7 @@ ones this plan was made from.</p>
 calculation overflows.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.planned_demand" class="method"><a class="src rightside" href="../src/casa_imaging_products/demand.rs.html#215-222">Source</a><h4 class="code-header">pub fn <a href="#method.planned_demand" class="fn">planned_demand</a>(
     &amp;self,
-    problem: &amp;<a class="struct" href="../casa_imaging_model/compiled_problem/struct.CompiledProblem.html" title="struct casa_imaging_model::compiled_problem::CompiledProblem">CompiledProblem</a>,
+    problem: &amp;CompiledProblem,
     storage_plan: <a class="struct" href="struct.ProductStoragePlan.html" title="struct casa_imaging_products::ProductStoragePlan">ProductStoragePlan</a>,
     writer: &amp;<a class="struct" href="struct.CasaImageWriter.html" title="struct casa_imaging_products::CasaImageWriter">CasaImageWriter</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.ContinuumGenerationDemand.html" title="struct casa_imaging_products::ContinuumGenerationDemand">ContinuumGenerationDemand</a>, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p><a href="struct.PlannedContinuumGeneration.html#method.demand" title="method casa_imaging_products::PlannedContinuumGeneration::demand"><code>Self::demand</code></a> before the run: from the shapes its problem fixes,
@@ -31,7 +31,7 @@ the run completes.</p>
 publishes a role the products cannot produce, or a member’s size
 overflows.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.for_problem" class="method"><a class="src rightside" href="../src/casa_imaging_products/plan.rs.html#191-244">Source</a><h4 class="code-header">pub fn <a href="#method.for_problem" class="fn">for_problem</a>(
-    problem: &amp;<a class="struct" href="../casa_imaging_model/compiled_problem/struct.CompiledProblem.html" title="struct casa_imaging_model::compiled_problem::CompiledProblem">CompiledProblem</a>,
+    problem: &amp;CompiledProblem,
     controls: &amp;<a class="struct" href="struct.ContinuumProductControls.html" title="struct casa_imaging_products::ContinuumProductControls">ContinuumProductControls</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>The publication inventory of a run of <code>problem</code>, before it runs:
 what <a href="struct.PlannedContinuumGeneration.html#method.new" title="associated function casa_imaging_products::PlannedContinuumGeneration::new"><code>Self::new</code></a> compiles from the run’s completion, which the
