@@ -196,10 +196,26 @@ static inline void accumulate(device atomic_float *grid, ulong at, float value, 
 #if COMPENSATED_GRID
 kernel void fold_grid(device float *grid [[buffer(0)]], constant ulong &count [[buffer(1)]],
                       uint index [[thread_position_in_grid]]) {
+#pragma clang fp contract(off)
+#pragma clang fp reassociate(off)
     if (ulong(index) < count) {
-        grid[index] += grid[count + index] + grid[2 * count + index];
-        grid[count + index] = 0.0f;
-        grid[2 * count + index] = 0.0f;
+        float high = grid[index];
+        float low = grid[count + index];
+        float tail = grid[2 * count + index];
+        float sum = high + low;
+        float part = sum - high;
+        float error = (high - (sum - part)) + (low - part);
+        float total = sum + tail;
+        float tail_part = total - sum;
+        float tail_error = (sum - (total - tail_part)) + (tail - tail_part);
+        float remainder = error + tail_error;
+        float remainder_part = remainder - error;
+        float remainder_error = (error - (remainder - remainder_part)) + (tail_error - remainder_part);
+        grid[index] = total;
+        // Preserve the fold's loss across applies. Clearing it here makes the
+        // result depend on row/chunk boundaries even with exact inner sums.
+        grid[count + index] = isfinite(total) ? remainder : 0.0f;
+        grid[2 * count + index] = isfinite(total) ? remainder_error : 0.0f;
     }
 }
 #endif

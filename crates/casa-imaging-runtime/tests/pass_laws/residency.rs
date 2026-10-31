@@ -429,9 +429,21 @@ fn metal_owners_and_predictors_are_charged_their_kernel_copies() {
     let ring = casa_imaging_metal::ring_bytes(operator.polarization().correlations().len());
     let cpu = demand(BackendChoice::Cpu, false).bytes(1);
     let metal = demand(BackendChoice::Metal, false).bytes(1);
+    let Partition::Regions { regions, .. } = &domains[0].partition else {
+        unreachable!()
+    };
+    let corrections: u64 = regions
+        .iter()
+        .map(|region| {
+            let cells = operator
+                .accumulator_layout(PlaneRange::single(0), Some(region.tile), ModeSet::DATA_PSF)
+                .cells();
+            casa_imaging_metal::accumulator_extra_bytes(cells as u64)
+        })
+        .sum();
     assert_eq!(
         metal,
-        cpu + owners as u64 * (ring + kernels),
+        cpu + owners as u64 * (ring + kernels) + corrections,
         "each owner's ring and kernel copies"
     );
     let with_model = demand(BackendChoice::Metal, true).bytes(1);

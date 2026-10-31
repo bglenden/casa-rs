@@ -14,6 +14,69 @@ use common::{Kernels, Rng, metal, operator};
 use num_complex::Complex32;
 
 #[test]
+fn changing_apply_boundaries_preserves_the_compensated_sum() {
+    let operator = operator(Kernels::Spheroidal, Basis::Constant, &mut Rng::new(4));
+    let Some(backend) = metal(&operator) else {
+        return;
+    };
+    let mut backend = backend.with_deferred_grid_completion();
+    let layout = operator.accumulator_layout(PlaneRange::single(0), None, ModeSet::DATA);
+    let mut whole = MetalBackend::accumulator(layout.clone()).unwrap();
+    let mut streamed = MetalBackend::accumulator(layout).unwrap();
+    let make = |count| {
+        let mut buffer = SampleBuffer::with_capacity(2, count);
+        for _ in 0..count {
+            buffer.push(
+                Placement {
+                    u: 0.0,
+                    v: 0.0,
+                    w: 0.0,
+                    phase: 0.0,
+                    plane: 0,
+                    spectral: 0.0,
+                    cf: CfKey { group: 0, cube: 0 },
+                    gradient: [0.0; 2],
+                    prediction_w_positive: false,
+                },
+                &[Complex32::new(1.1, -0.7); 2],
+                &[0.7; 2],
+            );
+        }
+        buffer
+    };
+    for (buffer, repeat, acc) in [
+        (make(1 << 18), 1, &mut whole),
+        (make(1 << 10), 1 << 8, &mut streamed),
+    ] {
+        for _ in 0..repeat {
+            backend
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Grid {
+                        mode: Mode::Data,
+                        acc,
+                    },
+                )
+                .unwrap();
+        }
+        backend.complete().unwrap();
+    }
+    let mut error = 0.0_f64;
+    let mut power = 0.0_f64;
+    for (a, b) in f32::cells(whole.storage())
+        .iter()
+        .zip(f32::cells(streamed.storage()))
+    {
+        error += f64::from((*a - *b).norm_sqr());
+        power += f64::from(a.norm_sqr());
+    }
+    let nrms = (error / power).sqrt();
+    assert!(nrms <= 1e-6, "apply-boundary NRMS={nrms}");
+    assert_eq!(whole.sumwt(), streamed.sumwt());
+}
+
+#[test]
 fn compact_contributions_match_f64_across_applies_and_reset() {
     let operator = operator(Kernels::Spheroidal, Basis::Constant, &mut Rng::new(4));
     let Some(mut backend) = metal(&operator) else {
