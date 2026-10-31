@@ -525,9 +525,9 @@ Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader)
 
 **Partial** — backend=auto/cpu/gpu, gridprecision and all scientific products (#991).
 
-Fresh CASA 6.7.6.14 reproduction at 5ad410a88eb9957e2a0de177218e766d89095d3a confirms #991: compact-array PSF NRMS CPU/f64 8.35e-8, CPU/f32 0.01919, auto/Metal/f32 about 0.01884. Native PB was explicitly disabled to isolate gridding. Two auto runs differ by PSF 1.63e-6 and residual 2.08e-5; atomic order does not account for the larger CASA error. Current Metal selected-observation versus observation-batch T1 laws also fail their existing 1e-6 bound, including explicit write_pb=False. The owner approved a bounded native partial-grid/f64-merge prototype; no algorithm correction, widened tolerance or full-task acceptance is claimed yet. Preserve admissions, native computation and per-mode performance requirements.
+Fresh CASA 6.7.6.14 reproduction at 5ad410a88eb9957e2a0de177218e766d89095d3a confirms #991: compact-array PSF NRMS CPU/f64 8.35e-8, CPU/f32 0.01919, auto/Metal/f32 about 0.01884. Native PB was explicitly disabled to isolate gridding. Two auto runs differ by PSF 1.63e-6 and residual 2.08e-5; atomic order does not account for the larger CASA error. Current Metal selected-observation versus observation-batch T1 laws also fail their existing 1e-6 bound, including explicit write_pb=False. Two local corrections are retired: partial-grid/f64 merging cost about 29 times its control major cycle; hash-based contribution grouping improved compact PSF NRMS to 1.88e-6 but made the ordinary VLA task 81% slower in a quiet same-source W1 comparison. Grouping also retained the ordinary beam-check failures. Its 109-test gate passed 103 cases and failed the same six route laws; no tolerance changed. Both experimental implementations were removed. Only the independently reviewed exact host-ring memory charge and allocation law remain. Local performance experiments are preauthorized; #991 and full-task acceptance remain open. Preserve admissions, native computation and per-mode performance requirements.
 
-Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current).
+Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments).
 
 #### tclean deviations and unfinished work
 
@@ -720,3 +720,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `5ad410a88eb9957e2a0de177218e766d89095d3a`; CASA: `casatasks6.7.6.14; casatools6.7.6-14`.
 - Command: `CASA Python -I /private/tmp/probe-tclean-accuracy-991.py`.
 - Receipt: `resources/casa-compat/evidence/tclean-accuracy-991-20261031.json; /Volumes/home/casa-rs/tclean/20261031/accuracy-991-20261031.tar`.
+
+<a id="tclean-evidence-accuracy-experiments"></a>
+##### accuracy-experiments
+
+**Retired native f32 correction experiments — retired for measured performance cost; scientific acceptance unfinished.** Pinned CASA 6.7.6.14 small standard-MFS niter0 diagnostics, W1. Partial-grid merge: compact accuracy improved but major-cycle cost about 29x. Grouped spread: compact PSF NRMS1.88e-6; quiet ABBAABBA ordinary VLA wall0.6123s versus control0.3384s and major0.4861s versus0.2226s. Ordinary beam checks and six unchanged Metal route laws still fail. Both candidates removed; retained exact ring-host storage charge has a passing actual allocation law and independent review. No universal science, representative T2 or production algorithm adoption is claimed.
+
+- [docs/Planning/tclean-f32-accuracy-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/ab50378368bedbf9a8eb1de23ce3cb305d646d70/docs/Planning/tclean-f32-accuracy-proposal-20261031.md)
+- [resources/casa-compat/evidence/tclean-partial-grid-experiment-20261031.json](https://github.com/bglenden/casa-rs/blob/ab50378368bedbf9a8eb1de23ce3cb305d646d70/resources/casa-compat/evidence/tclean-partial-grid-experiment-20261031.json)
+- [resources/casa-compat/evidence/tclean-grouped-spread-experiment-20261031.json](https://github.com/bglenden/casa-rs/blob/ab50378368bedbf9a8eb1de23ce3cb305d646d70/resources/casa-compat/evidence/tclean-grouped-spread-experiment-20261031.json)
+- Revision: `partial fe9303b46be3bced29d8ebd8d8de961a0547dc6d; grouped40bddd122825d758f194e48add6f0ce3540daa73; retirement ab50378368bedbf9a8eb1de23ce3cb305d646d70`; CASA: `casatasks6.7.6.14; casatools6.7.6-14`.
+- Command: `CASA Python -I probe-tclean-{partial-grids,grouped-refim}.py; python3 time-grouped-spread-quiet.py; recipes archived with products`.
+- Receipt: `/Volumes/home/casa-rs/tclean/20261031/{partial-grid,grouped-spread}-experiment-20261031.tar; SHA-256 reread verified.`.
