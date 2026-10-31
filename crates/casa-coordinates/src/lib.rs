@@ -63,6 +63,7 @@
 
 pub mod coordinate;
 pub mod coordinate_system;
+pub mod defaults;
 pub mod direction;
 pub mod error;
 pub mod fits;
