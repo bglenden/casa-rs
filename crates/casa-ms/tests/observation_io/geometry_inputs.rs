@@ -178,7 +178,7 @@ fn series(observation: &dyn casa_observation::Observation) -> casa_observation::
             direction: PointingDirection::Beam,
             antennas: (0..3).map(AntennaId).collect(),
             times: grid.times_s[0]..=grid.times_s[grid.times_s.len() - 1],
-            budget_bytes: 1 << 20,
+            budget_bytes: observation.pointing_bytes().expect("pointing bound"),
         })
         .expect("pointing")
 }
@@ -321,7 +321,7 @@ fn series_over(
             direction: PointingDirection::Beam,
             antennas: (0..3).map(AntennaId).collect(),
             times,
-            budget_bytes: 1 << 20,
+            budget_bytes: observation.pointing_bytes().expect("pointing bound"),
         })
         .expect("pointing")
 }

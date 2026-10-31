@@ -133,6 +133,9 @@ fn converted(root: &Path, label: &str, shape: Shape) -> PathBuf {
         &measurement_set,
         tutorial_vla_a_antennas()[..shape.antennas].to_vec(),
     );
+    if label == "long_labels" {
+        request.antennas[0].name = "LONG_".to_string() + &"antenna".repeat(32);
+    }
     request.duration_seconds = 10.0 * shape.integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
@@ -267,6 +270,10 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
     ] {
         stores.push((label.to_string(), converted(root.path(), label, shape)));
     }
+    stores.push((
+        "long_labels".into(),
+        converted(root.path(), "long_labels", base),
+    ));
     for (label, path) in &stores {
         drop(Msv4Observation::open(path).expect("open"));
         let mut granted = 0;
@@ -295,6 +302,9 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
     }
     a_store_beyond_its_budget_is_refused_before_it_decodes(&stores[5].1);
     a_dense_pointing_read_holds_at_most_its_budget(&stores[5].1);
+    a_pointing_query_holds_at_most_its_charge(&stores[4].1);
+    a_pointing_query_holds_at_most_its_charge(&stores[5].1);
+    a_pointing_query_holds_at_most_its_charge(&stores[9].1);
 }
 
 /// Reading a full dense pointing span must fit the request's decoded-array
@@ -314,15 +324,62 @@ fn a_dense_pointing_read_holds_at_most_its_budget(path: &Path) {
             .map(|antenna| AntennaId(antenna as u32))
             .collect(),
         times: -1.0e12..=1.0e12,
-        budget_bytes: budget,
+        budget_bytes: usize::MAX,
     };
     drop(opened.pointing(&request).expect("warm pointing read"));
     let (series, peak, _) = measured(|| opened.pointing(&request).expect("pointing read"));
     assert_eq!(series.antennas.len(), antennas);
     assert!(
         peak <= budget as u64,
-        "the dense pointing read held {peak} bytes, beyond its {budget} budget"
+        "the dense pointing read held {peak} bytes, beyond the {budget} decoded and series bytes"
     );
+}
+
+/// The production charge includes handles and labels, and rejects one byte
+/// less than the full-span query requires. Exercise small and long labels.
+fn a_pointing_query_holds_at_most_its_charge(path: &Path) {
+    let opened = Msv4Observation::open(path).expect("open pointing store");
+    let mut request = PointingRequest {
+        partition: PartitionId(0),
+        direction: PointingDirection::Beam,
+        antennas: (0..opened.catalogue().antennas.len())
+            .map(|antenna| AntennaId(antenna as u32))
+            .collect(),
+        times: -1.0e12..=1.0e12,
+        budget_bytes: 0,
+    };
+    loop {
+        match opened.pointing(&request) {
+            Ok(_) => break,
+            Err(ObservationError::OverBudget { required, .. }) => {
+                assert!(required > request.budget_bytes);
+                request.budget_bytes = required;
+            }
+            Err(error) => panic!("pointing charge: {error}"),
+        }
+    }
+    let required = request.budget_bytes;
+    let (series, peak, _) = measured(|| opened.pointing(&request).expect("pointing read"));
+    assert_eq!(series.antennas.len(), request.antennas.len());
+    assert!(
+        peak <= required as u64,
+        "pointing held {peak}, charged {required}"
+    );
+    assert!(opened.pointing_bytes().expect("universal bound") >= required);
+    request.budget_bytes -= 1;
+    assert!(
+        matches!(
+            opened.pointing(&request),
+            Err(ObservationError::OverBudget { required: refused, .. }) if refused == required
+        ),
+        "pointing must refuse one byte less than its charge"
+    );
+    request.budget_bytes = usize::MAX;
+    request.antennas.push(request.antennas[0]);
+    assert!(matches!(
+        opened.pointing(&request),
+        Err(ObservationError::InvalidRequest { .. })
+    ));
 }
 
 /// An opening whose projection exceeds its budget is refused before it
