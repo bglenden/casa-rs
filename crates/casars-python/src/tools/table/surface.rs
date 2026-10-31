@@ -54,7 +54,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("clearlocks", &[], R::Any, No),
+    method("clearlocks", &[], R::Any, Yes),
     method("close", &[], R::Any, Yes),
     method(
         "colarraytype",
@@ -97,7 +97,7 @@ const METHODS: &[Method] = &[
             param("norows", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "copyrows",
@@ -108,7 +108,7 @@ const METHODS: &[Method] = &[
             param("nrow", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "create",
@@ -134,16 +134,16 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("datachanged", &[], R::Any, No),
+    method("datachanged", &[], R::Any, Yes),
     method("done", &[], R::Any, Yes),
-    method("endianformat", &[], R::Any, No),
+    method("endianformat", &[], R::Any, Yes),
     method(
         "fieldnames",
         &[param("keyword", K::Text, Text(""))],
         R::Any,
         Yes,
     ),
-    method("flush", &[], R::Any, No),
+    method("flush", &[], R::Any, Yes),
     method(
         "fromASDM",
         &[
@@ -321,7 +321,7 @@ const METHODS: &[Method] = &[
         "ismultiused",
         &[param("checksubtables", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isopened",
@@ -514,7 +514,7 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("resync", &[], R::Any, No),
+    method("resync", &[], R::Any, Yes),
     method(
         "row",
         &[
@@ -549,7 +549,7 @@ const METHODS: &[Method] = &[
             param("nbytes", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "showcache",

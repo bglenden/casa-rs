@@ -79,6 +79,8 @@ def encode_value(value: Any, path: str) -> Any:
         return {"list": [encode_value(item, path) for item in value]}
     if value is None:
         return {"none": True}
+    if type(value).__name__ == "table":
+        return {"tool": True}
     raise TypeError(f"cannot encode {type(value)}")
 
 
@@ -163,11 +165,20 @@ def same_error(got: dict[str, str], want: dict[str, str], where: str) -> None:
         assert got["message"].split("\n")[0] == want["message"].split("\n")[0], where
 
 
-def run_step(tool: Any, step: dict[str, Any], path: str) -> dict[str, Any]:
+def run_step(
+    tool: Any, step: dict[str, Any], path: str, bound: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One recorded step on `tool`, or on the tool the step's `on` names; the
+    tool it returns is kept under the step's `bind`, in `bound`."""
     args = [decode_value(arg, path) for arg in step["args"]]
     kwargs = {name: decode_value(value, path) for name, value in step["kwargs"].items()}
+    options = step.get("options", {})
+    target = bound[options["on"]] if "on" in options else tool
     try:
-        return {"value": encode_value(getattr(tool, step["method"])(*args, **kwargs), path)}
+        value = getattr(target, step["method"])(*args, **kwargs)
+        if "bind" in options:
+            bound[options["bind"]] = value
+        return {"value": encode_value(value, path)}
     except Exception as error:  # noqa: BLE001 - compared with what CASA raised
         return {"error": {"type": type(error).__name__, "message": str(error).replace(path, PLACEHOLDER)}}
 
@@ -210,9 +221,10 @@ def test_the_tool_answers_as_casa_does(
     path = str((tmp_path / source.name).resolve())
     shutil.copytree(source, path)
     tool = tools.table()
+    bound: dict[str, Any] = {}
     for index, step in enumerate(recorded["steps"]):
         where = f"{scenario}[{index}] {step['method']}{tuple(step['args'])} {step['kwargs']}"
-        got = run_step(tool, step, path)
+        got = run_step(tool, step, path, bound)
         if "error" in step:
             if step["error"]["message"] == "Unknown casa DataType!":
                 assert "value" in got and got["value"]["ndarray"] == "int64", where
@@ -224,6 +236,8 @@ def test_the_tool_answers_as_casa_does(
             assert "value" in got, f"{where}: CASA gave a value, casa-rs raised {got['error']}"
             same_value(got["value"], step["value"], where)
     tool.done()
+    for other in bound.values():
+        other.done()
 
 
 def test_every_call_releases_the_gil(fixtures: dict[str, Path], tmp_path: Path) -> None:
@@ -936,3 +950,244 @@ def test_writes_after_a_row_removal_keep_the_rows_removed_under_the_same_lock(
     assert reader.getcol("name").tolist() == ["alpha", "beta"]
     assert "extra" in reader.colnames()
     reader.done()
+
+
+HOLDER = """
+import sys
+import time
+from casars import tools
+
+tool = tools.table()
+assert tool.open(sys.argv[1], nomodify=False, lockoptions={"option": "permanent"})
+print("held", flush=True)
+time.sleep(float(sys.argv[2]))
+"""
+
+
+@pytest.mark.parametrize("option", ["default", "auto", "user"])
+def test_datachanged_is_true_once_after_another_process_has_written(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """The modify counter that `datachanged` compares moves when another
+    process releases a write lock: the answer is True once, then False
+    (recorded for one handle by `state`; two processes cannot be replayed)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    tool.datachanged()
+    assert not tool.datachanged()
+    assert tool.unlock()
+    subprocess.run([sys.executable, "-c", WRITER, str(path)], check=True, timeout=120)
+    assert tool.datachanged()
+    assert not tool.datachanged()
+    tool.done()
+
+
+def test_datachanged_is_true_while_another_process_holds_the_write_lock(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Another process writing means the data is changing, as CASA says
+    (`Table::hasDataChanged` gives up its try for a read lock)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False, lockoptions={"option": "user"})
+    tool.datachanged()
+    assert not tool.datachanged()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", HOLDER, str(path), "4"], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "held"
+        assert tool.datachanged()
+        assert not tool.haslock(write=False)
+    finally:
+        holder.wait(timeout=60)
+    tool.done()
+
+
+def test_a_copy_is_the_directory_of_the_table_and_leaves_the_source_alone(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Without values or rows asked for, `copy` copies the table's files as
+    they are, whatever its storage managers: a MeasurementSet's copy has the
+    same files with the same bytes."""
+    source = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], source)
+    before = table_files(source)
+    tool = tools.table()
+    assert tool.open(str(source))
+    copied = tool.copy(str(tmp_path.resolve() / "copy.ms"), deep=True)
+    assert copied.name() == str(tmp_path.resolve() / "copy.ms")
+    assert copied.nrows() == tool.nrows()
+    assert not copied.iswritable()
+    assert table_files(source) == before
+    got = table_files(tmp_path.resolve() / "copy.ms")
+    for name, content in before.items():
+        if name != "table.lock":
+            assert got[name] == content, name
+    copied.done()
+    tool.done()
+
+
+@pytest.mark.parametrize("options", [{"valuecopy": True}, {"norows": True}])
+def test_a_copy_that_would_write_a_table_of_several_managers_afresh_changes_nothing(
+    options: dict[str, bool], fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """casa-tables cannot write the MeasurementSet's managers afresh: the
+    copy is refused before the target is touched (a table already at the
+    target stays)."""
+    source = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], source)
+    target = tmp_path.resolve() / "target.ms"
+    shutil.copytree(fixtures["ms"], target)
+    kept = table_files(target)
+    tool = tools.table()
+    assert tool.open(str(source))
+    with pytest.raises(NotImplementedError, match="not one StManAipsIO group"):
+        tool.copy(str(target), **options)
+    with pytest.raises(NotImplementedError, match="not one StManAipsIO group"):
+        tool.copy(str(tmp_path.resolve() / "new.ms"), **options)
+    assert table_files(target) == kept
+    assert not (tmp_path / "new.ms").exists()
+    tool.done()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"memorytable": True}, {"dminfo": {"*1": {"TYPE": "StandardStMan", "NAME": "S", "COLUMNS": []}}}],
+)
+def test_a_copy_to_memory_or_with_new_managers_is_not_implemented(
+    options: dict[str, Any], fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path))
+    with pytest.raises(NotImplementedError):
+        tool.copy(str(tmp_path.resolve() / "new.table"), **options)
+    assert not (tmp_path / "new.table").exists()
+    tool.done()
+
+
+def test_a_copy_replaces_a_table_at_the_target_and_refuses_a_file(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path))
+    target = tmp_path.resolve() / "target.table"
+    tool.copy(str(target), norows=True).done()
+    assert tools.table().open(str(target))
+    again = tool.copy(str(target))
+    assert again.nrows() == 3
+    again.done()
+    plain_file = tmp_path.resolve() / "plain"
+    plain_file.write_text("not a table")
+    with pytest.raises(RuntimeError, match="not a true table directory"):
+        tool.copy(str(plain_file))
+    assert plain_file.read_text() == "not a table"
+    tool.done()
+
+
+def test_a_copy_without_rows_keeps_the_group_name_of_a_stman_aipsio_table(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """The manager's group, as `getcoldesc` reports it, is kept when the
+    table is written afresh (the library's shallow copy dropped it)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path))
+    expected = tool.getcoldesc("label")["dataManagerGroup"]
+    copied = tool.copy(str(tmp_path.resolve() / "empty.table"), norows=True)
+    assert copied.nrows() == 0
+    assert copied.getcoldesc("label")["dataManagerGroup"] == expected
+    copied.done()
+    tool.done()
+
+
+def test_copyrows_into_a_table_of_several_managers_refuses_before_a_cell_is_read(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Its rows cannot be added in place yet (#1037): the output table is left
+    as it is, and so is the input."""
+    ms = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], ms)
+    before = table_files(ms)
+    tool = tools.table()
+    assert tool.open(str(ms))
+    with pytest.raises(NotImplementedError, match="not one StManAipsIO group"):
+        tool.copyrows(str(ms))
+    assert table_files(ms) == before
+    other = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], other)
+    # No column in common: nothing to copy, nothing refused.
+    assert tool.copyrows(str(other))
+    tool.done()
+
+
+def test_copyrows_into_a_table_another_tool_has_open_does_not_hang(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA shares one table between its tools in a process; casa-rs's tools
+    each have their own handle, and an automatic handle keeps the read lock
+    it took for its last read, which the write of the copy would wait for
+    for ever. The copy must end, here with a refusal (run in a process of
+    its own, so that a hang is a failed test, not a stuck one)."""
+    source = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], source)
+    out = tmp_path.resolve() / "out.table"
+    maker = tools.table()
+    assert maker.open(str(source))
+    maker.copy(str(out), norows=True).done()
+    maker.done()
+    script = (
+        "import sys\nfrom casars import tools\n"
+        "t = tools.table(); assert t.open(sys.argv[1], nomodify=False)\n"
+        "out = tools.table(); assert out.open(sys.argv[2])\n"
+        "assert out.nrows() == 0\n"
+        "try:\n    print(t.copyrows(sys.argv[2]))\nexcept Exception as e:\n"
+        "    print(type(e).__name__, e)\n"
+        "print(out.nrows())\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, str(source), str(out)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    # (The other handle holds its read lock and does not see the rows until
+    # it takes the lock again: CASA's tools of one process share a table.)
+    assert done.stdout.split()[0] == "True", done.stdout
+
+
+def test_a_copy_removes_a_table_or_an_empty_directory_at_the_target_and_nothing_else(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """casacore removes whatever directory is at the target; a slip of the name
+    must not delete a directory of other files, so casa-rs refuses one that is
+    no table, and a copy that lies inside the table (or the table inside it)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path))
+    other = tmp_path.resolve() / "notes"
+    other.mkdir()
+    (other / "keep.txt").write_text("keep")
+    with pytest.raises(RuntimeError, match="not a true table directory"):
+        tool.copy(str(other))
+    assert (other / "keep.txt").read_text() == "keep"
+    empty = tmp_path.resolve() / "empty"
+    empty.mkdir()
+    tool.copy(str(empty)).done()
+    assert (empty / "table.dat").is_file()
+    with pytest.raises(RuntimeError, match="one inside the other"):
+        tool.copy(str(path / "inside.table"))
+    with pytest.raises(RuntimeError, match="one inside the other"):
+        tool.copy(str(tmp_path.resolve()))
+    assert (path / "table.dat").is_file() and not (path / "inside.table").exists()
+    tool.done()

@@ -11,8 +11,10 @@ FIXTURE_TABLE is `python_fixture.table`, the table
 `cargo run -p casars-python --example make_python_fixtures -- DIR` writes, and
 MS is the MeasurementSet `crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz`
 unpacks to. Each scenario in `SCENARIOS` starts from a fresh copy of its
-fixture (`table` or `ms`) and replays its steps on a `tb` tool. A step is `[method, args, kwargs]`; the string
-`"<TABLE>"` in an argument stands for the scenario's copy of the table. The
+fixture (`table` or `ms`) and replays its steps on a `tb` tool. A step is `[method, args, kwargs]`, with
+a fourth element `{"on": NAME, "bind": NAME}` when it calls a tool a step before returned (`bind` names the tool
+a step returns, `on` the tool a step calls); the string
+`"<TABLE>"` in an argument stands for the scenario's copy of the table (`"<TABLE>.out"` is a sibling of it). The
 record keeps, for every step, either the encoded value `tb` returned
 (`"value"`) or the exception it raised (`"error"`: its type and message).
 
@@ -68,6 +70,8 @@ def encode(value, path):
         return {"list": [encode(item, path) for item in value]}
     if value is None:
         return {"none": True}
+    if type(value).__name__ == "table":
+        return {"tool": True}
     raise TypeError(f"cannot encode {type(value)}")
 
 
@@ -799,6 +803,210 @@ ROWS_COLUMNS = [
     ["close", [], {}],
 ]
 
+#: The python fixture table's columns (`COLUMNS` is a scenario by now).
+CELL_COLUMNS = ["id", "label", "gain", "spectrum", "vary", "meta"]
+
+
+def on(tool, steps):
+    """`steps` called on the tool bound to `tool`."""
+    return [[*step[:3], {"on": tool}] for step in steps]
+
+
+def cells(tool, rows=3):
+    """Every column's cell in the first `rows` rows, read from `tool`."""
+    return on(tool, [["getcell", [column, row], {}] for row in range(rows) for column in CELL_COLUMNS])
+
+
+def inspect(tool):
+    """What a table tool the table tool returned says about its table."""
+    return on(tool, [
+        ["name", [], {}],
+        ["iswritable", [], {}],
+        ["lockoptions", [], {}],
+        ["nrows", [], {}],
+        ["colnames", [], {}],
+        ["endianformat", [], {}],
+        ["getkeywords", [], {}],
+        ["info", [], {}],
+        ["getdminfo", [], {}],
+    ])
+
+
+#: Calls that report or move the table's state, on the python fixture table,
+#: before it is open, open for update, after, and open read-only.
+STATE = [
+    ["endianformat", [], {}],
+    ["flush", [], {}],
+    ["resync", [], {}],
+    ["datachanged", [], {}],
+    ["ismultiused", [], {}],
+    ["setmaxcachesize", ["id", 10], {}],
+    ["clearlocks", [], {}],
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["endianformat", [], {}],
+    ["flush", [], {}],
+    ["resync", [], {}],
+    ["datachanged", [], {}],
+    ["datachanged", [], {}],
+    ["ismultiused", [], {}],
+    ["ismultiused", [True], {}],
+    ["ismultiused", [], {"checksubtables": True}],
+    ["setmaxcachesize", ["spectrum", 1000], {}],
+    ["setmaxcachesize", ["id", 1000], {}],
+    ["setmaxcachesize", ["nosuch", 1000], {}],
+    ["setmaxcachesize", ["spectrum", -1], {}],
+    ["setmaxcachesize", ["spectrum", 0], {}],
+    ["setmaxcachesize", ["", 1000], {}],
+    ["setmaxcachesize", [], {"columnname": "label", "nbytes": 5}],
+    ["clearlocks", [], {}],
+    ["haslock", [], {"write": False}],
+    ["putcell", ["id", 0, 5], {}],
+    ["flush", [], {}],
+    ["getcell", ["id", 0], {}],
+    ["datachanged", [], {}],
+    ["close", [], {}],
+    ["endianformat", [], {}],
+    ["flush", [], {}],
+    ["resync", [], {}],
+    ["datachanged", [], {}],
+    ["ismultiused", [], {}],
+    ["setmaxcachesize", ["id", 10], {}],
+    ["clearlocks", [], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["flush", [], {}],
+    ["resync", [], {}],
+    ["datachanged", [], {}],
+    ["close", [], {}],
+] + [
+    step
+    for option in ("default", "auto", "user", "usernoread", "permanent", "autonoread")
+    for step in [
+        ["open", [PLACEHOLDER], {"lockoptions": {"option": option}, "nomodify": False}],
+        ["datachanged", [], {}],
+        ["datachanged", [], {}],
+        ["flush", [], {}],
+        ["resync", [], {}],
+        ["clearlocks", [], {}],
+        ["haslock", [], {}],
+        ["haslock", [], {"write": False}],
+        ["close", [], {}],
+    ]
+]
+
+#: The same calls on the MeasurementSet, whose files are big-endian.
+STATE_MS = [
+    ["open", [PLACEHOLDER], {}],
+    ["endianformat", [], {}],
+    ["datachanged", [], {}],
+    ["ismultiused", [], {}],
+    ["flush", [], {}],
+    ["resync", [], {}],
+    ["setmaxcachesize", ["TIME", 100], {}],
+    ["close", [], {}],
+]
+
+#: `copy`: the tool it returns, and what each combination of its options
+#: makes. The table is copied by name (`<TABLE>.cN`); a copy's tool is
+#: closed before the name is used again.
+COPIES = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["copy", [PLACEHOLDER + ".c1"], {}, {"bind": "c1"}],
+    *inspect("c1"),
+    *cells("c1"),
+    ["putcell", ["label", 0, "w"], {}, {"on": "c1"}],
+    ["close", [], {}, {"on": "c1"}],
+    ["copy", [PLACEHOLDER + ".c2"], {"deep": True}, {"bind": "c2"}],
+    *inspect("c2"),
+    ["close", [], {}, {"on": "c2"}],
+    ["copy", [PLACEHOLDER + ".c3"], {"valuecopy": True}, {"bind": "c3"}],
+    *inspect("c3"),
+    *cells("c3"),
+    ["close", [], {}, {"on": "c3"}],
+    ["copy", [PLACEHOLDER + ".c4"], {"norows": True}, {"bind": "c4"}],
+    *inspect("c4"),
+    ["getcoldesc", ["spectrum"], {}, {"on": "c4"}],
+    ["getcoldesc", ["meta"], {}, {"on": "c4"}],
+    ["getcell", ["id", 0], {}, {"on": "c4"}],
+    ["close", [], {}, {"on": "c4"}],
+    ["copy", [PLACEHOLDER + ".c5"], {"valuecopy": True, "endian": "big"}, {"bind": "c5"}],
+    *inspect("c5"),
+    *cells("c5"),
+    ["close", [], {}, {"on": "c5"}],
+    ["copy", [PLACEHOLDER + ".c6"], {"deep": True, "valuecopy": True, "endian": "LITTLE"}, {"bind": "c6"}],
+    ["endianformat", [], {}, {"on": "c6"}],
+    ["close", [], {}, {"on": "c6"}],
+    # Copying to a name that is a table (closed) replaces it.
+    ["copy", [PLACEHOLDER + ".c3"], {"norows": True}, {"bind": "c3b"}],
+    ["nrows", [], {}, {"on": "c3b"}],
+    ["close", [], {}, {"on": "c3b"}],
+    ["copy", [PLACEHOLDER + ".c7"], {"endian": "bogus"}],
+    ["copy", [PLACEHOLDER + ".c7"], {"valuecopy": True, "endian": "bogus"}],
+    ["copy", [""], {}],
+    # Copying a table to its own name.
+    ["copy", [PLACEHOLDER], {}, {"bind": "same"}],
+    ["name", [], {}, {"on": "same"}],
+    ["nrows", [], {}, {"on": "same"}],
+    ["close", [], {}, {"on": "same"}],
+    ["copy", [PLACEHOLDER], {"norows": True}],
+    ["copy", [PLACEHOLDER], {"valuecopy": True}],
+    ["nrows", [], {}],
+    ["close", [], {}],
+    ["copy", [PLACEHOLDER + ".c8"], {}],
+]
+
+#: `copyrows` into a table named by its path: all the rows, a range,
+#: appended, past the end, into a table with other columns, and into itself.
+COPYROWS = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["copy", [PLACEHOLDER + ".out"], {"norows": True}, {"bind": "o"}],
+    ["close", [], {}, {"on": "o"}],
+    ["copy", [PLACEHOLDER + ".other"], {"norows": True}, {"bind": "p"}],
+    ["close", [], {}, {"on": "p"}],
+    ["copyrows", [PLACEHOLDER + ".out"], {}],
+    ["open", [PLACEHOLDER + ".out"], {}],
+    ["nrows", [], {}],
+    *[["getcell", [column, row], {}] for row in range(3) for column in CELL_COLUMNS],
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["copyrows", [PLACEHOLDER + ".out"], {}],
+    ["copyrows", [PLACEHOLDER + ".out", 1, 0, 2], {}],
+    ["copyrows", [PLACEHOLDER + ".out", 2], {}],
+    ["copyrows", [PLACEHOLDER + ".out"], {"startrowin": 1, "nrow": 1}],
+    ["copyrows", [PLACEHOLDER + ".out", 0, 100, 1], {}],
+    ["copyrows", [PLACEHOLDER + ".out", 100], {}],
+    ["copyrows", [PLACEHOLDER + ".out", 0, -1, 100], {}],
+    ["copyrows", [PLACEHOLDER + ".out", -1], {}],
+    ["copyrows", [PLACEHOLDER + ".out", 0, 0, 0], {}],
+    ["copyrows", [PLACEHOLDER + ".nosuch"], {}],
+    ["open", [PLACEHOLDER + ".out"], {}],
+    ["nrows", [], {}],
+    ["getcol", ["label"], {}],
+    ["getcol", ["gain"], {}],
+    *[["getcell", [column, row], {}] for row in range(10) for column in ("label", "gain", "id")],
+    ["getcell", ["spectrum", 7], {}],
+    ["getcell", ["meta", 8], {}],
+    ["iscelldefined", ["vary", 9], {}],
+    # A table with other columns takes the ones it shares.
+    ["open", [PLACEHOLDER + ".other"], {"nomodify": False}],
+    ["removecols", [["gain", "meta"]], {}],
+    ["renamecol", ["label", "name"], {}],
+    ["open", [PLACEHOLDER], {}],
+    ["copyrows", [PLACEHOLDER + ".other"], {}],
+    ["open", [PLACEHOLDER + ".other"], {}],
+    ["nrows", [], {}],
+    ["colnames", [], {}],
+    ["getcol", ["gain"], {}],
+    ["getcell", ["spectrum", 2], {}],
+    # A table to itself: the rows are appended.
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["copyrows", [PLACEHOLDER], {}],
+    ["nrows", [], {}],
+    ["getcell", ["label", 4], {}],
+    ["copyrows", [PLACEHOLDER, 1, 1, 1], {}],
+    ["getcell", ["label", 1], {}],
+    ["close", [], {}],
+    ["copyrows", [PLACEHOLDER + ".out"], {}],
+]
+
 #: The scenario the MeasurementSet gets: for each column of the main table,
 #: its description and, for the first rows, its cells. Built from the table
 #: itself, so a column is probed whatever the fixture holds.
@@ -1169,16 +1377,23 @@ def run_scenario(steps, source):
     from casatools import table
 
     tool = table()
+    tools = {"": tool}
     record = []
-    for method, args, keywords in steps:
+    for method, args, keywords, *rest in steps:
+        options = rest[0] if rest else {}
         real_args = [realise(arg, path) for arg in args]
         outcome = {
             "method": method,
             "args": [encode(arg, path) for arg in args],
             "kwargs": {name: encode(value, path) for name, value in keywords.items()},
         }
+        if options:
+            outcome["options"] = options
         try:
-            outcome["value"] = encode(getattr(tool, method)(*real_args, **keywords), path)
+            value = getattr(tools[options.get("on", "")], method)(*real_args, **keywords)
+            outcome["value"] = encode(value, path)
+            if "bind" in options:
+                tools[options["bind"]] = value
         except Exception as error:  # noqa: BLE001 - recording whatever CASA raises
             outcome["error"] = {
                 "type": type(error).__name__,
@@ -1186,7 +1401,8 @@ def run_scenario(steps, source):
             }
         record.append(outcome)
     try:
-        tool.done()
+        for bound in tools.values():
+            bound.done()
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return record
@@ -1246,6 +1462,10 @@ def main():
     scenarios["rows"] = {"fixture": "table", "steps": ROWS, "source": arguments.fixture}
     scenarios["columns"] = {"fixture": "table", "steps": COLUMNS, "source": arguments.fixture}
     scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}
+    scenarios["state"] = {"fixture": "table", "steps": STATE, "source": arguments.fixture}
+    scenarios["state_ms"] = {"fixture": "ms", "steps": STATE_MS, "source": arguments.ms}
+    scenarios["copies"] = {"fixture": "table", "steps": COPIES, "source": arguments.fixture}
+    scenarios["copyrows"] = {"fixture": "table", "steps": COPYROWS, "source": arguments.fixture}
     for name, (fixture, steps) in REVIEW_SCENARIOS.items():
         source = arguments.ms if fixture == "ms" else arguments.fixture
         scenarios[name] = {"fixture": fixture, "steps": steps, "source": source}

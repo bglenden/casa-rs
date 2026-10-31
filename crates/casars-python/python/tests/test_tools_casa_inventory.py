@@ -41,6 +41,8 @@ IMPLEMENTED["table"] = {
     "removecolkeyword", "putinfo", "addreadmeline", "putcell", "putcol", "putvarcol",
     "getcellslice", "getcolslice", "putcellslice", "putcolslice", "getcoldesc",
     "addrows", "removerows", "renamecol", "removecols", "addcols", "getdminfo",
+    "endianformat", "flush", "resync", "datachanged", "ismultiused", "setmaxcachesize",
+    "clearlocks", "copyrows", "copy",
 }  # fmt: skip
 
 

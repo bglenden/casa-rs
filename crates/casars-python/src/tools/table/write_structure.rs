@@ -34,7 +34,7 @@ fn invalid(message: String) -> Fail {
 
 /// The options that write `table` in full as it is laid out, or the refusal
 /// of a layout casa-tables cannot rewrite without changing it.
-fn whole_table(table: &Table, what: &str) -> Result<TableOptions, Fail> {
+pub(super) fn whole_table(table: &Table, what: &str) -> Result<TableOptions, Fail> {
     table.single_stman_aipsio_options()?.ok_or_else(|| {
         Fail::Unsupported(format!(
             "table.{what} of a table that is not one StManAipsIO group (without a manager name \
@@ -48,7 +48,7 @@ fn whole_table(table: &Table, what: &str) -> Result<TableOptions, Fail> {
 /// What a column holds in a row nobody has written: zero, false or the
 /// empty string for a scalar, zeros for a fixed-shape array, an empty record
 /// for a record column; no cell for an array of variable shape.
-fn default_row(table: &Table) -> RecordValue {
+pub(super) fn default_row(table: &Table) -> RecordValue {
     let Some(schema) = table.schema() else {
         return RecordValue::default();
     };

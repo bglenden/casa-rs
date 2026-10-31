@@ -92,6 +92,16 @@ impl LockSettings {
         )
     }
 
+    /// The seconds between a table's looks for a request for its lock.
+    pub(super) fn interval(&self) -> f64 {
+        self.interval
+    }
+
+    /// The seconds a lock may be waited for; `0` waits for it.
+    pub(super) fn maxwait(&self) -> i64 {
+        self.maxwait
+    }
+
     /// The attempts at a lock `maxwait` allows; `0` waits for it.
     pub(super) fn attempts(&self) -> u32 {
         u32::try_from(self.maxwait.max(0)).unwrap_or(u32::MAX)
@@ -124,6 +134,34 @@ pub(super) struct Open {
     pub(super) name: PathBuf,
     pub(super) writable: bool,
     pub(super) lock: LockSettings,
+    /// The modify counter the last `datachanged()` saw (casacore starts a
+    /// table at 0).
+    pub(super) last_modify_counter: u32,
+}
+
+impl Open {
+    /// The table at `name` opened under `request`'s lock options.
+    pub(super) fn attach(name: &str, request: &LockRequest, writable: bool) -> Result<Self, Fail> {
+        let lock = LockSettings::from_request(request)?;
+        let path = Path::new(name);
+        if !path.exists() {
+            return Err(Fail::Runtime(format!("Table {name} does not exist")));
+        }
+        // A table opened `nomodify` holds no write lock, in the permanent
+        // modes too.
+        let options = LockOptions::new(lock.mode)
+            .with_inspection_interval(lock.interval)
+            .read_only(!writable);
+        let table = Table::open_with_lock(TableOptions::new(path), options)?;
+        let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        Ok(Self {
+            table,
+            name,
+            writable,
+            lock,
+            last_modify_counter: 0,
+        })
+    }
 }
 
 /// The tool's state: at most one open table.
@@ -161,24 +199,7 @@ impl State {
         writable: bool,
     ) -> Result<(), Fail> {
         self.open = None;
-        let lock = LockSettings::from_request(request)?;
-        let path = Path::new(name);
-        if !path.exists() {
-            return Err(Fail::Runtime(format!("Table {name} does not exist")));
-        }
-        // A table opened `nomodify` holds no write lock, in the permanent
-        // modes too.
-        let options = LockOptions::new(lock.mode)
-            .with_inspection_interval(lock.interval)
-            .read_only(!writable);
-        let table = Table::open_with_lock(TableOptions::new(path), options)?;
-        let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        self.open = Some(Open {
-            table,
-            name,
-            writable,
-            lock,
-        });
+        self.open = Some(Open::attach(name, request, writable)?);
         Ok(())
     }
 

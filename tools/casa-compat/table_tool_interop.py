@@ -49,7 +49,8 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
     recorded `rows`, `columns` and `rows_columns` scenarios are replayed
     (as far as their first close) through `casars.tools.table`, checking every
     step; `renamed.ms`, a copy of the small MeasurementSet with four columns
-    renamed; `removed.ms`, with two columns removed. OUT_JSON is what casa-rs
+    renamed; `removed.ms`, with two columns removed; the `copy_*` tables that
+    `copy` and `copyrows` make. OUT_JSON is what casa-rs
     reads of each (`structure_dump`: names, descriptions, the first cells).
 
 `structure-rsread DIR OUT_JSON`
@@ -86,9 +87,11 @@ on the Mac mini; copy this file and `table_tool_oracle.py` side by side):
     `casa_renamed.ms` and `casa_removed.ms`, below), in the same form, to
     `compare` with casa-rs's dump of them.
 
-`structure-casa-write MS DIR`
-    CASA renames and removes the same columns of two copies of the small
-    MeasurementSet, `DIR/casa_renamed.ms` and `DIR/casa_removed.ms`;
+`structure-casa-write MS DIR FIXTURE`
+    CASA copies the python fixture and the MeasurementSet (`copy`,
+    `copyrows`: `casa_copy_values.table`, `casa_copyrows.table`,
+    `casa_copy_ms.ms`), and renames and removes the same columns of two copies
+    of the small MeasurementSet, `DIR/casa_renamed.ms` and `DIR/casa_removed.ms`;
     `structure-rsread` them with casa-rs (a renamed column keeps its old name
     in the column set, which casa-rs failed to find before #1025's table
     part) and `compare` with `structure-read`.
@@ -286,6 +289,8 @@ STRUCTURE_TABLES = (
     "rows.table", "columns.table", "rows_columns.table", "renamed.ms", "removed.ms",
     "casa_renamed.ms", "casa_removed.ms", "casa_named.table", "casa_named_aipsio.table",
     "shrink_user.table", "shrink_permanent.table", "tiled_multi.table",
+    "copy_plain.table", "copy_values_big.table", "copy_rows.table", "copy_self.table",
+    "copy_ms.ms", "casa_copy_values.table", "casa_copyrows.table", "casa_copy_ms.ms",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -428,6 +433,29 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     else:
         raise SystemExit("the id column of a tiled manager was renamed")
     tool.done()
+    # `copy` and `copyrows`: a plain copy of the python fixture and of the
+    # MeasurementSet (their files as they are), a copy of the values with the
+    # byte order changed, a copy without rows given two rows of the original,
+    # and a table given its own rows.
+    source = tools.table()
+    assert source.open(str(Path(fixture).resolve()))
+    source.copy(str((out_dir / "copy_plain.table").resolve())).done()
+    source.copy(
+        str((out_dir / "copy_values_big.table").resolve()), valuecopy=True, endian="big"
+    ).done()
+    empty = out_dir / "copy_rows.table"
+    source.copy(str(empty.resolve()), norows=True).done()
+    assert source.copyrows(str(empty.resolve()), 1, 0, 2)
+    source.done()
+    shutil.copytree(fixture, out_dir / "copy_self.table")
+    tool = tools.table()
+    assert tool.open(str((out_dir / "copy_self.table").resolve()), nomodify=False)
+    assert tool.copyrows(str((out_dir / "copy_self.table").resolve()))
+    tool.done()
+    tool = tools.table()
+    assert tool.open(str(Path(ms).resolve()))
+    tool.copy(str((out_dir / "copy_ms.ms").resolve())).done()
+    tool.done()
     write_json(out_json, structure_dumps(tools.table, out_dir))
 
 
@@ -461,8 +489,9 @@ def command_structure_rsread(directory, out_json):
         print("named StManAipsIO: row and column calls refused, table unchanged")
 
 
-def command_structure_casa_write(ms, out_dir):
-    """CASA renames and removes the same columns of a copy of the MS."""
+def command_structure_casa_write(ms, out_dir, fixture):
+    """CASA renames and removes the same columns of a copy of the MS, and
+    copies tables (`copy`, `copyrows`) the way `structure-write` does."""
     from casatools import table  # noqa: PLC0415
 
     out_dir = Path(out_dir)
@@ -519,6 +548,17 @@ def command_structure_casa_write(ms, out_dir):
         tool.putcell("a", row, row + 1)
         tool.putcell("b", row, 0.5 * row)
     tool.close()
+    source = table()
+    source.open(str(fixture))
+    for name in ("casa_copy_values.table", "casa_copyrows.table", "casa_copy_ms.ms"):
+        shutil.rmtree(out_dir / name, ignore_errors=True)
+    source.copy(str(out_dir / "casa_copy_values.table"), valuecopy=True, endian="big").done()
+    source.copy(str(out_dir / "casa_copyrows.table"), norows=True).done()
+    assert source.copyrows(str(out_dir / "casa_copyrows.table"), 1, 0, 2)
+    source.close()
+    source.open(str(ms))
+    source.copy(str(out_dir / "casa_copy_ms.ms")).done()
+    source.done()
 
 
 def command_variants(fixture, out_dir):
@@ -773,7 +813,7 @@ COMMANDS = {
     "structure-write": (command_structure_write, 4),
     "structure-read": (command_structure_read, 2),
     "structure-rsread": (command_structure_rsread, 2),
-    "structure-casa-write": (command_structure_casa_write, 2),
+    "structure-casa-write": (command_structure_casa_write, 3),
 }
 
 
