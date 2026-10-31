@@ -84,6 +84,15 @@ impl LockSettings {
         )
     }
 
+    /// Whether the table takes the write lock when it is opened and keeps it
+    /// (the permanent modes).
+    pub(super) fn permanent(&self) -> bool {
+        matches!(
+            self.mode,
+            LockMode::PermanentLocking | LockMode::PermanentLockingWait
+        )
+    }
+
     /// Whether a read takes the read lock (all but the NoRead modes), as
     /// casacore's `TableLock::readLocking` says.
     pub(super) fn reads_lock(&self) -> bool {

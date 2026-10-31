@@ -571,6 +571,16 @@ impl State {
     ) -> Result<Method, Fail> {
         let open = self.open.as_ref().expect("a table is open");
         let rewrite = request.value_copy || request.no_rows;
+        // CASA's two tools share one table and its write lock; here the
+        // second tool would have to take a write lock the first holds.
+        if same && open.writable && open.lock.permanent() {
+            return Err(Fail::Unsupported(
+                "table.copy onto the name of a table open for update under permanent locking \
+                 is not yet implemented in casa-rs: the two tools would share one write lock \
+                 (#1028)"
+                    .to_string(),
+            ));
+        }
         // casacore's `RefTable::deepCopy` makes a table of its own of a
         // reference table whenever `deep` is given; a plain copy of one
         // stays a reference table, and is the directory copied.
