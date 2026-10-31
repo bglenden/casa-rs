@@ -202,8 +202,11 @@ def main() -> None:
         casatasks.tclean(imagename=str(prefix), restart=False, **common)
         assert (args.work / (expected + ".model")).is_dir()
         after = snapshot(args.work)
-        # Existing image bytes must survive; table.lock is process metadata.
-        science = {k:v for k,v in before.items() if k.startswith("casa.") and not k.endswith("table.lock")}
+        # CASA appends image history while checking prior images. Preserve
+        # every other byte; locks and those logtables are bookkeeping.
+        science = {k:v for k,v in before.items() if k.startswith("casa.")
+                   and not k.endswith("table.lock") and "/logtable/" not in k}
+        assert science
         assert all(after[k] == value for k,value in science.items())
         numbered.append(expected)
     output = args.work / "native-output"
@@ -229,6 +232,7 @@ def main() -> None:
                     unchanged_output_files=len(before)),
         stokes_startmodel=stokes_result,
         casa_absolute_restart_false_error=absolute_numbering,
+        casa_preservation_scope="all prior product bytes except table.lock and appended image-history logtables",
         result="passed lifecycle assertions; restart equivalence remains unfinished",
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)

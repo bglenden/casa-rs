@@ -161,7 +161,8 @@ def render(data: dict[str, Any], record: dict[str, Any], surface: dict[str, Any]
     for key, entry in data["evidence"].items():
         lines.extend([f"<a id=\"tclean-evidence-{key}\"></a>", f"##### {key}", "", f"**{entry['kind']} — {entry['state']}.** {entry['scope']}", ""])
         for link in entry["links"]:
-            target = link if link.startswith("https://") else f"https://github.com/bglenden/casa-rs/blob/{data['audit_revision']}/{link}"
+            revision = entry.get("source_revision", data["audit_revision"])
+            target = link if link.startswith("https://") else f"https://github.com/bglenden/casa-rs/blob/{revision}/{link}"
             lines.append(f"- [{link}]({target})")
         if entry.get("receipt"):
             lines.extend([f"- Revision: `{entry['revision']}`; CASA: `{entry['casa_version']}`.", f"- Command: `{entry['command']}`.", f"- Receipt: `{entry['receipt']}`."])
@@ -176,13 +177,14 @@ def load(root: Path, task: str) -> dict[str, Any]:
 
 
 def validate_source_links(root: Path, data: dict[str, Any]) -> None:
-    revision = data["audit_revision"]
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+    versions = {entry.get("source_revision", data["audit_revision"]) for entry in data["evidence"].values()}
+    if not all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in versions):
         raise ValueError("semantic source links need an exact commit")
-    paths = sorted({link for item in data["evidence"].values() for link in item["links"] if not link.startswith("https://")})
+    objects = sorted({f"{item.get('source_revision', data['audit_revision'])}:{link}"
+                      for item in data["evidence"].values() for link in item["links"] if not link.startswith("https://")})
     result = subprocess.run(
         ["git", "-C", str(root), "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-        input="".join(f"{revision}:{path}\n" for path in paths),
+        input="".join(f"{obj}\n" for obj in objects),
         text=True, capture_output=True, check=True,
     )
     if any(line.endswith(" missing") for line in result.stdout.splitlines()):
