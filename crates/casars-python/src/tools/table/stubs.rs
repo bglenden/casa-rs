@@ -15,22 +15,6 @@ use super::{PyTableTool, stub};
 )]
 impl PyTableTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (desc, dminfo = None), text_signature = "($self, desc, dminfo={})")]
-    fn addcols(
-        &self,
-        desc: &Bound<'_, PyAny>,
-        dminfo: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addcols")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (nrow = None), text_signature = "($self, nrow=1)")]
-    fn addrows(&self, nrow: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("addrows")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn browse(&self) -> PyResult<Py<PyAny>> {
         stub("browse")
@@ -171,12 +155,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn getcoldesc(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getcoldesc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None, torecord = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1, torecord=False)")]
     fn getcoliter(
         &self,
@@ -193,12 +171,6 @@ impl PyTableTool {
     #[pyo3(signature = (actual = None), text_signature = "($self, actual=True)")]
     fn getdesc(&self, actual: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("getdesc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn getdminfo(&self) -> PyResult<Py<PyAny>> {
-        stub("getdminfo")
     }
 
     /// Not yet implemented in casa-rs.
@@ -230,28 +202,6 @@ impl PyTableTool {
         style: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("query")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnames), text_signature = "($self, columnames)")]
-    fn removecols(&self, columnames: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removecols")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (rownrs), text_signature = "($self, rownrs)")]
-    fn removerows(&self, rownrs: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removerows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (oldname, newname), text_signature = "($self, oldname, newname)")]
-    fn renamecol(
-        &self,
-        oldname: &Bound<'_, PyAny>,
-        newname: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("renamecol")
     }
 
     /// Not yet implemented in casa-rs.

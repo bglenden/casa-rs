@@ -607,6 +607,114 @@ impl State {
             }))
     }
 
+    /// `getcoldesc(columnname)`: the description of a column, as
+    /// `TableProxy::getColumnDescription` makes it: `ndim` only for an array
+    /// column, `shape` only for one of fixed shape, and `option` the sum of
+    /// casacore's `ColumnDesc` flags (`Direct` 1, `Undefined` 2, `FixedShape` 4).
+    pub(super) fn getcoldesc(&self, column: &str, log: &mut Vec<LogLine>) -> Reply {
+        let Some(open) = self.table(log) else {
+            return Ok(CasaValue::empty_record());
+        };
+        let schema = open.known(column)?;
+        let manager = open
+            .table
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column));
+        let options = schema.options();
+        let mut option = i64::from(options.direct) | i64::from(options.undefined) << 1;
+        let mut fields = vec![
+            ("comment", CasaValue::Text(schema.comment().to_string())),
+            (
+                "dataManagerGroup",
+                CasaValue::Text(
+                    manager
+                        .map(|manager| manager.name.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+            (
+                "dataManagerType",
+                CasaValue::Text(
+                    manager
+                        .map(|manager| manager.dm_type.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+            (
+                "keywords",
+                open.table
+                    .column_keywords(column)
+                    .map_or_else(CasaValue::empty_record, |record| {
+                        values::record(record, &open.name)
+                    }),
+            ),
+            ("maxlen", CasaValue::Int(i64::from(schema.max_length()))),
+            ("valueType", CasaValue::Text(data_type_name(schema).into())),
+        ];
+        if let ColumnType::Array(contract) = schema.column_type() {
+            match contract {
+                casa_tables::ArrayShapeContract::Fixed { shape } => {
+                    option |= 4;
+                    fields.push(("ndim", CasaValue::Int(shape.len() as i64)));
+                    fields.push((
+                        "shape",
+                        CasaValue::Ints {
+                            shape: vec![shape.len()],
+                            values: shape.iter().map(|&extent| extent as i64).collect(),
+                        },
+                    ));
+                }
+                casa_tables::ArrayShapeContract::Variable { ndim } => {
+                    fields.push(("ndim", CasaValue::Int(ndim.map_or(-1, |ndim| ndim as i64))));
+                }
+            }
+        } else if options.direct && matches!(schema.column_type(), ColumnType::Scalar) {
+            // A scalar column is of fixed shape, which casacore flags when
+            // the column is `Direct` (a scalar `int` made with option 1 says 5).
+            option |= 4;
+        }
+        fields.push(("option", CasaValue::Int(option)));
+        Ok(CasaValue::record(fields))
+    }
+
+    /// `getdminfo()`: a record per storage manager (`*1`, `*2`, ... in the
+    /// order the table lists them) with its columns, name, sequence number,
+    /// type and `SPEC`. casa-tables keeps the `SPEC` of no manager, and
+    /// `StManAipsIO`'s is empty, so a table of any other manager is refused.
+    pub(super) fn getdminfo(&self, log: &mut Vec<LogLine>) -> Reply {
+        let Some(open) = self.table(log) else {
+            return Ok(CasaValue::empty_record());
+        };
+        let managers = open.table.data_manager_info();
+        if let Some(other) = managers
+            .iter()
+            .find(|manager| manager.dm_type != "StManAipsIO")
+        {
+            return Err(Fail::Unsupported(format!(
+                "table.getdminfo of a table with a {} storage manager is not yet implemented \
+                 in casa-rs: casa-tables does not read the manager's SPEC (#1028)",
+                other.dm_type
+            )));
+        }
+        Ok(CasaValue::record(managers.iter().enumerate().map(
+            |(position, manager)| {
+                let mut columns = manager.columns.clone();
+                columns.sort();
+                (
+                    format!("*{}", position + 1),
+                    CasaValue::record([
+                        ("COLUMNS", CasaValue::Texts(columns)),
+                        ("NAME", CasaValue::Text(manager.name.clone())),
+                        ("SEQNR", CasaValue::Int(i64::from(manager.seq_nr))),
+                        ("SPEC", CasaValue::empty_record()),
+                        ("TYPE", CasaValue::Text(manager.dm_type.clone())),
+                    ]),
+                )
+            },
+        )))
+    }
+
     /// `getcolkeyword(columnname, keyword)`.
     pub(super) fn getcolkeyword(
         &self,

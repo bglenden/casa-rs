@@ -43,6 +43,18 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
     One unrelated keyword write by casa-rs into a table CASA wrote
     (`write-variable`), which rewrites the keyword record CASA created.
 
+`structure-write FIXTURE MS OUT_DIR OUT_JSON`
+    In OUT_DIR: `rows.table`, `columns.table` and `rows_columns.table`
+    (which adds columns too), copies of the python fixture on which the
+    recorded `rows`, `columns` and `rows_columns` scenarios are replayed
+    (as far as their first close) through `casars.tools.table`, checking every
+    step; `renamed.ms`, a copy of the small MeasurementSet with four columns
+    renamed; `removed.ms`, with two columns removed. OUT_JSON is what casa-rs
+    reads of each (`structure_dump`: names, descriptions, the first cells).
+
+`structure-rsread DIR OUT_JSON`
+    The same dump by casa-rs, of the tables in DIR (also those CASA wrote).
+
 `compare RS_JSON CASA_JSON`
     Prints the records on which the two dumps differ.
 
@@ -68,6 +80,18 @@ on the Mac mini; copy this file and `table_tool_oracle.py` side by side):
     `v_arr_*.table` tables `variants` wrote. casacore refuses that for an
     array keyword whose descriptor is fixed-shape, which casa-rs wrote until
     Astra's review of #1034 (finding 3).
+
+`structure-read DIR OUT_JSON`
+    What CASA reads of the tables `structure-write` left in DIR (and of
+    `casa_renamed.ms` and `casa_removed.ms`, below), in the same form, to
+    `compare` with casa-rs's dump of them.
+
+`structure-casa-write MS DIR`
+    CASA renames and removes the same columns of two copies of the small
+    MeasurementSet, `DIR/casa_renamed.ms` and `DIR/casa_removed.ms`;
+    `structure-rsread` them with casa-rs (a renamed column keeps its old name
+    in the column set, which casa-rs failed to find before #1025's table
+    part) and `compare` with `structure-read`.
 
 `write-variable TABLE`
     CASA writes array keywords (variable-shape, as CASA makes them) into
@@ -256,6 +280,247 @@ def command_rsread(table_path, out_json):
     tool.done()
 
 
+#: The tables `structure-write` makes (and `structure-casa-write` adds to) in
+#: its directory.
+STRUCTURE_TABLES = (
+    "rows.table", "columns.table", "rows_columns.table", "renamed.ms", "removed.ms",
+    "casa_renamed.ms", "casa_removed.ms", "casa_named.table", "casa_named_aipsio.table",
+    "shrink_user.table", "shrink_permanent.table", "tiled_multi.table",
+)
+
+#: What the structural calls do to the MeasurementSet's main table, by name:
+#: the columns renamed, then the ones removed (those the renames left alone).
+MS_RENAMES = [("ANTENNA1", "ANT1"), ("DATA", "DATA2"), ("FLAG_ROW", "FR"), ("TIME", "T")]
+MS_REMOVED = ["DATA", "FLAG_ROW"]
+
+
+#: Columns whose cells the dump does not read, each with the issue that says
+#: why: casa-rs's lazy read of a `TiledDataStMan` id column is wrong (#1038).
+UNREAD_CELLS = {("tiled_multi.table", "id"): "#1038"}
+
+
+def structure_dump(tool, path, table_name=""):
+    """What the tool reads of the table's rows and columns: the names, each
+    column's description (with its storage manager's type and name, and its
+    keywords) and its cells (every row of a small table, the first three of a
+    larger one). A cell is read only when `iscelldefined` says it is defined,
+    so that a read that fails for any other reason ends the run, as the same
+    failure of both tools would otherwise pass unseen. The managers
+    (`getdminfo`) are dumped where casa-rs answers."""
+    rows = tool.nrows()
+    result = {"nrows": rows, "colnames": list(tool.colnames())}
+    try:
+        result["dminfo"] = tool.getdminfo()
+    except NotImplementedError:  # the managers casa-rs does not read the SPEC of
+        pass
+    for column in result["colnames"]:
+        description = tool.getcoldesc(column)
+        result[f"desc:{column}"] = {
+            key: description[key]
+            for key in (
+                "valueType", "option", "ndim", "shape", "dataManagerType", "dataManagerGroup",
+                "keywords", "maxlen", "comment",
+            )
+            if key in description
+        }
+        cells = []
+        if (table_name, column) in UNREAD_CELLS:
+            result[f"cells:{column}"] = f"not read: {UNREAD_CELLS[(table_name, column)]}"
+            continue
+        for row in range(rows if rows <= 16 else 3):
+            if tool.iscelldefined(column, row):
+                cells.append(encode(tool.getcell(column, row), path))
+            else:
+                cells.append("undefined")
+        result[f"cells:{column}"] = cells
+    return {key: encode(value, path) for key, value in result.items()}
+
+
+def structure_dumps(tool_class, directory):
+    """The `structure_dump` of each table of `STRUCTURE_TABLES` in `directory`."""
+    dumps = {}
+    for name in STRUCTURE_TABLES:
+        path = Path(directory) / name
+        if not path.exists():
+            continue
+        tool = tool_class()
+        tool.open(str(path.resolve()))
+        dumps.update(
+            {
+                f"{name}:{key}": value
+                for key, value in structure_dump(tool, str(path.resolve()), name).items()
+            }
+        )
+        tool.done()
+    return dumps
+
+
+def command_structure_write(fixture, ms, out_dir, out_json):
+    sys.path.insert(0, str(RECORD))
+    import test_tools_table as replay  # noqa: PLC0415
+    from casars import tools  # noqa: PLC0415
+
+    out_dir = Path(out_dir)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    # The recorded rows and columns scenarios, as far as the first close: CASA
+    # then reads the table casa-rs left.
+    for name, scenario in (
+        ("rows.table", "rows"),
+        ("columns.table", "columns"),
+        ("rows_columns.table", "rows_columns"),
+    ):
+        shutil.copytree(fixture, out_dir / name)
+        path = str((out_dir / name).resolve())
+        tool = tools.table()
+        for index, step in enumerate(replay.RECORD["scenarios"][scenario]["steps"]):
+            if step["method"] == "close":
+                break
+            replay_step(replay, tool, step, path, f"{scenario}[{index}] {step['method']}")
+        tool.done()
+    shutil.copytree(ms, out_dir / "renamed.ms")
+    tool = tools.table()
+    assert tool.open(str((out_dir / "renamed.ms").resolve()), nomodify=False)
+    for old, new in MS_RENAMES:
+        assert tool.renamecol(old, new)
+    tool.done()
+    shutil.copytree(ms, out_dir / "removed.ms")
+    tool = tools.table()
+    assert tool.open(str((out_dir / "removed.ms").resolve()), nomodify=False)
+    assert tool.removecols(MS_REMOVED)
+    tool.done()
+    # Rows removed, then every other kind of write, under a write lock that is
+    # kept (Astra's review of #1036, finding 1): CASA does the same sequence.
+    for name, option in (("shrink_user.table", "user"), ("shrink_permanent.table", "permanent")):
+        shutil.copytree(fixture, out_dir / name)
+        tool = tools.table()
+        assert tool.open(
+            str((out_dir / name).resolve()), lockoptions={"option": option}, nomodify=False
+        )
+        if option == "user":
+            assert tool.lock()
+        assert tool.removerows([2])
+        assert tool.putkeyword("k", 1)
+        assert tool.putcell("id", 0, 9)
+        assert tool.renamecol("label", "name")
+        assert tool.addcols({"extra": {"valueType": "int"}})
+        if option == "user":
+            assert tool.unlock()
+        tool.done()
+    # casacore's TiledDataStMan table with two data columns and an id column:
+    # a data column is renamed, the id column refused (its name is also in the
+    # manager's hypercube values).
+    tiled = (
+        Path(__file__).resolve().parents[2]
+        / "crates/casa-tables/tests/data/tiled_data_stman/multi/big"
+    )
+    target = out_dir / "tiled_multi.table"
+    target.mkdir()
+    for file in ("table.dat", "table.f0", "table.f0_TSM0", "table.info"):
+        shutil.copy(tiled / file, target / file)
+    tool = tools.table()
+    assert tool.open(str(target.resolve()), nomodify=False)
+    assert tool.renamecol("a", "aa")
+    try:
+        tool.renamecol("id", "iz")
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit("the id column of a tiled manager was renamed")
+    tool.done()
+    write_json(out_json, structure_dumps(tools.table, out_dir))
+
+
+def command_structure_read(directory, out_json):
+    from casatools import table  # noqa: PLC0415
+
+    write_json(out_json, structure_dumps(table, directory))
+
+
+def command_structure_rsread(directory, out_json):
+    from casars import tools  # noqa: PLC0415
+
+    write_json(out_json, structure_dumps(tools.table, directory))
+    # A StManAipsIO with a name of its own is not rewritten in full: the name
+    # would be lost. The row calls refuse it, and change nothing.
+    named = Path(directory) / "casa_named_aipsio.table"
+    if named.exists():
+        before = {p.name: p.read_bytes() for p in named.iterdir() if p.name != "table.lock"}
+        tool = tools.table()
+        assert tool.open(str(named.resolve()), nomodify=False)
+        for call in (lambda: tool.addrows(1), lambda: tool.removerows([0]),
+                     lambda: tool.addcols({"c": {"valueType": "int"}})):
+            try:
+                call()
+            except NotImplementedError:
+                continue
+            raise SystemExit("a named StManAipsIO table was rewritten")
+        tool.done()
+        after = {p.name: p.read_bytes() for p in named.iterdir() if p.name != "table.lock"}
+        assert before == after, "a refused call changed the named StManAipsIO table"
+        print("named StManAipsIO: row and column calls refused, table unchanged")
+
+
+def command_structure_casa_write(ms, out_dir):
+    """CASA renames and removes the same columns of a copy of the MS."""
+    from casatools import table  # noqa: PLC0415
+
+    out_dir = Path(out_dir)
+    for name, work in (
+        ("casa_renamed.ms", lambda tool: [tool.renamecol(old, new) for old, new in MS_RENAMES]),
+        ("casa_removed.ms", lambda tool: tool.removecols(MS_REMOVED)),
+    ):
+        shutil.rmtree(out_dir / name, ignore_errors=True)
+        shutil.copytree(ms, out_dir / name)
+        tool = table()
+        tool.open(str(out_dir / name), nomodify=False)
+        work(tool)
+        tool.close()
+    # Tables whose managers are named: a tiled manager bound to the NAME
+    # `actual` while its column declares the group `declared` (`getcoldesc`
+    # and `getdminfo` say `actual`), and a `StManAipsIO` named `mine` (whose
+    # name casa-rs's full save would drop, so the tool must not rewrite it).
+    import numpy as np  # noqa: PLC0415
+
+    named = out_dir / "casa_named.table"
+    shutil.rmtree(named, ignore_errors=True)
+    tool = table()
+    tool.create(
+        str(named),
+        {
+            "a": {"valueType": "int"},
+            "cube": {
+                "valueType": "float", "ndim": 2, "shape": [2, 3], "option": 4,
+                "dataManagerType": "TiledShapeStMan", "dataManagerGroup": "declared",
+            },
+        },
+        nrow=3,
+        dminfo={
+            "*1": {
+                "TYPE": "TiledShapeStMan", "NAME": "actual",
+                "SPEC": {"DEFAULTTILESHAPE": [2, 3, 2]}, "COLUMNS": ["cube"],
+            }
+        },
+    )
+    for row in range(3):
+        tool.putcell("a", row, row + 5)
+        tool.putcell("cube", row, np.arange(6, dtype=np.float32).reshape(2, 3) + row)
+    tool.close()
+    named_aipsio = out_dir / "casa_named_aipsio.table"
+    shutil.rmtree(named_aipsio, ignore_errors=True)
+    tool = table()
+    tool.create(
+        str(named_aipsio),
+        {"a": {"valueType": "int"}, "b": {"valueType": "double"}},
+        nrow=3,
+        dminfo={"*1": {"TYPE": "StManAipsIO", "NAME": "mine", "SPEC": {}, "COLUMNS": ["a", "b"]}},
+    )
+    for row in range(3):
+        tool.putcell("a", row, row + 1)
+        tool.putcell("b", row, 0.5 * row)
+    tool.close()
+
+
 def command_variants(fixture, out_dir):
     import numpy as np  # noqa: PLC0415
     from casars import tools  # noqa: PLC0415
@@ -306,7 +571,10 @@ def command_compare(rs_json, casa_json):
     second = json.loads(Path(casa_json).read_text(encoding="utf-8"))
 
     def normal(value):
-        return re.sub(r'(/[^"]*/)?[\w.]*\.(table|ms)', "<T>", json.dumps(value, sort_keys=True))
+        text = re.sub(r'(/[^"]*/)?[\w.]*\.(table|ms)', "<T>", json.dumps(value, sort_keys=True))
+        # An empty string array has a NumPy width of its own in each tool
+        # (`<U1`, `<U5`); the width of nothing is not compared.
+        return re.sub(r'("data": \[\], "ndarray": )"<U\d+"', r'\1"<U"', text)
 
     different = [key for key in first if normal(first[key]) != normal(second.get(key))]
     print("records compared:", len(first), "| differences:", different)
@@ -502,6 +770,10 @@ COMMANDS = {
     "resize-variable": (command_resize_variable, 1),
     "typed": (command_typed, 2),
     "typed-check": (command_typed_check, 1),
+    "structure-write": (command_structure_write, 4),
+    "structure-read": (command_structure_read, 2),
+    "structure-rsread": (command_structure_rsread, 2),
+    "structure-casa-write": (command_structure_casa_write, 2),
 }
 
 

@@ -95,6 +95,79 @@ impl Incoming {
         Wide::from_python(obj).map(Self::Wide)
     }
 
+    /// The value as one string, when it is one.
+    pub(super) fn text(&self) -> Option<&str> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Texts(texts),
+            }) if texts.len() == 1 => Some(&texts[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as one integer, as `Record::asInt` takes it: an integer
+    /// scalar, and not a real, a Boolean, a string or an array.
+    pub(super) fn scalar_integer(&self) -> Option<i64> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Ints(ints),
+            }) if ints.len() == 1 => Some(ints[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as one Boolean, as `Record::asBool` takes it.
+    pub(super) fn scalar_flag(&self) -> Option<bool> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Bools(flags),
+            }) if flags.len() == 1 => Some(flags[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as integers, as `Record::toArrayInt64` takes it: an integer
+    /// or integers, an empty array of any type, and not reals.
+    pub(super) fn integer_elements(&self) -> Option<Vec<i64>> {
+        match self {
+            Self::Wide(Wide {
+                data: Data::Ints(ints),
+                ..
+            }) => Some(ints.clone()),
+            Self::Wide(Wide {
+                shape: Some(shape), ..
+            }) if shape.iter().product::<usize>() == 0 => Some(Vec::new()),
+            _ => None,
+        }
+    }
+
+    /// The fields of a sub-record, when the value is one.
+    pub(super) fn fields(&self) -> Option<&[(String, Incoming)]> {
+        match self {
+            Self::Record(fields) => Some(fields),
+            Self::Wide(_) => None,
+        }
+    }
+
+    /// casacore's name of the value's type, padded to the eight characters
+    /// `RecordRep`'s messages give it.
+    pub(super) fn type_label(&self) -> &'static str {
+        match self {
+            Self::Record(_) => "Record  ",
+            Self::Wide(Wide { shape: Some(_), .. }) => "Array   ",
+            Self::Wide(Wide { data, .. }) => match data {
+                Data::Bools(_) => "Bool    ",
+                Data::Ints(_) => "Int     ",
+                Data::Floats(_) => "Double  ",
+                Data::Complexes(_) => "DComplex",
+                Data::Texts(_) => "String  ",
+            },
+        }
+    }
+
     /// The value as a new keyword.
     pub(super) fn natural(self) -> Result<Value, Fail> {
         match self {

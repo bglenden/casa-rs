@@ -189,14 +189,14 @@ def same_cells_as_getcell(
     assert value["data"] == expected, where
 
 
-#: Recorded from CASA but not implemented yet (`getcoldesc`, `getdminfo`,
-#: `addrows`, `removerows`, `addcols`, `renamecol`, `removecols`); a scenario
-#: leaves this set as its methods land.
-PENDING: set[str] = {"rows_columns"}
+#: Recorded from CASA but not implemented yet; a scenario leaves this set as
+#: its methods land. (`rows_columns`, every structural call in one sequence,
+#: waits for nothing now.)
+PENDING: set[str] = set()
 
 #: Recorded from CASA but not followed: its own faults
 #: (`docs/CASA (C++) bugs.md`), each with a test of its own below.
-CASA_BUGS: set[str] = {"casa_bugs", "int_overflow"}
+CASA_BUGS: set[str] = {"casa_bugs", "int_overflow", "addrows_negative", "structure_partial"}
 
 REPLAYED = sorted(set(RECORD["scenarios"]) - CASA_BUGS - PENDING)
 
@@ -669,4 +669,270 @@ def test_a_large_array_is_copied_in_bulk_not_as_a_python_object_per_element(
     reader = tools.table()
     assert reader.open(str(path))
     assert reader.getkeyword("big").shape == (4, 64, 4000)
+    reader.done()
+
+
+@pytest.mark.parametrize("option", ["auto", "permanent", "user"])
+def test_columns_renamed_or_removed_change_table_dat_and_the_files_of_removed_managers_only(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """On a MeasurementSet, CASA changes `table.dat` alone to rename a column
+    and also deletes the files of a storage manager left with no column to
+    remove one (`tools/casa-compat` probe on the mini, 2026-10-31); no row is
+    rewritten. casa-rs does the same in every lock mode, and a reader sees the
+    columns under their new names (#1025)."""
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    before = table_files(path)
+    reader = tools.table()
+    assert reader.open(str(path))
+    antenna1, data = reader.getcol("ANTENNA1"), reader.getcell("DATA", 3)
+    reader.done()
+
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert tool.renamecol("ANTENNA1", "ANT1")
+    assert tool.renamecol("DATA", "DATA2")
+    assert tool.renamecol("FLAG_ROW", "FR")
+    assert tool.close()
+    renamed = table_files(path)
+    assert set(renamed) == set(before)
+    assert {name for name in before if before[name] != renamed[name]} == {"table.dat"}
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert "ANTENNA1" not in reader.colnames() and "ANT1" in reader.colnames()
+    assert (reader.getcol("ANT1") == antenna1).all()
+    assert (reader.getcell("DATA2", 3) == data).all()
+    reader.done()
+
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert tool.removecols(["DATA2", "FR"])
+    assert tool.close()
+    removed = table_files(path)
+    gone = set(renamed) - set(removed)
+    assert gone == {
+        "table.f17", "table.f17_TSM1", "table.f17_TSM2",  # DATA's tiled manager
+        "table.f6",  # FLAG_ROW's standard manager
+    }, sorted(gone)
+    assert set(removed) <= set(renamed)
+    kept = {name for name in removed if removed[name] != renamed[name]}
+    assert kept == {"table.dat"}, sorted(kept)
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert "DATA2" not in reader.colnames() and "FR" not in reader.colnames()
+    assert (reader.getcol("ANT1") == antenna1).all()
+    assert reader.nrows() == 1058
+    reader.done()
+
+
+def test_a_table_of_several_managers_refuses_rows_before_anything_changes(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """casa-tables cannot change the rows of a MeasurementSet in place, and a
+    full rewrite would change its layout: `addrows` is not implemented for it
+    (`NotImplementedError`), and `removerows` says what CASA says, since its
+    incremental and tiled managers cannot remove rows. Every file is as it was
+    and nothing was loaded to find out (#1025)."""
+    path = tmp_path.resolve() / "mssel_test_small.ms"
+    shutil.copytree(fixtures["ms"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    with pytest.raises(NotImplementedError, match="StManAipsIO group"):
+        tool.addrows(2)
+    with pytest.raises(NotImplementedError, match="StManAipsIO group"):
+        tool.addcols({"extra": {"valueType": "double"}})
+    with pytest.raises(NotImplementedError, match="getdminfo.*IncrementalStMan|getdminfo.*Tiled"):
+        tool.getdminfo()
+    with pytest.raises(RuntimeError, match="Rows cannot be removed from table .*do not support it"):
+        tool.removerows([0])
+    assert tool.nrows() == 1058
+    assert tool.close()
+    assert table_files(path) == before
+
+
+@pytest.mark.parametrize("option", ["default", "auto", "user", "permanent"])
+def test_rows_removed_from_a_table_are_gone_for_a_handle_that_opens_it_afterwards(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A table written in full after rows were removed must not be left
+    claiming the rows it had: the handle that wrote it keeps the lock (`user`,
+    `permanent`) or has released it, and a second handle opening the table at
+    once sees the rows that are there, before and after the first closes. The
+    rows last published in `table.lock` are the old count until the release;
+    a flush at the release used to raise `table.dat` back to it (#1025)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert tool.addrows(2)
+    assert tool.putcell("id", 4, 44)
+    assert tool.removerows([0, 3])
+    assert tool.nrows() == 3
+    if option == "user":
+        assert tool.unlock()
+    elif option == "permanent":
+        pass  # the lock stays held until close
+    if option != "permanent":
+        reader = tools.table()
+        assert reader.open(str(path))
+        assert reader.nrows() == 3
+        assert [reader.getcell("id", row) for row in range(3)] == [2, 3, 44]
+        reader.done()
+    assert tool.close()
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.nrows() == 3
+    assert [reader.getcell("id", row) for row in range(3)] == [2, 3, 44]
+    reader.done()
+
+
+def test_addrows_with_a_negative_count_is_refused_where_casa_removes_rows(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA 6.7.6.14 takes the count as an unsigned number that wraps:
+    `addrows(-1)` removes the last row and `addrows(-2)` two
+    (`docs/CASA (C++) bugs.md`). casa-rs refuses and changes nothing."""
+    counts = [
+        step["value"]["int"]
+        for step in RECORD["scenarios"]["addrows_negative"]["steps"]
+        if step["method"] == "nrows"
+    ]
+    assert counts == [3, 2, 0, 0], "CASA: 3 rows, after addrows(-1) 2, after addrows(-2) 0"
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    before = table_files(path)
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    with pytest.raises(RuntimeError, match="must not be negative"):
+        tool.addrows(-1)
+    assert tool.nrows() == 3
+    assert tool.close()
+    assert table_files(path) == before
+
+
+def test_a_structural_call_that_would_fail_part_way_changes_nothing_where_casa_changes_part(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """CASA does the part of a failing call before the failure: `removerows(
+    [2, 2])` removes the first row 2 and then raises, `addcols` adds the
+    columns that sort before the one that exists and then raises (Astra's
+    review of #1036, finding 6; `docs/CASA (C++) bugs.md`). casa-rs raises the
+    same errors and leaves the table as it was: the whole call is checked
+    first."""
+    steps = RECORD["scenarios"]["structure_partial"]["steps"]
+    recorded_rows = [step["value"]["int"] for step in steps if step["method"] == "nrows"]
+    assert recorded_rows == [3, 2], "CASA left two rows"
+    recorded_columns = next(
+        step["value"]["list"] for step in steps if step["method"] == "colnames"
+    )
+    assert {"str": "aaa"} in recorded_columns, "CASA added the column before the failing one"
+
+    path = str((tmp_path / "python_fixture.table").resolve())
+    shutil.copytree(fixtures["table"], path)
+    before = table_files(Path(path))
+    tool = tools.table()
+    assert tool.open(path, nomodify=False)
+    for step in steps:
+        if step["method"] in ("removerows", "addcols"):
+            got = run_step(tool, step, path)
+            assert "error" in got, step
+            same_error(got["error"], step["error"], step["method"])
+    assert tool.nrows() == 3
+    assert "aaa" not in tool.colnames()
+    assert tool.close()
+    assert table_files(Path(path)) == before
+
+
+@pytest.mark.parametrize("option", ["default", "auto", "user"])
+def test_a_reader_sees_the_columns_another_process_renamed_and_removed(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """After another process renames a column and removes another, a handle
+    that synchronizes on its next read describes the managers as they now are:
+    `getcoldesc` of the new name names its manager, and `getdminfo` lists the
+    new columns and not the old ones (the lock's reload took the schema and
+    the rows but not the managers; Astra's review of #1036, finding 7)."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option})
+    if option == "user":
+        assert tool.lock(write=False)
+    assert tool.getcoldesc("id")["dataManagerType"] == "StManAipsIO"
+    assert "id" in tool.getdminfo()["*1"]["COLUMNS"]
+    assert tool.unlock()  # the other process needs the write lock
+
+    subprocess.run(
+        [sys.executable, "-c", STRUCTURE_WRITER, str(path)], check=True, timeout=120
+    )
+
+    assert tool.getcoldesc("identifier")["dataManagerType"] == "StManAipsIO"
+    columns = list(tool.getdminfo()["*1"]["COLUMNS"])
+    assert "identifier" in columns
+    assert "id" not in columns and "gain" not in columns
+    assert tool.close()
+
+
+STRUCTURE_WRITER = """
+import sys
+from casars import tools
+
+tool = tools.table()
+assert tool.open(sys.argv[1], nomodify=False)
+assert tool.renamecol("id", "identifier")
+assert tool.removecols(["gain"])
+assert tool.close()
+"""
+
+
+@pytest.mark.parametrize("option", ["user", "permanent"])
+def test_writes_after_a_row_removal_keep_the_rows_removed_under_the_same_lock(
+    option: str, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """A full rewrite that removes rows, then a keyword, a cell, a rename and
+    an added column, all under the write lock a `user` or `permanent` handle
+    keeps: each of the later writes read the published row count back, which
+    still held the old count and raised `table.dat` to it, so that the table
+    claimed rows its manager lacked (Astra's review of #1036, finding 1). CASA
+    does the same sequence without trouble."""
+    path = tmp_path.resolve() / "python_fixture.table"
+    shutil.copytree(fixtures["table"], path)
+    # A first lock period that writes, so that `table.lock` publishes three rows.
+    warm = tools.table()
+    assert warm.open(str(path), nomodify=False)
+    assert warm.putkeyword("warm", 1)
+    assert warm.close()
+
+    tool = tools.table()
+    assert tool.open(str(path), lockoptions={"option": option}, nomodify=False)
+    if option == "user":
+        assert tool.lock()
+    assert tool.removerows([2])
+    assert tool.nrows() == 2
+    assert tool.putkeyword("k", 1)
+    assert tool.nrows() == 2
+    assert tool.putcell("id", 0, 9)
+    assert tool.renamecol("label", "name")
+    assert tool.addcols({"extra": {"valueType": "int"}})
+    assert tool.nrows() == 2
+    assert tool.getcol("name").tolist() == ["alpha", "beta"]
+    if option == "user":
+        assert tool.unlock()
+    assert tool.close()
+
+    reader = tools.table()
+    assert reader.open(str(path))
+    assert reader.nrows() == 2
+    assert reader.getcell("id", 0) == 9
+    assert reader.getkeyword("k") == 1
+    assert reader.getcol("name").tolist() == ["alpha", "beta"]
+    assert "extra" in reader.colnames()
     reader.done()

@@ -30,6 +30,7 @@ mod mutation;
 mod persisted_rows;
 mod query;
 mod streamed_scalar;
+mod structure;
 mod virtual_columns;
 
 pub use generated_array::{GeneratedArrayColumn, GeneratedArrayValueRun};
@@ -1795,10 +1796,11 @@ struct LockState {
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
     /// The table's change count when its state last matched the disk (open,
-    /// reload or flush). Releasing a write lock writes the table only when
-    /// the count has moved since, as casacore's `PlainTable::putFile` writes
-    /// only what changed.
-    flushed_generation: u64,
+    /// reload, flush or a full save to its own directory). Releasing a write
+    /// lock writes the table only when the count has moved since, as
+    /// casacore's `PlainTable::putFile` writes only what changed. It is
+    /// atomic because `Table::save` writes through a shared borrow.
+    flushed_generation: std::sync::atomic::AtomicU64,
     /// Whether this handle has written the table on disk, or started to,
     /// under the write lock it holds, and has not yet published that write
     /// in the sync data. Releasing the lock publishes the write when this is
@@ -1821,7 +1823,10 @@ struct LockState {
 impl LockState {
     /// Whether the table changed since its state last matched the disk.
     fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
-        table.generation() != self.flushed_generation
+        table.generation()
+            != self
+                .flushed_generation
+                .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether this lock period wrote the table on disk without yet

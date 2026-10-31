@@ -181,7 +181,6 @@ struct SsmHeader {
 
 #[derive(Debug, Clone)]
 struct SsmDmInfo {
-    #[allow(dead_code)]
     name: String,
     column_offsets: Vec<u32>,
     col_index_map: Vec<u32>,
@@ -273,6 +272,12 @@ fn parse_ssm_dm_blob(data: &[u8]) -> Result<SsmDmInfo, StorageError> {
         column_offsets,
         col_index_map,
     })
+}
+
+/// The manager's name (`DataManager::dataManagerName()`), from its blob in
+/// `table.dat`; `None` for a blob that does not parse.
+pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
+    parse_ssm_dm_blob(data).ok().map(|info| info.name)
 }
 
 /// Read a `Block<uInt>` as serialised by C++ casacore's `putBlock`.

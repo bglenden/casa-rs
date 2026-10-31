@@ -21,6 +21,7 @@ use super::{
 
 #[cfg(unix)]
 mod stale_rows;
+mod structure;
 
 /// `schema` as `manager` stores it: IncrementalStMan stores Direct
 /// fixed-shape arrays only, so its fixed-shape arrays become Direct.
@@ -2170,6 +2171,50 @@ fn cell_slices_of_a_lazy_table_load_no_rows() {
             &ArrayValue::from_i32_vec(vec![20, 21]),
             "{dm:?}"
         );
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+/// The manager's name is what the table on disk says it is
+/// (`DataManager::dataManagerName()`): for `StandardStMan` and
+/// `IncrementalStMan` the name in the manager's blob of `table.dat`, which
+/// casa-rs writes as the manager's type tag (casacore writes the group); for
+/// `StManAipsIO` the name in the header of its file, which casa-rs writes
+/// empty; for the others the group the columns were saved with.
+#[test]
+fn a_data_manager_info_names_the_manager_as_the_table_on_disk_does() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("flag", PrimitiveType::Bool),
+    ])
+    .expect("schema");
+    for (kind, name) in [
+        (DataManagerKind::StManAipsIO, ""),
+        (DataManagerKind::StandardStMan, "SSM"),
+        (DataManagerKind::IncrementalStMan, "ISM"),
+    ] {
+        let root = unique_test_dir(&format!("dm_name_{kind:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        let mut table = Table::with_schema(schema_for_manager(&schema, kind));
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("flag", Value::Scalar(ScalarValue::Bool(true))),
+            ]))
+            .expect("push row");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(kind)
+                    .with_data_manager_group("MyGroup"),
+            )
+            .expect("save");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open");
+        let managers = reopened.data_manager_info();
+        assert!(!managers.is_empty(), "{kind:?}");
+        for manager in managers {
+            assert_eq!(manager.name, name, "{kind:?}: {manager:?}");
+        }
         std::fs::remove_dir_all(&root).expect("cleanup test dir");
     }
 }

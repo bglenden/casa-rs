@@ -30,7 +30,7 @@ const METHODS: &[Method] = &[
             param("dminfo", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "addreadmeline",
@@ -38,7 +38,7 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, No),
+    method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, Yes),
     method("browse", &[], R::Any, No),
     method(
         "calc",
@@ -222,7 +222,7 @@ const METHODS: &[Method] = &[
         "getcoldesc",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcoliter",
@@ -282,7 +282,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("getdminfo", &[], R::Any, No),
+    method("getdminfo", &[], R::Any, Yes),
     method(
         "getkeyword",
         &[param("keyword", K::Any, Empty)],
@@ -491,7 +491,7 @@ const METHODS: &[Method] = &[
         "removecols",
         &[param("columnames", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removekeyword",
@@ -503,7 +503,7 @@ const METHODS: &[Method] = &[
         "removerows",
         &[param("rownrs", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "renamecol",
@@ -512,7 +512,7 @@ const METHODS: &[Method] = &[
             param("newname", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("resync", &[], R::Any, No),
     method(

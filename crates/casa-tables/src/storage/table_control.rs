@@ -71,6 +71,13 @@ pub(crate) struct TableDatContents {
     pub big_endian: bool,
     pub table_desc: TableDescContents,
     pub column_set: ColumnSetContents,
+    /// The name a renamed column has in the column set, by the column's
+    /// current name: casacore's `originalName`, under which its storage
+    /// manager knows it, which `Table::renameColumn` leaves as it was. The
+    /// reader gives every `PlainColumnEntry` its column's current name (so
+    /// that a column finds its manager by name) and keeps the name on file
+    /// here for the writer; a column never renamed has no entry.
+    pub names_on_file: std::collections::HashMap<String, String>,
 }
 
 impl TableDatContents {
@@ -196,16 +203,28 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
             let table_desc = read_table_desc(&mut io)?;
             let ncol = table_desc.columns.len();
             let col_is_array: Vec<bool> = table_desc.columns.iter().map(|c| c.is_array).collect();
-            let column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
+            let mut column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
 
             io.getend()?;
             io.close()?;
+
+            // The column set lists its columns in the description's order;
+            // a renamed column is listed under the name it had at creation.
+            let mut names_on_file = std::collections::HashMap::new();
+            for (entry, desc) in column_set.columns.iter_mut().zip(&table_desc.columns) {
+                if entry.original_name != desc.col_name {
+                    let on_file =
+                        std::mem::replace(&mut entry.original_name, desc.col_name.clone());
+                    names_on_file.insert(desc.col_name.clone(), on_file);
+                }
+            }
 
             Ok(TableDatResult::Plain(TableDatContents {
                 nrrow,
                 big_endian,
                 table_desc,
                 column_set,
+                names_on_file,
             }))
         }
         "RefTable" => {
@@ -1247,7 +1266,12 @@ fn write_column_set(io: &mut AipsIo, contents: &TableDatContents) -> Result<(), 
     // PlainColumn entries
     for (i, col) in cs.columns.iter().enumerate() {
         io.put_u32(2)?; // version=2
-        io.put_string(&col.original_name)?;
+        io.put_string(
+            contents
+                .names_on_file
+                .get(&col.original_name)
+                .unwrap_or(&col.original_name),
+        )?;
         // ScaColData or ArrColData derived data
         io.put_u32(1)?; // version=1
         io.put_u32(col.dm_seq_nr)?;
@@ -1574,6 +1598,17 @@ impl TableDatContents {
         for column in &column_set.columns {
             bytes = bytes.checked_add(column.original_name.capacity())?;
         }
+        // The names of renamed columns, as they stand and as the file has them.
+        bytes = bytes.checked_add(
+            self.names_on_file
+                .capacity()
+                .checked_mul(size_of::<(String, String)>())?,
+        )?;
+        for (current, on_file) in &self.names_on_file {
+            bytes = bytes
+                .checked_add(current.capacity())?
+                .checked_add(on_file.capacity())?;
+        }
         Some(bytes)
     }
 
@@ -1635,6 +1670,7 @@ impl TableDatContents {
                 }],
                 columns: plain_columns,
             },
+            names_on_file: std::collections::HashMap::new(),
         }
     }
     /// Build `TableDatContents` with both a storage manager DM and virtual engine DMs.
@@ -2082,6 +2118,7 @@ impl TableDatContents {
                 data_managers: dm_entries,
                 columns: plain_columns,
             },
+            names_on_file: std::collections::HashMap::new(),
         }
     }
 }
@@ -2445,6 +2482,7 @@ mod tests {
                     is_array: true,
                 }],
             },
+            names_on_file: std::collections::HashMap::new(),
         };
 
         let dir = test_dir("col_kw_rt");

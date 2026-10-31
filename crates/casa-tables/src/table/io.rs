@@ -266,7 +266,7 @@ impl Table {
                 error
             })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -421,7 +421,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -508,7 +508,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = row_count,
@@ -1162,6 +1162,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: source_dm.type_name,
+                name: target_data_manager_name.to_string(),
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
@@ -1323,6 +1324,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: "TiledShapeStMan".to_string(),
+                name: column.to_string(),
                 seq_nr,
                 columns: vec![column.to_string()],
             });
@@ -1644,7 +1646,10 @@ impl Table {
         // a write already persisted under it stays to be published.
         #[cfg(unix)]
         if let Some(state) = self.lock_state.as_mut() {
-            state.flushed_generation = self.inner.generation();
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         Ok(())
     }
@@ -1653,7 +1658,9 @@ impl Table {
     /// when that layout is a single `StManAipsIO` group holding every column:
     /// the group's name and the byte order of its files are kept. `None` for
     /// any other layout (several groups, another manager, a table that is
-    /// not on disk), which a full [`save`](Table::save) would change.
+    /// not on disk, a manager that has a name of its own in the header of its
+    /// file, which the writer would drop), which a full
+    /// [`save`](Table::save) would change.
     ///
     /// `StManAipsIO` keeps its columns in one file written in full, as
     /// casacore writes it, so such a table can be saved in full where a
@@ -1690,6 +1697,18 @@ impl Table {
                 .iter()
                 .any(|column| column.data_manager_type != "StManAipsIO")
         {
+            return Ok(None);
+        }
+        // A full save writes the empty manager name casa-rs always writes in
+        // the file's header, where casacore keeps the name the manager was
+        // bound with; a manager with a name of its own would lose it, so such
+        // a table is not one to rewrite.
+        let stored_name = crate::storage::stman_aipsio::name_from_file(&path.join(format!(
+            "{}{}",
+            crate::storage::TABLE_DATA_FILE_PREFIX,
+            manager.seq_nr
+        )));
+        if stored_name.is_some_and(|name| !name.is_empty()) {
             return Ok(None);
         }
         let format = if table_dat.big_endian {
