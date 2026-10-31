@@ -26,7 +26,8 @@ CASA behaviours casa-rs does not follow:
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
 [`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
-[`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows).
+[`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
+[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2698,6 +2699,27 @@ row 0 back, so that its later reads agree.
 (`addrows_negative` scenario). The count converts to a huge unsigned number
 and the table's row count wraps. casa-rs raises `RuntimeError` ("the number
 of rows must not be negative") and changes nothing.
+
+## `tb.removerows` and `tb.addcols` do part of a call that fails
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1036)
+- Affected code: casacore `BaseTable::removeRow(Vector)` and
+  `TableProxy::addColumns`
+
+`tb.removerows([2, 2])` on a table of three rows removes the first row 2,
+then raises "rownr 2 too high ... (#rows=2)", leaving two rows: the row
+numbers are taken from the highest down and each is checked against the
+table as it then is. (A number beyond the table, even among valid ones, fails
+before any row goes: it is the highest.) `tb.addcols` of `aaa` and `id` on a
+table that has `id` adds `aaa` and then raises "column already exists":
+`addColumns` builds the whole description first (a malformed field fails the
+call with nothing added) and then adds the columns one by one, in the
+record's sorted order (`structure_partial` scenario). casa-rs checks the whole
+call before it changes anything: both raise CASA's message and leave the table
+as it was. The successful calls, repeats included (`removerows([0, 0])`
+removes two rows), are CASA's.
 
 ## `importfits` reads every FITS date as UTC
 

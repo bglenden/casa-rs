@@ -669,6 +669,10 @@ impl State {
                     fields.push(("ndim", CasaValue::Int(ndim.map_or(-1, |ndim| ndim as i64))));
                 }
             }
+        } else if options.direct && matches!(schema.column_type(), ColumnType::Scalar) {
+            // A scalar column is of fixed shape, which casacore flags when
+            // the column is `Direct` (a scalar `int` made with option 1 says 5).
+            option |= 4;
         }
         fields.push(("option", CasaValue::Int(option)));
         Ok(CasaValue::record(fields))

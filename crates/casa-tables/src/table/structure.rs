@@ -5,8 +5,10 @@
 //! MeasurementSet keeps its tiled, incremental and standard managers.
 //!
 //! Each operation edits what `table.dat` holds, then reloads the table from
-//! the disk ([`Table::resync`]), so the handle is what the disk says without
-//! the change having loaded a row. The in-memory edits of
+//! the disk ([`Table::resync_or_discard`]), so the handle is what the disk
+//! says without the change having loaded a row, and holds nothing a release
+//! of the write lock would write in full. An operation refused before it
+//! wrote leaves the handle as clean as it found it. The in-memory edits of
 //! [`Table::rename_column`] and [`Table::remove_column`] load every row and
 //! are for a table written in full afterwards.
 //!
@@ -46,9 +48,29 @@ fn remove_manager_files(table_dir: &Path, seq_nr: u32) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether a hypercolumn definition of the table description lists `name`
+/// as a coordinate or an id column (the private keyword `Hypercolumn_<name>`
+/// lists its `data`, `coord` and `id` columns).
+fn is_id_or_coordinate_column(private_keywords: &RecordValue, name: &str) -> bool {
+    private_keywords
+        .fields()
+        .iter()
+        .filter(|field| field.name.starts_with("Hypercolumn_"))
+        .filter_map(|field| match &field.value {
+            Value::Record(definition) => Some(definition),
+            _ => None,
+        })
+        .flat_map(|definition| ["coord", "id"].map(|list| definition.get(list)))
+        .any(|list| match list {
+            Some(Value::Array(ArrayValue::String(names))) => names.iter().any(|n| n == name),
+            _ => false,
+        })
+}
+
 /// Renames `old` to `new` in the hypercolumn definitions of the table
-/// description, as `TableDesc::renameHypercolumn` does: the private keyword
-/// `Hypercolumn_<name>` lists its data, coordinate and id columns.
+/// description, as `TableDesc::renameColumn` does through
+/// `adjustHypercolumns` (casacore's own handling of coordinate and id
+/// columns there is not followed: they are refused, not renamed).
 fn rename_in_hypercolumns(private_keywords: &mut RecordValue, old: &str, new: &str) {
     edit_hypercolumns(private_keywords, |names| {
         for name in names {
@@ -102,6 +124,18 @@ impl Table {
             let index = column_index(dat, old)?;
             if column_index(dat, new).is_ok() {
                 return Err(SchemaError::DuplicateColumn(new.to_string()).into());
+            }
+            // The name of an id or coordinate column is also kept in the
+            // hypercube values of its tiled manager's file, which an edit of
+            // `table.dat` alone leaves behind: the renamed column would be
+            // unreadable. (casacore's own `adjustHypercolumns` does not carry
+            // these names over either.)
+            if is_id_or_coordinate_column(&dat.table_desc.private_keywords, old) {
+                return Err(TableError::Storage(format!(
+                    "column \"{old}\" is an id or coordinate column of a hypercolumn: its name \
+                     is also held in the hypercube values of its storage manager's file, which \
+                     cannot be renamed in place"
+                )));
             }
             dat.table_desc.columns[index].col_name = new.to_string();
             dat.column_set.columns[index].original_name = new.to_string();
@@ -179,7 +213,8 @@ impl Table {
                 .data_managers
                 .retain(|manager| !gone.contains(&manager.seq_nr));
             // A hypercolumn loses the columns it listed; one left with no
-            // data column is gone (`TableDesc::removeColumn`).
+            // data column is gone (the rule `adjustHypercolumns` applies to
+            // data columns; this is the native policy for the others).
             edit_hypercolumns(&mut dat.table_desc.private_keywords, |list| {
                 list.retain(|name| !removed_names.contains(name));
             });
@@ -229,7 +264,14 @@ impl Table {
             .source_path
             .clone()
             .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?;
+        // Every admitted write operation counts as a change of the handle,
+        // and a change the disk lacks is what releasing the write lock writes
+        // in full (as `StManAipsIO`, whatever the table's layout). This
+        // operation writes to the disk itself, so it must leave the handle
+        // as clean as it found it.
+        let dirty_before = self.holds_unflushed_changes();
         let auto_unlock = self.begin_write_operation(operation)?;
+        let mut wrote = false;
         let result = (|| {
             let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
             let TableDatResult::Plain(mut table_dat) =
@@ -243,13 +285,26 @@ impl Table {
             table_dat.raise_row_count(persisted_rows);
             let removed_managers = edit(&mut table_dat, &path)?;
             self.note_persisted_write(&path);
+            wrote = true;
             crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
             for seq_nr in removed_managers {
                 remove_manager_files(&path, seq_nr).map_err(StorageError::from)?;
             }
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&path);
-            self.resync()
+            Ok(())
         })();
+        if !wrote && !dirty_before {
+            // Refused before anything reached the disk.
+            self.mark_flushed();
+        }
+        let result = if wrote {
+            // The disk changed, wholly or in part: the handle takes what it
+            // holds from the disk, and is clean whether or not that works.
+            let reloaded = self.resync_or_discard();
+            result.and(reloaded)
+        } else {
+            result
+        };
         self.finish_write_operation(auto_unlock, result)
     }
 }

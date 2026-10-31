@@ -37,7 +37,8 @@ fn invalid(message: String) -> Fail {
 fn whole_table(table: &Table, what: &str) -> Result<TableOptions, Fail> {
     table.single_stman_aipsio_options()?.ok_or_else(|| {
         Fail::Unsupported(format!(
-            "table.{what} of a table that is not one StManAipsIO group is not yet implemented \
+            "table.{what} of a table that is not one StManAipsIO group (without a manager name \
+             of its own) is not yet implemented \
              in casa-rs: casa-tables cannot change the rows or columns of other storage \
              managers in place (#1028)"
         ))
@@ -186,9 +187,10 @@ impl State {
     }
 
     /// `addcols(desc, dminfo)`: columns of default values (a cell of an array
-    /// of variable shape undefined), all or none of them added. A column goes
-    /// into the table's one storage manager; naming another, or a `dminfo`,
-    /// is not implemented.
+    /// of variable shape undefined), all or none of them added (CASA adds the
+    /// ones before a column that fails, which casa-rs does not follow:
+    /// `docs/CASA (C++) bugs.md`). A column goes into the table's one storage
+    /// manager; naming another, or a `dminfo`, is not implemented.
     pub(super) fn addcols(
         &mut self,
         description: Vec<(String, Incoming)>,
@@ -200,10 +202,13 @@ impl State {
             // name: the columns are added in that order.
             let mut description = description;
             description.sort_by(|a, b| a.0.cmp(&b.0));
-            let columns = description
+            let columns: Vec<_> = description
                 .iter()
                 .map(|(name, column)| parse(name, column))
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect();
             let schema = table.schema();
             if let Some(existing) = columns.iter().find(|column| {
                 schema.is_some_and(|schema| schema.column(column.schema.name()).is_some())

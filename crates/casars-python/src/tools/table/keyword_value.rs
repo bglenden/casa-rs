@@ -106,13 +106,40 @@ impl Incoming {
         }
     }
 
-    /// The value as integers, when it is an integer or a list of them.
-    pub(super) fn integers(&self) -> Option<&[i64]> {
+    /// The value as one integer, as `Record::asInt` takes it: an integer
+    /// scalar, and not a real, a Boolean, a string or an array.
+    pub(super) fn scalar_integer(&self) -> Option<i64> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Ints(ints),
+            }) if ints.len() == 1 => Some(ints[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as one Boolean, as `Record::asBool` takes it.
+    pub(super) fn scalar_flag(&self) -> Option<bool> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Bools(flags),
+            }) if flags.len() == 1 => Some(flags[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as integers, as `Record::toArrayInt64` takes it: an integer
+    /// or integers, an empty array of any type, and not reals.
+    pub(super) fn integer_elements(&self) -> Option<Vec<i64>> {
         match self {
             Self::Wide(Wide {
                 data: Data::Ints(ints),
                 ..
-            }) => Some(ints),
+            }) => Some(ints.clone()),
+            Self::Wide(Wide {
+                shape: Some(shape), ..
+            }) if shape.iter().product::<usize>() == 0 => Some(Vec::new()),
             _ => None,
         }
     }

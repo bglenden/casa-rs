@@ -191,6 +191,10 @@ impl Table {
                         message: e.to_string(),
                     })?;
                 self.virtual_columns = snapshot.virtual_columns;
+                // The storage managers and the table info are what another
+                // process may have changed too (a renamed or removed column).
+                self.dm_info = snapshot.dm_info;
+                self.table_info = snapshot.table_info;
                 self.inner.replace_from_snapshot(
                     snapshot.rows,
                     snapshot.undefined_cells,
@@ -299,6 +303,44 @@ impl Table {
         }
         reloaded
     }
+
+    /// Reloads the table from disk, as [`resync`](Self::resync) does.
+    /// Without locks there is no write lock holding unflushed changes to
+    /// discard.
+    #[cfg(not(unix))]
+    pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
+        self.resync()
+    }
+
+    /// Whether the handle holds changes the disk does not have, which the
+    /// release of its write lock would write in full.
+    #[cfg(unix)]
+    pub(super) fn holds_unflushed_changes(&self) -> bool {
+        self.lock_state
+            .as_ref()
+            .is_some_and(|state| state.has_unflushed_changes(&self.inner))
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn holds_unflushed_changes(&self) -> bool {
+        false
+    }
+
+    /// Records that the handle has nothing the disk lacks: a disk-only
+    /// operation that began by counting as a change (every write operation
+    /// does) was refused before it wrote anything.
+    #[cfg(unix)]
+    pub(super) fn mark_flushed(&self) {
+        if let Some(state) = self.lock_state.as_ref() {
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn mark_flushed(&self) {}
 
     #[cfg(unix)]
     fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {

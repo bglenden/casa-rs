@@ -284,7 +284,7 @@ def command_rsread(table_path, out_json):
 #: its directory.
 STRUCTURE_TABLES = (
     "rows.table", "columns.table", "rows_columns.table", "renamed.ms", "removed.ms",
-    "casa_renamed.ms", "casa_removed.ms",
+    "casa_renamed.ms", "casa_removed.ms", "casa_named.table", "casa_named_aipsio.table",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -295,22 +295,33 @@ MS_REMOVED = ["DATA", "FLAG_ROW"]
 
 def structure_dump(tool, path):
     """What the tool reads of the table's rows and columns: the names, each
-    column's description and its first cells. An undefined cell is only
-    recorded as undefined, since the two tools word that differently."""
+    column's description (with its storage manager's type and name, and its
+    keywords) and its cells (every row of a small table, the first three of a
+    larger one). A cell is read only when `iscelldefined` says it is defined,
+    so that a read that fails for any other reason ends the run, as the same
+    failure of both tools would otherwise pass unseen. The managers
+    (`getdminfo`) are dumped where casa-rs answers."""
     rows = tool.nrows()
     result = {"nrows": rows, "colnames": list(tool.colnames())}
+    try:
+        result["dminfo"] = tool.getdminfo()
+    except NotImplementedError:  # the managers casa-rs does not read the SPEC of
+        pass
     for column in result["colnames"]:
         description = tool.getcoldesc(column)
         result[f"desc:{column}"] = {
             key: description[key]
-            for key in ("valueType", "option", "ndim", "shape", "dataManagerType")
+            for key in (
+                "valueType", "option", "ndim", "shape", "dataManagerType", "dataManagerGroup",
+                "keywords", "maxlen", "comment",
+            )
             if key in description
         }
         cells = []
-        for row in range(min(rows, 3)):
-            try:
+        for row in range(rows if rows <= 16 else 3):
+            if tool.iscelldefined(column, row):
                 cells.append(encode(tool.getcell(column, row), path))
-            except Exception:  # noqa: BLE001 - an undefined cell
+            else:
                 cells.append("undefined")
         result[f"cells:{column}"] = cells
     return {key: encode(value, path) for key, value in result.items()}
@@ -379,6 +390,24 @@ def command_structure_rsread(directory, out_json):
     from casars import tools  # noqa: PLC0415
 
     write_json(out_json, structure_dumps(tools.table, directory))
+    # A StManAipsIO with a name of its own is not rewritten in full: the name
+    # would be lost. The row calls refuse it, and change nothing.
+    named = Path(directory) / "casa_named_aipsio.table"
+    if named.exists():
+        before = {p.name: p.read_bytes() for p in named.iterdir() if p.name != "table.lock"}
+        tool = tools.table()
+        assert tool.open(str(named.resolve()), nomodify=False)
+        for call in (lambda: tool.addrows(1), lambda: tool.removerows([0]),
+                     lambda: tool.addcols({"c": {"valueType": "int"}})):
+            try:
+                call()
+            except NotImplementedError:
+                continue
+            raise SystemExit("a named StManAipsIO table was rewritten")
+        tool.done()
+        after = {p.name: p.read_bytes() for p in named.iterdir() if p.name != "table.lock"}
+        assert before == after, "a refused call changed the named StManAipsIO table"
+        print("named StManAipsIO: row and column calls refused, table unchanged")
 
 
 def command_structure_casa_write(ms, out_dir):
@@ -396,6 +425,49 @@ def command_structure_casa_write(ms, out_dir):
         tool.open(str(out_dir / name), nomodify=False)
         work(tool)
         tool.close()
+    # Tables whose managers are named: a tiled manager bound to the NAME
+    # `actual` while its column declares the group `declared` (`getcoldesc`
+    # and `getdminfo` say `actual`), and a `StManAipsIO` named `mine` (whose
+    # name casa-rs's full save would drop, so the tool must not rewrite it).
+    import numpy as np  # noqa: PLC0415
+
+    named = out_dir / "casa_named.table"
+    shutil.rmtree(named, ignore_errors=True)
+    tool = table()
+    tool.create(
+        str(named),
+        {
+            "a": {"valueType": "int"},
+            "cube": {
+                "valueType": "float", "ndim": 2, "shape": [2, 3], "option": 4,
+                "dataManagerType": "TiledShapeStMan", "dataManagerGroup": "declared",
+            },
+        },
+        nrow=3,
+        dminfo={
+            "*1": {
+                "TYPE": "TiledShapeStMan", "NAME": "actual",
+                "SPEC": {"DEFAULTTILESHAPE": [2, 3, 2]}, "COLUMNS": ["cube"],
+            }
+        },
+    )
+    for row in range(3):
+        tool.putcell("a", row, row + 5)
+        tool.putcell("cube", row, np.arange(6, dtype=np.float32).reshape(2, 3) + row)
+    tool.close()
+    named_aipsio = out_dir / "casa_named_aipsio.table"
+    shutil.rmtree(named_aipsio, ignore_errors=True)
+    tool = table()
+    tool.create(
+        str(named_aipsio),
+        {"a": {"valueType": "int"}, "b": {"valueType": "double"}},
+        nrow=3,
+        dminfo={"*1": {"TYPE": "StManAipsIO", "NAME": "mine", "SPEC": {}, "COLUMNS": ["a", "b"]}},
+    )
+    for row in range(3):
+        tool.putcell("a", row, row + 1)
+        tool.putcell("b", row, 0.5 * row)
+    tool.close()
 
 
 def command_variants(fixture, out_dir):
@@ -448,7 +520,10 @@ def command_compare(rs_json, casa_json):
     second = json.loads(Path(casa_json).read_text(encoding="utf-8"))
 
     def normal(value):
-        return re.sub(r'(/[^"]*/)?[\w.]*\.(table|ms)', "<T>", json.dumps(value, sort_keys=True))
+        text = re.sub(r'(/[^"]*/)?[\w.]*\.(table|ms)', "<T>", json.dumps(value, sort_keys=True))
+        # An empty string array has a NumPy width of its own in each tool
+        # (`<U1`, `<U5`); the width of nothing is not compared.
+        return re.sub(r'("data": \[\], "ndarray": )"<U\d+"', r'\1"<U"', text)
 
     different = [key for key in first if normal(first[key]) != normal(second.get(key))]
     print("records compared:", len(first), "| differences:", different)

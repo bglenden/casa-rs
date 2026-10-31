@@ -522,6 +522,61 @@ MS_SLICES = [
     ["close", [], {}],
 ]
 
+#: Column descriptions `addcols` takes, one column each and each named for
+#: what it probes, in `TableProxy::makeTableDesc`'s order of checks. Every call
+#: is followed by `colnames`, and every name by `getcoldesc` at the end: the
+#: refusals say what CASA raises, the others what it made.
+ADDCOLS_CASES = {
+    "shape_is_fixed": {"valueType": "float", "ndim": 2, "shape": [2, 3]},
+    "c_order": {"valueType": "float", "ndim": 2, "shape": [2, 3], "_c_order": True},
+    "rank_mismatch": {"valueType": "float", "ndim": 1, "shape": [2, 3]},
+    "negative_extent": {"valueType": "float", "ndim": 2, "shape": [2, -3]},
+    "zero_extent": {"valueType": "float", "ndim": 2, "shape": [2, 0]},
+    "shape_with_zero_ndim": {"valueType": "float", "ndim": 0, "shape": [2]},
+    "shape_with_negative_ndim": {"valueType": "float", "ndim": -1, "shape": [2]},
+    "unspecified_ndim": {"valueType": "float", "ndim": -1},
+    "ndim_string": {"valueType": "float", "ndim": "2"},
+    "keywords_int": {"valueType": "float", "keywords": 3},
+    "byte_scalar": {"valueType": "byte"},
+    "integer_scalar": {"valueType": "integer"},
+    "byte_array": {"valueType": "byte", "ndim": 1},
+    "integer_array": {"valueType": "integer", "ndim": 1},
+    "mixed_case": {"valueType": "Double"},
+    "valuetype_int": {"valueType": 3},
+    "no_valuetype": {"comment": "c"},
+    "record_array": {"valueType": "record", "ndim": 2},
+    "record_scalar": {"valueType": "record"},
+    "option_direct": {"valueType": "int", "option": 1},
+    "option_undefined": {"valueType": "int", "option": 2},
+    "option_string": {"valueType": "int", "option": "x"},
+    "maxlen": {"valueType": "string", "maxlen": 5},
+    "ndim_float": {"valueType": "float", "ndim": 2.0},
+    "ndim_bool": {"valueType": "float", "ndim": True},
+    "shape_floats": {"valueType": "float", "ndim": 2, "shape": [2.0, 3.0]},
+    "shape_scalar": {"valueType": "float", "ndim": 1, "shape": 3},
+    "comment_int": {"valueType": "int", "comment": 5},
+    "unknown_field": {"valueType": "int", "frobnicate": 1},
+    "unknown_type": {"valueType": "int128"},
+}
+
+ADDCOLS_DESCRIPTIONS = [
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    *[
+        step
+        for name, description in ADDCOLS_CASES.items()
+        for step in (["addcols", [{name: description}], {}], ["colnames", [], {}])
+    ],
+    # Fields that are not columns.
+    ["addcols", [{"_keywords_": {"a": 1}, "special_a": {"valueType": "int"}}], {}],
+    ["addcols", [{"_private_keywords_": {"a": 1}, "special_b": {"valueType": "int"}}], {}],
+    ["addcols", [{"_define_dminfo_": {"a": 1}, "special_c": {"valueType": "int"}}], {}],
+    ["addcols", [{"_keywords_": 3}], {}],
+    ["colnames", [], {}],
+    *[["getcoldesc", [name], {}] for name in ADDCOLS_CASES],
+    *[["getcoldesc", [name], {}] for name in ("special_a", "special_b", "special_c")],
+    ["close", [], {}],
+]
+
 #: Adding and removing rows on the python fixture table.
 ROWS = [
     ["open", [PLACEHOLDER], {"nomodify": False}],
@@ -900,6 +955,20 @@ REVIEW_SCENARIOS = {
         ["getcol", ["label"], {}],
         ["close", [], {}],
     ]),
+    # A call that fails part way has done part of its work in CASA:
+    # `removerows([2, 2])` removes the first row 2 and fails on the second
+    # (two rows are left); `addcols` adds the columns before the one that
+    # exists (`aaa` sorts before `id`) and fails there. casa-rs checks the
+    # whole call first and changes nothing.
+    "structure_partial": ("table", [
+        ["open", [PLACEHOLDER], {"nomodify": False}],
+        ["nrows", [], {}],
+        ["removerows", [[2, 2]], {}],
+        ["nrows", [], {}],
+        ["addcols", [{"aaa": {"valueType": "int"}, "id": {"valueType": "int"}}], {}],
+        ["colnames", [], {}],
+        ["close", [], {}],
+    ]),
     # addrows with a negative count takes the count as a huge unsigned number
     # and the row count wraps: addrows(-1) removes a row. casa-rs refuses.
     "addrows_negative": ("table", [
@@ -1169,6 +1238,11 @@ def main():
     scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
     scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
     scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}
+    scenarios["addcols_descriptions"] = {
+        "fixture": "table",
+        "steps": ADDCOLS_DESCRIPTIONS,
+        "source": arguments.fixture,
+    }
     scenarios["rows"] = {"fixture": "table", "steps": ROWS, "source": arguments.fixture}
     scenarios["columns"] = {"fixture": "table", "steps": COLUMNS, "source": arguments.fixture}
     scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}

@@ -5336,15 +5336,22 @@ fn extract_dm_info(
             };
             let columns: Vec<String> = members().map(|(_, pc)| pc.original_name.clone()).collect();
             // StandardStMan and IncrementalStMan keep their name in their
-            // blob and StManAipsIO in the header of its file; the others are
-            // named by the group their columns declare (the column set lists
-            // its columns in the table description's order).
+            // blob, StManAipsIO and the tiled managers in the header of
+            // their file (the NAME they were bound with, which a column's
+            // declared group need not equal); any other is named by the group
+            // its columns declare (the column set lists its columns in the
+            // table description's order).
             let stored_name = match dm.type_name.as_str() {
                 "StandardStMan" => standard_stman::dm_name_from_blob(&dm.data),
                 "IncrementalStMan" => incremental_stman::dm_name_from_blob(&dm.data),
                 "StManAipsIO" => stman_aipsio::name_from_file(
                     &table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
                 ),
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                    tiled_stman::name_from_file(
+                        &table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
+                    )
+                }
                 _ => None,
             };
             let name = stored_name.unwrap_or_else(|| {

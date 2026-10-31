@@ -1598,6 +1598,17 @@ impl TableDatContents {
         for column in &column_set.columns {
             bytes = bytes.checked_add(column.original_name.capacity())?;
         }
+        // The names of renamed columns, as they stand and as the file has them.
+        bytes = bytes.checked_add(
+            self.names_on_file
+                .capacity()
+                .checked_mul(size_of::<(String, String)>())?,
+        )?;
+        for (current, on_file) in &self.names_on_file {
+            bytes = bytes
+                .checked_add(current.capacity())?
+                .checked_add(on_file.capacity())?;
+        }
         Some(bytes)
     }
 
