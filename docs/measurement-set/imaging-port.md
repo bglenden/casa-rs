@@ -194,7 +194,7 @@ no imager parameter names. It sees only `&dyn Observation`.
   (`Msv2Observation::index_bytes`).
   Counting laws:
   - the whole run's
-    (`the_observation_batch_route_stays_within_its_admission`, with a
+    (`the_batches_stay_within_their_admission`, with a
     101-channel window imaged whole and gapped, `0:0~1;100`), whose slack
     hides the source's charge;
   - the source's own (`tests/batch_source_memory.rs`, through
@@ -210,13 +210,15 @@ no imager parameter names. It sees only `&dyn Observation`.
   Neither route charges the tiles the table layer stages while a tiled
   column is read (up to 8 a column, #965); the source's law allows
   exactly those.
-- **Refused** until a later step: `FLOAT_DATA`; several MeasurementSets;
-  and a `WEIGHT_SPECTRUM` that only some selected rows define (the MSv2
-  adapter takes the column from its first cell, today's route from every
-  selected row). Fields that follow an ephemeris and ephemeris-table phase
-  centres were refused here until #942 (section 2.2.1).
-- **Evidence.** The route law (`casa_imaging_application::route_law`)
-  images every T1 run on both routes and compares every product: all 200
+- **Refused:** `FLOAT_DATA` and several MeasurementSets, which no request
+  names, and an intent selection by state that splits an `OBS_MODE`
+  (section 2.8). A `WEIGHT_SPECTRUM` that only some selected rows define
+  was refused until the cutover, which takes CASA's rule (section 2.8);
+  fields that follow an ephemeris and ephemeris-table phase centres were
+  refused until #942 (section 2.2.1).
+- **Evidence.** The route law (`casa_imaging_application::route_law`,
+  retired with today's route at the cutover) imaged every T1 run on both
+  routes and compared every product: all 200
   are bit-identical, the image runs with `usepointing` (AW over two
   windows, the mosaic gridder) among them. On T1.5 (the refim and kernels
   harnesses, the AW pair with `usepointing`, and CAS-7841 under the mosaic
@@ -640,16 +642,76 @@ saves a copy of each cell on every MSv2 mutation writer.
 
 ### 2.7 What is removed at cutover
 
-The cutover PR deletes all of the following:
-- `MeasurementSetSource`;
-- the selected-observation access, buffer, content plan and walk modules;
+The cutover is two PRs, one after the other (section 4, step 6). The
+first removes today's route:
+- `MeasurementSetSource`, today's row write, and the run option
+  (`SourceRoute`);
+- today's access resolution and its admission
+  (`resolve_selected_observation`'s call, `finalize_source_access`);
+- the laws that held the routes equal (`route_law`, the step-3b
+  `geometry_law`), which need today's route as their reference. The
+  store law (`store_law`) keeps step 3b's 1e-12 comparison between a
+  MeasurementSet and its MSv4 conversion, on the batch geometry of both.
+
+The second (§2.4) removes what compile's walks still use:
+- the selected-observation access, buffer, content plan and walk modules,
+  the resolution and its write, in `casa-ms`;
 - `SelectedRows` and the row-based model types;
-- `SelectedVisibilityWrite` (once nothing else uses it);
+- `SelectedVisibilityWrite`;
 - the `casa-ms → casa-imaging-model` edge. Step 3b deepened it: today's
   route in `casa-ms` now calls `GridFtProjection`, the pointing law and the
   AW pointing groups from the model, and those callers go with the route.
 
-The imaging dependency checker's grandfathered lists shrink accordingly.
+The plan put all of these in one PR. Between the two, `casa-ms`'s
+selected-observation layer is called only by compile's survey. The imaging
+dependency checker's grandfathered lists shrink with the second.
+
+### 2.8 Cutover decisions (2026-10-29)
+
+The batch route refused four things today's route read. The owner asked
+for them to be decided without waiting (2026-10-29). Each decision is
+reversible:
+- **`WEIGHT_SPECTRUM`: CASA's rule.** CASA's iterator asks whether
+  `WEIGHT_SPECTRUM` has content (`TableColumn::hasContent`: the first
+  cell defined, no axis empty) again at each new spectral window, at the
+  first row it meets there (`VisibilityIteratorImpl2::weightSpectrumExists`,
+  read in the CASA source). Today's route took the column only when every
+  selected row defined it. The MSv2 adapter now decides per partition,
+  from the first of its rows in time order. Compile names the weights the
+  selected partitions hold, and the passes read each partition's own. The
+  refusal is gone, and so is the survey's per-row definedness read.
+  Where a window's rows disagree, CASA's one answer depends on its
+  iteration order, and reading a cell without content fails; the adapter
+  answers per partition (contracts, section 4).
+- **`FLOAT_DATA`: not imaged.** A request names `DATA` or
+  `CORRECTED_DATA` only, so neither route ever imaged it. Single-dish data
+  stays out of interferometric imaging; the guard stays.
+- **Intent selection across a shared `OBS_MODE`: refused.** A pattern
+  selects every state of a mode, so only a selection by state number can
+  split one. The contract already excludes selection by `STATE_ID`
+  (contracts, section 4), and MSv4 has no states.
+- **Rows the grid cannot hold: refused**, as XRADIO's converter refuses
+  them. These are:
+  - two rows at one time and baseline of a partition;
+  - two fields or scans at one time of a partition;
+  - several `PROCESSOR_ID`s in a partition.
+
+  MSv2 is assembled into MSv4's structures. An MSv2 that cannot be has no
+  MSv4 either, and today's route was its only reader. Baseline-dependent
+  times are not refused but padded, and the admission sees the padding
+  (section 6). Extending the adapter is #1008.
+
+**The products in the worker fit.** Today's route charged a large source,
+which the run released before its products, and that left the products
+room. The batch source's charge is small (266 kB on the worker laws'
+fixture), so a run's products can need more than its passes: a 128-pixel
+MFS image's restoring convolution holds 3.1 MB. The fit now counts the
+products on one lane (`PlannedContinuumGeneration::planned_demand`)
+beside what the run keeps to the end, net of the source's charge, and
+refuses a run whose products cannot fit before its passes (#763's law).
+Where the products set a run's least memory, it runs on the policy's
+workers or on none. The worker laws therefore image a cube, whose passes
+set its own least memory.
 
 ## 3. Owner decisions
 
@@ -705,10 +767,21 @@ Each step is its own PR with its own laws. Only the last switches production.
    counting law run on both routes. Its timing, on the write-back workload
    `standard-mfs-model-data-vla` among the rest, is step 6's blocking
    comparison (section 5).
-6. **Cutover.**
-   - The option's default flips, and 2.7's routes are removed in the same PR.
-   - The blocking comparison must pass.
-   - It needs an independent review of the persistence and the hot loop.
+6. **Cutover**, in three stacked PRs:
+   - **6a.** Today's route is removed, and with it the run option, rather
+     than its default flipped (section 2.7, first PR). Compile opens the
+     observation the run reads, once. The four decisions of section 2.8
+     land with it. The blocking comparison must pass, and the PR needs an
+     independent review of the persistence and the hot loop.
+   - **6b.** Compile reads the catalogue and the opening's index, not MAIN
+     (section 2.4), and the rest of section 2.7 is removed.
+   - **6c.** MSv4 imaging, the acceptance of decision 5: compile and the
+     run open an MSv4 through the same `&dyn Observation`, and T1 runs on
+     the trial's MSv4 conversions.
+
+   The plan had 2.4 before the cutover, keeping both routes equal at each
+   step. Removing today's route first leaves 2.4 one route to serve; the
+   three are reviewed together.
 
 ## 5. Baseline and blocking comparison
 

@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
-use casa_imaging_application::geometry_law::{compare_geometry, compare_stores};
-use casa_imaging_application::route_law;
+use casa_imaging_application::store_law::compare_stores;
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{
     MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
@@ -372,27 +371,15 @@ impl Observation {
             unreachable!("parameters are an object");
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
-        if !route_law::written_columns(&request).is_empty() {
-            // The batch route writes a copy of the MeasurementSet as it is
-            // before either route writes.
-            route_law::copy_for_batches(&request.vis).expect("copy the MeasurementSet");
-        }
-        let result = run(parameters.clone(), &request)?;
-        assert_geometry_law(name, &request);
-        assert_route_law(name, parameters, &request, &result.artifacts);
+        let result = run(parameters, &request)?;
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))
     }
 
-    /// Imaging port step 3b's equality law (#932) alone for `controls`,
-    /// without imaging: for a geometry no imaging law of its own covers.
-    pub fn assert_geometry(&self, name: &str, controls: Value) {
-        assert_geometry_law(name, &self.request(name, controls));
-    }
-
-    /// The same law between stores (#932, #942): the batch geometry of the
-    /// rows `controls` image equals theirs in `converted`, another store of
-    /// the same observation (an MSv4 conversion), to the law's 1e-12.
+    /// The store law (#932, #942): under `controls`' geometry the batch
+    /// geometry of every sample equals its batch geometry in `converted`,
+    /// another store of the same observation (an MSv4 conversion), to the
+    /// law's 1e-12.
     pub fn assert_store_geometry(&self, name: &str, controls: Value, converted: &Path) {
         let request = self.request(name, controls);
         let comparison = compare_stores(&request, &run_context(&request), converted)
@@ -522,10 +509,6 @@ impl Observation {
     }
 }
 
-/// Imaging port step 3b's equality law (#932): the batch geometry of every
-/// row the run imaged equals today's route's to 1e-12 relative (each
-/// quantity to its scale: UVW and phase shift to the baseline length,
-/// pixels to their magnitude, angles in radians).
 /// The imager's defaults these laws were written against, where CASA's
 /// tclean defaults differ (#931): 1000-iteration minor cycles, W planes
 /// derived from the data, and the imager's fixed `conjbeams` and
@@ -546,19 +529,6 @@ fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
     }
 }
 
-fn assert_geometry_law(name: &str, request: &ImagingRequest) {
-    let comparison =
-        compare_geometry(request, &run_context(request)).expect("both geometry routes");
-    eprintln!("{name}: geometry law {comparison:?}");
-    assert!(comparison.rows > 0, "{name}: no rows to compare");
-    assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
-    assert_eq!(comparison.duplicates, 0, "{name}: {comparison:?}");
-    assert!(
-        comparison.holds(),
-        "{name}: batch geometry departs from today's: {comparison:?}"
-    );
-}
-
 /// A run context for `request` on this host.
 fn run_context(request: &ImagingRequest) -> RunContext {
     RunContext {
@@ -566,59 +536,6 @@ fn run_context(request: &ImagingRequest) -> RunContext {
         policy: request.resource_policy(),
         cancel: Cancel::default(),
         summary: None,
-    }
-}
-
-/// Imaging port's route law (#932, steps 4 and 5): the run imaged again
-/// on the observation-batch route gives every product of `reported`, and
-/// every column it writes back (to the copy of the MeasurementSet taken
-/// before), to a normalized RMS of [`route_law::TOLERANCE`].
-fn assert_route_law(
-    name: &str,
-    mut parameters: ImagingParameters,
-    request: &ImagingRequest,
-    reported: &[ImagerArtifact],
-) {
-    let batches = route_law::on_batches(request);
-    parameters.0.insert(
-        "imagename".to_string(),
-        json!(batches.imagename.display().to_string()),
-    );
-    parameters
-        .0
-        .insert("vis".to_string(), json!(batches.vis.display().to_string()));
-    let result = run(parameters, &batches)
-        .unwrap_or_else(|error| panic!("{name}: the observation-batch route: {error}"));
-    let prefix = request.imagename.display().to_string();
-    let batch_prefix = batches.imagename.display().to_string();
-    assert_eq!(
-        result.artifacts.len(),
-        reported.len(),
-        "{name}: the routes report different products"
-    );
-    for artifact in reported {
-        let suffix = artifact
-            .path
-            .strip_prefix(&prefix)
-            .unwrap_or_else(|| panic!("{} outside {prefix}", artifact.path));
-        let other = format!("{batch_prefix}{suffix}");
-        let nrms = route_law::image_nrms(Path::new(&artifact.path), Path::new(&other))
-            .unwrap_or_else(|error| panic!("{name}{suffix}: {error}"));
-        eprintln!("{name}{suffix}: route law NRMS {nrms:.3e}");
-        assert!(
-            nrms <= route_law::TOLERANCE,
-            "{name}{suffix}: the observation-batch route departs from today's by NRMS {nrms:.3e}"
-        );
-    }
-    for column in route_law::written_columns(request) {
-        let nrms = route_law::column_nrms(&request.vis, &batches.vis, column)
-            .unwrap_or_else(|error| panic!("{name} {column}: {error}"));
-        eprintln!("{name} {column}: route law NRMS {nrms:.3e}");
-        assert!(
-            nrms <= route_law::TOLERANCE,
-            "{name} {column}: the observation-batch route writes it departing from today's by \
-             NRMS {nrms:.3e}"
-        );
     }
 }
 

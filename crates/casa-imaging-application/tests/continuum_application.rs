@@ -11,7 +11,7 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ApplicationDispatchError, Cancel, CleanStop, HostResources, ImagingOutcome, ImagingRequest,
-    PrepareError, ResourcePolicy, RunContext, SourceRoute, route_law,
+    PrepareError, ResourcePolicy, RunContext, product_law,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
@@ -867,8 +867,9 @@ fn spoiled_row_images(spoiled: Spoiled, weighting: &str) -> Result<[ArrayD<f32>;
 }
 
 /// The compiled `FiniteValuePolicy::RejectUnflaggedInput`: an unflagged
-/// non-finite visibility fails the run, naming its row and the remedy,
-/// where CASA images it as NaN everywhere. Under uniform weighting the
+/// non-finite visibility fails the run, naming its sample (window, time,
+/// baseline, channel and correlation; MAIN row 3 is baseline 0–1) and the
+/// remedy, where CASA images it as NaN everywhere. Under uniform weighting the
 /// density pass reads no visibilities, so the first imaging pass finds it.
 #[test]
 fn an_unflagged_nonfinite_visibility_fails_the_run_and_names_it() {
@@ -882,7 +883,9 @@ fn an_unflagged_nonfinite_visibility_fails_the_run_and_names_it() {
             panic!("{weighting}: an unflagged NaN visibility imaged");
         };
         assert!(
-            error.contains("visibility at MAIN row 3") && error.contains("flagdata"),
+            error.contains("unflagged visibility at spectral window 0")
+                && error.contains("baseline 0–1, channel 0")
+                && error.contains("flagdata"),
             "{weighting}: {error}"
         );
     }

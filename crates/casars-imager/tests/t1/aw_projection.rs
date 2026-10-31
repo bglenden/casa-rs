@@ -433,14 +433,13 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
     assert_same_products(&reused, &fresh);
 }
 
-/// Imaging port step 3b (#932): under `usepointing` each row's antenna
-/// pointing and its AW pointing pixel come from the POINTING table (one
-/// row an integration, as the simulator writes for a stated field), over
-/// two windows whose epochs the batches visit window by window. The batch
-/// geometry equals the selected rows', and so do the products of the
-/// batch route (step 4), whose two partitions share one pointing query.
+/// Under `usepointing` each row's antenna pointing and its AW pointing
+/// pixel come from the POINTING table (one row an integration, as the
+/// simulator writes for a stated field), over two windows whose epochs the
+/// batches visit window by window, and whose two partitions share one
+/// pointing query (#932 step 3b).
 #[test]
-fn aw_pointing_geometry_of_batches_is_the_selected_rows() {
+fn aw_projection_images_on_its_pointing_table() {
     let setup = Setup {
         fields: vec![Setup::pointing([0.0, 0.0])],
         ..two_window_setup()
@@ -450,6 +449,5 @@ fn aw_pointing_geometry_of_batches_is_the_selected_rows() {
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
     let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
     controls["usepointing"] = json!(true);
-    observation.assert_geometry("aw-pointing", controls.clone());
     observation.image("aw-pointing-image", controls);
 }

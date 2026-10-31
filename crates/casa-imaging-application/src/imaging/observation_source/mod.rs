@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The observation's batches as a [`BoundedSource`] of native rows: the
-//! imaging port's batch route (#932, step 4), beside the selected-observation
-//! route ([`super::source::MeasurementSetSource`]) until the cutover, chosen
-//! by [`crate::SourceRoute`].
+//! route every pass reads (#932).
 //!
 //! Each wave binds one [`AccessRequest`] per selected partition, in turn:
 //! the partition's selected channels that reach the wave's planes, the
@@ -10,9 +8,8 @@
 //! into a [`NativeBlock`] in one copy: its padding and the samples the UV
 //! selection excludes are dropped, and each kept sample's geometry comes
 //! from the run's [`GeometryPlan`]. A block holds whole times of one
-//! partition. Samples the store flags (MSv2 `FLAG_ROW` included) are kept,
-//! as the selected-observation route keeps flagged rows: geometry is
-//! formed for them, and the passes skip their flagged values.
+//! partition. Samples the store flags (MSv2 `FLAG_ROW` included) are kept:
+//! geometry is formed for them, and the passes skip their flagged values.
 //!
 //! This module sees only the shared [`Observation`] interface; the
 //! selection was resolved against the store when the run was prepared
@@ -49,7 +46,9 @@ use window::wave_window;
 pub(crate) use write::{BatchWriter, WriteBack};
 use write::{Delivered, Provenance, WriteCharge};
 
-use super::source::PlaneBounds;
+/// Output-frame frequency bounds of a plane range, for windowed traversals
+/// of a cube: the low edge of the first plane to the high edge of the last.
+pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
 
 /// What the batch route holds open for a run: the observation, the
 /// selection resolved to its partitions, the compiled geometry and the

@@ -215,15 +215,15 @@ pub(crate) fn partition_bytes(partition: &PartitionEntry) -> usize {
         + plain(scans)
         + plain(baselines)
         + entries(data_groups, group_bytes)
+        + casa_types::memory::btree_node_bytes::<AntennaId, Receptors>(receptors.len())
         + receptors.values().map(receptors_bytes).sum::<usize>()
         + plain(states)
 }
 
-/// The heap one antenna's receptors hold in a partition's map, its entry
-/// included.
+/// The heap one antenna's receptor values own, excluding their map's nodes.
 pub(crate) fn receptors_bytes(receptors: &Receptors) -> usize {
     let Receptors { types, angles } = receptors;
-    2 * size_of::<(AntennaId, Receptors)>() + strings(types) + entries(angles, quantity)
+    strings(types) + entries(angles, quantity)
 }
 
 /// The heap a data group's entry holds.

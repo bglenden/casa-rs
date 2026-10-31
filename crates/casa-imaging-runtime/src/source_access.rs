@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The bounded content budget of the selected observation's source.
+//! The block layout of the selected observation's rows, and the budget
+//! that bounds what the source holds before the problem quotes its own.
 
 use casa_imaging_model::{CompiledProblem, SpectralWindowSelection};
 use casa_imaging_operator::RowSpectrum;
-use casa_ms::{
-    BoundSelectedObservationError, ResolvedSelectedObservationAccess,
-    SelectedObservationContentBudget, SelectedObservationContentPlanError,
-};
+use casa_ms::SelectedObservationContentBudget;
 
-use crate::pass::{BlockShape, RowSamples, chunk_bytes_per_row, source_block_bytes};
-use crate::{Admission, Admitted, Demand, HostResources, ResourcePolicy, admit, free_memory};
+use crate::pass::BlockShape;
 
 /// Relative allowance for the Doppler factor between the frame of a
 /// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
@@ -94,107 +91,4 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
 #[must_use]
 pub const fn bootstrap_source_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(64 << 20, 2, 4)
-}
-
-/// Why a source's execution envelope could not be finalized.
-#[derive(Debug, thiserror::Error)]
-pub enum SourceAccessError {
-    /// The storage owner could not quote or bind the source's requirements.
-    #[error("selected-observation access: {0}")]
-    Access(#[from] BoundSelectedObservationError),
-    /// The requirement curve could not be evaluated or planned.
-    #[error("selected-observation content plan: {0}")]
-    ContentPlan(#[from] SelectedObservationContentPlanError),
-    /// The policy's free memory cannot hold the source's envelope.
-    #[error(transparent)]
-    Admission(#[from] Admission),
-    /// The preferred envelope does not fit the address space.
-    #[error("the selected-observation envelope overflows")]
-    Overflow,
-}
-
-/// Finalize an unopened source's bounded execution envelope and admit it,
-/// with the stream that converts its blocks for the passes.
-///
-/// The storage owner supplies the requirement curve; the source takes its
-/// mandatory minimum and grows beyond it by at most the bootstrap budget.
-/// Each row a block holds is also converted into the native blocks a pass's
-/// stream double-buffers, and predicted by a pass with a model
-/// ([`source_block_bytes`]); the source and that storage together grow by
-/// at most a quarter of what `policy` leaves free on `host` past the
-/// minimum, shared in proportion to their bytes per row, so the paged cube
-/// cache and the passes, admitted after them, keep the rest. A row of
-/// [`row_layout`] produces at most `row` samples, which the passes' row
-/// chunks hold until they reach their cap. The reservation holds the
-/// envelope the source plans and what the passes hold for its blocks, and
-/// the run keeps it while the source is open.
-pub fn finalize_source_access(
-    problem: &CompiledProblem,
-    access: ResolvedSelectedObservationAccess,
-    row: RowSamples,
-    host: &HostResources,
-    policy: &ResourcePolicy,
-) -> Result<Admitted<ResolvedSelectedObservationAccess>, SourceAccessError> {
-    let requirements = access.content_requirements(problem)?;
-    let maximum_live_blocks = access
-        .source_binding()
-        .content_budget()
-        .maximum_live_blocks();
-    let minimum = requirements.minimum_bytes()?;
-    let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
-    let bootstrap = bootstrap_source_budget().available_bytes();
-    let quarter = free.saturating_sub(minimum) / 4;
-    let budget = |growth: usize| {
-        Ok::<_, SourceAccessError>(SelectedObservationContentBudget::new(
-            minimum
-                .checked_add(growth)
-                .ok_or(SourceAccessError::Overflow)?,
-            maximum_live_blocks,
-            requirements.maximum_pointing_polynomial_terms(),
-        ))
-    };
-    let layout = row_layout(problem);
-    let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
-    // The passes' row chunks also grow with the block, under the passes'
-    // own charge, until they reach their cap; the passes stream on the
-    // allocation's streaming workers.
-    let workers = policy.cores(host).streaming_workers;
-    let passes_per_row = passes(1) - passes(0) + chunk_bytes_per_row(layout, row, workers);
-    let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
-    let source_per_row =
-        (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;
-    let share = u128::from(source_per_row) * quarter as u128
-        / u128::from((source_per_row + passes_per_row).max(1));
-    let planned = requirements.plan(budget(
-        bootstrap.min(usize::try_from(share).map_err(|_| SourceAccessError::Overflow)?),
-    )?)?;
-    let passes = passes(planned.rows_per_block());
-    tracing::info!(
-        rows_per_block = planned.rows_per_block(),
-        envelope_bytes = planned.maximum_resident_bytes(),
-        pass_bytes = passes,
-        minimum_bytes = minimum,
-        live_blocks = maximum_live_blocks,
-        "selected-observation source plan"
-    );
-    let reservation = admit(
-        host,
-        policy,
-        &Demand {
-            phase: "selected-observation source",
-            memory: u64::try_from(planned.maximum_resident_bytes())
-                .map_err(|_| SourceAccessError::Overflow)?
-                .checked_add(passes)
-                .ok_or(SourceAccessError::Overflow)?,
-        },
-    )?;
-    let budget = SelectedObservationContentBudget::new(
-        planned.maximum_resident_bytes(),
-        maximum_live_blocks,
-        requirements.maximum_pointing_polynomial_terms(),
-    );
-    Ok(Admitted {
-        value: access.with_content_budget(budget),
-        reservation,
-    })
 }

@@ -20,10 +20,10 @@
 //! lock and creates the column when its writer begins, before the first
 //! block is read.
 //!
-//! Each write leaves what today's route leaves: padding, samples the UV
+//! Each write leaves what it does not image: padding, samples the UV
 //! selection excludes, the channels of a batch's span the selection leaves
 //! out, the fit-only channels of a continuum transform, and the products
-//! not routed. Flagged samples are written.
+//! not routed. Flagged samples are written, as CASA writes them.
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
@@ -82,9 +82,8 @@ pub(crate) struct WriteBack {
 impl WriteBack {
     /// An update session over `observation`, writing the model when
     /// `model` and the corrected data when `corrected`. A `MODEL_DATA`
-    /// MAIN lacks is created with CASA's initial model, as today's route
-    /// creates it; `CORRECTED_DATA` is written only where it exists, as
-    /// today's route requires it.
+    /// MAIN lacks is created with CASA's initial model; `CORRECTED_DATA` is
+    /// written only where it exists.
     ///
     /// # Errors
     ///

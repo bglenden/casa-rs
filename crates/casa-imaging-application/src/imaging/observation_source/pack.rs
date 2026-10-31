@@ -2,9 +2,10 @@
 //! One batch packed into a native block: each selected sample's geometry,
 //! values, weights and flags, copied once.
 
+use casa_imaging_deconvolution::direction_world_to_pixel;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
-    FiniteValuePolicy,
+    FiniteValuePolicy, SelectedAntennaResponses, SkyDirection,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -16,7 +17,6 @@ use num_complex::Complex32;
 
 use super::selection::{PartitionSelection, SelectedPartition};
 use crate::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
-use crate::imaging::source::{antenna_types, pointing_offset};
 
 /// The block layout of one partition's batches in one wave: which of a
 /// batch's channels and correlations a block holds.
@@ -193,8 +193,8 @@ impl<'b> Arrays<'b> {
 impl Packer<'_> {
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
     /// `geometry` applied to those samples. Unread visibilities are zero.
-    /// A non-finite input fails the run as the selected-observation route
-    /// fails it ([`FiniteValuePolicy`]), naming the sample.
+    /// A non-finite input fails the run under [`FiniteValuePolicy`], naming
+    /// the sample.
     pub(super) fn pack(
         &self,
         (batch, partition, layout): (&VisibilityBatch<'_>, &SelectedPartition, &Layout),
@@ -380,8 +380,7 @@ impl Row<'_, '_> {
     }
 }
 
-/// The error for a non-finite `what` at `at`, naming the remedy, as the
-/// selected-observation route words it.
+/// The error for a non-finite `what` at `at`, naming the remedy.
 fn nonfinite_input(what: &str, at: &str) -> SourceError {
     format!(
         "an unflagged {what} at {at} is not finite; CASA would image it as NaN everywhere. \
@@ -432,4 +431,55 @@ fn fill_samples(
         }
     }
     Ok(())
+}
+
+/// The mosaic dish index of each antenna of a row: its aperture class's
+/// position in the selection's `classes`, the order
+/// [`crate::imaging::measurement::domain_operator`] lists the dishes in; a row
+/// without response classes (every problem without an instrument model)
+/// is on the first dish.
+fn antenna_types(
+    responses: Option<SelectedAntennaResponses>,
+    classes: &[AntennaResponseClass],
+) -> [u8; 2] {
+    let index = |class: AntennaResponseClass| {
+        classes
+            .iter()
+            .position(|known| *known == class)
+            .map_or(0, |index| u8::try_from(index).expect("few dish classes"))
+    };
+    responses.map_or([0, 0], |responses| {
+        [index(responses.antenna1), index(responses.antenna2)]
+    })
+}
+
+/// The offset of a row's pointing from `direction`'s reference pixel as
+/// direction cosines along the image axes: the A-projection pointing pixel
+/// when the selection evaluated one, else the antenna-1 pointing direction
+/// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
+/// buffer's first `direction1`; under tclean `usepointing=False` the
+/// selection evaluates it as the field's phase-tracking centre).
+fn pointing_offset(
+    direction: DirectionCoordinateSpec,
+    aw_pixel: Option<[f64; 2]>,
+    pointing: SkyDirection,
+) -> Result<[f64; 2], SourceError> {
+    let pixel = match aw_pixel {
+        Some(pixel) => pixel,
+        None => {
+            if pointing.frame() != direction.reference_direction().frame() {
+                return Err("a row's pointing direction is not in the image frame".into());
+            }
+            direction_world_to_pixel(
+                direction,
+                [pointing.longitude_rad(), pointing.latitude_rad()],
+            )?
+        }
+    };
+    let reference = direction.reference_pixel();
+    let increment = direction.increment_rad();
+    Ok([
+        (pixel[0] - reference[0]) * increment[0],
+        (pixel[1] - reference[1]) * increment[1],
+    ])
 }

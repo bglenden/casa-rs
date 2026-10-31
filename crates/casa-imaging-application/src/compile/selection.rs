@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, ObservationSelection, SelectedMainRow, SelectedRows,
-    SelectedRowsBuilder, SpectralWindowSelection, VisibilityColumn as OwnerVisibilityColumn,
+    SelectedRowsBuilder, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
+    VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
@@ -59,7 +60,6 @@ pub(super) struct Survey {
     /// parallactic angle).
     pub(super) first_cross_row: Option<SelectedObservationRow>,
     pub(super) w: WRange,
-    pub(super) weight_spectrum_complete: bool,
     /// A continuum run's selected channels per window and their envelope.
     pub(super) continuum: Option<(WindowChannels, SelectedObservationSpectralEnvelope)>,
 }
@@ -180,23 +180,12 @@ pub(super) fn survey(
     )?;
     let io = budget.row_io_budget();
     let mut facts = RowFacts::new(ms.row_count(), ddids.len());
-    let main_table = ms.main_table();
-    let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut row_error = None;
     ms.visit_selected_observation_rows(&row_selection, io, |row| {
         if row_error.is_none()
             && let Some((_, reducer)) = continuum.as_mut()
         {
             row_error = reducer.observe(row).err();
-        }
-        if weight_spectrum_complete {
-            match main_table
-                .column_accessor("WEIGHT_SPECTRUM")
-                .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
-            {
-                Ok(defined) => weight_spectrum_complete = defined,
-                Err(error) => row_error = Some(error.into()),
-            }
         }
         facts.observe(row);
     })?;
@@ -246,7 +235,6 @@ pub(super) fn survey(
         time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
         first_cross_row: facts.first_cross_row,
         w: facts.w,
-        weight_spectrum_complete,
         continuum,
     })
 }
@@ -446,8 +434,10 @@ pub(super) fn explicit_spw_channels(
     ))
 }
 
-/// The observation selection: the surveyed rows, `channels` per window and
-/// every correlation of the selected polarization setups.
+/// The observation selection: the surveyed rows, `channels` per window with
+/// the window's whole frequency axis (CASA's mosaic kernels select by the
+/// complete `CHAN_FREQ` and `|CHAN_WIDTH[0]|`), and every correlation of
+/// the selected polarization setups.
 pub(super) fn observation_selection(
     ms: &MeasurementSet,
     survey: Survey,
@@ -457,15 +447,28 @@ pub(super) fn observation_selection(
     let spectral_windows = channels
         .iter()
         .map(|(spw_id, channels)| {
-            SpectralWindowSelection::new(
+            let window = survey
+                .spectral_windows
+                .iter()
+                .find(|window| window.spw_id == *spw_id)
+                .expect("the channels read are of selected windows");
+            let catalog = window
+                .channel_widths_hz
+                .first()
+                .and_then(|width| {
+                    SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
+                })
+                .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
+            Ok(SpectralWindowSelection::new(
                 u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
                     .iter()
                     .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
                     .collect(),
             )
+            .with_coordinate_catalog(catalog))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, PrepareError>>()?;
     let correlations = survey
         .row_selection
         .data_descriptions()

@@ -645,6 +645,17 @@ impl Grid {
         let per_time = self.baselines.len();
         &self.cells[times.start * per_time..times.end * per_time]
     }
+
+    /// The first of its rows in time order, as CASA's iteration meets them:
+    /// the lowest MAIN row of its first time.
+    pub(super) fn first_time_row(&self) -> usize {
+        self.cells(0..1)
+            .iter()
+            .copied()
+            .filter(|cell| *cell != NO_ROW)
+            .min()
+            .expect("a partition's first time holds a row") as usize
+    }
 }
 
 /// Record `value` at a time, which every row of that time must share.

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against a frozen CASA Uranus cube, on
-//! both observation routes.
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
 
 use std::{
     error::Error,
@@ -11,8 +10,7 @@ use std::{
 
 use casa_coordinates::CoordinateModel;
 use casa_images::PagedImage;
-use casa_imaging_application::geometry_law::compare_geometry;
-use casa_imaging_application::{SourceRoute, execute, route_law};
+use casa_imaging_application::execute;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::FrequencyRef;
 use serde_json::json;
@@ -38,69 +36,37 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     copy_tree(&source, &measurement_set)?;
 
     // A dirty 16-channel source-frame cube of field 1 tracking its
-    // ephemeris, each output channel 64 native channels wide, on each
-    // route (#942): today's selected rows and the observation's batches.
+    // ephemeris (#942), each output channel 64 native channels wide.
     let mut failures = Vec::new();
-    let mut prefixes = Vec::new();
-    for (route, label) in [
-        (SourceRoute::SelectedRows, "rows"),
-        (SourceRoute::ObservationBatches, "batches"),
-    ] {
-        let rust_prefix = staging
-            .path()
-            .join(format!("rust-uranus-cubesource-{label}"));
-        let mut request = imaging::request(json!({
-            "vis": measurement_set,
-            "imagename": rust_prefix,
-            "imsize": 512,
-            "cell": "0.1arcsec",
-            "phasecenter": "TRACKFIELD",
-            "field": "1",
-            "spw": "0",
-            "datacolumn": "DATA",
-            "specmode": "cubesource",
-            "outframe": "REST",
-            "start": "0",
-            "width": "64",
-            "channel_count": 16,
-            "minpsffraction": 0.1,
-            "pblimit": 0.1,
-        }));
-        request.source_route = route;
-        let result = execute(&request, imaging::context(request.resource_policy()))?;
-        let samples = result.scientific().normal_state().sample_count();
-        eprintln!("t41 {label} samples={samples}");
-        if samples != SELECTED_SAMPLE_COUNT {
-            failures.push(format!(
-                "{label}: {samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal \
-                 must retain all 1,024 channels and both parallel hands (#986)"
-            ));
-        }
-        assert_matching_wcs(&rust_prefix, &casa_prefix)?;
-        failures.extend(
-            compare_with_casa(&rust_prefix, &casa_prefix)?
-                .into_iter()
-                .map(|failure| format!("{label}: {failure}")),
-        );
-        if route == SourceRoute::SelectedRows {
-            let geometry = compare_geometry(&request, &imaging::context(request.resource_policy()))
-                .map_err(|error| error as Box<dyn Error>)?;
-            eprintln!("t41 geometry law {geometry:?}");
-            if !geometry.holds() || geometry.unmatched > 0 || geometry.duplicates > 0 {
-                failures.push(format!("the geometry law fails: {geometry:?}"));
-            }
-        }
-        prefixes.push(rust_prefix);
+    let rust_prefix = staging.path().join("rust-uranus-cubesource");
+    let request = imaging::request(json!({
+        "vis": measurement_set,
+        "imagename": rust_prefix,
+        "imsize": 512,
+        "cell": "0.1arcsec",
+        "phasecenter": "TRACKFIELD",
+        "field": "1",
+        "spw": "0",
+        "datacolumn": "DATA",
+        "specmode": "cubesource",
+        "outframe": "REST",
+        "start": "0",
+        "width": "64",
+        "channel_count": 16,
+        "minpsffraction": 0.1,
+        "pblimit": 0.1,
+    }));
+    let result = execute(&request, imaging::context(request.resource_policy()))?;
+    let samples = result.scientific().normal_state().sample_count();
+    eprintln!("t41 samples={samples}");
+    if samples != SELECTED_SAMPLE_COUNT {
+        failures.push(format!(
+            "{samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal must retain \
+             all 1,024 channels and both parallel hands (#986)"
+        ));
     }
-    for suffix in PRODUCTS {
-        let [rows, batches] = [&prefixes[0], &prefixes[1]]
-            .map(|prefix| PathBuf::from(format!("{}{suffix}", prefix.display())));
-        let nrms = route_law::image_nrms(&rows, &batches)?;
-        eprintln!("t41 route law product={suffix} nrms={nrms:.3e}");
-        if nrms > route_law::TOLERANCE {
-            failures.push(format!("{suffix}: the routes differ by NRMS {nrms:.3e}"));
-        }
-    }
+    assert_matching_wcs(&rust_prefix, &casa_prefix)?;
+    failures.extend(compare_with_casa(&rust_prefix, &casa_prefix)?);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }

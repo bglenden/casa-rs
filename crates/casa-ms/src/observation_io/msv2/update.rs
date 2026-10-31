@@ -486,8 +486,7 @@ fn seeds_model(main: &casa_tables::Table, targets: &[ResolvedTarget]) -> bool {
 }
 
 /// Refuse a target whose column cannot be written in place in bounded
-/// memory, as today's route refuses it
-/// ([`crate::scratch_columns::unbounded_destination`]): the column must be
+/// memory ([`crate::scratch_columns::unbounded_destination`]): the column must be
 /// in a tiled manager, and a column the session creates clones `DATA`'s,
 /// which must be one and hold `DATA` alone. A column in any other manager
 /// is saved by rewriting every row of its storage group, once a batch.
