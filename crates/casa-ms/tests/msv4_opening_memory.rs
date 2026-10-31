@@ -13,6 +13,7 @@
 #![cfg(all(feature = "msv4", unix))]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -22,7 +23,9 @@ use casa_ms::{
     MeasurementSet, SyntheticField, SyntheticObservationRequest, generate_synthetic_observation_ms,
     tutorial_vla_a_antennas,
 };
-use casa_observation::ObservationError;
+use casa_observation::{
+    AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
+};
 use casa_tables::ColumnSchema;
 use casa_types::PrimitiveType;
 use casa_types::{ArrayValue, Value};
@@ -235,7 +238,7 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
         (
             "times",
             Shape {
-                integrations: 400,
+                integrations: 1024,
                 ..base
             },
         ),
@@ -291,6 +294,35 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
         drop(opened);
     }
     a_store_beyond_its_budget_is_refused_before_it_decodes(&stores[5].1);
+    a_dense_pointing_read_holds_at_most_its_budget(&stores[5].1);
+}
+
+/// Reading a full dense pointing span must fit the request's decoded-array
+/// and final-series budget even while it builds the last antenna's series.
+fn a_dense_pointing_read_holds_at_most_its_budget(path: &Path) {
+    let opened = Msv4Observation::open(path).expect("open dense pointing store");
+    let (times, antennas) = (1024, 6);
+    // The fixed allowance covers Zarr's array handles and coordinate labels.
+    // The series and decoded values must stay within the size-dependent part.
+    let budget = (times + times * antennas * 2) * size_of::<f64>()
+        + antennas * (times + 2) * 4 * size_of::<f64>()
+        + (16 << 10);
+    let request = PointingRequest {
+        partition: PartitionId(0),
+        direction: PointingDirection::Beam,
+        antennas: (0..antennas)
+            .map(|antenna| AntennaId(antenna as u32))
+            .collect(),
+        times: -1.0e12..=1.0e12,
+        budget_bytes: budget,
+    };
+    drop(opened.pointing(&request).expect("warm pointing read"));
+    let (series, peak, _) = measured(|| opened.pointing(&request).expect("pointing read"));
+    assert_eq!(series.antennas.len(), antennas);
+    assert!(
+        peak <= budget as u64,
+        "the dense pointing read held {peak} bytes, beyond its {budget} budget"
+    );
 }
 
 /// An opening whose projection exceeds its budget is refused before it

@@ -192,16 +192,13 @@ impl Msv4Observation {
                 let direction = [span[at], span[at + 1]];
                 (!direction[0].is_nan()).then_some((time, direction))
             });
-            let samples: Vec<(usize, [f64; 2])> = before[index]
-                .into_iter()
-                .chain(within)
-                .chain(after[index])
-                .collect();
-            let sample_times: Vec<f64> = samples.iter().map(|(time, _)| times[*time]).collect();
-            let coefficients = samples
-                .iter()
-                .flat_map(|(_, direction)| *direction)
-                .collect();
+            let samples = before[index].into_iter().chain(within).chain(after[index]);
+            let mut sample_times = Vec::with_capacity(last - first + 2);
+            let mut coefficients = Vec::with_capacity((last - first + 2) * 2);
+            for (time, direction) in samples {
+                sample_times.push(times[time]);
+                coefficients.extend_from_slice(&direction);
+            }
             series.antennas.insert(
                 antenna,
                 AntennaPointing::new(sample_times.clone(), None, sample_times, 1, coefficients)?,
