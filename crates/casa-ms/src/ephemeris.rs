@@ -130,69 +130,32 @@ impl PhaseCentreEphemeris {
         })
     }
 
-    /// Bind every selected FIELD-linked ephemeris.
+    /// Track the selected fields' own ephemerides (`TRACKFIELD`), as the
+    /// observation's `catalogue` holds them: an MSv2's `FIELD/EPHEM*.tab`
+    /// tables, read when it opened, or an MSv4's `field_and_source`
+    /// ephemerides. Nothing more is read, so nothing more is held.
+    ///
+    /// # Errors
+    ///
+    /// [`PhaseCentreEphemerisError::MissingTrackedField`] for a selected
+    /// field that follows no ephemeris, and
+    /// [`PhaseCentreEphemerisError::EmptyTrackedFieldSet`] for no field.
     pub fn tracked_fields(
-        measurement_set: &MeasurementSet,
+        catalogue: &casa_observation::Catalogue,
         field_ids: impl IntoIterator<Item = usize>,
-        budget: EphemerisBudget,
     ) -> Result<Self, PhaseCentreEphemerisError> {
-        let ephemeris_ids = field_ephemeris_ids(measurement_set)?;
-        let root = measurement_set
-            .path()
-            .ok_or(PhaseCentreEphemerisError::UnbackedMeasurementSet)?;
-        let mut requested = Vec::new();
-        let mut selected = BTreeSet::new();
-        for field_id in field_ids {
-            if !selected.insert(field_id) {
-                continue;
-            }
-            let ephemeris_id = ephemeris_ids
+        let mut bindings = Vec::new();
+        for field_id in field_ids.into_iter().collect::<BTreeSet<_>>() {
+            let series = catalogue
+                .fields
                 .get(field_id)
-                .copied()
-                .flatten()
+                .and_then(|field| field.ephemeris.clone())
                 .ok_or(PhaseCentreEphemerisError::MissingTrackedField { field_id })?;
-            let path = find_field_ephemeris(root, ephemeris_id)?;
-            requested.push((field_id, path));
+            bindings.push(FieldEphemerisBinding { field_id, series });
         }
-        if requested.is_empty() {
+        if bindings.is_empty() {
             return Err(PhaseCentreEphemerisError::EmptyTrackedFieldSet);
         }
-
-        let mut preflights = BTreeMap::new();
-        for (_, path) in &requested {
-            if !preflights.contains_key(path) {
-                preflights.insert(path.clone(), EphemerisSeriesPreflight::open(path)?);
-            }
-        }
-        let field_binding_bytes = requested
-            .len()
-            .checked_mul(size_of::<FieldEphemerisBinding>())
-            .ok_or(PhaseCentreEphemerisError::ByteOverflow)?;
-        let retained_bytes = preflights
-            .values()
-            .try_fold(selected_ephemeris_allocation_bytes()?, |bytes, series| {
-                bytes.checked_add(series.retained_bytes)
-            })
-            .and_then(|bytes| bytes.checked_add(field_binding_bytes))
-            .ok_or(PhaseCentreEphemerisError::ByteOverflow)?;
-        admit_reference_data(budget, retained_bytes)?;
-
-        let unique = preflights
-            .into_iter()
-            .map(|(path, preflight)| preflight.load().map(|series| (path, Arc::new(series))))
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
-        let mut bindings = requested
-            .into_iter()
-            .map(|(field_id, path)| FieldEphemerisBinding {
-                field_id,
-                series: Arc::clone(
-                    unique
-                        .get(&path)
-                        .expect("every requested ephemeris path was preflighted"),
-                ),
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_by_key(|binding| binding.field_id);
         Ok(Self {
             kind: EphemerisKind::TrackedField {
                 fields: bindings.into_boxed_slice(),

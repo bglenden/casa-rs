@@ -9,12 +9,9 @@
 //! an ephemeris is converted towards its direction at the time, not its
 //! `PHASE_DIR`, which is then an offset.
 
-use std::collections::BTreeMap;
-
-use casa_ms::MeasurementSet;
-use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
+use casa_ms::derived::engine::MsCalEngine;
+use casa_observation::Catalogue;
 use casa_types::measures::PreparedFrequencyConversion;
-use casa_types::measures::direction::MDirection;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
 
@@ -41,40 +38,20 @@ impl SpectralEnvelope {
     }
 }
 
-/// The field directions frequency conversions are evaluated towards, read
-/// once per field.
-struct Directions<'a> {
-    ms: &'a MeasurementSet,
-    engine: &'a MsCalEngine,
-    stored: BTreeMap<i32, MDirection>,
-}
-
-impl<'a> Directions<'a> {
-    fn new(ms: &'a MeasurementSet, engine: &'a MsCalEngine) -> Self {
-        Self {
-            ms,
-            engine,
-            stored: BTreeMap::new(),
-        }
-    }
-
-    /// The observatory frame towards `epoch`'s field at its time.
-    fn frame(&mut self, epoch: Epoch) -> Result<MeasFrame, PrepareError> {
-        let field = usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
-        let direction = if self.engine.field_moves(field) {
-            self.engine
-                .observation_direction_j2000(epoch.time_mjd_seconds, field)?
-        } else if let Some(direction) = self.stored.get(&epoch.field_id) {
-            direction.clone()
-        } else {
-            let direction = raw_field_phase_direction(self.ms, field)?;
-            self.stored.insert(epoch.field_id, direction.clone());
-            direction
-        };
-        Ok(self
-            .engine
-            .spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?)
-    }
+/// The observatory frame towards `epoch`'s field at its time: a moving
+/// field's direction then, else a fixed field's stored phase centre, in its
+/// stored frame, as the deleted MAIN walk read `PHASE_DIR`.
+fn epoch_frame(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    epoch: Epoch,
+) -> Result<MeasFrame, PrepareError> {
+    let field = usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+    let direction = if engine.field_moves(field) {
+        engine.observation_direction_j2000(epoch.time_mjd_seconds, field)?
+    } else {
+        catalogue.fields[field].phase_centre.clone()
+    };
+    Ok(engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?)
 }
 
 /// The lower and upper edges of `channels` of `window`: each channel's
@@ -123,12 +100,11 @@ fn selected_edges(
 /// edges already in a frame other than `TOPO` that is the output's, as
 /// they are.
 pub(super) fn continuum_envelope(
-    (ms, engine): (&MeasurementSet, &MsCalEngine),
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     selected: &WindowChannels,
 ) -> Result<SpectralEnvelope, PrepareError> {
     let output = FrequencyRef::LSRK;
-    let mut directions = Directions::new(ms, engine);
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
     let mut fold = |hz: f64| {
         edges_hz[0] = edges_hz[0].min(hz);
@@ -147,7 +123,7 @@ pub(super) fn continuum_envelope(
         }
         let mut converter = MFrequencyConverter::new(source, output);
         for epoch in survey.window_epochs(window.spw_id) {
-            let frame = directions.frame(*epoch)?;
+            let frame = epoch_frame((catalogue, engine), *epoch)?;
             fold(converter.convert_hz(lower_hz, &frame)?.hz());
             fold(converter.convert_hz(upper_hz, &frame)?.hz());
         }
@@ -177,7 +153,7 @@ pub(super) struct OutputAxis {
 /// frames agree. The selected channels' interpolation support does not
 /// redefine this nominal density domain.
 pub(super) fn cube_density_padding(
-    (ms, engine): (&MeasurementSet, &MsCalEngine),
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     window: &SourceSpectralWindow,
     output: &OutputAxis,
@@ -219,7 +195,6 @@ pub(super) fn cube_density_padding(
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
-    let mut directions = Directions::new(ms, engine);
     let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
     let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
     for &field in &survey.fields {
@@ -229,7 +204,7 @@ pub(super) fn cube_density_padding(
             .iter()
             .filter(|epoch| epoch.field_id == field)
         {
-            let frame = directions.frame(*epoch)?;
+            let frame = epoch_frame((catalogue, engine), *epoch)?;
             let conversion = PreparedFrequencyConversion::new(
                 output.frequency_reference,
                 window.frequency_reference,

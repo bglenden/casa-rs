@@ -55,7 +55,7 @@ fn body() -> Vec<EphemerisRow> {
 
 /// The track with its field following [`body`] (`FIELD.EPHEMERIS_ID` 0),
 /// its `PHASE_DIR` the offset from it.
-fn moving_track() -> Observation {
+pub(super) fn moving_track() -> Observation {
     let observation = Observation::synthesise(&[("point", POINT)]);
     let path = observation.measurement_set();
     let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");

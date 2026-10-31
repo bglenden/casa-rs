@@ -25,6 +25,8 @@ mod metal;
 mod model_column;
 #[path = "t1/mosaic.rs"]
 mod mosaic;
+#[path = "t1/msv4.rs"]
+mod msv4;
 #[path = "t1/mtmfs.rs"]
 mod mtmfs;
 #[path = "t1/non_square.rs"]

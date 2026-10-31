@@ -67,7 +67,7 @@ pub use observation::{
     CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
     MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
     ObservationSource, ObservationSourceInput, ObservationSourceProvenance, PartitionSelection,
-    ResolvedIntent, RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
+    RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
     SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
     WeightColumn, compile_observation,
 };

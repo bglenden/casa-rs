@@ -30,7 +30,7 @@ use std::sync::{Mutex, PoisonError};
 
 use casa_imaging_model::SequentialContinuumTransform;
 use casa_imaging_runtime::pass::{NativeBlock, STREAM_SLOTS, SourceError};
-use casa_ms::observation_io::{Msv2Observation, UpdateSession};
+use casa_ms::observation_io::UpdateSession;
 use casa_observation::{
     AccessRequest, BatchAddress, Correlation, Deliver, Observation, ObservationError, PatchValues,
     UpdateTarget, Updater, WritableRole,
@@ -39,6 +39,7 @@ use casa_types::measures::MjdHighPrec;
 use ndarray::ArrayView3;
 use num_complex::Complex32;
 
+use crate::compile::OpenedStore;
 use crate::imaging::visibility_write::writes_channel;
 
 /// What a writing traversal queues for its sink, in delivery order.
@@ -81,16 +82,18 @@ pub(crate) struct WriteBack {
 
 impl WriteBack {
     /// An update session over `observation`, writing the model when
-    /// `model` and the corrected data when `corrected`. A `MODEL_DATA`
-    /// MAIN lacks is created with CASA's initial model; `CORRECTED_DATA` is
-    /// written only where it exists.
+    /// `model` and the corrected data when `corrected`. A MeasurementSet's
+    /// `MODEL_DATA` MAIN lacks is created with CASA's initial model; an
+    /// MSv4 cannot add a data group, so its `model` group must exist.
+    /// `CORRECTED_DATA` is written only where it exists.
     ///
     /// # Errors
     ///
     /// When the session cannot open over the observation or a target
-    /// cannot be resolved ([`UpdateSession::over_msv2`]).
+    /// cannot be resolved ([`UpdateSession::over_msv2`],
+    /// [`UpdateSession::over_msv4`]).
     pub(crate) fn open(
-        observation: Msv2Observation,
+        observation: OpenedStore,
         model: bool,
         corrected: bool,
     ) -> Result<Self, ObservationError> {
@@ -105,7 +108,10 @@ impl WriteBack {
             targets.push(UpdateTarget::new("corrected", WritableRole::Visibilities));
         }
         Ok(Self {
-            session: UpdateSession::over_msv2(observation, &targets)?,
+            session: match observation {
+                OpenedStore::V2(observation) => UpdateSession::over_msv2(*observation, &targets)?,
+                OpenedStore::V4(observation) => UpdateSession::over_msv4(observation, &targets)?,
+            },
             model,
             corrected,
             queue: Mutex::default(),

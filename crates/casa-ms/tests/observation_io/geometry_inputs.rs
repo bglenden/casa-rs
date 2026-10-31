@@ -925,7 +925,9 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
     .expect("an engine");
     let at_no_time = |field| {
         engine
-            .moving_field_reference_direction(&ms, field)
+            // The MeasurementSet states each field's TIME, so no fallback
+            // time is read.
+            .moving_field_reference_direction(field, f64::NAN)
             .expect("a direction")
     };
     let actual = at_no_time(0).expect("field 0 moves");
@@ -1020,4 +1022,139 @@ fn fields_carry_the_ephemerides_they_follow() {
     engine
         .observation_direction_j2000(time_s, 2)
         .expect("the fixed field's direction");
+}
+
+/// Whether two directions are the same, bit for bit, and in one frame.
+fn same_direction(
+    a: &casa_types::measures::direction::MDirection,
+    b: &casa_types::measures::direction::MDirection,
+) -> bool {
+    a.refer() == b.refer()
+        && a.cosines()
+            .iter()
+            .zip(b.cosines())
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+}
+
+/// The largest angle between two J2000 directions, radians.
+fn separation(
+    a: &casa_types::measures::direction::MDirection,
+    b: &casa_types::measures::direction::MDirection,
+) -> f64 {
+    let [a, b] = [a.cosines(), b.cosines()];
+    let dot: f64 = a.iter().zip(b).map(|(a, b)| a * b).sum();
+    let cross = [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    cross.iter().map(|c| c * c).sum::<f64>().sqrt().atan2(dot)
+}
+
+/// The engine compile builds from an observation's catalogue is the one it
+/// built from the MeasurementSet's subtables, field ephemerides attached:
+/// the same antennas, observatory, time scale, field directions, motions
+/// and reference epochs, so the same directions, frames and parallactic
+/// angles at every time. Bit for bit for the MeasurementSet's catalogue,
+/// fields in a frame that needs `FIELD.TIME` to convert and a field that
+/// follows an ephemeris among them; to 1e-12 rad for its MSv4 conversion.
+#[test]
+fn the_catalogue_engine_is_the_measurement_set_engine() {
+    use casa_ms::derived::engine::MsCalEngine;
+    let root = tempfile::tempdir().expect("root");
+    let variant = |name: &str| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).expect("dir");
+        mosaic(&dir, 4)
+    };
+    let measures = casa_test_support::deterministic_measures_provider;
+    let engines = |path: &Path| {
+        let ms = MeasurementSet::open(path).expect("ms");
+        let from_ms = MsCalEngine::with_measures(&ms, measures())
+            .and_then(|engine| engine.with_field_ephemerides(&ms))
+            .expect("the MeasurementSet's engine");
+        let observation = open(path, &OpenOptions::default()).expect("the observation");
+        let from_catalogue = MsCalEngine::from_catalogue(observation.catalogue(), measures())
+            .expect("the catalogue's engine");
+        (from_ms, from_catalogue)
+    };
+    let times = [59_000.25 * 86_400.0, 59_000.25 * 86_400.0 + 60.0];
+
+    let (icrs, _) = variant("icrs");
+    variable_phase_references(&icrs, |_| DirectionRef::ICRS);
+    let (moving, _) = variant("moving");
+    super::follow_ephemerides(&moving, &[0, -1, -1]);
+    for path in [&icrs, &moving] {
+        let (from_ms, from_catalogue) = engines(path);
+        assert_eq!(from_ms.num_antennas(), from_catalogue.num_antennas());
+        assert_eq!(from_ms.num_fields(), from_catalogue.num_fields());
+        assert_eq!(from_ms.time_reference(), from_catalogue.time_reference());
+        assert_eq!(
+            from_ms.observatory_position().values(),
+            from_catalogue.observatory_position().values()
+        );
+        for field in 0..from_ms.num_fields() {
+            assert_eq!(
+                from_ms.field_moves(field),
+                from_catalogue.field_moves(field)
+            );
+            assert!(same_direction(
+                from_ms.field_direction_j2000(field).expect("ms"),
+                from_catalogue
+                    .field_direction_j2000(field)
+                    .expect("catalogue"),
+            ));
+            let reference = |engine: &MsCalEngine| {
+                engine
+                    .moving_field_reference_direction(field, f64::NAN)
+                    .expect("the reference direction")
+            };
+            match (reference(&from_ms), reference(&from_catalogue)) {
+                (None, None) => {}
+                (Some(a), Some(b)) => assert!(same_direction(&a, &b), "field {field}"),
+                other => panic!("field {field}: {other:?}"),
+            }
+            for time in times {
+                assert!(same_direction(
+                    &from_ms
+                        .observation_direction_j2000(time, field)
+                        .expect("ms"),
+                    &from_catalogue
+                        .observation_direction_j2000(time, field)
+                        .expect("catalogue"),
+                ));
+                for antenna in 0..from_ms.num_antennas() {
+                    assert_eq!(
+                        from_ms
+                            .parallactic_angle(time, field, antenna)
+                            .expect("ms")
+                            .to_bits(),
+                        from_catalogue
+                            .parallactic_angle(time, field, antenna)
+                            .expect("catalogue")
+                            .to_bits(),
+                    );
+                }
+            }
+        }
+    }
+
+    // The conversion of a MeasurementSet of J2000 fields, none moving.
+    let (plain, v4) = variant("plain");
+    let (original, _) = engines(&plain);
+    let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
+    let converted = MsCalEngine::from_catalogue(msv4.catalogue(), measures()).expect("msv4");
+    assert_eq!(original.num_fields(), converted.num_fields());
+    assert_eq!(
+        original.observatory_position().values(),
+        converted.observatory_position().values()
+    );
+    for field in 0..converted.num_fields() {
+        assert!(!converted.field_moves(field));
+        let difference = separation(
+            original.field_direction_j2000(field).expect("ms"),
+            converted.field_direction_j2000(field).expect("msv4"),
+        );
+        assert!(difference <= 1.0e-12, "field {field}: {difference:e} rad");
+    }
 }
