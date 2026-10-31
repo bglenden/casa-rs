@@ -190,8 +190,8 @@ fn input(root: &Path, index: usize) -> PathBuf {
 }
 
 /// An input whose observing session states long strings: a project, an
-/// observer and a `SCHEDULE` line of 16 KiB each (casa-tables writes a
-/// string within one 32 KiB bucket).
+/// observer and a `SCHEDULE` line of 1 MiB each, each spanning 33 string
+/// buckets of 32 KiB.
 fn stated(root: &Path) -> PathBuf {
     let path = track(root, "stated", (0.0, INTEGRATIONS, 32));
     let mut ms = MeasurementSet::open(&path).expect("ms");
@@ -206,15 +206,12 @@ fn stated(root: &Path) -> PathBuf {
         ))
     };
     for (column, value) in [
-        (
-            "PROJECT",
-            Value::Scalar(ScalarValue::String(text(16 << 10))),
-        ),
+        ("PROJECT", Value::Scalar(ScalarValue::String(text(1 << 20)))),
         (
             "OBSERVER",
-            Value::Scalar(ScalarValue::String(text(16 << 10))),
+            Value::Scalar(ScalarValue::String(text(1 << 20))),
         ),
-        ("SCHEDULE", lines(vec![text(16 << 10)])),
+        ("SCHEDULE", lines(vec![text(1 << 20)])),
     ] {
         observation
             .row_accessor_mut()
@@ -379,17 +376,15 @@ fn a_creation_plan_holds_what_it_admits() {
     );
 
     // HISTORY rows are charged as the plan keeps them and as writing holds
-    // them (4 MiB of messages, each within a string bucket); rows beyond
-    // the budget are refused before they are copied.
+    // them, 4 MiB of messages in many rows or in one; rows beyond the
+    // budget are refused before they are copied.
     let with_history = |(rows, bytes): (usize, usize), memory_bytes: usize| CreationOptions {
         history: history(rows, bytes),
         ..options(integration, memory_bytes)
     };
-    holds_its_charges(
-        &inputs,
-        &destination,
-        &with_history((256, 16 << 10), generous),
-    );
+    for rows in [(256, 16 << 10), (1, 4 << 20)] {
+        holds_its_charges(&inputs, &destination, &with_history(rows, generous));
+    }
     let message = 8 << 20;
     let heavy = with_history((1, message), least + (1 << 20));
     let refused = refused_within_budget(&inputs, &destination, &heavy);

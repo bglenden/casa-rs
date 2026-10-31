@@ -42,7 +42,7 @@ pub use oracle_runtime::OracleError;
 pub use table_oracle::{HeldCppTableReader, TableOracle};
 pub use table_oracle_impl::{
     BulkScalarIoBenchResult, CellSliceBenchParams, CellSliceBenchResult, CppTableFixture,
-    DeepCopyBenchResult, SetAlgebraBenchResult,
+    DeepCopyBenchResult, SetAlgebraBenchResult, SsmStatistics,
 };
 pub use test_data::*;
 

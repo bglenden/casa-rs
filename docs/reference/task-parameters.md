@@ -134,7 +134,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run from the launcher form |
+| <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run |
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
 | <code>summary_paths</code> | <code>parameter.summary_paths@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; required when mode="summary" | Inspect | Calibration-table paths for summary mode |

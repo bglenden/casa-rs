@@ -88,9 +88,7 @@ def order_surfaces_by_application_catalog(
     if not isinstance(applications, list):
         raise GenerationError("application-catalog.json must contain an applications array")
     task_ids = [
-        application.get("id")
-        for application in applications
-        if isinstance(application, dict) and application.get("kind") == "task"
+        application.get("id") for application in applications if isinstance(application, dict)
     ]
     if not all(isinstance(surface_id, str) for surface_id in task_ids):
         raise GenerationError("every task application must have a string id")
