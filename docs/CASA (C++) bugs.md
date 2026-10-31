@@ -2529,8 +2529,8 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28
-- Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
-  review)
+- Status: CASA behavior retained with a warning (owner decision #980,
+  2026-10-31; supersedes #970's refusal)
 - Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
   (`setModelImageOne`, `regridToModelImage`) and casacore
   `images/Images/ImageRegrid.tcc`
@@ -2539,8 +2539,12 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 axes only. `ImageRegrid` copies the Stokes axis without comparing its
 coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
 Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
-requires the start model's Stokes to be the image's, plane for plane, a
-single plane included (`casa_imaging_application`'s `StartModel`).
+now matches this positional copy for equal-count Stokes axes and warns when
+the labels differ (`casa_imaging_application`'s `StartModel`). The owner
+requested matching CASA with a warning on 2026-10-31 (#980), replacing the
+earlier refusal. This is not a physical polarization conversion; published
+coordinates still describe the requested target image. Unequal-plane-count
+forms remain unassessed for equivalence.
 
 A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is

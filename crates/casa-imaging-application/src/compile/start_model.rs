@@ -10,10 +10,9 @@
 //!   already on that grid; casa-rs regrids it too, which changes it only by
 //!   rounding;
 //! - its direction frame is the image's: casa-rs does not convert frames;
-//! - its Stokes are the image's, plane for plane, however many there are.
-//!   CASA's regrid leaves the Stokes axis alone, so it seeds a Stokes I
-//!   image from a Stokes Q start model; casa-rs refuses that (`docs/CASA
-//!   (C++) bugs.md`);
+//! - its Stokes planes are copied by position, as CASA leaves that axis
+//!   out of the regrid. Different labels produce a warning, not a refusal
+//!   or a polarization conversion (owner decision, #980, 2026-10-31);
 //! - a cube's start model has the image's spectral axis. An MFS image's has
 //!   one plane, at any frequency: CASA's regrid replicates a degenerate
 //!   spectral axis, and an MFS model holds one plane whatever frequency it
@@ -26,7 +25,7 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, StokesType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_images::{
     AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, RegridTemplate, TempImage,
     TempStoragePolicy, check_regrid, regrid,
@@ -64,7 +63,7 @@ impl StartModel {
     }
 
     /// Check the image at `path` as a start model of `template`'s image.
-    pub(crate) fn onto(path: &Path, template: RegridTemplate) -> Result<Self, PrepareError> {
+    pub(crate) fn onto(path: &Path, mut template: RegridTemplate) -> Result<Self, PrepareError> {
         let refuse = |reason: String| PrepareError::StartModel {
             path: path.to_path_buf(),
             reason,
@@ -82,20 +81,29 @@ impl StartModel {
                 "its unit is {units:?}; a start model is in Jy/pixel, as CASA's tclean requires"
             )));
         }
+        let (ours, theirs) = (stokes(&coordinates), stokes(&template.coordinates));
+        // SIImageStore::regridToModelImage regrids only direction and
+        // spectral axes. Match its positional Stokes copying even when
+        // the labels differ. This template is private to seeding pixels;
+        // published coordinates still come from the compiled image domain.
+        if ours != theirs
+            && let (Some(input), Some(output)) = (
+                coordinates.find_coordinate(CoordinateType::Stokes),
+                template.coordinates.find_coordinate(CoordinateType::Stokes),
+            )
+        {
+            template
+                .coordinates
+                .replace_coordinate(output, coordinates.coordinate(input).clone());
+        }
         check_regrid(&coordinates, &shape, &template).map_err(|error| {
             refuse(format!(
-                "{error}; its Stokes and spectral axes must be the image's"
+                "{error}; the non-regridded axis shapes and spectral coordinates must match"
             ))
         })?;
-        // `check_regrid` keeps the input's coordinate on an axis of one
-        // pixel in both images, which a regrid's caller sees; the model
-        // keeps only the pixels, so a single Stokes plane is checked here.
-        let (ours, theirs) = (stokes(&coordinates), stokes(&template.coordinates));
         if ours != theirs {
-            return Err(refuse(format!(
-                "its Stokes are {ours:?} and the image's {theirs:?}; a start model seeds the \
-                 image's own Stokes planes"
-            )));
+            tracing::warn!(startmodel = ?path, input_stokes = ?ours, image_stokes = ?theirs,
+                "startmodel Stokes labels differ: copying planes by position as CASA does; no polarization conversion is performed");
         }
         Ok(Self {
             path: path.to_path_buf(),

@@ -191,7 +191,7 @@
     },
     "startmodel": {
       "status": "Partial",
-      "scope": "One real Jy/pixel model, MFS or cube, with matching Stokes/spectral axes and direction frame; masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations are refused. See #970 and the existing Stokes-mismatch deviation.",
+      "scope": "One real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31); this change is not yet paired-verified. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused.",
       "evidence": [
         "signature",
         "reader",
@@ -1127,13 +1127,28 @@
       ]
     },
     {
-      "id": "inherited-startmodel-and-taper",
-      "state": "Proposed",
-      "inputs": "Unitless uvtaper or startmodel with a different Stokes coordinate.",
-      "casa": "Unitless taper is interpreted as radians despite documented lambda; its startmodel regrid can copy a different single Stokes plane.",
-      "ours": "Refuses those inputs, as recorded by #970 and the CASA bugs reference.",
-      "rationale": "Recommend retaining explicit-unit and matching-Stokes requirements; owner agreement has been requested. Existing implementation is preserved while pending.",
-      "impact": "Explicit taper units and matching model Stokes are required. Merging the implementation alone is not proof of an owner-approved exception.",
+      "id": "uvtaper-units",
+      "state": "Previously agreed",
+      "inputs": "A unitless uvtaper entry.",
+      "casa": "Interprets bare values as radians, despite documenting lambda; large values may zero every imaging weight.",
+      "ours": "Requires explicit angle or lambda/klambda units and errors clearly on bare values.",
+      "rationale": "Prevent a documented-unit mismatch from silently producing an empty image.",
+      "impact": "Callers must supply units; numerical unit-bearing taper behavior remains governed by #970 evidence.",
+      "owner_decision": "Owner, 2026-10-31, this chat: Require explicit units.",
+      "evidence": [
+        "additions",
+        "reader"
+      ]
+    },
+    {
+      "id": "startmodel-stokes",
+      "state": "Unfinished",
+      "inputs": "Start-model Stokes labels differ from the target; equal plane counts.",
+      "casa": "Copies planes by position without converting polarization, since only direction and spectral axes are regridded.",
+      "ours": "Owner-directed implementation now copies by position and warns; focused and paired verification are pending.",
+      "rationale": "Match CASA's behavior, while making the label mismatch visible.",
+      "impact": "A Q model can seed I and permuted Stokes planes are copied positionally; this is not a physical polarization conversion. Unequal-plane-count behavior still needs oracle assessment.",
+      "owner_decision": "Owner, 2026-10-31, this chat: Match but issue a warning. This supersedes the prior refusal.",
       "evidence": [
         "additions",
         "reader"

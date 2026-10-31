@@ -388,7 +388,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter or phasecenter_field` | Implemented | Numeric text is split into phasecenter_field; other text becomes phasecenter direction; empty means unset. <br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `stokes` | `'I'` | `'I'`; `stokes` → `stokes` | Partial | Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. [returns](#tclean-behavior-returns)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `projection` | `'SIN'` | `'SIN'`; `projection` → `projection` | Default only | Read and ignored; non-default is catalog-refused (issue 980). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `startmodel` | `''` | `''`; `startmodel` → `StartModel (compile/seeding)` | Partial | One real Jy/pixel model, MFS or cube, with matching Stokes/spectral axes and direction frame; masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations are refused. See #970 and the existing Stokes-mismatch deviation. [restart](#tclean-behavior-restart)<br>Catalog domain: `path` (image) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions) |
+| `startmodel` | `''` | `''`; `startmodel` → `StartModel (compile/seeding)` | Partial | One real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31); this change is not yet paired-verified. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused. [restart](#tclean-behavior-restart)<br>Catalog domain: `path` (image) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions) |
 | `specmode` | `'mfs'` | `'mfs'`; `specmode` → `specmode` | Partial | cont aliases mfs; mvc is refused (issue 823); cube, cubedata and cubesource pass into request/spectral compile. [spectral](#tclean-behavior-spectral)<br>Catalog domain: `cont`, `cube`, `cubedata`, `cubesource`, `mfs`, `mvc` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `reffreq` | `''` | `''`; `reffreq` → `reffreq` | Default only | Read and ignored by reader; catalog refuses non-default in every mode (issue 980). [spectral](#tclean-behavior-spectral)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `nchan` | `-1` | `-1`; `nchan` → `channel_count` | Partial | In cube, positive value supplies output count; -1 uses casa-rs channel_count. MFS ignores this count. Derived CASA extent cases are refused (issue 980). [spectral](#tclean-behavior-spectral)<br>Catalog domain: `integer` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
@@ -561,14 +561,24 @@ Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-a
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [lifecycle](#tclean-evidence-lifecycle), [reader](#tclean-evidence-reader).
 
-##### inherited-startmodel-and-taper: Proposed
+##### uvtaper-units: Previously agreed
 
-- Inputs: Unitless uvtaper or startmodel with a different Stokes coordinate.
-- CASA: Unitless taper is interpreted as radians despite documented lambda; its startmodel regrid can copy a different single Stokes plane.
-- casa-rs: Refuses those inputs, as recorded by #970 and the CASA bugs reference.
-- Rationale: Recommend retaining explicit-unit and matching-Stokes requirements; owner agreement has been requested. Existing implementation is preserved while pending.
-- User impact: Explicit taper units and matching model Stokes are required. Merging the implementation alone is not proof of an owner-approved exception.
-- Owner decision: Pending; not an accepted deviation.
+- Inputs: A unitless uvtaper entry.
+- CASA: Interprets bare values as radians, despite documenting lambda; large values may zero every imaging weight.
+- casa-rs: Requires explicit angle or lambda/klambda units and errors clearly on bare values.
+- Rationale: Prevent a documented-unit mismatch from silently producing an empty image.
+- User impact: Callers must supply units; numerical unit-bearing taper behavior remains governed by #970 evidence.
+- Owner decision: Owner, 2026-10-31, this chat: Require explicit units.
+- Evidence: [additions](#tclean-evidence-additions), [reader](#tclean-evidence-reader).
+
+##### startmodel-stokes: Unfinished
+
+- Inputs: Start-model Stokes labels differ from the target; equal plane counts.
+- CASA: Copies planes by position without converting polarization, since only direction and spectral axes are regridded.
+- casa-rs: Owner-directed implementation now copies by position and warns; focused and paired verification are pending.
+- Rationale: Match CASA's behavior, while making the label mismatch visible.
+- User impact: A Q model can seed I and permuted Stokes planes are copied positionally; this is not a physical polarization conversion. Unequal-plane-count behavior still needs oracle assessment.
+- Owner decision: Owner, 2026-10-31, this chat: Match but issue a warning. This supersedes the prior refusal.
 - Evidence: [additions](#tclean-evidence-additions), [reader](#tclean-evidence-reader).
 
 #### tclean evidence

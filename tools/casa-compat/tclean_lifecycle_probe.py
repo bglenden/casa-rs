@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,7 +50,57 @@ def native(binary: Path, directory: Path, values: dict) -> dict:
         reply = json.loads(run.stdout)
     except ValueError:
         raise RuntimeError(f"native reply: {run.stdout}\n{run.stderr}") from None
-    return {"exit_code": run.returncode, "reply": reply}
+    return {"exit_code": run.returncode, "reply": reply, "stderr": run.stderr}
+
+
+def stokes_probe(args, common, source):
+    """Reuse #970's small-fixture comparator; this is not a T2 science row."""
+    from casatasks import tclean
+    from casatools import image
+    model = args.work / "q-start.model"
+    shutil.copytree(str(source) + ".model", model)
+    ia = image()
+    ia.open(str(model))
+    coords = ia.coordsys()
+    coords.setstokes("Q")
+    ia.setcoordsys(coords.torecord())
+    coords.done()
+    ia.done()
+    casa_dir = args.work / "casa" / "stokes-single"
+    rust_dir = args.work / "rust" / "stokes-single"
+    casa_dir.mkdir(parents=True)
+    rust_dir.mkdir(parents=True)
+    values = {**common, "niter": 0, "startmodel": str(model)}
+    tclean(imagename=str(casa_dir / "image"), **values)
+    result = native(args.imager.resolve(), rust_dir, {**values,
+        "imagename": str(rust_dir / "image"), "backend": "cpu", "gridprecision": "f64"})
+    assert result["exit_code"] == 0, result
+    assert "copying planes by position" in result["stderr"], result["stderr"]
+    script = Path(__file__).resolve().parents[1] / "imaging/t15_imager_additions.py"
+    spec = importlib.util.spec_from_file_location("t15", script)
+    t15 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(t15)
+    t15.ROOT, t15.TAG = str(args.work), ""
+    rows = t15.compare("stokes-single")
+    assert {"image.model", "image.residual", "image.psf", "image.image", "image.sumwt"} <= rows.keys(), rows
+    for product, row in rows.items():
+        assert "nrms" in row, (product, row)
+        assert row["mask_mismatch"] == 0, (product, row)
+        assert row["nrms"] <= 1e-3, (product, row)
+        if "sumwt" in row:
+            ours, casa = row["sumwt"]
+            assert abs(ours - casa) <= 5e-5 * abs(casa), row
+    stokes = []
+    for prefix in [casa_dir / "image", rust_dir / "image"]:
+        ia = image()
+        ia.open(str(prefix) + ".model")
+        coords = ia.coordsys()
+        stokes.append(list(coords.stokes()))
+        coords.done()
+        ia.done()
+    assert stokes == [["I"], ["I"]], stokes
+    return dict(products=rows, output_model_stokes=stokes, warning_observed=True,
+                scope="single Q-labelled seed into I; small production-path T1.5 diagnostic, not representative T2")
 
 
 def main() -> None:
@@ -63,6 +114,7 @@ def main() -> None:
     parser.add_argument("--imager", required=True, type=Path)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--stokes", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
@@ -81,7 +133,7 @@ def main() -> None:
     tb.open(str(vis), nomodify=False)
     tb.putcol("DATA", np.ones_like(tb.getcol("DATA")))
     tb.close()
-    common = dict(vis=str(vis), imsize=[64], cell="2arcsec", weighting="natural",
+    common = dict(vis=str(vis), datacolumn="data", imsize=[64], cell="2arcsec", weighting="natural",
                   niter=10, gain=0.1, threshold="0Jy", pblimit=-0.1)
     prefix = args.work / "casa"
     first = casatasks.tclean(imagename=str(prefix), **common)
@@ -114,6 +166,7 @@ def main() -> None:
     repeated = native(args.imager.resolve(), output, {**values, "niter": 40})
     assert repeated["exit_code"] != 0 and "#944" in repeated["reply"]["message"], repeated
     assert before == snapshot(output), "native retry changed existing output bytes"
+    stokes_result = stokes_probe(args, common, prefix) if args.stokes else None
     receipt = dict(
         kind="small lifecycle/refusal oracle; not representative science",
         casa_tasks=casatasks.version_string(), casa_tools=casatools.version_string(),
@@ -125,6 +178,7 @@ def main() -> None:
                   startmodel_conflict=conflict, restart_false_prefixes=numbered),
         native=dict(first_status=initial["reply"].get("status"), repeated=repeated,
                     unchanged_output_files=len(before)),
+        stokes_startmodel=stokes_result,
         result="passed lifecycle assertions; restart equivalence remains unfinished",
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
