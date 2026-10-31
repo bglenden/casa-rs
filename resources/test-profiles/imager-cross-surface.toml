@@ -37,5 +37,4 @@ mask = ["box[[100pix, 100pix], [500pix, 500pix]]"]
 parallel = false
 channel_start = 0
 channel_count = 64
-write_pb = true
 cf_resident_mb = 512

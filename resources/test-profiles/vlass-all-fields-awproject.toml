@@ -31,5 +31,4 @@ cycleniter = 2000
 cyclefactor = 3
 channel_start = 0
 channel_count = 64
-write_pb = true
 cf_resident_mb = 512

@@ -531,6 +531,10 @@ impl Observation {
 /// derived from the data, and the imager's fixed `conjbeams` and
 /// `mosweight`.
 fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
+    // These component laws predate default PB production and include moving
+    // fields and frequencies outside the analytic PB's implemented scope.
+    // The production default and explicit opt-out have their own pb_default T1.
+    fields.entry("write_pb").or_insert_with(|| json!(false));
     fields.entry("cycleniter").or_insert_with(|| json!(1000));
     match fields.get("gridder").and_then(Value::as_str) {
         Some("wproject") => {
@@ -579,7 +583,24 @@ fn assert_route_law(
     request: &ImagingRequest,
     reported: &[ImagerArtifact],
 ) {
-    let batches = route_law::on_batches(request);
+    let mut batches = route_law::on_batches(request);
+    if let Some(source) = &request.outlierfile {
+        // A second scientific run needs private outlier namespaces too.
+        let text = std::fs::read_to_string(source).expect("read route-law outliers");
+        let text = text
+            .lines()
+            .map(|line| match line.split_once('=') {
+                Some((key, value)) if key.trim() == "imagename" => {
+                    format!("{key}={}.batches", value.trim())
+                }
+                _ => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let path = source.with_extension("batches.outlier");
+        std::fs::write(&path, text).expect("write route-law outliers");
+        batches.outlierfile = Some(path);
+    }
     parameters.0.insert(
         "imagename".to_string(),
         json!(batches.imagename.display().to_string()),

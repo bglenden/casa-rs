@@ -41,8 +41,9 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 1);
+    assert_eq!(bundle.surface.migrations().len(), 2);
     assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
+    assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
     assert!(
         bundle
             .surface
@@ -215,7 +216,7 @@ fn imager_profiles_reject_stale_contract_aliases_and_non_profile_authority() {
     let bundle = builtin_surface_bundle("tclean").unwrap();
     let current = bundle.surface.contract_version();
     // Contract 28, the imager's last, migrates; older ones are refused.
-    let stale = profile_source(current - 2, "");
+    let stale = profile_source(27, "");
     assert_diagnostic(&stale, &bundle, DiagnosticCode::UnsupportedContract);
 
     let alias = profile_source(current, "polarization = \"Q\"\n");
@@ -294,7 +295,7 @@ fn an_imager_profile_migrates_to_tclean() -> Result<(), Box<dyn Error>> {
         .filter(|diagnostic| diagnostic.code == DiagnosticCode::DefaultChanged)
         .filter_map(|diagnostic| diagnostic.parameter.clone())
         .collect::<Vec<_>>();
-    assert_eq!(warned, ["nterms", "perchanweightdensity"]);
+    assert_eq!(warned, ["nterms", "perchanweightdensity", "write_pb"]);
     let request = request_from_profile("old", source)?;
     assert_eq!(request.phasecenter_field, Some(3));
     assert_eq!(request.mask_box, [[1, 2, 10, 12]]);

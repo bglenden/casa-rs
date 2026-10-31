@@ -25,9 +25,11 @@ def plain(value):
 
 def main():
     import casatasks
+    import casatools
     from casatools import ms, table, quanta
 
     assert casatasks.version_string() == "6.7.6.14"
+    assert casatools.version_string() == "6.7.6-14"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vis", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -75,7 +77,7 @@ def main():
             assert all(0 <= row < total for row in rows)
             recorded[name] = dict(selectors=selectors, selected=bool(selected), rows=rows,
                                   indices=plain(handle.msselectedindices()))
-        except Exception as error:
+        except (RuntimeError, ValueError) as error:
             recorded[name] = dict(selectors=selectors, error={"type": type(error).__name__, "message": str(error)})
         finally:
             handle.done()
@@ -83,7 +85,7 @@ def main():
     assert recorded["field_id"]["rows"] == recorded["field_name"]["rows"]
     assert recorded["field_id_and_name"]["rows"] == recorded["all"]["rows"]
     archive = repo / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
-    output = dict(casa_tasks=casatasks.version_string(), casa_tools="6.7.6-14",
+    output = dict(casa_tasks=casatasks.version_string(), casa_tools=casatools.version_string(),
                   oracle_script_revision=revision, fixture=archive.name,
                   fixture_archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
                   row_identity="physical zero-based MAIN row numbers, in returned order",

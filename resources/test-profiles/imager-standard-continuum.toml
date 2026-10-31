@@ -19,4 +19,3 @@ weighting = "briggs"
 robust = -0.25
 niter = 500
 parallel = true
-write_pb = true
