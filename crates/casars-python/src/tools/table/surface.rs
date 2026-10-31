@@ -36,7 +36,7 @@ const METHODS: &[Method] = &[
         "addreadmeline",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, No),
     method("browse", &[], R::Any, No),
@@ -55,18 +55,18 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("clearlocks", &[], R::Any, No),
-    method("close", &[], R::Any, No),
+    method("close", &[], R::Any, Yes),
     method(
         "colarraytype",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coldatatype",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "colfieldnames",
@@ -75,15 +75,15 @@ const METHODS: &[Method] = &[
             param("keyword", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "colkeywordnames",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
-    method("colnames", &[], R::Any, No),
+    method("colnames", &[], R::Any, Yes),
     method(
         "copy",
         &[
@@ -135,13 +135,13 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("datachanged", &[], R::Any, No),
-    method("done", &[], R::Any, No),
+    method("done", &[], R::Any, Yes),
     method("endianformat", &[], R::Any, No),
     method(
         "fieldnames",
         &[param("keyword", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method("flush", &[], R::Any, No),
     method(
@@ -193,7 +193,7 @@ const METHODS: &[Method] = &[
             param("rownr", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcellslice",
@@ -205,7 +205,7 @@ const METHODS: &[Method] = &[
             param("incr", K::Ints, Ints(&[1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcol",
@@ -216,7 +216,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcoldesc",
@@ -243,13 +243,13 @@ const METHODS: &[Method] = &[
             param("keyword", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcolkeywords",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcolshapestring",
@@ -260,7 +260,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcolslice",
@@ -274,7 +274,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getdesc",
@@ -283,8 +283,13 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("getdminfo", &[], R::Any, No),
-    method("getkeyword", &[param("keyword", K::Any, Empty)], R::Any, No),
-    method("getkeywords", &[], R::Any, No),
+    method(
+        "getkeyword",
+        &[param("keyword", K::Any, Empty)],
+        R::Any,
+        Yes,
+    ),
+    method("getkeywords", &[], R::Any, Yes),
     method(
         "getvarcol",
         &[
@@ -294,15 +299,15 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "haslock",
         &[param("write", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
-    method("info", &[], R::Any, No),
+    method("info", &[], R::Any, Yes),
     method(
         "iscelldefined",
         &[
@@ -310,7 +315,7 @@ const METHODS: &[Method] = &[
             param("rownr", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "ismultiused",
@@ -328,16 +333,16 @@ const METHODS: &[Method] = &[
         "isscalarcol",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isvarcol",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
-    method("iswritable", &[], R::Any, No),
-    method("keywordnames", &[], R::Any, No),
+    method("iswritable", &[], R::Any, Yes),
+    method("keywordnames", &[], R::Any, Yes),
     method("listlocks", &[], R::Any, No),
     method(
         "lock",
@@ -346,13 +351,13 @@ const METHODS: &[Method] = &[
             param("nattempts", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("lockoptions", &[], R::Any, No),
-    method("name", &[], R::Any, No),
-    method("ncols", &[], R::Any, No),
-    method("nrows", &[], R::Any, No),
-    method("ok", &[], R::Any, No),
+    method("lockoptions", &[], R::Any, Yes),
+    method("name", &[], R::Any, Yes),
+    method("ncols", &[], R::Any, Yes),
+    method("nrows", &[], R::Any, Yes),
+    method("ok", &[], R::Any, Yes),
     method(
         "open",
         &[
@@ -361,7 +366,7 @@ const METHODS: &[Method] = &[
             param("nomodify", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcell",
@@ -371,7 +376,7 @@ const METHODS: &[Method] = &[
             param("thevalue", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcellslice",
@@ -384,7 +389,7 @@ const METHODS: &[Method] = &[
             param("incr", K::Ints, Ints(&[1])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcol",
@@ -396,7 +401,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolkeyword",
@@ -406,7 +411,7 @@ const METHODS: &[Method] = &[
             param("value", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolkeywords",
@@ -415,7 +420,7 @@ const METHODS: &[Method] = &[
             param("value", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putcolslice",
@@ -430,9 +435,9 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("putinfo", &[param("value", K::Any, Required)], R::Any, No),
+    method("putinfo", &[param("value", K::Any, Required)], R::Any, Yes),
     method(
         "putkeyword",
         &[
@@ -441,13 +446,13 @@ const METHODS: &[Method] = &[
             param("makesubrecord", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putkeywords",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putvarcol",
@@ -459,7 +464,7 @@ const METHODS: &[Method] = &[
             param("rowincr", K::Int, Int(1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "query",
@@ -480,7 +485,7 @@ const METHODS: &[Method] = &[
             param("keyword", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removecols",
@@ -492,7 +497,7 @@ const METHODS: &[Method] = &[
         "removekeyword",
         &[param("keyword", K::Any, Empty)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removerows",
@@ -590,7 +595,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("unlock", &[], R::Any, No),
+    method("unlock", &[], R::Any, Yes),
 ];
 
 /// The `table` tool's surface.

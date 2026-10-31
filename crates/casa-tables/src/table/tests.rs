@@ -1968,6 +1968,333 @@ fn prepared_row_writer_seek_keeps_buffer_unmaterialized_and_direct_writes_cohere
     }
 }
 
+/// A cell written to a table whose rows are not loaded stays written when
+/// the rows are later loaded for reading or for a full save, whether it was
+/// written before or after another cell of its column was read, and a cell
+/// of a later write is not undone by the one before it. The table's other
+/// rows stay on disk while only cells are written and read.
+#[test]
+fn cells_written_to_a_lazy_table_survive_the_loading_of_its_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
+        for row in 0..4 {
+            table
+                .add_row(row_with_fixed_arrays(
+                    row,
+                    &[row, row + 1],
+                    &[100 + row, 200 + row],
+                ))
+                .expect("push row");
+        }
+        let root = unique_test_dir(&format!("lazy_cell_writes_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        // An array cell is written and its shape asked, and the scalar column
+        // read before one of its cells is written: no row is loaded.
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["id", "data"])
+                .expect("prepare");
+            writer.seek(1).expect("seek");
+            writer
+                .set_value_at(1, Value::Array(ArrayValue::from_i32_vec(vec![70, 90])))
+                .expect("array write");
+        }
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after the array write {dm:?}"
+        );
+        assert_eq!(
+            reopened.array_shape(1, "data").expect("shape"),
+            Some(vec![2])
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after array_shape {dm:?}"
+        );
+        assert_eq!(
+            table_scalar(&reopened, 2, "id").expect("read caches the column"),
+            &ScalarValue::Int32(2)
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "after the scalar read {dm:?}"
+        );
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["id"])
+                .expect("prepare");
+            writer.seek(3).expect("seek");
+            writer
+                .set_value_at(0, Value::Scalar(ScalarValue::Int32(33)))
+                .expect("scalar write");
+        }
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "cell writes and reads load no rows for {dm:?}"
+        );
+
+        // The rows loaded for reading carry both writes.
+        assert_eq!(
+            reopened.row(1).expect("row 1").get("data"),
+            Some(&Value::Array(ArrayValue::from_i32_vec(vec![70, 90]))),
+            "{dm:?}"
+        );
+        assert_eq!(
+            reopened.row(3).expect("row 3").get("id"),
+            Some(&Value::Scalar(ScalarValue::Int32(33))),
+            "{dm:?}"
+        );
+
+        // A later write is not undone by the earlier one, and a full save
+        // writes them all.
+        {
+            let mut writer = reopened
+                .row_accessor_mut()
+                .prepare(&["data"])
+                .expect("prepare");
+            writer.seek(1).expect("seek");
+            writer
+                .set_value_at(0, Value::Array(ArrayValue::from_i32_vec(vec![71, 91])))
+                .expect("later write");
+        }
+        let copy = unique_test_dir(&format!("lazy_cell_writes_copy_{dm:?}"));
+        reopened
+            .save(TableOptions::new(&copy).with_data_manager(dm))
+            .expect("full save");
+        let verify = Table::open(TableOptions::new(&copy)).expect("reopen the copy");
+        assert_eq!(
+            table_array(&verify, 1, "data").expect("data row 1"),
+            &ArrayValue::from_i32_vec(vec![71, 91]),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_scalar(&verify, 3, "id").expect("id row 3"),
+            &ScalarValue::Int32(33),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_array(&verify, 2, "data").expect("data row 2"),
+            &ArrayValue::from_i32_vec(vec![2, 3]),
+            "{dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+        std::fs::remove_dir_all(&copy).expect("cleanup copy");
+    }
+}
+
+/// A slice of an array cell is read and written without loading the rows of
+/// a table read lazily (a MeasurementSet's visibilities would not fit in
+/// memory for one cell's slice), and the written slice is what the disk has
+/// after an in-place save of the row.
+#[test]
+fn cell_slices_of_a_lazy_table_load_no_rows() {
+    use super::Slicer;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema_for_manager(&schema, dm));
+        for row in 0..3 {
+            table
+                .add_row(row_with_fixed_arrays(
+                    row,
+                    &[10 * row, 10 * row + 1],
+                    &[0, 0],
+                ))
+                .expect("push row");
+        }
+        let root = unique_test_dir(&format!("lazy_cell_slices_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save");
+
+        let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let second = Slicer::contiguous(vec![1], vec![2]).expect("slicer");
+        assert_eq!(
+            reopened.get_cell_slice("data", 1, &second).expect("read"),
+            Value::Array(ArrayValue::from_i32_vec(vec![11])),
+            "{dm:?}"
+        );
+        reopened
+            .put_cell_slice("data", 1, &second, &ArrayValue::from_i32_vec(vec![99]))
+            .expect("write");
+        assert_eq!(
+            reopened.get_cell_slice("data", 1, &second).expect("reread"),
+            Value::Array(ArrayValue::from_i32_vec(vec![99])),
+            "{dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "a slice read and written loads no rows for {dm:?}"
+        );
+        reopened
+            .persist_selected_rows_in_place(&["data"], &[1])
+            .expect("save the row");
+
+        let verify = Table::open(TableOptions::new(&root)).expect("reopen");
+        assert_eq!(
+            table_array(&verify, 1, "data").expect("row 1"),
+            &ArrayValue::from_i32_vec(vec![10, 99]),
+            "{dm:?}"
+        );
+        assert_eq!(
+            table_array(&verify, 2, "data").expect("row 2"),
+            &ArrayValue::from_i32_vec(vec![20, 21]),
+            "{dm:?}"
+        );
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+/// A table that is one `StManAipsIO` group says how to write it in full as it
+/// is laid out (group name and byte order kept); any other layout says
+/// nothing, because a full save would change it.
+#[test]
+fn a_single_stman_aipsio_group_is_written_in_full_as_it_is_laid_out() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Float32, vec![2]),
+    ])
+    .expect("schema");
+    let build = || {
+        let mut table =
+            Table::with_schema(schema_for_manager(&schema, DataManagerKind::StManAipsIO));
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new(
+                    "data",
+                    Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+                ),
+            ]))
+            .expect("push row");
+        table
+    };
+
+    for format in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        let root = unique_test_dir(&format!("single_group_{format:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        build()
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::StManAipsIO)
+                    .with_data_manager_group("MyGroup")
+                    .with_endian_format(format),
+            )
+            .expect("save");
+        let table = Table::open(TableOptions::new(&root)).expect("open");
+        let options = table
+            .single_stman_aipsio_options()
+            .expect("options")
+            .expect("one StManAipsIO group");
+        assert_eq!(options.endian_format(), format);
+
+        // Written in full with those options, the table is laid out the same.
+        table.save(options).expect("full save");
+        let again = Table::open(TableOptions::new(&root)).expect("reopen");
+        let options = again
+            .single_stman_aipsio_options()
+            .expect("options")
+            .expect("still one StManAipsIO group");
+        assert_eq!(options.endian_format(), format);
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+
+    // Two managers: nothing to write it with.
+    let root = unique_test_dir("two_managers");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    let bindings = HashMap::from([(
+        "data".to_string(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StandardStMan,
+            tile_shape: None,
+        },
+    )]);
+    build()
+        .save_with_bindings(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StManAipsIO),
+            &bindings,
+        )
+        .expect("save with a binding");
+    let table = Table::open(TableOptions::new(&root)).expect("open");
+    assert!(
+        table
+            .single_stman_aipsio_options()
+            .expect("options")
+            .is_none(),
+        "a table of two managers must not be rewritten as one"
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+/// A cell that was undefined on disk is defined once it is written, whether
+/// or not the table's rows are loaded.
+#[test]
+fn a_written_cell_of_a_lazy_table_is_defined() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_variable("data", PrimitiveType::Int32, Some(1)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema_for_manager(&schema, DataManagerKind::StManAipsIO));
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]))
+        .expect("a row whose array cell is undefined");
+    let root = unique_test_dir("lazy_undefined_cell");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table.save(TableOptions::new(&root)).expect("save");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    assert!(!reopened.is_cell_defined(0, "data").expect("before"));
+    {
+        let mut writer = reopened
+            .row_accessor_mut()
+            .prepare(&["data"])
+            .expect("prepare");
+        writer.seek(0).expect("seek");
+        writer
+            .set_value_at(0, Value::Array(ArrayValue::from_i32_vec(vec![5, 6])))
+            .expect("write");
+    }
+    assert!(reopened.is_cell_defined(0, "data").expect("after"));
+    assert_eq!(
+        reopened.array_shape(0, "data").expect("shape"),
+        Some(vec![2])
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
 #[test]
 fn prepared_row_reader_sees_pending_and_cached_lazy_updates() {
     let schema = TableSchema::new(vec![
@@ -5570,6 +5897,27 @@ mod lock_tests {
         assert_eq!(reopened.row_count(), 2);
     }
 
+    /// A NoRead mode opens without a read lock, but an explicit request for
+    /// one takes it and it is held until released: casacore's
+    /// `PlainTable::lock` has no NoRead exception (probed in CASA 6.7.6.14
+    /// as `tb.haslock(write=False)` after `tb.lock(write=False)`).
+    #[test]
+    fn an_explicit_read_lock_is_taken_in_the_no_read_modes() {
+        for mode in [LockMode::AutoNoReadLocking, LockMode::UserNoReadLocking] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+            let mut table = Table::open_with_lock(opts, LockOptions::new(mode)).unwrap();
+            assert!(!table.has_lock(LockType::Read), "{mode:?} opens unlocked");
+
+            assert!(table.lock(LockType::Read, 1).unwrap());
+            assert!(table.has_lock(LockType::Read), "{mode:?} holds the lock");
+            assert!(!table.has_lock(LockType::Write));
+
+            table.unlock().unwrap();
+            assert!(!table.has_lock(LockType::Read), "{mode:?} released it");
+        }
+    }
+
     #[test]
     fn observation_owner_locked_modify_counter_tracks_one_write_unlock() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -5856,6 +6204,92 @@ mod lock_tests {
         writer.resync().unwrap();
         drop(writer);
         assert_eq!(published_counter(&opts), before.wrapping_add(1));
+    }
+
+    /// A writer that persists its own changes reloads the table after a
+    /// failure so that nothing is left to flush. When the reload fails too,
+    /// `resync_or_discard` still leaves nothing for the drop to write: the
+    /// table is not written in full with the change a failed write left in
+    /// memory.
+    #[test]
+    fn a_failed_reload_leaves_nothing_for_a_drop_to_write() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+
+        // The control file cannot be read, so the reload fails.
+        let control = opts.path().join("table.dat");
+        let hidden = opts.path().join("hidden-control");
+        std::fs::rename(&control, &hidden).unwrap();
+        assert!(writer.resync_or_discard().is_err(), "the reload succeeded");
+        std::fs::rename(&hidden, &control).unwrap();
+
+        let files = |dir: &std::path::Path| -> Vec<(String, Vec<u8>)> {
+            let mut files: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.file_name().is_some_and(|name| name != "table.lock"))
+                .map(|path| {
+                    (
+                        path.file_name().unwrap().to_string_lossy().into_owned(),
+                        std::fs::read(&path).unwrap(),
+                    )
+                })
+                .collect();
+            files.sort();
+            files
+        };
+        let before = files(opts.path());
+        drop(writer);
+        assert_eq!(files(opts.path()), before, "the drop wrote the table");
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(1),
+            "the change a failed write left in memory reached the disk"
+        );
+    }
+
+    /// A release that fails while the table holds unwritten changes, and
+    /// whose reload fails too, leaves nothing for the drop to write in full
+    /// (`unlock_metadata_only_or_discard`). The lock may stay held, as the
+    /// publication of a write needs the control file too; the drop then only
+    /// publishes.
+    #[test]
+    fn a_failed_release_discards_the_changes_and_leaves_nothing_for_a_drop_to_write() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+
+        // The control file becomes a directory: the metadata flush of the
+        // release fails, and so does the reload.
+        let control = opts.path().join("table.dat");
+        let hidden = opts.path().join("hidden-control");
+        std::fs::rename(&control, &hidden).unwrap();
+        std::fs::create_dir(&control).unwrap();
+        assert!(
+            writer.unlock_metadata_only_or_discard().is_err(),
+            "the blocked release succeeded"
+        );
+        std::fs::remove_dir(&control).unwrap();
+        std::fs::rename(&hidden, &control).unwrap();
+
+        let data = std::fs::read(opts.path().join("table.f0")).unwrap();
+        let dat = std::fs::read(&control).unwrap();
+        drop(writer);
+        assert_eq!(std::fs::read(opts.path().join("table.f0")).unwrap(), data);
+        assert_eq!(std::fs::read(&control).unwrap(), dat);
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(1)
+        );
     }
 
     /// An unlock whose flush fails returns the error and keeps the write

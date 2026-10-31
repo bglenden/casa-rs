@@ -825,9 +825,8 @@ fn read_array_record_field(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
         CasacoreDataType::TpArrayBool => {
             let count = io.get_u32()? as usize;
             let mut vals = vec![false; count.min(nelem)];
-            for v in vals.iter_mut() {
-                *v = io.get_bool()?;
-            }
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte.
+            io.get_bool_into(&mut vals)?;
             ArrayValue::Bool(
                 ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1352,11 +1351,13 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
             // while keeping the wire layout aligned with casacore.
             io.put_string("")?;
         } else if is_array_data_type(dt) {
-            // Array field: write IPosition shape.
-            if let Value::Array(av) = &field.value {
-                let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
-                write_iposition(io, &shape)?;
-            }
+            // A keyword array is of variable shape, as `RecordDesc::addField`
+            // without a shape makes it: `IPosition(1, -1)`. The array's own
+            // shape is written with its data (`write_array_record_field`).
+            // Writing the current shape here would fix the field to it, and
+            // `TableRecordRep::defineDataField` then refuses a later update of
+            // another shape (`Record::define - fixed array conformance error`).
+            write_iposition(io, &[-1])?;
         }
 
         io.put_string("")?; // comment
@@ -1437,7 +1438,14 @@ fn write_array_record_field(io: &mut AipsIo, av: &ArrayValue) -> Result<(), Stor
 /// ([`read_array_record_field`]) rebuilds Fortran-layout arrays.
 fn write_array_elements(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
     match av {
-        ArrayValue::Bool(a) => put_each(io, a, AipsIo::put_bool),
+        ArrayValue::Bool(a) => {
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte;
+            // one byte each is a record casacore refuses ("part of object
+            // not read").
+            let flags: Vec<bool> = casacore_order(a).copied().collect();
+            io.put_bool_slice(&flags, false)?;
+            Ok(())
+        }
         ArrayValue::UInt8(a) => put_each(io, a, AipsIo::put_u8),
         ArrayValue::Int16(a) => put_each(io, a, AipsIo::put_i16),
         ArrayValue::UInt16(a) => put_each(io, a, AipsIo::put_u16),
@@ -2312,6 +2320,79 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("table_control_{name}_{nanos}"))
+    }
+
+    /// A Boolean array in a keyword record is bit-packed, as casacore's
+    /// `TypeIO` writes it: sixteen flags take the two bytes nine do, and the
+    /// first flag is the lowest bit. One byte per flag made CASA 6.7.6.14
+    /// refuse the table ("AipsIO::getend: part of object not read").
+    #[test]
+    fn a_boolean_array_keyword_is_bit_packed() {
+        fn record_with(flags: &[bool]) -> RecordValue {
+            let mut record = RecordValue::default();
+            let cells = ArrayD::from_shape_vec(IxDyn(&[flags.len()]).f(), flags.to_vec()).unwrap();
+            record.upsert("flags", Value::Array(ArrayValue::Bool(cells)));
+            record
+        }
+        let nine = [true, false, true, true, false, false, true, false, true];
+        let sixteen = [true; 16];
+        let short = serialize_record_to_uchar(&record_with(&nine)).unwrap();
+        let long = serialize_record_to_uchar(&record_with(&sixteen)).unwrap();
+        assert_eq!(short.len(), long.len(), "both pack into two bytes");
+
+        let three = serialize_record_to_uchar(&record_with(&[true, false, true])).unwrap();
+        let element_count_then_bits = [0, 0, 0, 3, 0b101];
+        assert!(
+            three
+                .windows(5)
+                .any(|window| window == element_count_then_bits),
+            "{three:?}"
+        );
+
+        for flags in [&nine[..], &sixteen[..]] {
+            let bytes = serialize_record_to_uchar(&record_with(flags)).unwrap();
+            let read = deserialize_record_from_uchar(&bytes).unwrap();
+            let Some(Value::Array(ArrayValue::Bool(cells))) = read.get("flags") else {
+                panic!("a Boolean array: {read:?}");
+            };
+            assert_eq!(cells.iter().copied().collect::<Vec<_>>(), flags);
+        }
+    }
+
+    /// An array keyword is of variable shape in its `RecordDesc`
+    /// (`IPosition(1, -1)`, as `RecordDesc::addField` without a shape makes
+    /// it), whatever shape its data has: a fixed shape would make casacore
+    /// refuse a later update of another shape
+    /// (`Record::define - fixed array conformance error`, observed with CASA
+    /// 6.7.6.14 on a table whose descriptor had been changed to a fixed one).
+    #[test]
+    fn an_array_keyword_is_of_variable_shape_in_its_record_desc() {
+        let variable_shape = [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff];
+        let mut record = RecordValue::default();
+        record.upsert(
+            "vector",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.0, 2.0]).unwrap(),
+            )),
+        );
+        record.upsert(
+            "matrix",
+            Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), vec![1, 2, 3, 4, 5, 6]).unwrap(),
+            )),
+        );
+        let bytes = serialize_record_to_uchar(&record).unwrap();
+        let described = bytes
+            .windows(variable_shape.len())
+            .filter(|window| *window == variable_shape)
+            .count();
+        assert_eq!(
+            described, 2,
+            "one variable shape per array field: {bytes:?}"
+        );
+
+        let read = deserialize_record_from_uchar(&bytes).unwrap();
+        assert_eq!(read, record, "the data keeps its own shape");
     }
 
     #[test]

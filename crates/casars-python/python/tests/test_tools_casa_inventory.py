@@ -31,6 +31,16 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
+IMPLEMENTED["table"] = {
+    "open", "close", "done", "ok", "name", "nrows", "ncols", "colnames", "iswritable", "info",
+    "lockoptions", "haslock", "lock", "unlock", "isscalarcol", "isvarcol", "coldatatype",
+    "colarraytype", "getcell", "getcol", "getvarcol", "getcolshapestring", "iscelldefined",
+    "keywordnames", "getkeywords", "getkeyword", "fieldnames", "colkeywordnames",
+    "getcolkeywords", "getcolkeyword", "colfieldnames",
+    "putkeyword", "putkeywords", "removekeyword", "putcolkeyword", "putcolkeywords",
+    "removecolkeyword", "putinfo", "addreadmeline", "putcell", "putcol", "putvarcol",
+    "getcellslice", "getcolslice", "putcellslice", "putcolslice",
+}  # fmt: skip
 
 
 @pytest.mark.parametrize("tool", sorted(ISSUES))

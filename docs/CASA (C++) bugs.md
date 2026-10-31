@@ -20,7 +20,12 @@ CASA behaviours casa-rs does not follow:
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
-[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
+[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
+[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
+[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
+[`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
+[`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2596,6 +2601,89 @@ reads the input's world values at the pixels it was cut from. CASA's
 `imsubimage` ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
+
+## `tb.getcol` refuses a column of `int64`
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `src/code/stdcasa/StdCasa/CasacSupport.cc`
+  (`fromValueHolder`)
+
+`tb.getcol` of a scalar column of `Int64` raises `RuntimeError: Unknown casa
+DataType!` in CASA 6.7.6.14, while `tb.getcell` of the same column returns the
+value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
+`int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
+the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
+(the converter for records in the same file has both). The recording is
+`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
+`int64` array, as it does for every other integer column.
+
+## `tb.putkeyword` stores an int beyond 32 bits as 0
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion for table keywords
+
+`tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
+gives `0`, both for a new keyword and for an existing 32-bit `Int` one
+(CASA 6.7.6.14; the `casa_bugs` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
+stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
+refuses such a value for an existing 32-bit keyword with
+`RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
+bits`, rather than store a wrong number.
+
+## `tb` slices with a wrong rank or a start outside the array abort the process
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `table::getcellslice`, `getcolslice`, `putcellslice`
+  and `putcolslice`, over casacore's `Slicer`
+
+In CASA 6.7.6.14 a slice whose `blc`, `trc` or `incr` has the wrong number of
+elements for the array, or whose `blc` lies outside the array, throws an
+`ArraySlicerError` that nothing catches, and the Python process ends
+(`libc++abi: terminating due to uncaught exception of type
+casacore::ArraySlicerError`, exit status 134). The default `incr=[1]` is such a
+slice for an array of more than one axis, so `tb.getcellslice('DATA', 0, [0, 0],
+[1, 3])` aborts. casa-rs raises a `RuntimeError` for each of them and takes a
+one-element `incr` as the step of every axis. The recording
+(`crates/casars-python/python/tests/data/casa_table_tool.json`, `slices` and
+`ms_slices`) holds only the cases CASA survives. CASA is also inconsistent
+about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
+than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
+follows both.
+
+## `tb.putcell` and `putcol` wrap an int beyond 32 bits in an int cell
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion to a column's type
+
+`tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
+`-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
+(CASA 6.7.6.14; the `int_overflow` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
+to the 32-bit column type without a range check, as for `putkeyword` above.
+casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
+leaves the cell, rather than store a wrong number. Astra's review of #1034
+noted the departure.
+
+## `tb.putcell` with several rows writes those before a missing one
+
+- Date noted: 2026-10-30
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::putCell`
+
+`tb.putcell('id', [0, 3], 22)` on a table of three rows writes row 0, then
+fails on row 3 with `no such row`: `TableProxy::putCell` checks and writes one
+row at a time, so a call that raises has still changed the table
+(`rows_vector` scenario). casa-rs checks every row first and raises with the
+table as it was. The recording follows the failed call with a write that puts
+row 0 back, so that its later reads agree.
 
 ## `importfits` reads every FITS date as UTC
 

@@ -25,12 +25,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn addreadmeline(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("addreadmeline")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (nrow = None), text_signature = "($self, nrow=1)")]
     fn addrows(&self, nrow: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("addrows")
@@ -57,46 +51,6 @@ impl PyTableTool {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn clearlocks(&self) -> PyResult<Py<PyAny>> {
         stub("clearlocks")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn close(&self) -> PyResult<Py<PyAny>> {
-        stub("close")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn colarraytype(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("colarraytype")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn coldatatype(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("coldatatype")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, keyword = None), text_signature = "($self, columnname, keyword='')")]
-    fn colfieldnames(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        keyword: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("colfieldnames")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn colkeywordnames(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("colkeywordnames")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn colnames(&self) -> PyResult<Py<PyAny>> {
-        stub("colnames")
     }
 
     /// Not yet implemented in casa-rs.
@@ -161,20 +115,8 @@ impl PyTableTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn done(&self) -> PyResult<Py<PyAny>> {
-        stub("done")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
     fn endianformat(&self) -> PyResult<Py<PyAny>> {
         stub("endianformat")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (keyword = None), text_signature = "($self, keyword='')")]
-    fn fieldnames(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("fieldnames")
     }
 
     /// Not yet implemented in casa-rs.
@@ -229,41 +171,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr = None), text_signature = "($self, columnname, rownr=0)")]
-    fn getcell(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcell")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, blc, trc, incr = None), text_signature = "($self, columnname, rownr, blc, trc, incr=[1])")]
-    fn getcellslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        blc: &Bound<'_, PyAny>,
-        trc: &Bound<'_, PyAny>,
-        incr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcellslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1)")]
-    fn getcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcol")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn getcoldesc(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("getcoldesc")
@@ -283,49 +190,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, keyword = None), text_signature = "($self, columnname, keyword=[])")]
-    fn getcolkeyword(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        keyword: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcolkeyword")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn getcolkeywords(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getcolkeywords")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1)")]
-    fn getcolshapestring(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcolshapestring")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, blc, trc, incr, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, blc, trc, incr, startrow=0, nrow=-1, rowincr=1)")]
-    fn getcolslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        blc: &Bound<'_, PyAny>,
-        trc: &Bound<'_, PyAny>,
-        incr: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcolslice")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (actual = None), text_signature = "($self, actual=True)")]
     fn getdesc(&self, actual: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("getdesc")
@@ -335,52 +199,6 @@ impl PyTableTool {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn getdminfo(&self) -> PyResult<Py<PyAny>> {
         stub("getdminfo")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (keyword = None), text_signature = "($self, keyword=[])")]
-    fn getkeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("getkeyword")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn getkeywords(&self) -> PyResult<Py<PyAny>> {
-        stub("getkeywords")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1)")]
-    fn getvarcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getvarcol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (write = None), text_signature = "($self, write=True)")]
-    fn haslock(&self, write: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("haslock")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn info(&self) -> PyResult<Py<PyAny>> {
-        stub("info")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr = None), text_signature = "($self, columnname, rownr=0)")]
-    fn iscelldefined(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("iscelldefined")
     }
 
     /// Not yet implemented in casa-rs.
@@ -396,195 +214,9 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn isscalarcol(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isscalarcol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn isvarcol(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isvarcol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn iswritable(&self) -> PyResult<Py<PyAny>> {
-        stub("iswritable")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn keywordnames(&self) -> PyResult<Py<PyAny>> {
-        stub("keywordnames")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn listlocks(&self) -> PyResult<Py<PyAny>> {
         stub("listlocks")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (write = None, nattempts = None), text_signature = "($self, write=True, nattempts=0)")]
-    fn lock(
-        &self,
-        write: Option<&Bound<'_, PyAny>>,
-        nattempts: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("lock")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn lockoptions(&self) -> PyResult<Py<PyAny>> {
-        stub("lockoptions")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn name(&self) -> PyResult<Py<PyAny>> {
-        stub("name")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn ncols(&self) -> PyResult<Py<PyAny>> {
-        stub("ncols")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nrows(&self) -> PyResult<Py<PyAny>> {
-        stub("nrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn ok(&self) -> PyResult<Py<PyAny>> {
-        stub("ok")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (tablename = None, lockoptions = None, nomodify = None), text_signature = "($self, tablename='', lockoptions={}, nomodify=True)")]
-    fn open(
-        &self,
-        tablename: Option<&Bound<'_, PyAny>>,
-        lockoptions: Option<&Bound<'_, PyAny>>,
-        nomodify: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("open")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, thevalue = None), text_signature = "($self, columnname, rownr, thevalue=[])")]
-    fn putcell(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        thevalue: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcell")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, rownr, value = None, blc = None, trc = None, incr = None), text_signature = "($self, columnname, rownr, value=[], blc=[], trc=[], incr=[1])")]
-    fn putcellslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        rownr: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        blc: Option<&Bound<'_, PyAny>>,
-        trc: Option<&Bound<'_, PyAny>>,
-        incr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcellslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], startrow=0, nrow=-1, rowincr=1)")]
-    fn putcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, keyword = None, value = None), text_signature = "($self, columnname, keyword=[], value=[])")]
-    fn putcolkeyword(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        keyword: Option<&Bound<'_, PyAny>>,
-        value: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcolkeyword")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value), text_signature = "($self, columnname, value)")]
-    fn putcolkeywords(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcolkeywords")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value = None, blc = None, trc = None, incr = None, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value=[], blc=[], trc=[], incr=[1], startrow=0, nrow=-1, rowincr=1)")]
-    fn putcolslice(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        blc: Option<&Bound<'_, PyAny>>,
-        trc: Option<&Bound<'_, PyAny>>,
-        incr: Option<&Bound<'_, PyAny>>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putcolslice")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn putinfo(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("putinfo")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (keyword = None, value = None, makesubrecord = None), text_signature = "($self, keyword=[], value=[], makesubrecord=False)")]
-    fn putkeyword(
-        &self,
-        keyword: Option<&Bound<'_, PyAny>>,
-        value: Option<&Bound<'_, PyAny>>,
-        makesubrecord: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putkeyword")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn putkeywords(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("putkeywords")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, value, startrow = None, nrow = None, rowincr = None), text_signature = "($self, columnname, value, startrow=0, nrow=-1, rowincr=1)")]
-    fn putvarcol(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        value: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putvarcol")
     }
 
     /// Not yet implemented in casa-rs.
@@ -601,25 +233,9 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, keyword = None), text_signature = "($self, columnname, keyword=[])")]
-    fn removecolkeyword(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        keyword: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("removecolkeyword")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnames), text_signature = "($self, columnames)")]
     fn removecols(&self, columnames: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("removecols")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (keyword = None), text_signature = "($self, keyword=[])")]
-    fn removekeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("removekeyword")
     }
 
     /// Not yet implemented in casa-rs.
@@ -728,11 +344,5 @@ impl PyTableTool {
         sep: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("toasciifmt")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn unlock(&self) -> PyResult<Py<PyAny>> {
-        stub("unlock")
     }
 }

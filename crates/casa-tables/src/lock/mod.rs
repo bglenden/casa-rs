@@ -147,6 +147,11 @@ pub struct LockOptions {
     /// Inspection interval in seconds for [`LockMode::AutoLocking`].
     /// Default: 5.0 seconds.
     pub inspection_interval: f64,
+    /// Whether the table is opened for reading only (`Table::Old`, not
+    /// `Table::Update`). The permanent modes then hold a read lock for the
+    /// table's life, not the write lock, so that readers coexist.
+    /// Default: `false`.
+    pub read_only: bool,
 }
 
 impl Default for LockOptions {
@@ -154,6 +159,7 @@ impl Default for LockOptions {
         Self {
             mode: LockMode::NoLocking,
             inspection_interval: 5.0,
+            read_only: false,
         }
     }
 }
@@ -170,6 +176,13 @@ impl LockOptions {
     /// Set the inspection interval for auto-locking mode.
     pub fn with_inspection_interval(mut self, seconds: f64) -> Self {
         self.inspection_interval = seconds;
+        self
+    }
+
+    /// Open the table for reading only: a permanent mode then takes a read
+    /// lock, as casacore's `PlainTable` does for a table opened `Old`.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
     }
 }

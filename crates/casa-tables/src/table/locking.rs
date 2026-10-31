@@ -49,9 +49,14 @@ impl Table {
 
         // Acquire the initial lock the mode asks for, with casacore's number
         // of attempts (`TableLockData::makeLock`, `PlainTable`).
+        let permanent_lock = if lock_opts.read_only {
+            LockType::Read
+        } else {
+            LockType::Write
+        };
         let initial = match lock_opts.mode {
-            LockMode::PermanentLocking => Some((LockType::Write, 1)),
-            LockMode::PermanentLockingWait => Some((LockType::Write, 0)),
+            LockMode::PermanentLocking => Some((permanent_lock, 1)),
+            LockMode::PermanentLockingWait => Some((permanent_lock, 0)),
             LockMode::AutoLocking | LockMode::DefaultLocking => Some((LockType::Read, 0)),
             // AutoNoReadLocking skips the read lock on open; only write
             // locks are acquired.
@@ -148,11 +153,9 @@ impl Table {
                 operation: "lock".into(),
             })?;
 
-        // NoRead modes skip the file-level read lock entirely.
-        if lock_type == LockType::Read && state.options.mode.skip_read_lock() {
-            return Ok(true);
-        }
-
+        // The NoRead modes only spare a table the read lock it takes on
+        // open (`skip_read_lock`); an explicit request takes it, as
+        // casacore's `PlainTable::lock` does.
         // A table already locked needs no synchronization: no other process
         // can have written it (casacore's `PlainTable::lock`). Requesting a
         // read lock while holding the write lock keeps the write lock and
@@ -264,17 +267,32 @@ impl Table {
     pub fn unlock_metadata_only_or_discard(&mut self) -> Result<(), TableError> {
         let released = self.unlock_metadata_only();
         if released.is_err() && self.has_lock(LockType::Write) {
-            if self.resync().is_err() {
-                // Unreloadable, the changes are discarded all the same:
-                // nothing is left to flush, so a drop only publishes.
-                let generation = self.inner.generation();
-                if let Some(state) = self.lock_state.as_mut() {
-                    state.flushed_generation = generation;
-                }
-            }
+            let _ = self.resync_or_discard();
             let _ = self.unlock_metadata_only();
         }
         released
+    }
+
+    /// Reloads the table from disk, as [`resync`](Self::resync) does and,
+    /// when the reload fails, discards the changes not yet written all the
+    /// same: the table is left as it was in memory, but with nothing to
+    /// flush, so that closing or dropping it while it holds the write lock
+    /// only publishes what reached the disk and never writes the table in
+    /// full. Returns the reload's error.
+    ///
+    /// A writer that persists its changes itself (`save_metadata_only`,
+    /// `save_selected_rows`) calls this after a failure, to leave nothing
+    /// for the full write of a drop to find.
+    #[cfg(unix)]
+    pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
+        let reloaded = self.resync();
+        if reloaded.is_err() {
+            let generation = self.inner.generation();
+            if let Some(state) = self.lock_state.as_mut() {
+                state.flushed_generation = generation;
+            }
+        }
+        reloaded
     }
 
     #[cfg(unix)]

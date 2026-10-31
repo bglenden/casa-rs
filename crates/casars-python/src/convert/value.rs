@@ -40,6 +40,18 @@ pub(crate) enum CasaValue {
     },
     /// A NumPy unicode array.
     Texts(Vec<String>),
+    /// A NumPy `int64` array of `shape`, its values in Fortran order.
+    Ints { shape: Vec<usize>, values: Vec<i64> },
+    /// A NumPy `bool` array of `shape`, in Fortran order.
+    Bools {
+        shape: Vec<usize>,
+        values: Vec<bool>,
+    },
+    /// A NumPy unicode array of `shape`, in Fortran order.
+    TextArray {
+        shape: Vec<usize>,
+        values: Vec<String>,
+    },
     /// A Python `list`.
     List(Vec<CasaValue>),
     /// A Python `tuple`.
@@ -121,7 +133,9 @@ impl CasaValue {
         }
     }
 
-    fn from_scalar(scalar: &ScalarValue) -> Self {
+    /// A casacore scalar: any integer type becomes an `int`, any real type a
+    /// `float`.
+    pub(crate) fn from_scalar(scalar: &ScalarValue) -> Self {
         match scalar {
             ScalarValue::Bool(flag) => Self::Bool(*flag),
             ScalarValue::UInt8(value) => Self::Int(i64::from(*value)),
@@ -204,11 +218,30 @@ impl CasaValue {
                 .into_pyarray(py)
                 .into_any()
                 .unbind(),
+            Self::Ints { shape, values } => fortran_array(shape, values)?
+                .into_pyarray(py)
+                .into_any()
+                .unbind(),
+            Self::Bools { shape, values } => fortran_array(shape, values)?
+                .into_pyarray(py)
+                .into_any()
+                .unbind(),
             Self::Texts(texts) => {
                 let keywords = PyDict::new(py);
                 keywords.set_item("dtype", "str")?;
                 py.import("numpy")?
                     .call_method("array", (PyList::new(py, texts)?,), Some(&keywords))?
+                    .unbind()
+            }
+            Self::TextArray { shape, values } => {
+                let numpy = py.import("numpy")?;
+                let keywords = PyDict::new(py);
+                keywords.set_item("dtype", "str")?;
+                let flat =
+                    numpy.call_method("array", (PyList::new(py, values)?,), Some(&keywords))?;
+                let order = PyDict::new(py);
+                order.set_item("order", "F")?;
+                flat.call_method("reshape", (shape,), Some(&order))?
                     .unbind()
             }
             Self::List(items) => {
