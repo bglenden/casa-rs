@@ -83,6 +83,19 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// An acquired sample has unusable coordinates; padding is excluded
+    /// using the store's acquisition index, not coordinate finiteness.
+    #[error(
+        "non-finite UVW in partition {partition} at time {time_mjd_seconds} on baseline {antennas:?}"
+    )]
+    NonFiniteUvw {
+        /// The observation partition.
+        partition: u32,
+        /// Seconds from MJD zero in the partition's time scale.
+        time_mjd_seconds: f64,
+        /// Catalogue antenna identifiers.
+        antennas: [u32; 2],
+    },
     /// The `spw` or `ddid` selection names no data description.
     #[error("selection resolved to no data descriptions")]
     NoSelectedDataDescriptions,

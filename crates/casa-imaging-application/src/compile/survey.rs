@@ -330,12 +330,7 @@ fn survey_partition(
         };
         for time in 0..batch.times() {
             let selected = if plan.reads_uvw() {
-                let held = observe_time(
-                    &batch,
-                    time,
-                    tested.then_some((uv, candidate)),
-                    &mut facts.w,
-                );
+                let held = observe_time(plan, candidate, &batch, time, &mut facts.w)?;
                 samples += if tested { held } else { 0 };
                 held > 0
             } else {
@@ -369,26 +364,41 @@ fn survey_partition(
 /// with finite UVW that `uv`, when tested, holds for its candidate's
 /// wavelength. Returns how many.
 fn observe_time(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
     batch: &VisibilityBatch<'_>,
     time: usize,
-    uv: Option<(&UvSelection, &Candidate)>,
     w: &mut WRange,
-) -> u64 {
+) -> Result<u64, PrepareError> {
+    let uv = plan.row_selection.uv_distances();
     let uvw = batch.group.uvw.expect("the survey reads UVW");
     let per_time = batch.samples_per_time();
     let mut held = 0;
     for sample in time * per_time..(time + 1) * per_time {
         let uvw_m = uvw.metres_at(sample);
-        if !uvw_m.iter().all(|value| value.is_finite()) {
+        if !uv.holds(uvw_m, candidate.wavelength_m) {
             continue;
         }
-        if uv.is_some_and(|(uv, candidate)| !uv.holds(uvw_m, candidate.wavelength_m)) {
+        if !uvw_m.iter().all(|value| value.is_finite()) {
+            let baseline = batch.baselines[sample % per_time];
+            let time_mjd_seconds = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
+            if plan
+                .observation
+                .main_row(candidate.id, time_mjd_seconds, baseline)
+                .is_some()
+            {
+                return Err(PrepareError::NonFiniteUvw {
+                    partition: candidate.id.0,
+                    time_mjd_seconds,
+                    antennas: [baseline.antenna1.0, baseline.antenna2.0],
+                });
+            }
             continue;
         }
         w.observe(uvw_m[2]);
         held += 1;
     }
-    held
+    Ok(held)
 }
 
 /// The samples `estimate`'s one partition delivers that are not padding.
@@ -466,6 +476,87 @@ mod tests {
     use super::*;
 
     const T0: f64 = 5_000_000_000.0;
+
+    /// A stored row's NaN coordinates are invalid input, not evidence of
+    /// missing acquisition. Grid padding still passes the same survey.
+    #[test]
+    fn a_nonfinite_stored_uvw_is_refused_but_grid_padding_is_skipped() {
+        for poison in [Some(true), Some(false), None] {
+            let root = tempfile::tempdir().expect("temporary fixture");
+            let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            tar::Archive::new(flate2::read::GzDecoder::new(
+                std::fs::File::open(archive).unwrap(),
+            ))
+            .unpack(root.path())
+            .unwrap();
+            let path = root.path().join("ms_trial.ms");
+            let mut ms = MeasurementSet::open(&path).unwrap();
+            if let Some(all) = poison {
+                for row in 0..if all { ms.row_count() } else { 1 } {
+                    ms.main_table_mut()
+                        .cell_accessor_mut(row, "UVW")
+                        .unwrap()
+                        .set(Value::Array(ArrayValue::Float64(
+                            ndarray::arr1(&[f64::NAN; 3]).into_dyn(),
+                        )))
+                        .unwrap();
+                }
+            } else {
+                ms.main_table_mut().remove_rows(&[7]).unwrap();
+            }
+            let rows = ms.row_count() as u64;
+            ms.save().unwrap();
+            drop(ms);
+            let observation = Msv2Observation::open(&path).unwrap();
+            assert_eq!(observation.catalogue().partitions.len(), 1);
+            let id = observation.catalogue().partition_ids()[0];
+            let entry = observation.catalogue().partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let plan = SurveyPlan {
+                observation: &observation,
+                candidates: Candidates {
+                    data_group: "base".into(),
+                    partitions: vec![],
+                },
+                row_selection: RowSelection::new(
+                    IdSelection::All,
+                    UvSelection::All,
+                    IntentSelection::All,
+                ),
+                w_range: true,
+                first_cross: false,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                observation_ids: BTreeSet::new(),
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, 1 << 20);
+            let result = survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            );
+            if poison.is_some() {
+                assert!(
+                    matches!(result, Err(PrepareError::NonFiniteUvw { .. })),
+                    "{poison:?}"
+                );
+            } else {
+                assert_eq!(result.unwrap(), rows);
+                assert!(!facts.epochs[&candidate.spectral_window].is_empty());
+            }
+        }
+    }
 
     /// Native AW's reference time on `ms_trial.ms` cut to two
     /// cross-correlation rows of one baseline an hour apart, each row's
