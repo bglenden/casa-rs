@@ -384,7 +384,9 @@ fn observe_time(
             let time_mjd_seconds = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
             if plan
                 .observation
-                .main_row(candidate.id, time_mjd_seconds, baseline)
+                // MSv2 offsets are the stored MJD-zero seconds. Preserve
+                // their bits for the index, including a stored -0.0.
+                .main_row(candidate.id, batch.time.offsets_s()[time], baseline)
                 .is_some()
             {
                 return Err(PrepareError::NonFiniteUvw {
@@ -481,7 +483,12 @@ mod tests {
     /// missing acquisition. Grid padding still passes the same survey.
     #[test]
     fn a_nonfinite_stored_uvw_is_refused_but_grid_padding_is_skipped() {
-        for poison in [Some(true), Some(false), None] {
+        for (poison, signed_zero) in [
+            (Some(true), false),
+            (Some(false), false),
+            (Some(true), true),
+            (None, false),
+        ] {
             let root = tempfile::tempdir().expect("temporary fixture");
             let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
@@ -492,6 +499,15 @@ mod tests {
             .unwrap();
             let path = root.path().join("ms_trial.ms");
             let mut ms = MeasurementSet::open(&path).unwrap();
+            if signed_zero {
+                let remove: Vec<_> = (1..ms.row_count()).collect();
+                ms.main_table_mut().remove_rows(&remove).unwrap();
+                ms.main_table_mut()
+                    .cell_accessor_mut(0, "TIME")
+                    .unwrap()
+                    .set(Value::Scalar(ScalarValue::Float64(-0.0)))
+                    .unwrap();
+            }
             if let Some(all) = poison {
                 for row in 0..if all { ms.row_count() } else { 1 } {
                     ms.main_table_mut()
