@@ -2067,6 +2067,61 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tbgetcol-refuses-a-column-of-int64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.getcol refuses a column of int64
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.putkeyword stores an int beyond 32 bits as 0
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb slices with a wrong rank or a start outside the array abort the process
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.putcell and putcol wrap an int beyond 32 bits in an int cell
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.putcell with several rows writes those before a missing one
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#importfits-reads-every-fits-date-as-utc" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2125,7 +2180,12 @@ CASA behaviours casa-rs does not follow:
 <a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>,
 <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
-<a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>.
+<a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
+<a href="#tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> of an <code>int64</code> column</a>,
+<a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> of an int beyond 32 bits</a>,
+<a href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices that abort the process</a>,
+<a href="#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell"><code>tb.putcell</code> of an int beyond 32 bits</a>,
+<a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows</a>.
 Simulator behaviours casa-rs does not follow:
 <a href="#the-simulator-stores-tai-as-utc">TIME as TAI</a>,
 <a href="#the-simulator-charges-shadowing-to-the-antenna-in-front">shadowing the front antenna</a>,
@@ -4512,6 +4572,84 @@ reads the input's world values at the pixels it was cut from. CASA's
 <code>imsubimage</code> ignores a box on an image without a direction coordinate, the
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.</p>
+<h2 id="tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> refuses a column of <code>int64</code><a class="headerlink" href="#tbgetcol-refuses-a-column-of-int64" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casatools <code>src/code/stdcasa/StdCasa/CasacSupport.cc</code>
+  (<code>fromValueHolder</code>)</li>
+</ul>
+<p><code>tb.getcol</code> of a scalar column of <code>Int64</code> raises <code>RuntimeError: Unknown casa
+DataType!</code> in CASA 6.7.6.14, while <code>tb.getcell</code> of the same column returns the
+value as a Python <code>int</code> and <code>getcol</code> of an <code>Int</code> (32-bit) column returns an
+<code>int64</code> array. <code>fromValueHolder</code>, which turns the column's <code>ValueHolder</code> into
+the Python value, has a <code>TpInt64</code> case for a scalar but none for <code>TpArrayInt64</code>
+(the converter for records in the same file has both). The recording is
+<code>crates/casars-python/python/tests/data/casa_table_tool.json</code> (<code>cells</code>,
+<code>getcol('id')</code>; the fixture's <code>id</code> column is <code>Int64</code>). casa-rs returns the
+<code>int64</code> array, as it does for every other integer column.</p>
+<h2 id="tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> stores an int beyond 32 bits as 0<a class="headerlink" href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casatools <code>ValueHolder</code> conversion for table keywords</li>
+</ul>
+<p><code>tb.putkeyword('name', 2**40)</code> returns <code>True</code> and <code>tb.getkeyword('name')</code> then
+gives <code>0</code>, both for a new keyword and for an existing 32-bit <code>Int</code> one
+(CASA 6.7.6.14; the <code>casa_bugs</code> scenario of
+<code>crates/casars-python/python/tests/data/casa_table_tool.json</code>). The Python
+<code>int</code> is narrowed to casacore's 32-bit <code>Int</code> without a range check. casa-rs
+stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
+refuses such a value for an existing 32-bit keyword with
+<code>RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
+bits</code>, rather than store a wrong number.</p>
+<h2 id="tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices with a wrong rank or a start outside the array abort the process<a class="headerlink" href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casatools <code>table::getcellslice</code>, <code>getcolslice</code>, <code>putcellslice</code>
+  and <code>putcolslice</code>, over casacore's <code>Slicer</code></li>
+</ul>
+<p>In CASA 6.7.6.14 a slice whose <code>blc</code>, <code>trc</code> or <code>incr</code> has the wrong number of
+elements for the array, or whose <code>blc</code> lies outside the array, throws an
+<code>ArraySlicerError</code> that nothing catches, and the Python process ends
+(<code>libc++abi: terminating due to uncaught exception of type
+casacore::ArraySlicerError</code>, exit status 134). The default <code>incr=[1]</code> is such a
+slice for an array of more than one axis, so <code>tb.getcellslice('DATA', 0, [0, 0],
+[1, 3])</code> aborts. casa-rs raises a <code>RuntimeError</code> for each of them and takes a
+one-element <code>incr</code> as the step of every axis. The recording
+(<code>crates/casars-python/python/tests/data/casa_table_tool.json</code>, <code>slices</code> and
+<code>ms_slices</code>) holds only the cases CASA survives. CASA is also inconsistent
+about <code>trc=-1</code>: <code>getcellslice</code> refuses it ("All elements of trc must be greater
+than or equal to 0"), <code>getcolslice</code> takes it as the last element; casa-rs
+follows both.</p>
+<h2 id="tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell"><code>tb.putcell</code> and <code>putcol</code> wrap an int beyond 32 bits in an int cell<a class="headerlink" href="#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casatools <code>ValueHolder</code> conversion to a column's type</li>
+</ul>
+<p><code>tb.putcell('ANTENNA1', 0, 2147483648)</code> returns <code>True</code> and the cell then holds
+<code>-2147483648</code>; <code>-2147483649</code> becomes <code>2147483647</code> and <code>4294967297</code> becomes <code>1</code>
+(CASA 6.7.6.14; the <code>int_overflow</code> scenario of
+<code>crates/casars-python/python/tests/data/casa_table_tool.json</code>, which the
+replay leaves out). <code>putcol</code> wraps the same way. A Python <code>int</code> is narrowed
+to the 32-bit column type without a range check, as for <code>putkeyword</code> above.
+casa-rs raises <code>RuntimeError: a value is out of range for a column of Int</code> and
+leaves the cell, rather than store a wrong number. Astra's review of #1034
+noted the departure.</p>
+<h2 id="tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows writes those before a missing one<a class="headerlink" href="#tbputcell-with-several-rows-writes-those-before-a-missing-one" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-30</li>
+<li>Status: CASA behaviour that casa-rs does not follow (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casacore <code>TableProxy::putCell</code></li>
+</ul>
+<p><code>tb.putcell('id', [0, 3], 22)</code> on a table of three rows writes row 0, then
+fails on row 3 with <code>no such row</code>: <code>TableProxy::putCell</code> checks and writes one
+row at a time, so a call that raises has still changed the table
+(<code>rows_vector</code> scenario). casa-rs checks every row first and raises with the
+table as it was. The recording follows the failed call with a write that puts
+row 0 back, so that its later reads agree.</p>
 <h2 id="importfits-reads-every-fits-date-as-utc"><code>importfits</code> reads every FITS date as UTC<a class="headerlink" href="#importfits-reads-every-fits-date-as-utc" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-30</li>
