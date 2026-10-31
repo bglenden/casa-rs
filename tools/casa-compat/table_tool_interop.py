@@ -44,8 +44,9 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
     (`write-variable`), which rewrites the keyword record CASA created.
 
 `structure-write FIXTURE MS OUT_DIR OUT_JSON`
-    In OUT_DIR: `rows.table` and `columns.table`, copies of the python
-    fixture on which the recorded `rows` and `columns` scenarios are replayed
+    In OUT_DIR: `rows.table`, `columns.table` and `rows_columns.table`
+    (which adds columns too), copies of the python fixture on which the
+    recorded `rows`, `columns` and `rows_columns` scenarios are replayed
     (as far as their first close) through `casars.tools.table`, checking every
     step; `renamed.ms`, a copy of the small MeasurementSet with four columns
     renamed; `removed.ms`, with two columns removed. OUT_JSON is what casa-rs
@@ -282,7 +283,8 @@ def command_rsread(table_path, out_json):
 #: The tables `structure-write` makes (and `structure-casa-write` adds to) in
 #: its directory.
 STRUCTURE_TABLES = (
-    "rows.table", "columns.table", "renamed.ms", "removed.ms", "casa_renamed.ms", "casa_removed.ms",
+    "rows.table", "columns.table", "rows_columns.table", "renamed.ms", "removed.ms",
+    "casa_renamed.ms", "casa_removed.ms",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -340,7 +342,11 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     out_dir.mkdir(parents=True)
     # The recorded rows and columns scenarios, as far as the first close: CASA
     # then reads the table casa-rs left.
-    for name, scenario in (("rows.table", "rows"), ("columns.table", "columns")):
+    for name, scenario in (
+        ("rows.table", "rows"),
+        ("columns.table", "columns"),
+        ("rows_columns.table", "rows_columns"),
+    ):
         shutil.copytree(fixture, out_dir / name)
         path = str((out_dir / name).resolve())
         tool = tools.table()
