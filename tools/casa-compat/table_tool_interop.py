@@ -43,6 +43,17 @@ With the casa-rs package (a venv with `pip install -e crates/casars-python`):
     One unrelated keyword write by casa-rs into a table CASA wrote
     (`write-variable`), which rewrites the keyword record CASA created.
 
+`structure-write FIXTURE MS OUT_DIR OUT_JSON`
+    In OUT_DIR: `rows.table` and `columns.table`, copies of the python
+    fixture on which the recorded `rows` and `columns` scenarios are replayed
+    (as far as their first close) through `casars.tools.table`, checking every
+    step; `renamed.ms`, a copy of the small MeasurementSet with four columns
+    renamed; `removed.ms`, with two columns removed. OUT_JSON is what casa-rs
+    reads of each (`structure_dump`: names, descriptions, the first cells).
+
+`structure-rsread DIR OUT_JSON`
+    The same dump by casa-rs, of the tables in DIR (also those CASA wrote).
+
 `compare RS_JSON CASA_JSON`
     Prints the records on which the two dumps differ.
 
@@ -68,6 +79,18 @@ on the Mac mini; copy this file and `table_tool_oracle.py` side by side):
     `v_arr_*.table` tables `variants` wrote. casacore refuses that for an
     array keyword whose descriptor is fixed-shape, which casa-rs wrote until
     Astra's review of #1034 (finding 3).
+
+`structure-read DIR OUT_JSON`
+    What CASA reads of the tables `structure-write` left in DIR (and of
+    `casa_renamed.ms` and `casa_removed.ms`, below), in the same form, to
+    `compare` with casa-rs's dump of them.
+
+`structure-casa-write MS DIR`
+    CASA renames and removes the same columns of two copies of the small
+    MeasurementSet, `DIR/casa_renamed.ms` and `DIR/casa_removed.ms`;
+    `structure-rsread` them with casa-rs (a renamed column keeps its old name
+    in the column set, which casa-rs failed to find before #1025's table
+    part) and `compare` with `structure-read`.
 
 `write-variable TABLE`
     CASA writes array keywords (variable-shape, as CASA makes them) into
@@ -254,6 +277,119 @@ def command_rsread(table_path, out_json):
     tool.open(path)
     write_json(out_json, dump(tool, path))
     tool.done()
+
+
+#: The tables `structure-write` makes (and `structure-casa-write` adds to) in
+#: its directory.
+STRUCTURE_TABLES = (
+    "rows.table", "columns.table", "renamed.ms", "removed.ms", "casa_renamed.ms", "casa_removed.ms",
+)
+
+#: What the structural calls do to the MeasurementSet's main table, by name:
+#: the columns renamed, then the ones removed (those the renames left alone).
+MS_RENAMES = [("ANTENNA1", "ANT1"), ("DATA", "DATA2"), ("FLAG_ROW", "FR"), ("TIME", "T")]
+MS_REMOVED = ["DATA", "FLAG_ROW"]
+
+
+def structure_dump(tool, path):
+    """What the tool reads of the table's rows and columns: the names, each
+    column's description and its first cells. An undefined cell is only
+    recorded as undefined, since the two tools word that differently."""
+    rows = tool.nrows()
+    result = {"nrows": rows, "colnames": list(tool.colnames())}
+    for column in result["colnames"]:
+        description = tool.getcoldesc(column)
+        result[f"desc:{column}"] = {
+            key: description[key]
+            for key in ("valueType", "option", "ndim", "shape", "dataManagerType")
+            if key in description
+        }
+        cells = []
+        for row in range(min(rows, 3)):
+            try:
+                cells.append(encode(tool.getcell(column, row), path))
+            except Exception:  # noqa: BLE001 - an undefined cell
+                cells.append("undefined")
+        result[f"cells:{column}"] = cells
+    return {key: encode(value, path) for key, value in result.items()}
+
+
+def structure_dumps(tool_class, directory):
+    """The `structure_dump` of each table of `STRUCTURE_TABLES` in `directory`."""
+    dumps = {}
+    for name in STRUCTURE_TABLES:
+        path = Path(directory) / name
+        if not path.exists():
+            continue
+        tool = tool_class()
+        tool.open(str(path.resolve()))
+        dumps.update(
+            {f"{name}:{key}": value for key, value in structure_dump(tool, str(path.resolve())).items()}
+        )
+        tool.done()
+    return dumps
+
+
+def command_structure_write(fixture, ms, out_dir, out_json):
+    sys.path.insert(0, str(RECORD))
+    import test_tools_table as replay  # noqa: PLC0415
+    from casars import tools  # noqa: PLC0415
+
+    out_dir = Path(out_dir)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    # The recorded rows and columns scenarios, as far as the first close: CASA
+    # then reads the table casa-rs left.
+    for name, scenario in (("rows.table", "rows"), ("columns.table", "columns")):
+        shutil.copytree(fixture, out_dir / name)
+        path = str((out_dir / name).resolve())
+        tool = tools.table()
+        for index, step in enumerate(replay.RECORD["scenarios"][scenario]["steps"]):
+            if step["method"] == "close":
+                break
+            replay_step(replay, tool, step, path, f"{scenario}[{index}] {step['method']}")
+        tool.done()
+    shutil.copytree(ms, out_dir / "renamed.ms")
+    tool = tools.table()
+    assert tool.open(str((out_dir / "renamed.ms").resolve()), nomodify=False)
+    for old, new in MS_RENAMES:
+        assert tool.renamecol(old, new)
+    tool.done()
+    shutil.copytree(ms, out_dir / "removed.ms")
+    tool = tools.table()
+    assert tool.open(str((out_dir / "removed.ms").resolve()), nomodify=False)
+    assert tool.removecols(MS_REMOVED)
+    tool.done()
+    write_json(out_json, structure_dumps(tools.table, out_dir))
+
+
+def command_structure_read(directory, out_json):
+    from casatools import table  # noqa: PLC0415
+
+    write_json(out_json, structure_dumps(table, directory))
+
+
+def command_structure_rsread(directory, out_json):
+    from casars import tools  # noqa: PLC0415
+
+    write_json(out_json, structure_dumps(tools.table, directory))
+
+
+def command_structure_casa_write(ms, out_dir):
+    """CASA renames and removes the same columns of a copy of the MS."""
+    from casatools import table  # noqa: PLC0415
+
+    out_dir = Path(out_dir)
+    for name, work in (
+        ("casa_renamed.ms", lambda tool: [tool.renamecol(old, new) for old, new in MS_RENAMES]),
+        ("casa_removed.ms", lambda tool: tool.removecols(MS_REMOVED)),
+    ):
+        shutil.rmtree(out_dir / name, ignore_errors=True)
+        shutil.copytree(ms, out_dir / name)
+        tool = table()
+        tool.open(str(out_dir / name), nomodify=False)
+        work(tool)
+        tool.close()
 
 
 def command_variants(fixture, out_dir):
@@ -502,6 +638,10 @@ COMMANDS = {
     "resize-variable": (command_resize_variable, 1),
     "typed": (command_typed, 2),
     "typed-check": (command_typed_check, 1),
+    "structure-write": (command_structure_write, 4),
+    "structure-read": (command_structure_read, 2),
+    "structure-rsread": (command_structure_rsread, 2),
+    "structure-casa-write": (command_structure_casa_write, 2),
 }
 
 
