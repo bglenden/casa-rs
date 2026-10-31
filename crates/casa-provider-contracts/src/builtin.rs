@@ -346,7 +346,7 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 29);
+        assert_eq!(surface.contract_version(), 30);
         assert_eq!(surface.bindings().len(), 114);
         for binding in surface.bindings() {
             let concept = catalog
@@ -451,14 +451,15 @@ mod tests {
                 .all(|binding| binding.aliases.is_empty()),
             "current imager profiles expose canonical names only"
         );
-        // A contract-28 imager profile migrates to tclean's names.
+        // Contract 28 migrates to tclean's names, then contract 29 adopts
+        // the reviewed PB default while preserving explicit overrides.
         assert_eq!(
             surface
                 .migrations()
                 .iter()
                 .map(|migration| (migration.from_contract, migration.to_contract))
                 .collect::<Vec<_>>(),
-            [(28, 29)]
+            [(28, 29), (29, 30)]
         );
     }
 
