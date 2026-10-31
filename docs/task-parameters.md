@@ -29,7 +29,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 30
 
 [parameters]
 vis = "data/target.ms"
@@ -65,6 +65,14 @@ CASA's (`phasecenter_field` to `phasecenter`, `mask_box` and `mask_image` to
 `niter = 0`), its values to CASA's forms, and an omitted value whose default
 changed (`imsize`, `cell`, `cycleniter`, `nterms`) takes tclean's with a
 warning. Older imager contracts are refused.
+
+Contract 30 changes casa-rs's keyword-only `write_pb` extra to default to
+`True`, so an ordinary `tclean` call writes the `.pb` product CASA writes.
+This changes none of CASA's 92 parameters or their defaults; `pbcor=False`
+still leaves the restored image uncorrected. A contract-29 profile with
+`write_pb` omitted adopts the new default with a warning. An explicit
+`write_pb=False` remains an opt-out. The owner approved this change on
+2026-10-31 (#980).
 
 Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file

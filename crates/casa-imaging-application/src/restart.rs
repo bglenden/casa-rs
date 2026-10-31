@@ -31,7 +31,14 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
         .unwrap_or(Path::new("."));
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
         Err(source) => {
             return Err(PrepareError::InspectOutputDirectory {
                 path: directory.into(),

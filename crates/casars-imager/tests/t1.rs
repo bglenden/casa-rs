@@ -29,6 +29,8 @@ mod mosaic;
 mod mtmfs;
 #[path = "t1/non_square.rs"]
 mod non_square;
+#[path = "t1/pb_default.rs"]
+mod pb_default;
 #[path = "t1/restart.rs"]
 mod restart;
 #[path = "t1/routes.rs"]

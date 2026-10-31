@@ -439,6 +439,19 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// Refuse an occupied `tclean` output namespace until CASA restart is
+    /// implemented (#944). Task entry points call this before creating a
+    /// run summary; the lower-level execution API retains its per-attempt
+    /// atomic replacement contract.
+    ///
+    /// # Errors
+    ///
+    /// An existing main/outlier scientific product, unreadable output
+    /// directory or invalid outlier-name file.
+    pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
+        crate::restart::check(self)
+    }
+
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {

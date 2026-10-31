@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 29,
+      "contract_version": 30,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9529,7 +9529,7 @@
           "name": "write_pb",
           "concept": {"id": "parameter.write_pb", "semantic_revision": 1},
           "order": 96,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
@@ -9826,6 +9826,12 @@
             {"kind": "set", "parameter": "conjbeams", "value": {"kind": "bool", "value": true}, "when": {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}}}
           ],
           "changed_defaults": ["imsize", "cell", "cycleniter", "nterms", "perchanweightdensity"]
+        },
+        {
+          "from_contract": 29,
+          "to_contract": 30,
+          "steps": [],
+          "changed_defaults": ["write_pb"]
         }
       ]
     },

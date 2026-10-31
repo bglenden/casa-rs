@@ -269,7 +269,7 @@ def tclean(
     channel_start: int | Literal['none'] = 'none',
     channel_count: int | Literal['none'] = 'none',
     hogbom_iteration_mode: str = 'strict',
-    write_pb: bool = False,
+    write_pb: bool = True,
     fitspw: str = 'none',
     fitorder: int = 0,
     save_continuum_residual: bool = False,

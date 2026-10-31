@@ -4579,6 +4579,11 @@
       "fingerprint": "c510d87913f6acf010b342de03c202f9ebddaf820ef3e4f05ceb25ec6f89a511"
     },
     {
+      "id": "tclean",
+      "contract_version": 30,
+      "fingerprint": "077259a93724573288f68b2a7c4c3530ff44ea49206b28c531f69f1850a2de5e"
+    },
+    {
       "id": "uvcontsub",
       "contract_version": 1,
       "fingerprint": "2435bfb0428d488b10bff6339d782f63e2b03af7b9eb1b7e585c3080985c363e"

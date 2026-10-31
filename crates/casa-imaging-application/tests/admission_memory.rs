@@ -375,12 +375,10 @@ fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
 /// its baseline; its size on disk bounds what a measured run can add to
 /// the table cache, and stays in the comparison.
 fn warm(measurement_set: &Path, root: &Path) {
-    // Warming a second MS is an independent run, not a CASA restart.
-    let outputs = tempfile::tempdir_in(root).expect("warming output directory");
     casa_imaging_application::execute(
         &request(
             measurement_set,
-            &outputs.path().join("warm"),
+            &root.join("warm"),
             64,
             json!({ "niter": 0 }),
         ),
@@ -782,7 +780,7 @@ fn products_on_fewer_lanes_stay_within_their_admission() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
-    let mut dirty = cube(
+    let dirty = cube(
         &measurement_set,
         &root.path().join("dirty"),
         json!({ "niter": 0 }),
@@ -791,10 +789,6 @@ fn products_on_fewer_lanes_stay_within_their_admission() {
     let mut fewer_lanes = None;
     let mut memory = 1 << 20;
     for _ in 0..64 {
-        // Each ceiling is a fresh experiment. Do not reuse a prior run's
-        // products, and remove this attempt's disposable files afterwards.
-        let outputs = tempfile::tempdir_in(root.path()).expect("ceiling output directory");
-        dirty.imagename = outputs.path().join("dirty");
         let label = format!("dirty cube at {memory} bytes");
         eprintln!("{label}");
         let measured = measure(&dirty, 4, memory);
