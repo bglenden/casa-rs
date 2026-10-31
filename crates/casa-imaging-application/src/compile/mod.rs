@@ -13,6 +13,7 @@
 mod aw_plan_tests;
 mod direction;
 mod domains;
+mod envelope;
 mod error;
 mod instrument;
 mod native_aw;
@@ -23,6 +24,7 @@ mod selection;
 mod specification;
 mod spectral;
 mod start_model;
+mod survey;
 
 pub(crate) use opening::open_observation;
 pub(crate) use start_model::StartModel;
@@ -35,7 +37,7 @@ use casa_imaging_deconvolution::ImageDomainReconstructionMaskPlans;
 use casa_imaging_model::{
     CentreLaws, FlagPolicy, GeometryInput, ModelBounds, ModelLifecycleRequirements,
     NativeAwRequestInput, NumericPrecision, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ProblemSpecification, SelectedColumns,
+    ObservationSourceProvenance, PartitionSelection, ProblemSpecification, SelectedColumns,
     SequentialContinuumTransform, UvwCoordinateLaw,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing, NativeCacheLock};
@@ -43,12 +45,10 @@ use casa_imaging_products::{
     AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
     PrimaryBeamCentres,
 };
+use casa_imaging_runtime::Admitted;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::observation_io::Msv2Observation;
-use casa_ms::{
-    MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
-    SelectedObservationSpectralWindow, VisibilityDataColumn,
-};
+use casa_ms::{MeasurementSet, PhaseCentreEphemeris, VisibilityDataColumn};
 use casa_types::measures::frame::MeasFrame;
 
 use crate::native::OpenedObservation;
@@ -60,10 +60,11 @@ use crate::{
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
 pub use error::{OutlierProblem, PrepareError};
-pub(crate) use partitions::resolve_partitions;
-use selection::{Survey, WindowChannels};
+pub(crate) use partitions::{PartitionSelectionError, resolve_partitions};
+use selection::WindowChannels;
 use specification::SpecificationInputs;
 use spectral::{FrameContext, PreparedSpectralAxis};
+use survey::{Survey, SurveyPlan};
 
 /// A request compiled against its MeasurementSet, before the problem
 /// compiler binds the observation.
@@ -85,27 +86,26 @@ pub(crate) struct Prepared {
     pub(crate) write_corrected_data: bool,
     /// What the native run deploys once the availability check passes.
     pub(crate) deployment: Deployment,
-    /// The charge of the survey's walk of the MeasurementSet's rows, done.
-    pub(crate) walks: casa_imaging_runtime::Reservation,
+    /// The charge of compile's survey of the observation, held until the
+    /// problem compiles.
+    pub(crate) survey: casa_imaging_runtime::Reservation,
 }
 
 /// The MeasurementSet as [`prepare`] surveyed it: the table, its geometry
-/// engine, the source budget, the selection survey and the spectral axis.
+/// engine, the selection survey and the spectral axis.
 struct Surveyed<'a> {
     ms: &'a MeasurementSet,
     engine: &'a MsCalEngine,
-    budget: SelectedObservationContentBudget,
     survey: &'a Survey,
     spectral: &'a PreparedSpectralAxis,
 }
 
 /// Compile `request` against its MeasurementSet.
 ///
-/// What compile reads is admitted, not compile itself: the survey's walk
-/// of the MeasurementSet's rows is admitted once it is open and its rows
-/// are known, before the walk; the tables' descriptions are admitted before
-/// the MeasurementSet is opened. The observation the run
-/// reads is opened here, once ([`open_observation`]).
+/// What compile reads is admitted, not compile itself: table descriptions
+/// are admitted before opening the MeasurementSet, the observation opens
+/// once under its growing grant ([`open_observation`]), and its survey
+/// ([`survey::survey`]) is admitted before reading the selected partitions.
 pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,
@@ -119,16 +119,6 @@ pub(crate) fn prepare(
         },
     )?;
     let ms = MeasurementSet::open_retained_read(&request.vis)?;
-    let budget = casa_imaging_runtime::bootstrap_source_budget();
-    // The survey walks the MAIN rows under `budget`.
-    let walks = casa_imaging_runtime::admit(
-        &context.host,
-        &context.policy,
-        &casa_imaging_runtime::Demand {
-            phase: "MeasurementSet walks",
-            memory: ms.row_walk_bytes(budget.row_io_budget())? as u64,
-        },
-    )?;
     let opened = open_observation(ms, (&context.host, &context.policy), opening)?;
     let ms = opened.value.measurement_set();
     // The one Measures provider of the run: compile's geometry and the
@@ -136,24 +126,25 @@ pub(crate) fn prepare(
     let measures = casa_ms::open_measures_runtime()?;
     let engine =
         MsCalEngine::with_measures(ms, Arc::clone(&measures))?.with_field_ephemerides(ms)?;
-    // An MFS run's spectral envelope is held beside the survey walk and
-    // admitted on its own, against the run's memory.
-    let envelope_bytes = if request.specmode == SpecMode::Mfs {
-        selection::envelope_bytes(ms, context.policy.memory(&context.host))?
-    } else {
-        0
-    };
-    let envelope = casa_imaging_runtime::admit(
-        &context.host,
-        &context.policy,
-        &casa_imaging_runtime::Demand {
-            phase: "spectral envelope",
-            memory: envelope_bytes as u64,
-        },
-    )?;
-    let survey = selection::survey(request, ms, budget, envelope_bytes, &engine)?;
-    drop(envelope);
-    let centre = direction::resolve_centre(request, ms, &survey, &engine, budget)?;
+    let Admitted {
+        value: mut survey,
+        reservation: survey_charge,
+    } = survey_observation(request, &opened.value, context)?;
+    if request.specmode == SpecMode::Mfs {
+        let selected = survey
+            .spectral_windows
+            .iter()
+            .map(|window| {
+                Ok((
+                    window.spw_id,
+                    selection::selected_channels(request, window.spw_id, &window.frequencies_hz)?,
+                ))
+            })
+            .collect::<Result<WindowChannels, PrepareError>>()?;
+        let envelope = envelope::continuum_envelope((ms, &engine), &survey, &selected)?;
+        survey.continuum = Some((selected, envelope));
+    }
+    let centre = direction::resolve_centre(request, ms, &survey, &engine)?;
     let frame = FrameContext {
         anchor_time_mjd_seconds: survey.first_time_mjd_seconds,
         time_bounds_mjd_seconds: survey.time_bounds_mjd_seconds,
@@ -165,14 +156,14 @@ pub(crate) fn prepare(
     let moving_rest_frame = moving_rest_frame(request, &centre, &frame)?;
     let spectral =
         spectral::prepare_axis(request, ms, &survey, &frame, moving_rest_frame.as_ref())?;
-    let surveyed = Surveyed {
+    let surveyed_observation = Surveyed {
         ms,
         engine: &engine,
-        budget,
         survey: &survey,
         spectral: &spectral,
     };
-    let (continuum_transform, channels) = continuum_selection(request, &surveyed, &centre)?;
+    let surveyed = &surveyed_observation;
+    let (continuum_transform, channels) = continuum_selection(request, surveyed, &centre)?;
     let observation_info = direction::observation_info(ms, &survey, &centre, &engine)?;
     let domains = domains::prepare_domains(
         request,
@@ -195,7 +186,7 @@ pub(crate) fn prepare(
     let deployment = deployment(
         request,
         context,
-        &surveyed,
+        surveyed,
         &domains,
         primary_beam,
         primary_beam_centres,
@@ -206,7 +197,7 @@ pub(crate) fn prepare(
         &spectral,
         specification_inputs(
             request,
-            &surveyed,
+            surveyed,
             instrument,
             primary_beam.is_some(),
             continuum_transform,
@@ -236,7 +227,7 @@ pub(crate) fn prepare(
     let phase_table = centre
         .ephemeris
         .as_ref()
-        .and_then(SelectedObservationEphemeris::external_series)
+        .and_then(PhaseCentreEphemeris::external_series)
         .cloned();
     drop(engine);
     Ok(Prepared {
@@ -264,8 +255,46 @@ pub(crate) fn prepare(
         write_model_column: request.savemodel,
         write_corrected_data: request.save_continuum_residual,
         deployment,
-        walks,
+        survey: survey_charge,
     })
+}
+
+/// Survey the partitions of `observation` that `request` selects
+/// ([`survey::survey`]): its data descriptions' partitions holding a
+/// selected field and, under an intent selection, a selected state's
+/// `OBS_MODE`; their UVW when a UV-distance interval or a W-projecting
+/// gridder needs it, and native AW's first cross-correlation sample.
+fn survey_observation(
+    request: &ImagingRequest,
+    observation: &Msv2Observation,
+    context: &RunContext,
+) -> Result<Admitted<Survey>, PrepareError> {
+    let ms = observation.measurement_set();
+    let ddids = selection::selected_data_descriptions(request, &ms.data_description()?)?;
+    let row_selection = selection::row_selection(request, ms)?;
+    let visibility = selection::visibility_column(ms, request.datacolumn)?;
+    let candidates = partitions::candidates(observation, &ddids, &row_selection, visibility)?;
+    let windows = selection::spectral_windows(
+        ms,
+        candidates
+            .partitions
+            .iter()
+            .map(|candidate| candidate.spectral_window),
+    )?;
+    let plan = SurveyPlan {
+        observation,
+        candidates,
+        row_selection,
+        w_range: matches!(
+            request.gridder,
+            Gridder::Wproject { .. } | Gridder::Awproject(_)
+        ),
+        first_cross: matches!(
+            &request.gridder,
+            Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
+        ),
+    };
+    survey::survey(plan, windows, (&context.host, &context.policy))
 }
 
 /// The rest frame of a moving source (`cubesource`): the observatory frame
@@ -355,7 +384,7 @@ fn specification_inputs(
     })
 }
 
-/// The selected observation's manifest: the survey's rows, the channels
+/// The selected observation's manifest: the survey's samples, the channels
 /// read with each selected window's whole frequency axis, the visibility
 /// column, and the weights the selected partitions hold (each partition's
 /// by CASA's rule, [`partitions::stored_weights`]).
@@ -367,8 +396,12 @@ fn snapshot_input(
 ) -> Result<ObservationSnapshotInput, PrepareError> {
     let ms = observation.measurement_set();
     let visibility = selection::visibility_column(ms, request.datacolumn)?;
-    let weights = partitions::stored_weights(observation, &survey.row_selection, visibility);
-    let selection = selection::observation_selection(ms, survey, channels)?;
+    let weights = partitions::stored_weights(
+        observation.catalogue(),
+        survey.partitions.iter().map(PartitionSelection::partition),
+        visibility,
+    );
+    let selection = selection::observation_selection(survey, channels)?;
     Ok(ObservationSnapshotInput::new(vec![
         ObservationSourceInput::new(
             ObservationSourceProvenance::new(request.vis.display().to_string()),
@@ -436,28 +469,20 @@ fn cube_density_padding(
         return Ok(None);
     }
     let window = selection::one_window(&survey.spectral_windows, "cube density")?;
-    Ok(Some(
-        surveyed.ms.selected_observation_cube_density_padding(
-            &survey.row_selection,
-            SelectedObservationSpectralWindow::borrow_selected(
-                u32::try_from(window.spw_id).expect("SPW ids are nonnegative stored i32 values"),
-                window.frequency_reference,
-                &window.frequencies_hz,
-                &window.channel_widths_hz,
-                spectral.window_channels(window.spw_id),
-            ),
-            survey.fields.iter().copied(),
-            spectral.output_frequency_reference,
-            [
+    Ok(Some(envelope::cube_density_padding(
+        (surveyed.ms, surveyed.engine),
+        survey,
+        window,
+        &envelope::OutputAxis {
+            frequency_reference: spectral.output_frequency_reference,
+            centres_hz: [
                 spectral.reference_frequency_hz,
                 spectral.reference_frequency_hz
                     + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
             ],
-            spectral.output_channels,
-            surveyed.engine,
-            surveyed.budget.row_io_budget(),
-        )?,
-    ))
+            channels: spectral.output_channels,
+        },
+    )?))
 }
 
 /// The native run's runtime, product publication and AW catalog, still to
@@ -716,11 +741,11 @@ fn aw_plan(
             native_cf_policy,
             ..
         } => {
-            let first_row = surveyed
+            let first_cross = surveyed
                 .survey
-                .first_cross_row
+                .first_cross
                 .ok_or(PrepareError::NoCrossCorrelationRow)?;
-            let input = native_aw::resolve(request, aw, surveyed, first_row)?;
+            let input = native_aw::resolve(request, aw, surveyed, first_cross)?;
             input.validate()?;
             (native_cf_cache.clone(), Some((*native_cf_policy, input)))
         }

@@ -1132,7 +1132,7 @@ fn kept_weight_bytes(
         .observation()
         .sources()
         .iter()
-        .map(|source| source.selection().rows().selected_row_count())
+        .map(|source| source.selection().samples())
         .sum::<u64>();
     let samples = usize::try_from(rows).ok()?.checked_mul(channels)?;
     let bytes = WeightCache::bytes(samples);

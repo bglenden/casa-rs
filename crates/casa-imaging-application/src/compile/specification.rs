@@ -25,8 +25,9 @@ use casa_imaging_model::{
 use casa_ms::{parse_spw_selector, resolve_channel_selector_selection};
 
 use super::PrepareError;
-use super::selection::{SourceSpectralWindow, WRange};
+use super::selection::SourceSpectralWindow;
 use super::spectral::PreparedSpectralAxis;
+use super::survey::WRange;
 use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SpecMode, Weighting};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -206,7 +207,7 @@ fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationCont
 /// corrected data, when asked for.
 fn transaction(request: &ImagingRequest) -> ObservationTransactionRequirements {
     ObservationTransactionRequirements::new(if request.savemodel {
-        ModelColumnWrite::SelectedRows
+        ModelColumnWrite::SelectedSamples
     } else {
         ModelColumnWrite::Disabled
     })
@@ -352,10 +353,10 @@ pub(super) fn w_projection(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
         planes,
     )?;
-    if w.rows == 0 {
+    if w.samples == 0 {
         return Ok(contract);
     }
-    let rms_w_m = (w.sum_squares_m2 / w.rows as f64).sqrt();
+    let rms_w_m = (w.sum_squares_m2 / w.samples as f64).sqrt();
     Ok(contract.with_statistics(WStatistics::new(
         w.minimum_abs_m * lowest_hz / SPEED_OF_LIGHT_M_PER_S,
         rms_w_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,

@@ -319,7 +319,7 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
         assert_eq!(resolve(&polarized, BackendRequest::Gpu, None, true), Metal);
     }
     let model_write = ProblemFixture {
-        model_column_write: ModelColumnWrite::SelectedRows,
+        model_column_write: ModelColumnWrite::SelectedSamples,
         ..ProblemFixture::standard()
     }
     .compile();

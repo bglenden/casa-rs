@@ -8,7 +8,7 @@ use casa_imaging_runtime::pass::{
     BlockShape, OVERLAPPED_BLOCKS, RowSamples, chunk_bytes_per_row, source_block_bytes,
 };
 use casa_imaging_runtime::{
-    Admitted, Demand, HostResources, ResourcePolicy, admit, bootstrap_source_budget, free_memory,
+    Admitted, BOOTSTRAP_SOURCE_BYTES, Demand, HostResources, ResourcePolicy, admit, free_memory,
     row_layout,
 };
 use casa_observation::{AccessRequest, Observation, PartitionEstimate};
@@ -89,7 +89,7 @@ fn estimate(
 /// what the source holds for them beside the passes' blocks.
 ///
 /// The batches hold at least one time of each partition, and grow beyond
-/// one time by at most the bootstrap budget ([`bootstrap_source_budget`])
+/// one time by at most the bootstrap budget ([`BOOTSTRAP_SOURCE_BYTES`])
 /// or the source's share of a quarter of what `policy` leaves free on
 /// `host`, shared with the passes' per-row storage in proportion to their
 /// bytes per sample. They
@@ -167,9 +167,7 @@ pub(crate) fn admit_batches(
     let quarter = free.saturating_sub(minimum) / 4;
     let share = u128::from(source_per_row as u64) * u128::from(quarter)
         / u128::from((source_per_row as u64 + passes_per_row).max(1));
-    let growth = bootstrap_source_budget()
-        .available_bytes()
-        .min(usize::try_from(share).unwrap_or(usize::MAX));
+    let growth = BOOTSTRAP_SOURCE_BYTES.min(usize::try_from(share).unwrap_or(usize::MAX));
     let target = (minimum_rows * source_per_row + growth) / source_per_row.max(1);
     // A batch holds at most one part in OVERLAPPED_BLOCKS of its
     // partition's selected times, and at least one time.

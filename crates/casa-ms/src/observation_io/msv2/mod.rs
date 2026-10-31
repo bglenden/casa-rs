@@ -577,6 +577,44 @@ impl Msv2Observation {
         (row != index::NO_ROW).then_some(row)
     }
 
+    /// Whether the MAIN row partition `id` holds at `time_s` on `baseline`
+    /// ([`Self::main_row`]) is row-flagged (`FLAG_ROW`); `None` where no
+    /// row fills the cell. The batches fold `FLAG_ROW` into every value's
+    /// flag, as an MSv4 holds no row flags; this states the row flag itself,
+    /// for a consumer that follows CASA's use of it, such as AW
+    /// projection's reference time (CASA `getPA`), where a row whose flags
+    /// are all set but whose `FLAG_ROW` is not still counts.
+    ///
+    /// # Errors
+    ///
+    /// When MAIN's `FLAG_ROW` cannot be read.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    pub fn row_flagged(
+        &self,
+        id: PartitionId,
+        time_s: f64,
+        baseline: OrderedBaseline,
+    ) -> Result<Option<bool>, ObservationError> {
+        let Some(row) = self.main_row(id, time_s, baseline) else {
+            return Ok(None);
+        };
+        let mut flagged = Vec::with_capacity(1);
+        self.ms
+            .main_table()
+            .required_scalar_columns_for_rows_into(
+                &[row as usize],
+                &mut [RequiredScalarColumnDestination::new(
+                    "FLAG_ROW",
+                    RequiredScalarColumnValuesMut::Bool(&mut flagged),
+                )],
+            )
+            .map_err(table_error)?;
+        Ok(flagged.first().copied())
+    }
+
     /// The first MAIN row of partition `id`, `None` when it holds none:
     /// XRADIO's converter numbers an MSv2's partitions in the order their
     /// first rows appear.

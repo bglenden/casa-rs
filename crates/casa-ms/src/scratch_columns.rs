@@ -475,9 +475,65 @@ mod tests {
     use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
     use super::prepare_write;
+    use crate::MeasurementSet;
+    use crate::observation_io::{OpenOptions, UpdateSession, open_update};
     use crate::schema::SubtableId;
     use crate::schema::main_table::VisibilityDataColumn;
-    use crate::{MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
+    use casa_observation::{
+        AccessRequest, CorrelationRequest, FieldSelection, Grouping, ObservationError, PartitionId,
+        Roles, TimeSelection, UpdateTarget, Updater, WeightRequest, WritableRole,
+    };
+
+    /// Imaging's writer of `MODEL_DATA` at `path`: an update session with a
+    /// model target.
+    fn imaging_session(path: &Path) -> Result<UpdateSession, ObservationError> {
+        let model = UpdateTarget {
+            create: true,
+            ..UpdateTarget::new("model", WritableRole::Visibilities)
+        };
+        open_update(path, &OpenOptions::default(), &[model])
+    }
+
+    /// The session's first updater, which clears what CASA clears and
+    /// creates a missing `MODEL_DATA` seeded with CASA's initial model.
+    fn begin(session: &UpdateSession) -> Result<Box<dyn Updater + '_>, ObservationError> {
+        let channels = session
+            .observation()
+            .catalogue()
+            .partition(PartitionId(0))
+            .frequencies_hz
+            .len();
+        let request = AccessRequest {
+            partitions: vec![PartitionId(0)],
+            data_group: "base".to_string(),
+            roles: Roles {
+                values: false,
+                flags: false,
+                weights: false,
+                uvw: false,
+                time_centroid: false,
+                interval: false,
+                exposure: false,
+                scan: false,
+            },
+            channels: 0..channels,
+            times: TimeSelection::All,
+            fields: FieldSelection::All,
+            weights: WeightRequest::Stored,
+            correlations: CorrelationRequest::ALL,
+            grouping: Grouping::None,
+            batch_bytes: usize::MAX,
+        };
+        session.updater(&request, &[0])
+    }
+
+    /// Imaging taking `MODEL_DATA` at `path` before its first batch: the
+    /// session's first updater bound and finished.
+    fn imaging_takes_model_data(path: &Path) -> Result<(), ObservationError> {
+        let session = imaging_session(path)?;
+        begin(&session)?.finish()?;
+        Ok(())
+    }
 
     fn unpack(root: &Path, archive: &str, name: &str) -> PathBuf {
         let archive = Path::new(env!("CARGO_MANIFEST_DIR")).join(archive);
@@ -771,10 +827,7 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         let path = with_model_under_source(root.path());
         let [main_before, source_before] = managers(&path);
-        SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
-            .expect("begin")
-            .complete()
-            .expect("complete");
+        imaging_takes_model_data(&path).expect("take MODEL_DATA");
         assert_source_cleared(&path);
         let [main, source] = managers(&path);
         assert_eq!(source, source_before);
@@ -796,10 +849,8 @@ mod tests {
         let managers_before = managers(&path);
         let keywords_before = main_keywords(&path);
         let held = casa_tables::TableWriteLock::acquire(path.join("SOURCE"), 1).expect("lock");
-        let refused =
-            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false));
+        let refused = imaging_takes_model_data(&path);
         assert!(refused.is_err(), "refused while SOURCE is held");
-        drop(refused);
         held.release().expect("release");
         assert_eq!(managers(&path), managers_before);
         assert_eq!(main_keywords(&path), keywords_before);
@@ -819,10 +870,7 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
         as_casa_left_it(&path);
-        SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
-            .expect("begin")
-            .complete()
-            .expect("complete");
+        imaging_takes_model_data(&path).expect("take MODEL_DATA");
         assert_eq!(
             main_keywords(&path),
             ["KEEP", "MS_VERSION", "definedmodel_field_7", "model_7"]
@@ -909,32 +957,31 @@ mod tests {
         let Some(read_only) = read_only_table_dat(&path) else {
             return;
         };
-        let written =
-            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
-                .and_then(SelectedVisibilityWrite::complete);
+        let written = imaging_takes_model_data(&path);
         drop(read_only);
         assert!(written.is_err(), "the metadata write fails");
         assert_eq!(table_files(&path), files_before);
         assert_eq!(main_keywords(&path), keywords_before);
     }
 
-    /// A write whose completion cannot write MAIN's metadata fails and
-    /// leaves MAIN as the write left it on disk, `MODEL_DATA` created and
-    /// seeded: released, not rewritten in full.
+    /// A write's completion writes none of MAIN's metadata: the update
+    /// session creates and seeds `MODEL_DATA` when its first updater begins
+    /// (where the deleted selected-visibility write did it on completion),
+    /// so a completion with `table.dat` read-only succeeds and leaves MAIN
+    /// as the write left it on disk, `MODEL_DATA` created and seeded.
     #[test]
-    fn a_failed_completion_leaves_main_as_it_was() {
+    fn a_completion_leaves_main_as_its_beginning_left_it() {
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
-        let write =
-            SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
-                .expect("begin");
+        let session = imaging_session(&path).expect("session");
+        let write = begin(&session).expect("begin");
         let files_begun = table_files(&path);
         let Some(read_only) = read_only_table_dat(&path) else {
             return;
         };
-        let completed = write.complete();
+        let completed = write.finish();
         drop(read_only);
-        assert!(completed.is_err(), "the metadata write fails");
+        completed.expect("the completion writes no metadata");
         assert_eq!(table_files(&path), files_begun);
         let ms = MeasurementSet::open(&path).expect("reopen");
         assert!(
@@ -953,16 +1000,9 @@ mod tests {
     fn imaging_s_write_of_an_existing_model_data_clears_the_virtual_model() {
         let root = tempfile::tempdir().expect("root");
         let path = trial(root.path());
-        let targets = SelectedVisibilityWriteTargets::new(true, false);
-        SelectedVisibilityWrite::begin(&path, targets)
-            .expect("create")
-            .complete()
-            .expect("created");
+        imaging_takes_model_data(&path).expect("created");
         as_casa_left_it(&path);
-        SelectedVisibilityWrite::begin(&path, targets)
-            .expect("begin")
-            .complete()
-            .expect("complete");
+        imaging_takes_model_data(&path).expect("taken again");
         assert_eq!(
             main_keywords(&path),
             [

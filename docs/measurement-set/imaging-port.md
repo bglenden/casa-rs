@@ -465,9 +465,9 @@ Two consequences:
 ### 2.3 Selection
 
 The imager's selection is resolved once (`RowSelection`,
-`casa-imaging-model/src/observation.rs:188`): fields, a UV-distance
-interval (in wavelengths per window) and scan intents. A compiled predicate
-applies it per MAIN row (`selected_observation/row_selection.rs:20`).
+`casa-imaging-model/src/observation.rs`): fields, a UV-distance interval (in
+wavelengths per window) and scan intents. Today's route applied it per MAIN
+row through a compiled predicate.
 Windows, channels, correlations and times already map onto `AccessRequest`.
 On a batch:
 - field and intent are per time;
@@ -510,6 +510,57 @@ chunks) and the estimate answer what compile walks MAIN for today:
 Three walks become one index built at opening. The index's cost is the
 trial's measured opening time; the baseline (section 5) must show the sum
 does not regress.
+
+**As landed (step 6b).** Compile names the partitions the request selects
+from the catalogue (`compile/partitions.rs`): a partition's data description
+must be selected, its fields must include a selected one and, under an
+intent selection, its `OBS_MODE` must be a selected state's. One traversal
+of them (`compile/survey.rs`) reads no visibilities. Without a UV-distance
+interval it reads only the times and fields of each batch, and the estimate
+counts the selected samples: times × baselines less the padding
+(`PartitionEstimate::padded_fraction`). With one, or for a W-projecting
+gridder's W range, it reads UVW and tests each sample. A partition holding
+no selected sample is dropped. The survey's batches and the epochs it keeps
+are admitted before it reads (`observation survey`). Native AW's first
+cross-correlation sample comes from a second traversal, the same reads,
+which asks the MSv2 adapter for each cross-correlation sample's `FLAG_ROW`
+(`Msv2Observation::row_flagged`) and stops at the first sample found.
+
+The model's `ObservationSelection` is partition-shaped: the selected sample
+count, the per-sample predicates, the partitions (`PartitionSelection`: the
+window and the correlation products of each) and the windows' channels.
+`SelectedRows`, the data-description and polarization selections and
+`ModelColumnWrite::SelectedRows` are gone; the write scope is
+`ModelColumnWrite::SelectedSamples`.
+
+What the survey keeps per window is its epochs: the distinct (time, field)
+pairs of its selected samples, ascending in time. The continuum envelope and
+the cube's density padding convert at them (`compile/envelope.rs`), with
+CASA's algorithms carried over from the deleted layer. Two things differ
+from the MAIN walk, each by a rounding or a reordering of what CASA reads,
+and a third reads what CASA reads by another path:
+- **The anchor.** The spectral frame's anchor and the image's observation
+  date are the earliest selected time, not the first selected MAIN row's.
+  The two agree for a MeasurementSet in time order.
+- **The envelope's epochs.** CASA keys them by `TIME·(DATA_DESC_ID+1)`,
+  each the earliest row of its key, and converts a window's at its data
+  descriptions' keys in key order through one `MFrequency::Convert`. A
+  window's samples at one time towards one field are one epoch here. For a
+  window of one data description and one field per time the epochs and
+  their order are CASA's.
+- **The first cross-correlation sample.** CASA's AW projection takes the
+  first row of the first buffer that is a cross-correlation and not
+  row-flagged (`getPA`), whatever its cell flags. The survey takes the
+  earliest selected cross-correlation sample whose MAIN row's `FLAG_ROW` is
+  false, padding having no row: the same row's time, field and
+  observation. The batches fold `FLAG_ROW` into every value's flag, so the
+  survey asks the adapter for the row flag itself; a row whose every flag
+  is set but whose `FLAG_ROW` is not still counts, as in CASA.
+
+PR 6b keeps compile reading the MeasurementSet's subtables beside the
+catalogue (`SPECTRAL_WINDOW`, `FIELD`, `OBSERVATION`, `STATE`,
+`DATA_DESCRIPTION`) and its frames through `MsCalEngine`; 6c moves them to the
+catalogue, so an MSv4 compiles.
 
 ### 2.5 Weights, `WeightCache`, errors
 
@@ -666,6 +717,23 @@ The plan put all of these in one PR. Between the two, `casa-ms`'s
 selected-observation layer is called only by compile's survey. The imaging
 dependency checker's grandfathered lists shrink with the second.
 
+As landed, the second removes `casa-ms`'s `selected_observation`,
+`selected_observation_buffer` and `observation_owner` modules, MAIN's row
+walk (`ms/main_rows.rs`) and their memory laws; the model's
+`selected_numeric` and `selected_observation_sample` modules; and the
+`casa-ms → casa-imaging-model` edge. What of them the rest still used moves:
+- the phase-centre ephemeris (`PhaseCentreEphemeris`, with an
+  `EphemerisBudget`) stays in `casa-ms` for compile's centre;
+- the antennas' response classes and pointing directions
+  (`sample_antennas`) move to the model, beside the batch geometry;
+- the write's scratch-column rules stay in `scratch_columns`, which the
+  update session calls; the deleted writer's tests, the CASA scratch
+  columns test and the C++ `MODEL_DATA` interop tests now run through the
+  update session;
+- the T41 `TRACKFIELD` oracle compares the batch geometry's pointing at
+  three row times with CASA's (`store_law::row_pointing`), and the engine's
+  `girar` reference values test the model's projection.
+
 ### 2.8 Cutover decisions (2026-10-29)
 
 The batch route refused four things today's route read. The owner asked
@@ -773,11 +841,14 @@ Each step is its own PR with its own laws. Only the last switches production.
      observation the run reads, once. The four decisions of section 2.8
      land with it. The blocking comparison must pass, and the PR needs an
      independent review of the persistence and the hot loop.
-   - **6b.** Compile reads the catalogue and the opening's index, not MAIN
-     (section 2.4), and the rest of section 2.7 is removed.
-   - **6c.** MSv4 imaging, the acceptance of decision 5: compile and the
-     run open an MSv4 through the same `&dyn Observation`, and T1 runs on
-     the trial's MSv4 conversions.
+   - **6b.** Compile reads the catalogue and one survey of the observation,
+     not MAIN (section 2.4), and the rest of section 2.7 is removed. The
+     window frequencies, fields and frames still come from the
+     MeasurementSet's subtables.
+   - **6c.** MSv4 imaging, the acceptance of decision 5: compile reads
+     those from the catalogue, compile and the run open an MSv4 through the
+     same `&dyn Observation`, and T1 runs on the trial's MSv4
+     conversions.
 
    The plan had 2.4 before the cutover, keeping both routes equal at each
    step. Removing today's route first leaves 2.4 one route to serve; the

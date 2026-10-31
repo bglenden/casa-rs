@@ -105,7 +105,7 @@ impl DomainOperator {
 }
 
 /// Correlation types every block delivers, in block order: the first
-/// source's selection, which every source must share.
+/// source's selection, which every partition of every source must share.
 pub(crate) fn selected_correlations(
     problem: &CompiledProblem,
 ) -> Result<Vec<Correlation>, ImagingError> {
@@ -114,7 +114,7 @@ pub(crate) fn selected_correlations(
         .read_set()
         .sources()
         .iter()
-        .flat_map(|source| source.selection().correlations())
+        .flat_map(|source| source.selection().partitions())
         .map(|selection| {
             selection
                 .products()
@@ -127,7 +127,7 @@ pub(crate) fn selected_correlations(
     })?;
     if layouts.any(|layout| layout != first) {
         return Err(ImagingError::Unsupported {
-            reason: "selected polarization setups differ in their correlations",
+            reason: "selected partitions differ in their correlations",
         });
     }
     Ok(first)

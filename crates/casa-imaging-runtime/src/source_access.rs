@@ -4,7 +4,6 @@
 
 use casa_imaging_model::{CompiledProblem, SpectralWindowSelection};
 use casa_imaging_operator::RowSpectrum;
-use casa_ms::SelectedObservationContentBudget;
 
 use crate::pass::BlockShape;
 
@@ -29,8 +28,8 @@ pub fn row_layout(problem: &CompiledProblem) -> BlockShape {
         ),
         correlations: sources
             .iter()
-            .flat_map(|source| source.selection().correlations())
-            .map(|selection| selection.products().len())
+            .flat_map(|source| source.selection().partitions())
+            .map(|partition| partition.products().len())
             .max()
             .unwrap_or(0),
         // One projection per pass domain: each facet of a faceted image
@@ -86,9 +85,7 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
     }
 }
 
-/// The budget that bounds source inspection before the compiled problem
-/// can quote its complete initialization and traversal requirements.
-#[must_use]
-pub const fn bootstrap_source_budget() -> SelectedObservationContentBudget {
-    SelectedObservationContentBudget::new(64 << 20, 2, 4)
-}
+/// The bytes that bound what the source reads before the compiled problem
+/// quotes its own requirements: how far its batches grow beyond one time,
+/// and what a phase centre's ephemeris table may hold.
+pub const BOOTSTRAP_SOURCE_BYTES: usize = 64 << 20;
