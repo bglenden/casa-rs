@@ -3,6 +3,7 @@
 //! with.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use pyo3::PyErr;
@@ -83,6 +84,15 @@ impl LockSettings {
         )
     }
 
+    /// Whether the table takes the write lock when it is opened and keeps it
+    /// (the permanent modes).
+    pub(super) fn permanent(&self) -> bool {
+        matches!(
+            self.mode,
+            LockMode::PermanentLocking | LockMode::PermanentLockingWait
+        )
+    }
+
     /// Whether a read takes the read lock (all but the NoRead modes), as
     /// casacore's `TableLock::readLocking` says.
     pub(super) fn reads_lock(&self) -> bool {
@@ -90,6 +100,25 @@ impl LockSettings {
             self.mode,
             LockMode::AutoNoReadLocking | LockMode::UserNoReadLocking
         )
+    }
+
+    /// The request that opens a table with these settings again.
+    pub(super) fn request(&self) -> LockRequest {
+        LockRequest {
+            option: Some(self.option.to_string()),
+            interval: Some(self.interval),
+            maxwait: Some(self.maxwait),
+        }
+    }
+
+    /// The seconds between a table's looks for a request for its lock.
+    pub(super) fn interval(&self) -> f64 {
+        self.interval
+    }
+
+    /// The seconds a lock may be waited for; `0` waits for it.
+    pub(super) fn maxwait(&self) -> i64 {
+        self.maxwait
     }
 
     /// The attempts at a lock `maxwait` allows; `0` waits for it.
@@ -124,12 +153,59 @@ pub(super) struct Open {
     pub(super) name: PathBuf,
     pub(super) writable: bool,
     pub(super) lock: LockSettings,
+    /// The modify counter the last `datachanged()` saw (casacore starts a
+    /// table at 0).
+    pub(super) last_modify_counter: u32,
+}
+
+impl Open {
+    /// The table at `name` opened under `request`'s lock options.
+    pub(super) fn attach(name: &str, request: &LockRequest, writable: bool) -> Result<Self, Fail> {
+        let lock = LockSettings::from_request(request)?;
+        let path = Path::new(name);
+        if !path.exists() {
+            return Err(Fail::Runtime(format!("Table {name} does not exist")));
+        }
+        // A table opened `nomodify` holds no write lock, in the permanent
+        // modes too.
+        let options = LockOptions::new(lock.mode)
+            .with_inspection_interval(lock.interval)
+            .read_only(!writable);
+        let table = Table::open_with_lock(TableOptions::new(path), options)?;
+        let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        Ok(Self {
+            table,
+            name,
+            writable,
+            lock,
+            last_modify_counter: 0,
+        })
+    }
 }
 
 /// The tool's state: at most one open table.
-#[derive(Default)]
 pub(crate) struct State {
     pub(super) open: Option<Open>,
+    /// Tells the tool apart in the registry of the process's tools
+    /// (`registry.rs`).
+    pub(super) id: u64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl State {
+    /// The state of a tool with `open` attached.
+    pub(super) fn new(open: Option<Open>) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        Self {
+            open,
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 /// Logs the message CASA logs when a call needs a table and none is open.
@@ -161,24 +237,7 @@ impl State {
         writable: bool,
     ) -> Result<(), Fail> {
         self.open = None;
-        let lock = LockSettings::from_request(request)?;
-        let path = Path::new(name);
-        if !path.exists() {
-            return Err(Fail::Runtime(format!("Table {name} does not exist")));
-        }
-        // A table opened `nomodify` holds no write lock, in the permanent
-        // modes too.
-        let options = LockOptions::new(lock.mode)
-            .with_inspection_interval(lock.interval)
-            .read_only(!writable);
-        let table = Table::open_with_lock(TableOptions::new(path), options)?;
-        let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        self.open = Some(Open {
-            table,
-            name,
-            writable,
-            lock,
-        });
+        self.open = Some(Open::attach(name, request, writable)?);
         Ok(())
     }
 

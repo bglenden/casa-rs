@@ -32,40 +32,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn clearlocks(&self) -> PyResult<Py<PyAny>> {
-        stub("clearlocks")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (newtablename, deep = None, valuecopy = None, dminfo = None, endian = None, memorytable = None, returnobject = None, norows = None), text_signature = "($self, newtablename, deep=False, valuecopy=False, dminfo={}, endian='aipsrc', memorytable=False, returnobject=False, norows=False)")]
-    fn copy(
-        &self,
-        newtablename: &Bound<'_, PyAny>,
-        deep: Option<&Bound<'_, PyAny>>,
-        valuecopy: Option<&Bound<'_, PyAny>>,
-        dminfo: Option<&Bound<'_, PyAny>>,
-        endian: Option<&Bound<'_, PyAny>>,
-        memorytable: Option<&Bound<'_, PyAny>>,
-        returnobject: Option<&Bound<'_, PyAny>>,
-        norows: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("copy")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outtable, startrowin = None, startrowout = None, nrow = None), text_signature = "($self, outtable, startrowin=0, startrowout=-1, nrow=-1)")]
-    fn copyrows(
-        &self,
-        outtable: &Bound<'_, PyAny>,
-        startrowin: Option<&Bound<'_, PyAny>>,
-        startrowout: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("copyrows")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (tablename = None, tabledesc = None, lockoptions = None, endianformat = None, memtype = None, nrow = None, dminfo = None), text_signature = "($self, tablename='', tabledesc={}, lockoptions={}, endianformat='', memtype='', nrow=0, dminfo={})")]
     fn create(
         &self,
@@ -89,24 +55,6 @@ impl PyTableTool {
         subdirname: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         stub("createmultitable")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn datachanged(&self) -> PyResult<Py<PyAny>> {
-        stub("datachanged")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn endianformat(&self) -> PyResult<Py<PyAny>> {
-        stub("endianformat")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn flush(&self) -> PyResult<Py<PyAny>> {
-        stub("flush")
     }
 
     /// Not yet implemented in casa-rs.
@@ -174,12 +122,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (checksubtables = None), text_signature = "($self, checksubtables=False)")]
-    fn ismultiused(&self, checksubtables: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("ismultiused")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (tablename), text_signature = "($self, tablename)")]
     fn isopened(&self, tablename: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("isopened")
@@ -202,12 +144,6 @@ impl PyTableTool {
         style: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("query")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn resync(&self) -> PyResult<Py<PyAny>> {
-        stub("resync")
     }
 
     /// Not yet implemented in casa-rs.
@@ -238,16 +174,6 @@ impl PyTableTool {
         name: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("selectrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, nbytes), text_signature = "($self, columnname, nbytes)")]
-    fn setmaxcachesize(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        nbytes: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setmaxcachesize")
     }
 
     /// Not yet implemented in casa-rs.

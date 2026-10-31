@@ -6,7 +6,9 @@
 //!
 //! Implemented so far: `open`, `close`, `done`, `ok`, `name`, `iswritable`,
 //! the lock calls, and the read side (`state`, `read`): sizes and names,
-//! column descriptions, cells and columns, keywords and column keywords.
+//! column descriptions, cells and columns, keywords and column keywords;
+//! the writes (`write*`), `copy` and `copyrows` (`copy`), and the calls that
+//! report or move a table's state (`housekeeping`).
 //! Values are casatools' (`values`): integers come back as `int64`, reals
 //! as `float64`, complex numbers as `complex128`, a column's rows last.
 //!
@@ -15,10 +17,14 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod cell_convert;
 mod cell_value;
+mod copy;
+mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod read;
+mod registry;
 mod slices;
 mod state;
 mod stubs;
@@ -28,7 +34,7 @@ mod write;
 mod write_cells;
 mod write_structure;
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -36,6 +42,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use copy::CopyRequest;
 use keyword_value::Incoming;
 use read::KeywordRef;
 use slices::Corners;
@@ -63,7 +70,7 @@ const _: fn() = || {
 /// CASA's `table` tool.
 #[pyclass(name = "table", module = "casars.tools", frozen)]
 pub(crate) struct PyTableTool {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 impl PyTableTool {
@@ -270,7 +277,7 @@ impl PyTableTool {
     #[new]
     fn new() -> Self {
         Self {
-            state: Mutex::new(State::default()),
+            state: registry::track(State::default()),
         }
     }
 
@@ -741,6 +748,120 @@ impl PyTableTool {
     fn removecols(&self, py: Python<'_>, columnames: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let columns = column_names(columnames, "columnames")?;
         self.call(py, move |state, log| state.removecols(columns, log))
+    }
+
+    /// The byte order of the table's files, `big` or `little`.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn endianformat(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, log| state.endianformat(log))
+    }
+
+    /// Write what the table holds to the disk.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn flush(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, log| state.flush(log))
+    }
+
+    /// Take what another process has written since the lock was released.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn resync(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, log| state.resync(log))
+    }
+
+    /// Whether the table's data has changed since the last call.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn datachanged(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, log| state.datachanged(log))
+    }
+
+    /// Whether another process has the table open.
+    #[pyo3(signature = (checksubtables = None), text_signature = "($self, checksubtables=False)")]
+    fn ismultiused(
+        &self,
+        py: Python<'_>,
+        checksubtables: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let check = flag(checksubtables, false)?;
+        self.call(py, move |state, log| state.ismultiused(check, log))
+    }
+
+    /// Set the cache size of a column.
+    #[pyo3(signature = (columnname, nbytes), text_signature = "($self, columnname, nbytes)")]
+    fn setmaxcachesize(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        nbytes: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        let nbytes = integer(Some(nbytes), "nbytes", 0)?;
+        self.call(py, move |state, log| {
+            state.setmaxcachesize(&column, nbytes, log)
+        })
+    }
+
+    /// Give up the locks an automatic locking mode keeps.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn clearlocks(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| state.clearlocks())
+    }
+
+    /// Copy rows into another table, given by name.
+    #[pyo3(signature = (outtable, startrowin = None, startrowout = None, nrow = None), text_signature = "($self, outtable, startrowin=0, startrowout=-1, nrow=-1)")]
+    fn copyrows(
+        &self,
+        py: Python<'_>,
+        outtable: &Bound<'_, PyAny>,
+        startrowin: Option<&Bound<'_, PyAny>>,
+        startrowout: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let out = text(outtable, "outtable")?;
+        let start_in = integer(startrowin, "startrowin", 0)?;
+        let start_out = integer(startrowout, "startrowout", -1)?;
+        let count = integer(nrow, "nrow", -1)?;
+        self.call(py, move |state, log| {
+            state.copyrows(&out, start_in, start_out, count, log)
+        })
+    }
+
+    /// Copy the table; the result is a table tool open on the copy.
+    #[pyo3(signature = (newtablename, deep = None, valuecopy = None, dminfo = None, endian = None, memorytable = None, returnobject = None, norows = None), text_signature = "($self, newtablename, deep=False, valuecopy=False, dminfo={}, endian='aipsrc', memorytable=False, returnobject=False, norows=False)")]
+    #[allow(clippy::too_many_arguments)]
+    fn copy(
+        &self,
+        py: Python<'_>,
+        newtablename: &Bound<'_, PyAny>,
+        deep: Option<&Bound<'_, PyAny>>,
+        valuecopy: Option<&Bound<'_, PyAny>>,
+        dminfo: Option<&Bound<'_, PyAny>>,
+        endian: Option<&Bound<'_, PyAny>>,
+        memorytable: Option<&Bound<'_, PyAny>>,
+        returnobject: Option<&Bound<'_, PyAny>>,
+        norows: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let new_name = text(newtablename, "newtablename")?;
+        // `returnobject` is ignored by CASA, which always returns the tool.
+        flag(returnobject, false)?;
+        let request = CopyRequest {
+            new_name,
+            deep: flag(deep, false)?,
+            value_copy: flag(valuecopy, false)?,
+            has_dminfo: match dminfo {
+                Some(dminfo) => !record_fields(dminfo)?.is_empty(),
+                None => false,
+            },
+            endian: endian.map_or(Ok("aipsrc".to_string()), |name| text(name, "endian"))?,
+            memory: flag(memorytable, false)?,
+            no_rows: flag(norows, false)?,
+        };
+        let mut lines = Vec::new();
+        let copied = py.detach(|| self.guard().copy(&request, &mut lines));
+        emit(py, LOGGER, &lines)?;
+        let tool = Self {
+            state: registry::track(State::new(Some(copied?))),
+        };
+        Ok(Py::new(py, tool)?.into_any())
     }
 
     /// Write one cell, coerced to the column's type.

@@ -20,6 +20,9 @@ use super::{
 };
 
 #[cfg(unix)]
+mod copy;
+#[cfg(unix)]
+mod publish;
 mod stale_rows;
 mod structure;
 

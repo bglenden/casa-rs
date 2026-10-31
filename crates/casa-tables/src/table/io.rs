@@ -1654,6 +1654,36 @@ impl Table {
         Ok(())
     }
 
+    /// The byte order of the files of this table as they are on disk, from
+    /// the marker in `table.dat`; for a reference table, the byte order of the
+    /// table it refers to, as casacore's `RefTable` reports it. `None` for a
+    /// table that has no directory, a concatenation of tables, or a reference
+    /// chain that is too deep or cannot be read.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::endianFormat()`.
+    pub fn stored_endian_format(&self) -> Result<Option<EndianFormat>, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        Ok(stored_endian_format_of(path, 0))
+    }
+
+    /// Whether the directory of this table holds a reference table (a view
+    /// of rows and columns of another table, as a selection makes), rather
+    /// than a table of its own.
+    pub fn is_reference_table(&self) -> Result<bool, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(false);
+        };
+        let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+        Ok(matches!(
+            crate::storage::table_control::read_table_dat_dispatch(&control_path)?,
+            crate::storage::table_control::TableDatResult::Ref(_)
+        ))
+    }
+
     /// The options that write this table in full as it is laid out on disk,
     /// when that layout is a single `StManAipsIO` group holding every column:
     /// the group's name and the byte order of its files are kept. `None` for
@@ -1791,28 +1821,24 @@ impl Table {
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.validate()?;
-        let snapshot = StorageSnapshot {
-            row_count: 0,
-            rows: Vec::new(),
-            undefined_cells: Vec::new(),
-            keywords: self.inner.keywords().clone(),
-            column_keywords: self.inner.all_column_keywords().clone(),
-            schema: self.inner.schema().cloned(),
-            table_info: self.table_info.clone(),
-            virtual_columns: std::collections::HashSet::new(),
-            virtual_bindings: Vec::new(),
-            dm_info: vec![],
-            retained_read_metadata: None,
-        };
         self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
-        storage.save(
+        storage.save_borrowed(
             &opts.path,
-            &snapshot,
+            &[],
+            &[],
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &std::collections::HashSet::new(),
+            &[],
             opts.data_manager,
+            opts.data_manager_group.as_deref(),
             opts.endian_format.is_big_endian(),
             opts.tile_shape.as_deref(),
         )?;
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&opts.path);
         Ok(())
     }
 }
@@ -2159,5 +2185,24 @@ fn current_value_for_column(
             Err(TableError::ColumnNotFound { .. }) => Ok(None),
             Err(err) => Err(err),
         }
+    }
+}
+
+/// The byte order of the table at `path`, following reference tables to the
+/// table they refer to (`depth` bounds a chain that loops).
+fn stored_endian_format_of(path: &Path, depth: usize) -> Option<EndianFormat> {
+    use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+    let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+    match read_table_dat_dispatch(&control_path).ok()? {
+        TableDatResult::Plain(table_dat) => Some(if table_dat.big_endian {
+            EndianFormat::BigEndian
+        } else {
+            EndianFormat::LittleEndian
+        }),
+        TableDatResult::Ref(reference) if depth < 32 => stored_endian_format_of(
+            &crate::table_path::add_directory_for_link(&reference.parent_relative_path, path),
+            depth + 1,
+        ),
+        _ => None,
     }
 }

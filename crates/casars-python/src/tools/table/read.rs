@@ -149,7 +149,7 @@ impl Open {
     }
 
     /// A column of the table, or CASA's "unknown" refusal.
-    fn known(&self, name: &str) -> Result<&ColumnSchema, Fail> {
+    pub(super) fn known(&self, name: &str) -> Result<&ColumnSchema, Fail> {
         self.column(name, || format!("Table column {name} is unknown"))
     }
 

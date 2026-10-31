@@ -18,7 +18,7 @@ use crate::lock::publish_persisted_write;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
-use crate::storage::{CompositeStorage, StorageManager, StorageSnapshot, TableInfo};
+use crate::storage::{CompositeStorage, StorageSnapshot, TableInfo};
 use crate::table::columns::collect_undefined_cells_for_schema;
 use crate::table_impl::TableImpl;
 
@@ -922,6 +922,13 @@ impl TableOptions {
             endian_format: EndianFormat::default(),
             tile_shape: None,
         }
+    }
+
+    /// Targets `path` instead, keeping every other option, returning the
+    /// updated options.
+    pub fn with_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.path = path.as_ref().to_path_buf();
+        self
     }
 
     /// Overrides the data manager, returning the updated options.
