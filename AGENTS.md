@@ -110,36 +110,41 @@ The internal disk is small. Do not fill it.
 - The repository is public; copying its source to any host is fine. Never copy
   credentials, secrets, or non-public datasets.
 
-## Ask First
+## Completion And Owner Input
 
-- New top-level apps or product families
-- Changing persisted formats, provider-contract bundles, or other external
-  contracts. Rust APIs between workspace crates are not external contracts:
-  add, change or remove them whenever that serves the work (a measured
-  performance gain, a simpler design) and record the change on the issue or
-  PR
-- Changing dependency direction, the runtime or concurrency model, or a major
-  performance algorithm
-- Editing accepted ADRs
-- Reducing approved scope or acceptance checks, or weakening tests without a
-  replacement
-- Merging, releasing, or deleting branches and worktrees you did not create
+- Carry an authorized task through implementation, validation, required
+  reviews, CI, merge and cleanup. Resumed work and existing PRs follow the
+  same rule. Do not stop at a partial result or a proposal for the next step
+  while authorized work can continue.
+- Stop and ask the owner only for a true blocker or an extremely consequential
+  architectural decision. Investigate and resolve routine implementation,
+  integration and environment problems autonomously. Exhaust safe available
+  alternatives before declaring a blocker, and continue unaffected work.
+- Preserve the authorized scope, scientific and interoperability contracts,
+  and required acceptance checks. Do not weaken tests or reduce acceptance
+  criteria to finish. Record decisions and evidence on the issue or PR.
+- Every required review uses a fresh Astra (`gpt-6-astra`) subagent at
+  `xhigh` reasoning effort, without inherited conversation context. Give it
+  a self-contained brief with the exact revision, diff, relevant contracts
+  and validation evidence. Resolve its findings before proceeding; request
+  another review when substantive changes require one.
 
 ## Merging
 
 - Marking a PR ready for review is the go-ahead to merge: mark it ready, then
   immediately run `gh pr merge --auto --merge`; GitHub merges it once the
   required CI checks on `main` pass.
-- Mark a PR ready without asking once its gates are green, any independent
-  review it needs is done with every finding resolved, and no deviation or
-  question is open for the owner; then report that it is merging. Ask first
-  when any of those is missing, when the PR touches an Ask First item, or when
-  it is a PR you did not create.
+- Mark a PR ready without asking once its gates are green, its required
+  reviews are complete with every finding resolved, and no true blocker or
+  extremely consequential architectural decision remains; then report that
+  it is merging. This applies to existing PRs taken over as part of an
+  authorized task. Fix failed gates and review findings autonomously.
 - Science, persistence, and interoperability changes need an independent
-  review by a separate agent or person before they are marked ready. Docs,
-  tests, and tooling need only green CI.
-- The agent that opens a PR owns it until it merges: watch its CI through
-  the host's PR monitor (`CLAUDE.md` names the Claude app's), rerun a job
+  review by the Astra subagent specified above before they are marked ready.
+  Docs, tests, and tooling need only green CI.
+- The agent that opens or takes over a PR owns it until it merges: watch its
+  CI through the host's PR monitor (`CLAUDE.md` names the Claude app's), or
+  bounded CLI checks when that monitor is unavailable. Rerun a job
   that failed on a known flaky test, fix real failures on the branch without
   asking, and report outcomes rather than progress. Auto-merge waits while
   CI is red; convert the PR back to a draft if the fix is not quick.
