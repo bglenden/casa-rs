@@ -74,7 +74,12 @@ const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 /// native prediction its batch ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let host = backend::ring_host_bytes();
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    let host = 0;
     (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+        + host
         + grouping_bytes()
 }
 

@@ -161,6 +161,11 @@ struct Slot {
     sources: Buffer,
 }
 
+/// The ring's host allocation, separate from the device buffers it owns.
+pub(super) const fn ring_host_bytes() -> u64 {
+    (RING * size_of::<Slot>()) as u64
+}
+
 /// A committed command buffer.
 #[derive(Clone)]
 struct Command(Retained<ProtocolObject<dyn MTLCommandBuffer>>);

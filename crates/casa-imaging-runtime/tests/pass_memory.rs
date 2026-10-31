@@ -26,8 +26,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_operator::{
-    Basis, GridPrecision, MeasurementOperator, ModeSet, PlaneRange, SpectralAxis, SpectralKernel,
-    SpectralResampler, WeightingGeneration,
+    Basis, CfKey, GridBackend, GridPrecision, MeasurementOperator, Mode, ModeSet, Placement,
+    PlaneRange, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration,
+    Work,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockPredictor, BoundedSource, CHUNK_PLACEMENTS, Cancel, DeviceNoise,
@@ -499,6 +500,79 @@ fn held_in_a_clean_window<T>(label: &str, mut run: impl FnMut() -> T) -> (u64, T
             "{label}: none of {WINDOWS} windows ended where it began; they kept {kept:?} bytes"
         );
     }
+}
+
+/// The native spread backend's actual host allocations and live device
+/// buffers fit its charged ring/kernel storage, including #991 grouping
+/// scratch when the experiment is enabled. Enough samples fill the ring.
+#[test]
+fn a_metal_spread_backend_holds_at_most_its_charged_scratch() {
+    if !alone("a_metal_spread_backend_holds_at_most_its_charged_scratch") {
+        return;
+    }
+    if !casa_imaging_metal::available() {
+        eprintln!("skipped: no Metal device");
+        return;
+    }
+    let operator = operator_of(32, GridPrecision::F32, Basis::Constant);
+    let npol = operator.polarization().correlations().len();
+    let mut buffer = SampleBuffer::with_capacity(npol, 1 << 18);
+    let placement = Placement {
+        u: 0.0,
+        v: 0.0,
+        w: 0.0,
+        phase: 0.0,
+        plane: 0,
+        spectral: 0.0,
+        cf: CfKey { group: 0, cube: 0 },
+        gradient: [0.0; 2],
+        prediction_w_positive: false,
+    };
+    for _ in 0..(1 << 18) {
+        buffer.push(placement, &[Complex32::new(1.0, 0.0); 2], &[1.0; 2]);
+    }
+    let mut acc = casa_imaging_metal::MetalBackend::accumulator(operator.accumulator_layout(
+        PlaneRange::single(0),
+        None,
+        ModeSet::DATA_PSF,
+    ))
+    .unwrap();
+    let apply = |backend: &mut casa_imaging_metal::MetalBackend<'_>, acc: &mut _| {
+        backend
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Psf,
+                    acc,
+                },
+            )
+            .unwrap();
+        backend.complete().unwrap();
+    };
+    // Warm process-wide device/kernel state before measuring a fresh owner.
+    {
+        let mut backend = casa_imaging_metal::MetalBackend::new(operator.cf(), false).unwrap();
+        apply(&mut backend, &mut acc);
+    }
+    let admitted =
+        casa_imaging_metal::ring_bytes(npol) + casa_imaging_metal::kernel_bytes(operator.cf());
+    let (heap, device) = held_in_a_clean_window("Metal spread scratch", || {
+        acc.reset();
+        let before = casa_imaging_metal::device_bytes();
+        let mut backend = casa_imaging_metal::MetalBackend::new(operator.cf(), false).unwrap();
+        apply(&mut backend, &mut acc);
+        let device = casa_imaging_metal::device_bytes().saturating_sub(before);
+        drop(backend);
+        device
+    });
+    assert!(acc.sumwt().iter().any(|weight| *weight > 0.0));
+    eprintln!("Metal spread scratch: heap={heap}, device={device}, admitted={admitted}");
+    assert!(
+        heap + device <= admitted,
+        "held {} against {admitted}",
+        heap + device
+    );
 }
 
 /// #449: a region pass on the CPU whose owners pipeline over two sets of
