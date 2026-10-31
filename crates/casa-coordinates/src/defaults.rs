@@ -235,7 +235,10 @@ mod tests {
             [StokesType::I, StokesType::Q, StokesType::U]
         );
         assert!(stokes_coordinate(0).is_none());
-        assert_eq!(stokes_coordinate(1).expect("one Stokes").stokes(), [StokesType::I]);
+        assert_eq!(
+            stokes_coordinate(1).expect("one Stokes").stokes(),
+            [StokesType::I]
+        );
         assert_eq!(
             stokes_coordinate(4).expect("four Stokes").stokes(),
             [StokesType::I, StokesType::Q, StokesType::U, StokesType::V]
@@ -253,7 +256,12 @@ mod tests {
 
         let system = coordinate_system_for_shape(&[4, 5, 3, 2], false);
         let pixel = vec![0.0; 4];
-        let world = system.to_world(&pixel).expect("the default maps its origin");
-        assert_eq!(system.to_pixel(&world).expect("the mapping is invertible"), pixel);
+        let world = system
+            .to_world(&pixel)
+            .expect("the default maps its origin");
+        assert_eq!(
+            system.to_pixel(&world).expect("the mapping is invertible"),
+            pixel
+        );
     }
 }
