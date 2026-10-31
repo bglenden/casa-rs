@@ -426,6 +426,11 @@ impl<'cf> MetalBackend<'cf> {
         let device = Device::shared()?;
         let cells = layout.cells();
         let extra = crate::accumulator_extra_bytes(cells as u64) as usize;
+        if cfg!(feature = "compensated-f32-prototype") && cells > u32::MAX as usize / 2 {
+            return Err(OperatorError::Device(DeviceFailure::Allocation {
+                bytes: cells as u64 * size_of::<Complex32>() as u64 + extra as u64,
+            }));
+        }
         let buffer = device.buffer(cells * size_of::<Complex32>() + extra)?;
         let pointer = buffer.contents().cast::<Complex32>();
         // SAFETY: the buffer holds `cells` zeroed, 16-byte aligned complex
@@ -1066,19 +1071,7 @@ impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
         // Deferred grid work may still run; a backend dropped without
         // `complete` waits for it, and its usage says whether it failed.
-        let noise = self.noise_command.take();
-        for Command(command) in self
-            .ring
-            .iter_mut()
-            .filter_map(|slot| slot.command.take())
-            .chain(noise)
-        {
-            command.waitUntilCompleted();
-            if self.stage_timing {
-                self.usage.completed(&command);
-            }
-            self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
-        }
+        let _ = self.complete();
         let Usage {
             applies,
             samples,

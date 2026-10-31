@@ -54,3 +54,91 @@ impl MetalBackend<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::PolarizationCoordinate;
+    use casa_imaging_operator::{
+        Basis, CfKey, GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+        MeasurementOperator, Mode, ModeSet, Placement, PlaneRange, PolarizationRouting,
+        SampleBuffer, Spheroidal, Work,
+    };
+    use casa_types::Correlation;
+    use num_complex::Complex32;
+    use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn dropping_a_deferred_backend_completes_spread_and_fold_before_returning() {
+        if !crate::available() {
+            return;
+        }
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [32, 32],
+                increment_rad: [-1e-5, 1e-5],
+                reference_pixel: [16, 16],
+            },
+            GridPadding::None,
+        )
+        .unwrap();
+        let routing = PolarizationRouting::compile(
+            &[Correlation::XX, Correlation::YY],
+            &[PolarizationCoordinate::StokesI],
+        )
+        .unwrap();
+        let cf = Spheroidal::new(&geometry, &routing);
+        let operator = MeasurementOperator::new(
+            geometry,
+            Basis::Constant,
+            routing,
+            Box::new(cf),
+            GridPrecision::F32,
+        );
+        let mut backend = MetalBackend::new(operator.cf(), false)
+            .unwrap()
+            .with_deferred_grid_completion();
+        let mut acc = MetalBackend::accumulator(operator.accumulator_layout(
+            PlaneRange::single(0),
+            None,
+            ModeSet::DATA_PSF,
+        ))
+        .unwrap();
+        let mut samples = SampleBuffer::new(2);
+        for _ in 0..100_000 {
+            samples.push(
+                Placement {
+                    u: 0.0,
+                    v: 0.0,
+                    w: 0.0,
+                    phase: 0.0,
+                    plane: 0,
+                    spectral: 0.0,
+                    cf: CfKey { group: 0, cube: 0 },
+                    gradient: [0.0; 2],
+                    prediction_w_positive: false,
+                },
+                &[Complex32::new(1.1, -0.7); 2],
+                &[0.7; 2],
+            );
+        }
+        backend
+            .apply(
+                &samples.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Psf,
+                    acc: &mut acc,
+                },
+            )
+            .unwrap();
+        let slot = &backend.ring[(backend.next + RING - 1) % RING];
+        let spread = slot.command.clone().unwrap();
+        let fold = slot.fold_command.clone().unwrap();
+        // Inspect command states directly, before any DeviceCells accessor can
+        // wait for deferred work and conceal an incomplete destructor drain.
+        drop(backend);
+        assert_eq!(spread.0.status(), MTLCommandBufferStatus::Completed);
+        assert_eq!(fold.0.status(), MTLCommandBufferStatus::Completed);
+    }
+}
