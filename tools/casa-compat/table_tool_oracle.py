@@ -626,6 +626,20 @@ def ms_steps(source):
     return steps
 
 
+def ms_coldesc_steps(source):
+    """`getcoldesc` of every column of the MeasurementSet's main table: every
+    value type it holds, and the storage manager (type and group) of each."""
+    from casatools import table
+
+    probe = table()
+    probe.open(str(source))
+    columns = list(probe.colnames())
+    probe.done()
+    steps = [["open", [PLACEHOLDER], {}]]
+    steps += [["getcoldesc", [column], {}] for column in columns]
+    return steps + [["close", [], {}]]
+
+
 #: Cell and column writes on the MeasurementSet's main table, whose columns
 #: are of int, double, bool, float and complex-float types.
 MS_CELL_WRITES = [
@@ -983,6 +997,7 @@ def main():
     }
     scenarios["cells_write"] = {"fixture": "table", "steps": CELL_WRITES, "source": arguments.fixture}
     scenarios["ms"] = {"fixture": "ms", "steps": ms_steps(arguments.ms), "source": arguments.ms}
+    scenarios["ms_coldesc"] = {"fixture": "ms", "steps": ms_coldesc_steps(arguments.ms), "source": arguments.ms}
     scenarios["ms_cells_write"] = {"fixture": "ms", "steps": MS_CELL_WRITES, "source": arguments.ms}
     scenarios["slices"] = {"fixture": "table", "steps": SLICES, "source": arguments.fixture}
     scenarios["ms_slices"] = {"fixture": "ms", "steps": MS_SLICES, "source": arguments.ms}

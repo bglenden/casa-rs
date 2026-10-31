@@ -222,7 +222,7 @@ const METHODS: &[Method] = &[
         "getcoldesc",
         &[param("columnname", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcoliter",

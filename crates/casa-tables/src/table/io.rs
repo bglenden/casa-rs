@@ -1162,6 +1162,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: source_dm.type_name,
+                name: target_data_manager_name.to_string(),
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
@@ -1323,6 +1324,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: "TiledShapeStMan".to_string(),
+                name: column.to_string(),
                 seq_nr,
                 columns: vec![column.to_string()],
             });

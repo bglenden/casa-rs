@@ -316,6 +316,9 @@ impl std::fmt::Display for TableInfo {
 pub struct DataManagerInfo {
     /// The data manager type name (e.g. `"StManAipsIO"`, `"StandardStMan"`).
     pub dm_type: String,
+    /// The manager's name: the data manager group its columns are declared
+    /// with (empty when they name none), as `DataManager::dataManagerName()`.
+    pub name: String,
     /// Unique sequence number within the table.
     pub seq_nr: u32,
     /// Column names managed by this data manager.
@@ -5320,15 +5323,33 @@ fn extract_dm_info(table_dat: &table_control::TableDatContents) -> Vec<DataManag
         .data_managers
         .iter()
         .map(|dm| {
-            let columns: Vec<String> = table_dat
-                .column_set
-                .columns
-                .iter()
-                .filter(|pc| pc.dm_seq_nr == dm.seq_nr)
-                .map(|pc| pc.original_name.clone())
-                .collect();
+            let members = || {
+                table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            };
+            let columns: Vec<String> = members().map(|(_, pc)| pc.original_name.clone()).collect();
+            // StandardStMan and IncrementalStMan keep their name in their
+            // blob; the others are named by the group their columns declare
+            // (the column set lists its columns in the table description's
+            // order).
+            let blob_name = match dm.type_name.as_str() {
+                "StandardStMan" => standard_stman::dm_name_from_blob(&dm.data),
+                "IncrementalStMan" => incremental_stman::dm_name_from_blob(&dm.data),
+                _ => None,
+            };
+            let name = blob_name.unwrap_or_else(|| {
+                members()
+                    .find_map(|(index, _)| table_dat.table_desc.columns.get(index))
+                    .map(|desc| desc.data_manager_group.clone())
+                    .unwrap_or_default()
+            });
             DataManagerInfo {
                 dm_type: dm.type_name.clone(),
+                name,
                 seq_nr: dm.seq_nr,
                 columns,
             }

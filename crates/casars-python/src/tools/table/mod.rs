@@ -402,6 +402,13 @@ impl PyTableTool {
         self.read(py, move |state, log| state.coldatatype(&column, log))
     }
 
+    /// A column's description: type, shape, storage manager and keywords.
+    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
+    fn getcoldesc(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let column = text(columnname, "columnname")?;
+        self.read(py, move |state, log| state.getcoldesc(&column, log))
+    }
+
     /// How an array column stores its cells.
     #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
     fn colarraytype(&self, py: Python<'_>, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {

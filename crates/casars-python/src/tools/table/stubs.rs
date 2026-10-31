@@ -171,12 +171,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname), text_signature = "($self, columnname)")]
-    fn getcoldesc(&self, columnname: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getcoldesc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None, torecord = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1, torecord=False)")]
     fn getcoliter(
         &self,

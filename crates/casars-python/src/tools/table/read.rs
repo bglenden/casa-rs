@@ -607,6 +607,73 @@ impl State {
             }))
     }
 
+    /// `getcoldesc(columnname)`: the description of a column, as
+    /// `TableProxy::getColumnDescription` makes it: `ndim` only for an array
+    /// column, `shape` only for one of fixed shape, and `option` the sum of
+    /// casacore's `ColumnDesc` flags (`Direct` 1, `Undefined` 2, `FixedShape` 4).
+    pub(super) fn getcoldesc(&self, column: &str, log: &mut Vec<LogLine>) -> Reply {
+        let Some(open) = self.table(log) else {
+            return Ok(CasaValue::empty_record());
+        };
+        let schema = open.known(column)?;
+        let manager = open
+            .table
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column));
+        let options = schema.options();
+        let mut option = i64::from(options.direct) | i64::from(options.undefined) << 1;
+        let mut fields = vec![
+            ("comment", CasaValue::Text(schema.comment().to_string())),
+            (
+                "dataManagerGroup",
+                CasaValue::Text(
+                    manager
+                        .map(|manager| manager.name.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+            (
+                "dataManagerType",
+                CasaValue::Text(
+                    manager
+                        .map(|manager| manager.dm_type.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+            (
+                "keywords",
+                open.table
+                    .column_keywords(column)
+                    .map_or_else(CasaValue::empty_record, |record| {
+                        values::record(record, &open.name)
+                    }),
+            ),
+            ("maxlen", CasaValue::Int(i64::from(schema.max_length()))),
+            ("valueType", CasaValue::Text(data_type_name(schema).into())),
+        ];
+        if let ColumnType::Array(contract) = schema.column_type() {
+            match contract {
+                casa_tables::ArrayShapeContract::Fixed { shape } => {
+                    option |= 4;
+                    fields.push(("ndim", CasaValue::Int(shape.len() as i64)));
+                    fields.push((
+                        "shape",
+                        CasaValue::Ints {
+                            shape: vec![shape.len()],
+                            values: shape.iter().map(|&extent| extent as i64).collect(),
+                        },
+                    ));
+                }
+                casa_tables::ArrayShapeContract::Variable { ndim } => {
+                    fields.push(("ndim", CasaValue::Int(ndim.map_or(-1, |ndim| ndim as i64))));
+                }
+            }
+        }
+        fields.push(("option", CasaValue::Int(option)));
+        Ok(CasaValue::record(fields))
+    }
+
     /// `getcolkeyword(columnname, keyword)`.
     pub(super) fn getcolkeyword(
         &self,
