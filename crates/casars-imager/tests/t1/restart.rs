@@ -82,3 +82,24 @@ fn an_existing_outlier_is_refused_before_the_main_image_or_summary_is_written() 
     }
     assert_eq!(before, snapshot(directory.path()));
 }
+
+#[test]
+fn outlier_preflight_preserves_a_trailing_slash_and_does_not_allocate_its_mask() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("outlier");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join(".model"), "previous model").unwrap();
+    let outliers = directory.path().join("outliers.txt");
+    // This support would be enormous if the preflight compiled pixel masks.
+    fs::write(&outliers, "imagename=outlier/\nimsize=1000000000\nphasecenter=J2000 0deg -30deg\nmask=circle[[5pix,5pix],2pix]\n").unwrap();
+    let before = snapshot(directory.path());
+    let reply = json_run(directory.path(), json!({
+        "vis": "absent.ms", "imagename": directory.path().join("main"),
+        "cell": "1arcsec", "outlierfile": outliers, "backend": "cpu",
+    }));
+    match reply {
+        TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
+        reply => panic!("occupied outlier should fail without compiling a mask: {reply:?}"),
+    }
+    assert_eq!(before, snapshot(directory.path()));
+}

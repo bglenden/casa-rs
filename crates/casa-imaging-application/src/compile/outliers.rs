@@ -41,18 +41,41 @@ fn outlier_domains(
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
 ) -> Result<Vec<OutlierDomain>, OutlierProblem> {
-    let text = fs::read_to_string(path).map_err(OutlierProblem::Read)?;
-    let records = parse_records(&text)?;
-    if records.is_empty() {
-        return Err(OutlierProblem::Empty);
-    }
-    records
+    read_records(path)?
         .into_iter()
         .enumerate()
         .map(|(ordinal, fields)| {
             compile_record(path, ordinal, fields, default_size, default_cell_arcsec)
         })
         .collect()
+}
+
+/// Read only names, using compile's syntax and resolution. In particular,
+/// never allocate an image-sized mask before resource admission (#944).
+pub(super) fn read_output_prefixes(path: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+    let read = || {
+        read_records(path)?
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, mut fields)| {
+                take_required(&mut fields, "imagename", ordinal)
+                    .map(|name| resolve_output(path, &name))
+            })
+            .collect::<Result<Vec<_>, OutlierProblem>>()
+    };
+    read().map_err(|problem| PrepareError::OutlierFile {
+        path: path.into(),
+        problem,
+    })
+}
+
+fn read_records(path: &Path) -> Result<Vec<BTreeMap<String, String>>, OutlierProblem> {
+    let text = fs::read_to_string(path).map_err(OutlierProblem::Read)?;
+    let records = parse_records(&text)?;
+    if records.is_empty() {
+        return Err(OutlierProblem::Empty);
+    }
+    Ok(records)
 }
 
 fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierProblem> {

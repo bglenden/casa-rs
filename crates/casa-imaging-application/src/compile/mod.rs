@@ -93,13 +93,9 @@ struct Surveyed<'a> {
 }
 
 /// Check outlier output prefixes with the same parser compile uses (#944).
-pub(crate) fn check_outlier_outputs(
-    path: &std::path::Path,
-    size: [usize; 2],
-    cell: [f64; 2],
-) -> Result<(), PrepareError> {
-    for domain in outliers::read_outlier_domains(path, size, cell)? {
-        crate::restart::check_prefix(&domain.output)?;
+pub(crate) fn check_outlier_outputs(path: &std::path::Path) -> Result<(), PrepareError> {
+    for output in outliers::read_output_prefixes(path)? {
+        crate::restart::check_prefix(&output)?;
     }
     Ok(())
 }

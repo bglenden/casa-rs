@@ -4,20 +4,28 @@
 //! CASA reuses prior products; until that lifecycle is implemented, refuse
 //! the occupied scientific namespace before execution or summary publication.
 
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use crate::{ImagingRequest, PrepareError};
 
 pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     check_prefix(&request.imagename)?;
     if let Some(path) = &request.outlierfile {
-        super::compile::check_outlier_outputs(path, request.imsize, request.cell)?;
+        super::compile::check_outlier_outputs(path)?;
     }
     Ok(())
 }
 
 pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
-    let directory = prefix
+    // Publication appends to the original path bytes, including a trailing
+    // slash: `out/` writes `out/.model`, not the sibling `out.model`.
+    let mut model = prefix.as_os_str().to_os_string();
+    model.push(".model");
+    let model = PathBuf::from(model);
+    let directory = model
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
@@ -31,10 +39,11 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
             });
         }
     };
-    let Some(stem) = prefix.file_name() else {
+    let Some(stem) = model.file_name() else {
         return Ok(());
     };
     let stem = stem.to_string_lossy();
+    let stem = stem.strip_suffix(".model").expect("appended suffix");
     for entry in entries {
         let entry = entry.map_err(|source| PrepareError::InspectOutputDirectory {
             path: directory.into(),
@@ -42,10 +51,7 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
         })?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let Some(suffix) = name
-            .strip_prefix(stem.as_ref())
-            .and_then(|s| s.strip_prefix('.'))
-        else {
+        let Some(suffix) = name.strip_prefix(stem).and_then(|s| s.strip_prefix('.')) else {
             continue;
         };
         // Includes Taylor terms and derived products (.image.tt0.pbcor),
@@ -106,6 +112,19 @@ mod tests {
         }
         check_prefix(&prefix).unwrap();
         check_prefix(&directory.path().join("new/subdirectory/image")).unwrap();
+    }
+
+    #[test]
+    fn a_trailing_slash_checks_the_actual_publication_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".model");
+        fs::write(&path, "previous model").unwrap();
+        let prefix = PathBuf::from(format!("{}/", directory.path().display()));
+        assert!(matches!(
+            check_prefix(&prefix),
+            Err(PrepareError::ExistingImageProduct { .. })
+        ));
+        assert_eq!(fs::read_to_string(path).unwrap(), "previous model");
     }
 
     #[test]
