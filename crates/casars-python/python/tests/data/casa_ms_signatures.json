@@ -1,0 +1,1777 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "addephemeris": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "id"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ephemerisname"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "comment"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      }
+    ],
+    "asdmref": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "abspath"
+      }
+    ],
+    "close": [],
+    "concatenate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqtol"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dirtol"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "weightscale"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "handling"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "destmsfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "respectname"
+      }
+    ],
+    "continuumsub": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitspw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solint"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "'subtract'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      }
+    ],
+    "continuumsubold": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitspw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solint"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "'subtract'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      }
+    ],
+    "contsub": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outputms"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitspw"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "'*'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "'*'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unionspw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      },
+      {
+        "default": "'CORRECTED_DATA'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichcol"
+      }
+    ],
+    "createmultims": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outputTableName"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tables"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "subtables"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nomodify"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lock"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "copysubtables"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "omitsubtables"
+      }
+    ],
+    "cvel": [
+      {
+        "default": "'channel'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "'linear'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interp"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasec"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outframe"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "veltype"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "hanning"
+      }
+    ],
+    "cvelfreqs": [
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwids"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldids"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obstime"
+      },
+      {
+        "default": "'channel'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasec"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outframe"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "veltype"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "done": [],
+    "fromfits": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitsfile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nomodify"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lock"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obstype"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "host"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "forcenewserver"
+      },
+      {
+        "default": "'old'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antnamescheme"
+      }
+    ],
+    "fromfitsidi": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitsfile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nomodify"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lock"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obstype"
+      }
+    ],
+    "getdata": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxis"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxisgap"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "increment"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "average"
+      }
+    ],
+    "getdataold": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxis"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxisgap"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "increment"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "average"
+      }
+    ],
+    "getfielddirmeas": [
+      {
+        "default": "'PHASE_DIR'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dircolname"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldid"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "'measure'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      }
+    ],
+    "getreferencedtables": [],
+    "getscansummary": [],
+    "getspectralwindowinfo": [],
+    "hanningsmooth": [
+      {
+        "default": "'corrected'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      }
+    ],
+    "ismultims": [],
+    "iswritable": [],
+    "iterend": [],
+    "iterendold": [],
+    "iterinit": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "columns"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interval"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxrows"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "adddefaultsortcolumns"
+      }
+    ],
+    "iterinitold": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "columns"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interval"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxrows"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "adddefaultsortcolumns"
+      }
+    ],
+    "iternext": [],
+    "iternextold": [],
+    "iterorigin": [],
+    "iteroriginold": [],
+    "lister": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "options"
+      },
+      {
+        "default": "'data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "feed"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "array"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "average"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "showflags"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msselect"
+      },
+      {
+        "default": "50",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pagerows"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listfile"
+      }
+    ],
+    "listfits": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitsfile"
+      }
+    ],
+    "listhistory": [],
+    "metadata": [
+      {
+        "default": "50.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cachesize"
+      }
+    ],
+    "msselect": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "onlyparse"
+      }
+    ],
+    "msselectedindices": [],
+    "msseltoindex": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "vis"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      }
+    ],
+    "name": [],
+    "ngetdata": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxis"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ifraxisgap"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "increment"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "average"
+      }
+    ],
+    "niterend": [],
+    "niterinit": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "columns"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interval"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxrows"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "adddefaultsortcolumns"
+      }
+    ],
+    "niternext": [],
+    "niterorigin": [],
+    "nrow": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "selected"
+      }
+    ],
+    "nrowold": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "selected"
+      }
+    ],
+    "oldstatwt": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dorms"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "byantenna"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sepacs"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitspw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitcorr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "3",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minsamp"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "array"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      },
+      {
+        "default": "'corrected_data'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      }
+    ],
+    "open": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "thems"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nomodify"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lock"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "check"
+      }
+    ],
+    "partition": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outputms"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      },
+      {
+        "default": "'DATA'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichcol"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tileshape"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "subarray"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      }
+    ],
+    "putdata": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      }
+    ],
+    "putdataold": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      }
+    ],
+    "range": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "useflags"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blocksize"
+      }
+    ],
+    "rangeold": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "useflags"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blocksize"
+      }
+    ],
+    "regridspw": [
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outframe"
+      },
+      {
+        "default": "'chan'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "-3e+30",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "'LINEAR'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interpolation"
+      },
+      {
+        "default": "-3e+30",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "-3e+30",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "center"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bandwidth"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chanwidth"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "hanning"
+      }
+    ],
+    "reset": [],
+    "select": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      }
+    ],
+    "selectchannel": [
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inc"
+      }
+    ],
+    "selectchannelold": [
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "width"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inc"
+      }
+    ],
+    "selectinit": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datadescid"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reset"
+      }
+    ],
+    "selectinitold": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datadescid"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reset"
+      }
+    ],
+    "selectold": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "items"
+      }
+    ],
+    "selectpolarization": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantedpol"
+      }
+    ],
+    "selectpolarizationold": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantedpol"
+      }
+    ],
+    "selecttaql": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msselect"
+      }
+    ],
+    "selecttaqlold": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msselect"
+      }
+    ],
+    "sort": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "newmsname"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "columns"
+      }
+    ],
+    "split": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outputms"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "step"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      },
+      {
+        "default": "'DATA'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichcol"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tileshape"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "subarray"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      }
+    ],
+    "statistics": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "column"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complex_value"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "useflags"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "useweights"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "array"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reportingaxes"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timeaverage"
+      },
+      {
+        "default": "'0s'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timespan"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxuvwdistance"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doquantiles"
+      }
+    ],
+    "statisticsold": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "column"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complex_value"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "useflags"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "correlation"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "array"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obs"
+      }
+    ],
+    "statwt": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timebin"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "slidetimebin"
+      },
+      {
+        "default": "'spw'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chanbin"
+      },
+      {
+        "default": "2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minsamp"
+      },
+      {
+        "default": "'classic'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "statalg"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fence"
+      },
+      {
+        "default": "'mean'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "center"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lside"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zscore"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxiter"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitspw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "excludechans"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wtrange"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "preview"
+      },
+      {
+        "default": "'corrected'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      }
+    ],
+    "summary": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listunfl"
+      },
+      {
+        "default": "50.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cachesize"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wantreturn"
+      }
+    ],
+    "testconcatenate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msfile"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqtol"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dirtol"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "respectname"
+      }
+    ],
+    "timesort": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "newmsname"
+      }
+    ],
+    "tofits": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitsfile"
+      },
+      {
+        "default": "'corrected'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "column"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "writesyscal"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "multisource"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combinespw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "writestation"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "padwithflags"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      }
+    ],
+    "uvsub": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reverse"
+      }
+    ],
+    "virtconcatenate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msfile"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "auxfilename"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqtol"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dirtol"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "weightscale"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "respectname"
+      }
+    ],
+    "writehistory": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "message"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parms"
+      },
+      {
+        "default": "'MSHistoryHandler::addMessage()'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "origin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msname"
+      },
+      {
+        "default": "'ms'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "app"
+      }
+    ],
+    "writehistory_batch": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "messages"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parms"
+      },
+      {
+        "default": "'MSHistoryHandler::addMessage()'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "origin"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msname"
+      },
+      {
+        "default": "'ms'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "app"
+      }
+    ]
+  },
+  "tool": "ms"
+}

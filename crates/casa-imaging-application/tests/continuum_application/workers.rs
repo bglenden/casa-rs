@@ -97,7 +97,7 @@ fn cycled_mfs(measurement_set: &Path, image_name: &Path, nmajor: i64) -> Imaging
         json!({
             "imsize": 128,
             "niter": 20,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": nmajor,
             "gain": 0.37,
             "spw": "0:1~30",
@@ -266,7 +266,7 @@ fn synthetic_clean(measurement_set: &Path, image_name: &Path, controls: Value) -
         "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
         "weighting": "natural",
         "niter": 200,
-        "minor_cycle_length": 50,
+        "cycleniter": 50,
         "nmajor": 1,
         "gain": 0.2,
         "threshold": "1mJy",
@@ -303,12 +303,12 @@ fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
     let cases = [
         (
             "multiscale",
-            json!({ "deconvolver": "multiscale", "scales": "5,12" }),
+            json!({ "deconvolver": "multiscale", "scales": [5, 12] }),
             &[10_199_040_u64, 10_223_616][..],
         ),
         (
             "mtmfs",
-            json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": "5,12" }),
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [5, 12] }),
             &[14_909_440],
         ),
         (

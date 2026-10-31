@@ -58,7 +58,7 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     let directory = image_name.parent().expect("run directory").to_path_buf();
     let geometry = observation.geometry();
     let request = json!({
-        "surface": "imager",
+        "surface": "tclean",
         "values": {
             "vis": observation.measurement_set(),
             "imagename": image_name,
@@ -66,10 +66,10 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
             "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
             "backend": "cpu",
             "specmode": "cube",
-            "channel_count": 4,
+            "nchan": 4,
             "deconvolver": "hogbom",
             "niter": 1_000_000,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "gain": 0.01,
             "threshold": "0Jy",
         },

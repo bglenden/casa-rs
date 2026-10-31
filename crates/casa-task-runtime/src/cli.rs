@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -312,11 +312,11 @@ mod tests {
         );
         assert_eq!(
             patch.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
+            ParameterValue::Array(vec![ParameterValue::Integer(1024)])
         );
         assert_eq!(
             patch.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
+            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into())])
         );
         assert_eq!(patch.values["parallel"], ParameterValue::Bool(false));
         assert_eq!(
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(named, declared);
         let unknown =
             parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
-        assert!(unknown.contains("unknown imager parameter flag --thresh"));
+        assert!(unknown.contains("unknown tclean parameter flag --thresh"));
     }
 
     #[test]
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn catalog_cli_parser_applies_unsets_in_argument_order() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -438,7 +438,7 @@ mod tests {
         );
         assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
         // A value the concept refuses names its parameter.
-        let imager = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let imager = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         let imsize = ensure_parameter_binding(&imager, "imsize").unwrap();
         let refused = validated_cli_value(&imager, imsize, "abc").unwrap_err();
         assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");

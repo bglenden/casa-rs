@@ -103,13 +103,21 @@ struct Surveyed<'a> {
 ///
 /// What compile reads is admitted, not compile itself: the survey's walk
 /// of the MeasurementSet's rows is admitted once it is open and its rows
-/// are known, before the walk; opening it reads only its tables'
-/// descriptions, under the run's fixed charges. The observation the run
+/// are known, before the walk; the tables' descriptions are admitted before
+/// the MeasurementSet is opened. The observation the run
 /// reads is opened here, once ([`open_observation`]).
 pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,
 ) -> Result<Prepared, PrepareError> {
+    let opening = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "observation opening",
+            memory: Msv2Observation::opening_table_bytes(&request.vis) as u64,
+        },
+    )?;
     let ms = MeasurementSet::open_retained_read(&request.vis)?;
     let budget = casa_imaging_runtime::bootstrap_source_budget();
     // The survey walks the MAIN rows under `budget`.
@@ -121,7 +129,7 @@ pub(crate) fn prepare(
             memory: ms.row_walk_bytes(budget.row_io_budget())? as u64,
         },
     )?;
-    let opened = open_observation(ms, (&context.host, &context.policy))?;
+    let opened = open_observation(ms, (&context.host, &context.policy), opening)?;
     let ms = opened.value.measurement_set();
     // The one Measures provider of the run: compile's geometry and the
     // batches' both evaluate with it.

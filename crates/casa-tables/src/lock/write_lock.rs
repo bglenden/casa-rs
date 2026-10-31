@@ -342,6 +342,32 @@ pub(crate) fn publish_persisted_write(
     Ok(sync)
 }
 
+/// Brings the row count the lock file's sync data publishes to the rows
+/// `table.dat` holds now, while the write lock is still held, and changes
+/// nothing else in it: no counter moves, so the release publishes the write
+/// once, as it does for every write. Nothing is done when no sync data has
+/// been published (the count then reads as 0, and the table's own is used).
+///
+/// A full save that removed rows needs this: until the release, a
+/// metadata-only save, the admission of a partial save and a reload read
+/// that count back and take the larger of it and `table.dat`'s, which would
+/// raise the file to the rows the save removed.
+#[cfg(unix)]
+pub(crate) fn publish_persisted_rows(
+    lock_file: &LockFile,
+    table_dir: &Path,
+) -> std::io::Result<()> {
+    let Some(mut sync) = lock_file.read_sync_data()? else {
+        return Ok(());
+    };
+    let rows = PersistedShape::read(table_dir)?.rows;
+    if sync.nrrow != rows {
+        sync.nrrow = rows;
+        lock_file.write_sync_data(&sync)?;
+    }
+    Ok(())
+}
+
 /// The modify counter the lock file's sync data publishes, `None` when it has
 /// none. A read that fails means a writer was publishing at that moment, and
 /// counts as `None`, so a change is still seen.

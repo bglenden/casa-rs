@@ -12,11 +12,15 @@ fn the_application_catalog_lists_every_launch_entry() {
     assert!(
         applications
             .iter()
-            .all(|application| application.kind == "task" && application.id != "casars")
+            .all(|application| application.id != "casars")
     );
+    // Every entry is a task (#972 dropped the field that said so), and an
+    // entry holds only what a launch reads.
+    let entry = serde_json::to_value(&applications[0]).unwrap();
+    assert!(entry.get("kind").is_none() && entry.get("show_in_tui").is_none());
     assert!(applications.iter().any(|application| {
-        application.id == "imager"
-            && application.display_name == "Imager"
+        application.id == "tclean"
+            && application.display_name == "Tclean"
             && application.executable == "casars-imager"
             && application.override_env == "CASARS_IMAGER_BIN"
     }));
@@ -32,7 +36,7 @@ fn a_task_runs_its_override_or_names_what_is_missing() {
         imager.display().to_string(),
     )]);
     assert_eq!(
-        executable("imager", &environment, dir.path()).unwrap(),
+        executable("tclean", &environment, dir.path()).unwrap(),
         imager
     );
     let error = executable("tablebrowser", &environment, dir.path()).unwrap_err();
@@ -43,7 +47,7 @@ fn a_task_runs_its_override_or_names_what_is_missing() {
         "CASARS_SUITE_ROOT".to_string(),
         dir.path().display().to_string(),
     )]);
-    let error = executable("imager", &environment, dir.path()).unwrap_err();
+    let error = executable("tclean", &environment, dir.path()).unwrap_err();
     assert!(error.contains("CASARS_SUITE_ROOT"), "{error}");
 }
 
@@ -135,10 +139,10 @@ fn a_completion_reports_the_declared_product() {
 #[test]
 fn a_malformed_result_names_the_surface() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let error = completion("imager", "runner stdout", dir.path(), Vec::new())
+    let error = completion("tclean", "runner stdout", dir.path(), Vec::new())
         .expect_err("malformed result");
     assert!(
-        error.starts_with("unknown managed result for \"imager\""),
+        error.starts_with("unknown managed result for \"tclean\""),
         "{error}"
     );
 }

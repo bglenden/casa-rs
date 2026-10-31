@@ -10,6 +10,7 @@
 
 mod cursor;
 mod ephemeris;
+mod held;
 mod metadata;
 mod pointing;
 mod read;

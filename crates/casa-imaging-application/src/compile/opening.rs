@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The observation a request names, opened once for compile and the run:
-//! its opening admitted as it grows, and its index charged while it is
-//! open.
+//! its opening admitted as it grows and its retained memory charged while
+//! it is open.
 
-use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
+use casa_imaging_runtime::{Admitted, Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_observation::ObservationError;
@@ -11,24 +11,26 @@ use casa_observation::ObservationError;
 use super::PrepareError;
 
 /// The MeasurementSet `ms` opened as an observation, with the charge of its
-/// index while it is open ([`Msv2Observation::index_bytes`]). What opening
-/// usually holds is admitted before it opens, from MAIN's row count
+/// tables, index and catalogue while it is open. Its table descriptions are
+/// admitted before the MeasurementSet opens; what opening usually holds beyond
+/// them is admitted from MAIN's row count
 /// ([`Msv2Observation::opening_bytes`]), and each increase it asks for
 /// beyond ([`Msv2Observation::open_granted`]) is admitted before it is
 /// allocated: one that does not fit refuses the opening, as an admission.
-/// The charge is then trimmed to the index, or raised to it.
+/// The charge is then trimmed to what the observation retains, or raised to it.
 pub(crate) fn open_observation(
     ms: MeasurementSet,
     (host, policy): (&HostResources, &ResourcePolicy),
+    mut reservation: Reservation,
 ) -> Result<Admitted<Msv2Observation>, PrepareError> {
-    let mut reservation = admit(
+    reservation.join(admit(
         host,
         policy,
         &Demand {
             phase: "observation opening",
             memory: Msv2Observation::opening_bytes(ms.row_count()) as u64,
         },
-    )?;
+    )?);
     let mut refusal = None;
     let opened = Msv2Observation::open_granted_on(ms, &OpenOptions::default(), &mut |total| {
         let total = total as u64;
@@ -55,18 +57,17 @@ pub(crate) fn open_observation(
         Some(admission) => PrepareError::Admission(admission),
         None => PrepareError::Opening(error),
     })?;
-    // The catalogue's ephemerides are read with the subtables, before
-    // the index; they are charged with it.
-    let index = (opened.index_bytes() + opened.catalogue().ephemeris_bytes()) as u64;
-    if index <= reservation.memory() {
-        reservation.retain(index);
+    // Keep the charge for the tables, index and catalogue after opening.
+    let retained = opened.retained_bytes() as u64;
+    if retained <= reservation.memory() {
+        reservation.retain(retained);
     } else {
         reservation.join(admit(
             host,
             policy,
             &Demand {
-                phase: "observation index",
-                memory: index - reservation.memory(),
+                phase: "observation retained",
+                memory: retained - reservation.memory(),
             },
         )?);
     }

@@ -19,6 +19,7 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
 use crate::derived::engine::resolve_direction_reference_selected;
+use crate::observation_io::heap;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
@@ -294,19 +295,14 @@ pub(super) fn read_observations(
                 Some(ArrayValue::String(lines)) => lines.iter().cloned().collect(),
                 _ => Vec::new(),
             };
-            let uid = |line: usize, label: &str| {
-                schedule
-                    .get(line)
-                    .filter(|_| schedule.len() == 2)
-                    .and_then(|line| scheduled_uid(line, label))
-            };
+            let (scheduling_block, execution_block) = schedule_identifiers(&schedule);
             Ok(ObservationEntry {
                 telescope: observation.string(row, "TELESCOPE_NAME").map_err(storage)?,
                 observers: vec![observation.string(row, "OBSERVER").map_err(storage)?],
                 project: observation.string(row, "PROJECT").map_err(storage)?,
-                execution_block: uid(1, "ExecBlock"),
+                execution_block,
                 session_reference: None,
-                scheduling_block: uid(0, "SchedulingBlock"),
+                scheduling_block,
                 time_range: super::metadata::floats(
                     observation
                         .optional_array(row, "TIME_RANGE")
@@ -334,6 +330,32 @@ pub(super) fn read_observations(
             })
         })
         .collect()
+}
+
+/// The scheduling and execution block UIDs a `SCHEDULE` cell states: those
+/// of its two lines, as importasdm writes them ([`scheduled_uid`]); none
+/// for a cell of another length.
+pub(crate) fn schedule_identifiers(lines: &[String]) -> (Option<String>, Option<String>) {
+    match lines {
+        [scheduling, execution] => (
+            scheduled_uid(scheduling, "SchedulingBlock"),
+            scheduled_uid(execution, "ExecBlock"),
+        ),
+        _ => (None, None),
+    }
+}
+
+/// The `SCHEDULE` cell importasdm writes for block UIDs `scheduling` and
+/// `execution`, which [`schedule_identifiers`] reads back: its two lines,
+/// or no line without both.
+pub(crate) fn schedule_lines(scheduling: Option<&str>, execution: Option<&str>) -> Vec<String> {
+    match (scheduling, execution) {
+        (Some(scheduling), Some(execution)) => vec![
+            format!("[SchedulingBlock {scheduling},"),
+            format!("ExecBlock {execution}]"),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 /// The UID after `label` in a `SCHEDULE` line, as XRADIO's converter reads
@@ -460,6 +482,17 @@ impl Feeds {
             .and_then(|rows| rows.last())
     }
 
+    /// The most heap a partition's copy of one antenna's receptors holds
+    /// ([`heap::receptors_bytes`]).
+    pub(super) fn largest_receptors_bytes(&self) -> usize {
+        self.rows
+            .values()
+            .flatten()
+            .map(heap::receptors_bytes)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The first (antenna, feed, window) whose rows differ, among the rows
     /// [`Self::receptors`] reads: `FEED` states receptors that vary in
     /// time, of which it keeps the last. Rows for every window (-1) beside
@@ -542,6 +575,54 @@ pub(super) struct SpectralSetup {
     pub(super) frequency_frame: FrequencyRef,
     pub(super) channel_widths_hz: Vec<f64>,
     pub(super) correlations: Vec<Correlation>,
+}
+
+impl SpectralSetup {
+    /// The heap a copy of the setup holds.
+    pub(super) fn heap_bytes(&self) -> usize {
+        self.spectral_window.len()
+            + size_of_val(self.frequencies_hz.as_slice())
+            + size_of_val(self.channel_widths_hz.as_slice())
+            + size_of_val(self.correlations.as_slice())
+    }
+}
+
+/// The most [`spectral_setups`] holds: each `DATA_DESCRIPTION` row's
+/// copies of its window's name, channels and widths (`NUM_CHAN` of each)
+/// and its polarization's products (`NUM_CORR`), read from the rows the
+/// opening loads.
+pub(super) fn setups_bytes(ms: &MeasurementSet) -> Result<usize, ObservationError> {
+    let descriptions = ms.data_description().map_err(storage)?;
+    let windows = ms.spectral_window().map_err(storage)?;
+    let polarizations = ms.polarization().map_err(storage)?;
+    let mut bytes = 0;
+    for row in 0..descriptions.row_count() {
+        let window = descriptions.spectral_window_id(row).map_err(storage)?;
+        let polarization = descriptions.polarization_id(row).map_err(storage)?;
+        let channels = usize::try_from(window)
+            .ok()
+            .filter(|window| *window < windows.row_count())
+            .map(|window| {
+                Ok::<_, ObservationError>((
+                    windows.num_chan(window).map_err(storage)?,
+                    windows.name(window).map_err(storage)?.len(),
+                ))
+            })
+            .transpose()?
+            .map_or(0, |(channels, name)| {
+                2 * usize::try_from(channels).unwrap_or(0) * size_of::<f64>() + name
+            });
+        let products = usize::try_from(polarization)
+            .ok()
+            .filter(|polarization| *polarization < polarizations.row_count())
+            .map(|polarization| polarizations.num_corr(polarization).map_err(storage))
+            .transpose()?
+            .map_or(0, |products| {
+                usize::try_from(products).unwrap_or(0) * size_of::<Correlation>()
+            });
+        bytes += size_of::<SpectralSetup>() + channels + products;
+    }
+    Ok(bytes)
 }
 
 /// Every `DATA_DESCRIPTION` row's spectral setup.

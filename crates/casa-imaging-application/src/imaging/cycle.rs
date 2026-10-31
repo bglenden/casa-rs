@@ -1291,6 +1291,7 @@ fn minor_cycle_record(
         actual_iterations: summary.components,
         total_actual_iterations,
         total_flux: summary.absolute_flux,
+        model_flux: summary.model_flux,
         initial_peak_flux: summary.start_peak,
         final_peak_flux: summary.peak,
         noise_rms: summary.noise_rms,

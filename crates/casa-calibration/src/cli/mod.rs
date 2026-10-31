@@ -10,23 +10,30 @@
 //! logging; this module reads the resolved run into its
 //! [`CalibrationTaskRequest`], runs it, and writes its report.
 //!
-//! A run's reply carries the tagged [`CalibrationTaskResult`]. A command line
-//! prints the workflow's report in `format`, or writes it to `output`; a
-//! report that would replace an existing file is refused before the task
-//! runs unless `overwrite` is set. The calibration tasks return None for
-//! now; CASA's own return values come with the CASA-exact surfaces.
+//! A run's reply carries the tagged [`CalibrationTaskResult`] and the value
+//! CASA's task returns: `gaincal` and `bandpass` their tables, selected data
+//! and interval counts ([`solve_record`]), `fluxscale` its flux densities
+//! ([`fluxscale_record`]), and `applycal`, `gencal` and `calibrate`
+//! `None`. A command line prints the workflow's report in `format`, or
+//! writes it to `output`; a report that would replace an existing file is
+//! refused before the task runs unless `overwrite` is set.
 //!
 //! [`CalibrationTaskRequest`]: crate::CalibrationTaskRequest
 //! [`CalibrationTaskResult`]: crate::CalibrationTaskResult
 
+mod casa_read;
 mod read;
 mod render;
 
 use std::path::Path;
 
+use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
-use crate::calibration_task_schema_bundle;
+use crate::{
+    ApplyCalibrationTableSpec, CalibrationTaskRequest, CalibrationTaskResult,
+    calibration_task_schema_bundle, fluxscale_record, solve_record,
+};
 
 /// The surfaces `calibrate` hosts; the first runs when the command line
 /// names none.
@@ -60,7 +67,13 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if let Some(path) = report.output.as_deref() {
         refuse_existing_report(path, report.overwrite)?;
     }
+    let applied = match &request {
+        CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables.clone(),
+        CalibrationTaskRequest::SolveBandpass(solve) => solve.prior_calibration_tables.clone(),
+        _ => Vec::new(),
+    };
     let result = request.execute().map_err(TaskFailure::execution)?;
+    let value = casa_value(task.surface(), &applied, &result);
     let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
         Some(path) => {
@@ -71,7 +84,32 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         None => rendered,
     };
-    Ok(TaskSuccess::new(casa_task_runtime::CasaValue::None, &result)?.with_text(text))
+    Ok(TaskSuccess::new(value, &result)?.with_text(text))
+}
+
+/// What `surface` returns for `result`, as CASA's task of that name does;
+/// `applied` is the chain a solve pre-applied.
+fn casa_value(
+    surface: &str,
+    applied: &[ApplyCalibrationTableSpec],
+    result: &CalibrationTaskResult,
+) -> CasaValue {
+    match (surface, result) {
+        ("gaincal", CalibrationTaskResult::SolveGain(report)) => solve_record(
+            applied,
+            &report.selected_data,
+            &report.output_table,
+            &report.solve_stats,
+        ),
+        ("bandpass", CalibrationTaskResult::SolveBandpass(report)) => solve_record(
+            applied,
+            &report.selected_data,
+            &report.output_table,
+            &report.solve_stats,
+        ),
+        ("fluxscale", CalibrationTaskResult::FluxScale(report)) => fluxscale_record(report),
+        _ => CasaValue::None,
+    }
 }
 
 fn refuse_existing_report(path: &Path, overwrite: bool) -> Result<(), TaskFailure> {
@@ -85,5 +123,7 @@ fn refuse_existing_report(path: &Path, overwrite: bool) -> Result<(), TaskFailur
     Ok(())
 }
 
+#[cfg(test)]
+mod casa_tests;
 #[cfg(test)]
 mod tests;

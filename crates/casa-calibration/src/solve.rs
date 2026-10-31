@@ -32,7 +32,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
+use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
 use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
 use kernel::solve_group;
@@ -52,6 +54,15 @@ impl GainType {
         match self {
             Self::G => "G Jones",
             Self::T => "T Jones",
+        }
+    }
+
+    /// The polarizations a solution holds: one gain per receptor for G, one
+    /// for both for T.
+    pub(crate) fn polarizations(self) -> usize {
+        match self {
+            Self::G => 2,
+            Self::T => 1,
         }
     }
 }
@@ -152,6 +163,12 @@ pub struct GainSolveReport {
     pub spectral_window_ids: Vec<i32>,
     /// Number of solution rows written.
     pub solution_row_count: usize,
+    /// The data the solve selected, CASA's `selectvis`.
+    #[serde(default)]
+    pub selected_data: SelectedData,
+    /// How far the solve's intervals got, CASA's `solvestats`.
+    #[serde(default)]
+    pub solve_stats: SolveStats,
 }
 
 /// Errors returned by the limited `gaincal` solver.
@@ -173,6 +190,20 @@ pub enum GainSolveError {
     /// The selection produced no rows.
     #[error("gain solve selection produced no rows")]
     EmptySelection,
+
+    /// Two data descriptions of the selection share a spectral window.
+    /// CASA solves each description apart and writes each one's solutions
+    /// under the window; casa-rs keys a solve by its window and does not
+    /// take this layout yet.
+    #[error(
+        "DATA_DESC_IDs {data_desc_ids:?} share spectral window {spw_id}; casa-rs does not solve data descriptions that share a window yet (#979); select one of them"
+    )]
+    SharedSpectralWindow {
+        /// The shared window.
+        spw_id: i32,
+        /// The selected data descriptions on it.
+        data_desc_ids: Vec<i32>,
+    },
 
     /// The solve requires a point-source Stokes-I model.
     #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
@@ -308,6 +339,10 @@ pub(crate) struct SolvedGains {
     /// The spectral windows an interval reached a solve in, whether or not
     /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
+    /// The data the solve selected.
+    pub(crate) selected_data: SelectedData,
+    /// How far its intervals got.
+    pub(crate) solve_stats: SolveStats,
 }
 
 /// The solutions of [`solve_gain`], the resolved reference antenna and the
@@ -353,12 +388,24 @@ pub(crate) fn solve_gain_rows(
 
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
+    let mut solve_stats = SolveStatsBuilder::new(
+        request.gain_type.polarizations(),
+        spectral_window_ids(ms)?,
+        &context.available_antennas,
+    );
+    // Each solved interval's window and its rows in `solution_rows`.
+    let mut intervals = Vec::new();
     for ((base_key, bucket_key), mut group) in groups {
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
         }
         group.finalize_for_solve(request.solve_mode);
         trace::trace_group(&base_key, &bucket_key, &group, request);
+        solve_stats.interval(&IntervalStages::of(
+            &group,
+            request.min_baselines_per_antenna,
+        ));
+        let spw_id = group.spw_id;
         let Some(group_rows) = solve_closed_group(
             group,
             &context.available_antennas,
@@ -367,6 +414,13 @@ pub(crate) fn solve_gain_rows(
         ) else {
             continue;
         };
+        solve_stats.solutions(
+            spw_id,
+            group_rows.iter().map(|row| AntennaSolution {
+                antenna_id: row.antenna_id,
+                passed: row.flags.iter().map(|flagged| !flagged).collect(),
+            }),
+        );
         trace::trace_solution_rows(
             &base_key,
             &bucket_key,
@@ -374,7 +428,9 @@ pub(crate) fn solve_gain_rows(
             request,
             context.refant_id,
         );
+        let start = solution_rows.len();
         solution_rows.extend(group_rows);
+        intervals.push((spw_id, start..solution_rows.len()));
     }
     if solution_rows.is_empty() {
         return Err(GainSolveError::NoSolutions);
@@ -384,11 +440,47 @@ pub(crate) fn solve_gain_rows(
         context.refant_id,
         &refant_distance_order(ms, context.refant_id)?,
     );
+    // CASA's solnorm follows the reference antenna, over every interval
+    // (`SolvableVisJones::globalPostSolveTinker`).
+    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
+        && request.normalize_average_amplitude
+    {
+        normalize_gain_solution_amplitudes(&mut solution_rows);
+    }
+    // The reference antenna each interval ended with, where it kept its
+    // solution: flex flags an interval it found none for.
+    for (spw_id, rows) in intervals {
+        let rows = &solution_rows[rows];
+        if let Some(refant) = rows
+            .iter()
+            .find(|row| row.antenna_id == row.refant_id && row.flags.iter().any(|flagged| !flagged))
+        {
+            solve_stats.used_as_refant(spw_id, refant.antenna_id);
+        }
+    }
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
+        selected_data: context.selected_data,
+        solve_stats: solve_stats.finish(),
     })
+}
+
+/// Every spectral window of `ms`, by id.
+pub(crate) fn spectral_window_ids(ms: &MeasurementSet) -> Result<Vec<i32>, GainSolveError> {
+    let windows = ms
+        .spectral_window()
+        .map_err(|source| GainSolveError::OpenMeasurementSet {
+            path: ms
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<in-memory>".to_string()),
+            source,
+        })?;
+    Ok((0..windows.row_count())
+        .map(|row| i32::try_from(row).expect("window count fits in i32"))
+        .collect())
 }
 
 /// Solve one complete group whose accumulation is finalized
@@ -401,7 +493,7 @@ pub(crate) fn solve_closed_group(
     request: &GainSolveRequest,
     refant_id: i32,
 ) -> Option<Vec<kernel::SolutionRow>> {
-    let mut group_rows = solve_group(
+    solve_group(
         group,
         available_antennas,
         request.gain_type,
@@ -409,13 +501,7 @@ pub(crate) fn solve_closed_group(
         refant_id,
         request.min_snr,
         request.min_baselines_per_antenna,
-    )?;
-    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
-        && request.normalize_average_amplitude
-    {
-        normalize_gain_solution_amplitudes(&mut group_rows);
-    }
-    Some(group_rows)
+    )
 }
 
 /// The antennas other than `refant_id`, nearest it first: the alternates
@@ -590,40 +676,33 @@ fn phase_only(gain: Complex32) -> Complex32 {
     }
 }
 
+/// Divide every gain of each window by the root mean power of the window's
+/// unflagged solutions, taken over all its intervals, antennas and
+/// receptors together, as CASA's `solnorm` does
+/// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
+/// window with one unflagged solution or none stays, as `normSolnArray`
+/// normalizes only more than one.
 fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
-    let receptor_count = rows
-        .iter()
-        .map(|row| row.gains.len())
-        .max()
-        .unwrap_or_default();
-    for receptor in 0..receptor_count {
-        let mut power_sum = 0.0_f32;
-        let mut good_count = 0usize;
-        for row in rows.iter() {
-            if row.flags.get(receptor).copied().unwrap_or(true) {
-                continue;
+    let mut power = BTreeMap::<i32, (f64, usize)>::new();
+    for row in rows.iter() {
+        let (sum, count) = power.entry(row.spw_id).or_default();
+        for (gain, flagged) in row.gains.iter().zip(&row.flags) {
+            if !flagged {
+                *sum += f64::from(gain.norm_sqr());
+                *count += 1;
             }
-            let Some(gain) = row.gains.get(receptor) else {
-                continue;
-            };
-            let amplitude = gain.norm();
-            if amplitude <= f32::EPSILON {
-                continue;
-            }
-            power_sum += amplitude * amplitude;
-            good_count += 1;
         }
-        if good_count <= 1 {
+    }
+    for row in rows.iter_mut() {
+        let Some(&(sum, count)) = power.get(&row.spw_id) else {
+            continue;
+        };
+        let factor = (sum / count.max(1) as f64).sqrt() as f32;
+        if count <= 1 || !(factor.is_finite() && factor > 0.0) {
             continue;
         }
-        let amplitude_factor = (power_sum / good_count as f32).sqrt();
-        if amplitude_factor <= f32::EPSILON {
-            continue;
-        }
-        for row in rows.iter_mut() {
-            if let Some(gain) = row.gains.get_mut(receptor) {
-                *gain /= casa_types::Complex32::new(amplitude_factor, 0.0);
-            }
+        for gain in &mut row.gains {
+            *gain /= Complex32::new(factor, 0.0);
         }
     }
 }
@@ -690,5 +769,70 @@ pub(crate) fn stokes_name(code: i32) -> &'static str {
         11 => "YX",
         12 => "YY",
         _ => "UNKNOWN",
+    }
+}
+
+#[cfg(test)]
+mod solnorm_tests {
+    use super::*;
+
+    fn row(
+        spw_id: i32,
+        time_seconds: f64,
+        gains: [f32; 2],
+        flags: [bool; 2],
+    ) -> kernel::SolutionRow {
+        kernel::SolutionRow {
+            time_seconds,
+            field_id: 0,
+            spw_id,
+            antenna_id: 0,
+            scan_number: 1,
+            observation_id: 0,
+            refant_id: 0,
+            gains: gains
+                .iter()
+                .map(|&gain| Complex32::new(gain, 0.0))
+                .collect(),
+            flags: flags.to_vec(),
+            param_errors: vec![0.0; 2],
+            snrs: vec![0.0; 2],
+            weights: vec![1.0; 2],
+        }
+    }
+
+    /// CASA 6.7.6.14 normalizes a window's gains by one factor, the root
+    /// mean power of its unflagged solutions over every interval and both
+    /// receptors (probed: XX and YY solutions of mean power 0.43 and 1.51,
+    /// together 1.00), not each interval or receptor by its own.
+    #[test]
+    fn solnorm_divides_each_window_by_one_factor_over_its_intervals_and_receptors() {
+        let mut rows = vec![
+            row(0, 0.0, [1.0, 3.0], [false, false]),
+            row(0, 10.0, [2.0, 3.0], [false, false]),
+            // A flagged solution is divided but does not count.
+            row(0, 20.0, [100.0, 3.0], [true, false]),
+            row(1, 0.0, [4.0, 4.0], [false, false]),
+            // One unflagged solution is not normalized (normSolnArray).
+            row(2, 0.0, [4.0, 5.0], [false, true]),
+        ];
+        normalize_gain_solution_amplitudes(&mut rows);
+        let factor = ((1.0_f32 + 9.0 + 4.0 + 9.0 + 9.0) / 5.0).sqrt();
+        let amplitudes = |row: &kernel::SolutionRow| -> Vec<f32> {
+            row.gains.iter().map(|gain| gain.norm()).collect()
+        };
+        let close = |left: &[f32], right: &[f32]| {
+            left.iter()
+                .zip(right)
+                .all(|(left, right)| (left - right).abs() < 1e-5)
+        };
+        assert!(close(&amplitudes(&rows[0]), &[1.0 / factor, 3.0 / factor]));
+        assert!(close(&amplitudes(&rows[1]), &[2.0 / factor, 3.0 / factor]));
+        assert!(close(
+            &amplitudes(&rows[2]),
+            &[100.0 / factor, 3.0 / factor]
+        ));
+        assert!(close(&amplitudes(&rows[3]), &[1.0, 1.0]));
+        assert!(close(&amplitudes(&rows[4]), &[4.0, 5.0]));
     }
 }

@@ -1,25 +1,44 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Imaging requests resolved through the provider catalog, as the imager
+//! Imaging requests resolved through the provider catalog, as the `tclean`
 //! task resolves them, and the context a test runs them in.
 
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, ResourcePolicy, RunContext};
 
-/// The request for catalog `values`, plain JSON by imager parameter name,
-/// defaulted and checked by the catalog. It grids on the CPU unless the
-/// values name a `backend`: the catalog's `auto` would move a test onto the
-/// GPU wherever the host has one.
+/// The request for catalog `values`, plain JSON by tclean parameter name,
+/// defaulted and checked by the catalog and read as tclean's modes read
+/// them. It grids on the CPU unless the values name a `backend`: the
+/// catalog's `auto` would move a test onto the GPU wherever the host has
+/// one. A value these tests were written against when it was the imager's
+/// default fills in for CASA's (#931): a 512-pixel image of 1-arcsecond
+/// cells, 1000-iteration minor cycles, W planes derived from the data, and
+/// the imager's fixed `conjbeams` and `mosweight`.
 pub fn request(values: serde_json::Value) -> ImagingRequest {
     let serde_json::Value::Object(mut values) = values else {
         panic!("request values are a JSON object");
     };
     values.entry("backend").or_insert_with(|| "cpu".into());
+    values.entry("imsize").or_insert_with(|| 512.into());
+    values.entry("cell").or_insert_with(|| "1arcsec".into());
+    values.entry("cycleniter").or_insert_with(|| 1000.into());
+    match values.get("gridder").and_then(serde_json::Value::as_str) {
+        Some("wproject") => {
+            values.entry("wprojplanes").or_insert_with(|| (-1).into());
+        }
+        Some("awproject") => {
+            values.entry("conjbeams").or_insert_with(|| true.into());
+        }
+        Some("mosaic") => {
+            values.entry("mosweight").or_insert_with(|| false.into());
+        }
+        _ => {}
+    }
     let resolved = casa_task_runtime::resolve_plain_values(
-        casa_provider_contracts::builtin_surface_bundle("imager").expect("imager surface"),
+        casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
         std::path::PathBuf::from("."),
         &values,
     )
     .unwrap_or_else(|error| panic!("catalog values: {error}"));
-    serde_json::from_value(serde_json::Value::Object(resolved))
+    ImagingRequest::from_tclean(&resolved)
         .unwrap_or_else(|error| panic!("imaging request: {error}"))
 }
 

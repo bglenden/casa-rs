@@ -271,12 +271,11 @@ fn remove(table: &mut Table, names: &[String]) {
 /// MAIN rows read at a time while looking for the fields that have models.
 const FIELD_SCAN_ROWS: usize = 65_536;
 
-/// The fields that have a model pointer, in MAIN's or SOURCE's keywords,
-/// and rows in MAIN: those `clearModel` reaches, since it visits the fields
-/// MAIN names and a field without a pointer has nothing to clear. MAIN's
-/// `FIELD_ID` is read only when a pointer exists, a bounded chunk at a
-/// time, and no further than to find every pointed field.
-fn fields_with_models(ms: &MeasurementSet) -> MsResult<BTreeSet<i32>> {
+/// The fields with a virtual model pointer, `definedmodel_field_<id>`, in
+/// MAIN's or SOURCE's keywords, as the module states: those CASA's iterator
+/// reads a virtual model for in place of `MODEL_DATA`. Only keywords are
+/// read.
+pub fn virtual_model_fields(ms: &MeasurementSet) -> BTreeSet<i32> {
     let pointed = |keywords: &RecordValue| -> Vec<i32> {
         keywords
             .fields()
@@ -284,10 +283,20 @@ fn fields_with_models(ms: &MeasurementSet) -> MsResult<BTreeSet<i32>> {
             .filter_map(|field| field.name.strip_prefix("definedmodel_field_")?.parse().ok())
             .collect()
     };
-    let mut wanted: BTreeSet<i32> = pointed(ms.main_table().keywords()).into_iter().collect();
+    let mut fields: BTreeSet<i32> = pointed(ms.main_table().keywords()).into_iter().collect();
     if let Some(source) = ms.subtable(SubtableId::Source) {
-        wanted.extend(pointed(source.keywords()));
+        fields.extend(pointed(source.keywords()));
     }
+    fields
+}
+
+/// The fields that have a model pointer, in MAIN's or SOURCE's keywords,
+/// and rows in MAIN: those `clearModel` reaches, since it visits the fields
+/// MAIN names and a field without a pointer has nothing to clear. MAIN's
+/// `FIELD_ID` is read only when a pointer exists, a bounded chunk at a
+/// time, and no further than to find every pointed field.
+fn fields_with_models(ms: &MeasurementSet) -> MsResult<BTreeSet<i32>> {
+    let wanted = virtual_model_fields(ms);
     let mut found = BTreeSet::new();
     if wanted.is_empty() {
         return Ok(found);

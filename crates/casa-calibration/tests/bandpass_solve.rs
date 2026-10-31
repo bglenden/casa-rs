@@ -124,6 +124,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve bandpass");
@@ -217,6 +218,7 @@ fn solve_bandpass_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve bandpass around a FLAG_ROW outlier");
@@ -320,6 +322,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve dense bandpass");
@@ -485,6 +488,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve combined-scan bandpass");
@@ -626,6 +630,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve combined-field bandpass");
@@ -731,6 +736,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve normalized bandpass");
@@ -853,6 +859,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve BPOLY bandpass");

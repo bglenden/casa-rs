@@ -6,7 +6,7 @@ use crate::oracle_runtime::{OracleError, oracle_operation};
 use crate::table_oracle_impl::*;
 use crate::{
     BulkScalarIoBenchResult, CellSliceBenchParams, CellSliceBenchResult, CppTableFixture,
-    DeepCopyBenchResult, SetAlgebraBenchResult,
+    DeepCopyBenchResult, SetAlgebraBenchResult, SsmStatistics,
 };
 
 macro_rules! table_operation {
@@ -73,6 +73,49 @@ impl TableOracle {
         table_operation!("table.keyword_double_array", {
             cpp_keyword_double_array(path, keyword).map_err(|message| OracleError::CppFailure {
                 operation: "table.keyword_double_array",
+                message,
+            })
+        })
+    }
+
+    /// Write [`CppTableFixture::SsmLongStrings`]'s rows in C++ casacore as
+    /// casa-rs writes them: column by column, in StandardStMan buckets of
+    /// 32 KiB, big-endian or little-endian.
+    pub fn write_ssm_long_strings_by_column(
+        path: &std::path::Path,
+        big_endian: bool,
+    ) -> Result<(), OracleError> {
+        table_operation!("table.write_ssm_long_strings_by_column", {
+            cpp_write_ssm_long_strings_by_column(path, big_endian).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "table.write_ssm_long_strings_by_column",
+                    message,
+                }
+            })
+        })
+    }
+
+    /// Update a table of [`CppTableFixture::SsmLongStrings`]'s rows in C++
+    /// casacore. It shrinks row 0's `NAME` to 1,700 bytes and its `FIXED`
+    /// strings to 13, 111 and 25. It grows row 2's `VARIABLE` to strings of
+    /// 250,000 and 20 bytes, into the buckets that frees. It appends a row
+    /// of a 50,000-byte `NAME`, `FIXED` `p`, `q`, `r` and `VARIABLE` `s`.
+    /// Then it reopens the table and checks every cell there.
+    pub fn update_ssm_long_strings(path: &std::path::Path) -> Result<(), OracleError> {
+        table_operation!("table.update_ssm_long_strings", {
+            cpp_update_ssm_long_strings(path).map_err(|message| OracleError::CppFailure {
+                operation: "table.update_ssm_long_strings",
+                message,
+            })
+        })
+    }
+
+    /// C++ casacore's account of the StandardStMan holding column `NAME` of
+    /// the table at `path` (`ROStandardStManAccessor::showBaseStatistics`).
+    pub fn ssm_statistics(path: &std::path::Path) -> Result<SsmStatistics, OracleError> {
+        table_operation!("table.ssm_statistics", {
+            cpp_ssm_statistics(path).map_err(|message| OracleError::CppFailure {
+                operation: "table.ssm_statistics",
                 message,
             })
         })

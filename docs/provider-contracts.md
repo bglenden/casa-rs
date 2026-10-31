@@ -157,11 +157,13 @@ parameter surface has exactly one task-application entry that references the
 surface by stable ID, and every application is a task: the catalog's 26
 entries are its 26 task surfaces. Display name, category, and protocol
 family are projected from the referenced surface rather than copied into
-another inventory. Each application adds only executable/package identity,
-its explicit override variable, interaction and presentation metadata, and
-packaging visibility. (ADR-0017 keeps the older presentation fields, such as
-`shell_kind` and `interaction`, until the CASA-shaped Python work reshapes
-them.) Several surfaces may share one executable, a family whose first word
+another inventory. Each application adds only executable/package identity
+(`launch`), its explicit override variable, the kinds of dataset it reads,
+and packaging visibility (`include_in_suite`). Catalog schema 2 (#972)
+dropped the presentation fields only the retired terminal and Swift
+frontends read (`kind`, `shell_kind`, `interaction`, `show_in_tui`,
+`show_in_swift`), and an entry carrying any other field is refused. Several
+surfaces may share one executable, a family whose first word
 names the surface: `imhead` and `imstat` run `imexplore`; `plotms` runs
 `msexplore`; `split` runs `mstransform`; and `gaincal`, `bandpass`,
 `applycal`, `fluxscale`, and `gencal` run `calibrate`, whose own `calibrate`
@@ -192,7 +194,7 @@ inventory all project from this catalog.
 ## Parameter Catalog and Surface Definitions
 
 ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by imager and simobserve.
+current-only profile contract used by simobserve.
 
 `ParameterCatalog` entries describe reusable concepts:
 
@@ -250,7 +252,10 @@ its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
 changed defaults. An empty migration set declares a current-only surface: only
 the exact current contract and canonical parameter names are accepted. The
-imager and simobserve surfaces are current-only. Future, stale, and otherwise
+simobserve surface is current-only. A chain may start after contract 1:
+`tclean`, the imager's surface since contract 29 (#931), migrates profiles
+from contract 28, the `imager` surface's last, and answers to that former
+id. Future, stale, and otherwise
 unmigratable contracts are errors.
 
 Parameter documents do not support includes, environment or shell expansion,
@@ -371,8 +376,8 @@ data in column-major (Fortran) order. `casars._core` rebuilds Python's
 types and NumPy arrays from it, so a CASA-signature wrapper returns what
 CASA returns. `tools/casa-compat/record_casa_returns.py` records the
 structure of CASA's own return values
-(`resources/casa-compat/casa-6.7.6.14/returns.json`), which the image and
-MeasurementSet task tests compare against.
+(`resources/casa-compat/casa-6.7.6.14/returns.json`), which the image,
+MeasurementSet and calibration task tests compare against.
 
 ## Shared Versioned Component Schemas
 
@@ -449,7 +454,7 @@ a second default or migration implementation.
 ## Current Repo Mapping
 
 - `calibrate`: task surface
-- `casars-imager` (surface `imager`): task surface
+- `casars-imager` (surface `tclean`): task surface
 - `msexplore` and `plotms`: task surfaces served by `msexplore`
 - `imhead` and `imstat`: task surfaces served by `imexplore`
 - `casars.data.Image`: object surface

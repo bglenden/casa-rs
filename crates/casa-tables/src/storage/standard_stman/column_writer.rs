@@ -7,12 +7,14 @@
 //! appended to the array file (`table.fNi`) and long strings to the string
 //! buckets in that column-major order. Each column's slice of a data bucket
 //! is written at its place in the file as soon as it is full, and each
-//! string bucket once the next one starts; the index is generated as it is
-//! streamed into its buckets ([`super::index`]). So the writer holds one
-//! slice, one string bucket, one index bucket and the array file's buffer
-//! whatever the row count. The file is laid out as casacore's `SSMBase`
-//! reads it: the 512-byte header, the data buckets, the string buckets,
-//! then the index buckets.
+//! string bucket once the next one starts, even within one long string;
+//! the index is generated as it is streamed into its buckets
+//! ([`super::index`]). So the writer holds one slice, one string bucket,
+//! one index bucket and the array file's buffer, whatever the row count and
+//! however long a string, and while it stores a string array cell, that
+//! cell's encoding (its elements' lengths and bytes). The file is laid out
+//! as casacore's `SSMBase` reads it: the 512-byte header, the data buckets,
+//! the string buckets, then the index buckets.
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -117,23 +119,16 @@ fn column_bits(col_descs: &[ColumnDescContents]) -> Vec<usize> {
         .collect()
 }
 
-/// Write the finished string buckets, and with `all` the open one too, at
-/// their places from bucket `first_bucket` on, and release them.
-fn write_string_buckets(
-    strings: &mut StringBuckets,
+/// Write a string bucket at its place in the file: bucket `number` of
+/// buckets of `bucket_bytes` bytes.
+fn write_string_bucket(
     file: &mut File,
-    first_bucket: usize,
-    bucket_bytes: usize,
-    all: bool,
+    (number, bucket_bytes): (usize, usize),
+    bucket: &[u8],
 ) -> Result<(), StorageError> {
-    strings.release(all, |number, bucket| {
-        file.seek(SeekFrom::Start(bucket_offset(
-            first_bucket + number,
-            bucket_bytes,
-        )))?;
-        file.write_all(bucket)?;
-        Ok(())
-    })
+    file.seek(SeekFrom::Start(bucket_offset(number, bucket_bytes)))?;
+    file.write_all(bucket)?;
+    Ok(())
 }
 
 /// Write a StandardStMan data file from `cells`, column by column, and
@@ -175,7 +170,7 @@ pub(super) fn write_ssm_file_columns(
     let nr_data_buckets = nrrow.div_ceil(bucket_rows);
 
     let mut file = File::create(file_path)?;
-    let mut strings = StringBuckets::default();
+    let mut strings = StringBuckets::after(nr_data_buckets);
     let mut slice = Vec::new();
     for (column, desc) in col_descs.iter().enumerate() {
         let indirect = is_ssm_indirect(desc);
@@ -211,17 +206,17 @@ pub(super) fn write_ssm_file_columns(
                         desc.data_type,
                         nrelem,
                         value.as_deref(),
-                        &mut strings,
+                        &mut |data| {
+                            strings.stream(data, bucket_bytes, |number, bucket| {
+                                write_string_bucket(
+                                    &mut file,
+                                    (nr_data_buckets + number, bucket_bytes),
+                                    bucket,
+                                )
+                            })
+                        },
                         nr_data_buckets,
-                        bucket_bytes,
                         big_endian,
-                    );
-                    write_string_buckets(
-                        &mut strings,
-                        &mut file,
-                        nr_data_buckets,
-                        bucket_bytes,
-                        false,
                     )?;
                 }
             }
@@ -231,7 +226,10 @@ pub(super) fn write_ssm_file_columns(
             file.write_all(&slice)?;
         }
     }
-    write_string_buckets(&mut strings, &mut file, nr_data_buckets, bucket_bytes, true)?;
+    // The open string bucket, the last.
+    strings.release(|number, bucket| {
+        write_string_bucket(&mut file, (nr_data_buckets + number, bucket_bytes), bucket)
+    })?;
     if let Some(writer) = array_writer.as_mut() {
         writer.finish()?;
     }
@@ -331,9 +329,11 @@ mod tests {
     }
 
     /// Row `row`: every column but some variable arrays and the record,
-    /// which are left undefined in some rows.
+    /// which are left undefined in some rows; some names and strings are
+    /// longer than a string bucket.
     fn row(row: usize) -> RecordValue {
         let r = row as i32;
+        let long = |length: usize| "é-long".repeat(length / 7);
         let mut fields = vec![
             RecordField::new("I32", Value::Scalar(ScalarValue::Int32(r * 7 - 3))),
             RecordField::new("F64", Value::Scalar(ScalarValue::Float64(row as f64 / 3.0))),
@@ -351,10 +351,11 @@ mod tests {
             ),
             RecordField::new(
                 "LONG_NAME",
-                Value::Scalar(ScalarValue::String(format!(
-                    "a longer name for row {row} {}",
-                    "x".repeat(row % 40)
-                ))),
+                Value::Scalar(ScalarValue::String(if row % 250 == 7 {
+                    long(70_000)
+                } else {
+                    format!("a longer name for row {row} {}", "x".repeat(row % 40))
+                })),
             ),
             RecordField::new(
                 "FIXED_NAME",
@@ -378,7 +379,14 @@ mod tests {
                 "DIRECT_STRINGS",
                 Value::Array(ArrayValue::String(array(
                     &[2],
-                    vec![format!("s{row}"), "a rather longer string".to_string()],
+                    vec![
+                        format!("s{row}"),
+                        if row % 300 == 11 {
+                            long(45_000)
+                        } else {
+                            "a rather longer string".to_string()
+                        },
+                    ],
                 ))),
             ),
             RecordField::new(
@@ -489,6 +497,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The string buckets lie between the data and index buckets; one that
+    /// links to a next bucket is full, every one states its used and unused
+    /// bytes, and the header names the last, where casacore appends the
+    /// next string (`SSMBase::itsLastStringBucket`).
+    #[test]
+    fn string_buckets_are_linked_and_the_header_names_the_last() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let col_descs = schema_columns()
+            .iter()
+            .map(ColumnDescContents::from_column_schema)
+            .collect::<Vec<_>>();
+        let records = (0..1500).map(row).collect::<Vec<_>>();
+        let path = root.path().join("table.f0");
+        write_ssm_file_columns(
+            &path,
+            &col_descs,
+            &RowCells::new(&records, None, &col_descs),
+            false,
+        )
+        .expect("column writer");
+        let mut file = File::open(&path).expect("open");
+        let header = super::super::parse_ssm_header(&mut file).expect("header");
+        let indices = super::super::parse_ssm_indices(&mut file, &header).expect("index");
+        // The data buckets are the index's; the string buckets follow.
+        let first = indices[0].bucket_number.len() as i32;
+        let last = header.last_string_bucket;
+        assert_eq!(last, header.first_idx_bucket - 1);
+        assert!(last > first, "several string buckets");
+        let capacity = header.bucket_size as i32 - 16;
+        let ints = |bucket: &[u8], at: usize| {
+            i32::from_be_bytes(bucket[at..at + 4].try_into().expect("four bytes"))
+        };
+        let mut linked = 0;
+        for number in first..=last {
+            let bucket =
+                super::super::read_bucket(&mut file, &header, number as u32).expect("bucket");
+            let (used, unused, next) = (ints(&bucket, 4), ints(&bucket, 8), ints(&bucket, 12));
+            assert_eq!(used + unused, capacity, "bucket {number}");
+            if next >= 0 {
+                assert_eq!(next, number + 1, "bucket {number} links the next");
+                assert_eq!(used, capacity, "bucket {number} links on, so it is full");
+                linked += 1;
+            }
+            if number == last {
+                assert_eq!(next, -1, "the last string bucket links nowhere");
+            }
+        }
+        assert!(linked >= 2, "long strings continue in linked buckets");
     }
 
     /// The writer of fixed-width scalar groups, which streams its index

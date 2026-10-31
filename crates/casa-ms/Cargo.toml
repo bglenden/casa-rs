@@ -216,5 +216,9 @@ name = "creation_write_memory"
 path = "tests/creation_write_memory.rs"
 
 [[test]]
+name = "creation_plan_memory"
+path = "tests/creation_plan_memory.rs"
+
+[[test]]
 name = "subtable_overrides"
 path = "tests/subtable_overrides.rs"

@@ -671,7 +671,7 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
             "stokes": "IQUV",
             "imsize": 64,
             "niter": 4,
-            "minor_cycle_length": 4,
+            "cycleniter": 4,
             "savemodel": "modelcolumn",
         }),
     );
