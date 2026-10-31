@@ -61,6 +61,16 @@ class SemanticReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "absent at its pinned revision"):
             semantics.validate_source_links(ROOT, self.data)
 
+    def test_valid_mask_nan_cannot_pass_the_paired_product_comparison(self):
+        spec = importlib.util.spec_from_file_location("lifecycle", ROOT / "tools/casa-compat/tclean_lifecycle_probe.py")
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+        with self.assertRaisesRegex(AssertionError, "nonfinite"):
+            probe.require_finite_masked([float("nan")], [True])
+        with self.assertRaisesRegex(AssertionError, "empty"):
+            probe.require_finite_masked([1.0], [False])
+        probe.require_finite_masked([float("nan"), 1.0], [False, True])
+
 
 if __name__ == "__main__":
     unittest.main()

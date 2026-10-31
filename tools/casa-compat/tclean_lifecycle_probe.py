@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -53,6 +54,16 @@ def native(binary: Path, directory: Path, values: dict) -> dict:
     return {"exit_code": run.returncode, "reply": reply, "stderr": run.stderr}
 
 
+def require_finite_masked(values, mask) -> None:
+    """A valid-mask NaN must fail before NRMS filters nonfinite values."""
+    count = 0
+    for value, valid in zip(values, mask, strict=True):
+        if valid:
+            assert math.isfinite(value), "nonfinite sample inside valid product support"
+            count += 1
+    assert count > 0, "empty valid product support"
+
+
 def stokes_probe(args, common, source):
     """Reuse #970's small-fixture comparator; this is not a T2 science row."""
     from casatasks import tclean
@@ -81,6 +92,15 @@ def stokes_probe(args, common, source):
     t15 = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(t15)
     t15.ROOT, t15.TAG = str(args.work), ""
+    for name in sorted(path.name for path in rust_dir.iterdir() if path.name.startswith("image.")):
+        if not (casa_dir / name).is_dir():
+            continue
+        ours, our_mask, _ = t15.read(str(rust_dir / name))
+        theirs, their_mask, _ = t15.read(str(casa_dir / name))
+        assert ours.shape == theirs.shape and our_mask.shape == their_mask.shape, name
+        require_finite_masked(ours.ravel(), our_mask.ravel())
+        require_finite_masked(theirs.ravel(), their_mask.ravel())
+        assert (our_mask & their_mask).any(), (name, "empty comparison support")
     rows = t15.compare("stokes-single")
     assert {"image.model", "image.residual", "image.psf", "image.image", "image.sumwt"} <= rows.keys(), rows
     for product, row in rows.items():
@@ -118,8 +138,8 @@ def main() -> None:
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-    assert args.revision == head, (args.revision, head)
-    subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", head, "--", "crates"], check=True)
+    subprocess.run(["git", "-C", str(repo), "cat-file", "-e", args.revision + "^{commit}"], check=True)
+    subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", args.revision, "--", "crates"], check=True)
     assert casatasks.version_string() == "6.7.6.14"
     assert casatools.version_string() == "6.7.6-14"
     args.work.mkdir(parents=True, exist_ok=False)
@@ -170,7 +190,7 @@ def main() -> None:
     receipt = dict(
         kind="small lifecycle/refusal oracle; not representative science",
         casa_tasks=casatasks.version_string(), casa_tools=casatools.version_string(),
-        oracle_python=sys.executable, casars_revision=args.revision,
+        oracle_python=sys.executable, casars_revision=args.revision, recipe_revision=head,
         command=sys.argv, inputs="record_casa_returns.make_ms; noiseless unit DATA",
         parameters=common, native_backend="cpu", native_gridprecision="f64",
         casa=dict(first_iterdone=int(first["iterdone"]), second_iterdone=int(second["iterdone"]),
