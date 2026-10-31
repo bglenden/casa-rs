@@ -163,9 +163,14 @@ pub(super) fn survey(
 ) -> Result<Survey, PrepareError> {
     let data_description = ms.data_description()?;
     let ddids = selected_data_descriptions(request, &data_description)?;
+    let field_ids = request
+        .field
+        .as_deref()
+        .map(|selector| ms.resolve_field_selector(selector))
+        .transpose()?;
     let row_selection = ms.selected_observation_row_selection(
         &ddids,
-        request.field.as_deref(),
+        field_ids.as_deref(),
         request.uvrange.as_deref(),
         request.intent.as_deref(),
     )?;
@@ -218,7 +223,7 @@ pub(super) fn survey(
     // description, so over the observed ones it selects the same rows.
     let row_selection = ms.selected_observation_row_selection(
         &facts.ddids.iter().copied().collect::<Vec<_>>(),
-        request.field.as_deref(),
+        field_ids.as_deref(),
         request.uvrange.as_deref(),
         request.intent.as_deref(),
     )?;

@@ -56,10 +56,11 @@ pub struct ImagingRequest {
     /// A CASA outlier file naming further image domains.
     #[serde(deserialize_with = "optional")]
     pub outlierfile: Option<PathBuf>,
-    /// Selected `FIELD_ID`s, from identifiers and ranges such as
-    /// `0,3~5`; `None` selects every field.
-    #[serde(deserialize_with = "field_ids")]
-    pub field: Option<Vec<i32>>,
+    /// Field selector: IDs/ranges, exact names and simple `*` name patterns.
+    /// Resolved once against FIELD metadata during compilation; `None`
+    /// selects every field.
+    #[serde(deserialize_with = "optional")]
+    pub field: Option<String>,
     /// The `FIELD_ID` whose phase centre is the image centre.
     #[serde(deserialize_with = "optional")]
     pub phasecenter_field: Option<i32>,
@@ -856,15 +857,6 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
         Ok(values)
     } else {
         Err(D::Error::custom("numbers must be finite"))
-    }
-}
-
-fn field_ids<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<i32>>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(None),
-        text => casa_ms::parse_numeric_id_selector(text, "field")
-            .map(Some)
-            .map_err(D::Error::custom),
     }
 }
 

@@ -35,6 +35,8 @@ mod pb_default;
 mod restart;
 #[path = "t1/routes.rs"]
 mod routes;
+#[path = "t1/selection.rs"]
+mod selection;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]

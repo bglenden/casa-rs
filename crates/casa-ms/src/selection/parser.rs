@@ -19,15 +19,7 @@ pub(crate) fn selection_from_options(
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
-        let (field_ids, field_names) = parse_field_selector(ms, field)?;
-        if !field_ids.is_empty() {
-            selection = selection.field(&field_ids);
-        }
-        if !field_names.is_empty() {
-            let names = field_names.iter().map(String::as_str).collect::<Vec<_>>();
-            let resolved_ids = resolve_field_names(ms, &names)?;
-            selection = selection.field(&resolved_ids);
-        }
+        selection = selection.field(&ms.resolve_field_selector(field)?);
     }
 
     if let Some(spw) = options.spw.as_deref() {
@@ -67,6 +59,31 @@ pub(crate) fn selection_from_options(
     Ok(selection)
 }
 
+impl MeasurementSet {
+    /// Resolve a field selector using FIELD metadata, without scanning MAIN.
+    ///
+    /// Comma-separated IDs, inclusive numeric ranges, exact names and simple
+    /// `*` name patterns form a union, as CASA's `MSFieldGram` index list does.
+    /// The returned IDs are sorted and unique. Empty text returns an empty
+    /// list, the selection builder's convention for selecting every field.
+    ///
+    /// # Errors
+    ///
+    /// Unreadable FIELD metadata, or a name/pattern matching no FIELD row.
+    /// This resolver does not implement CASA's regex, quoted-name or comparison
+    /// expression forms, FIELD CODE/numeric-name fallback, or validate numeric
+    /// IDs against the FIELD row count. Name matching trims stored names and
+    /// excludes flagged FIELD rows, following `MSFieldIndex`.
+    pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
+        let (mut ids, names) = parse_field_selector(self, value)?;
+        if !names.is_empty() {
+            let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+            ids.extend(resolve_field_names(self, &names)?);
+        }
+        Ok(dedup_i32(ids))
+    }
+}
+
 fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {
     let mut ids = Vec::new();
     let mut names = Vec::new();
@@ -74,6 +91,11 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
         let part = raw_part.trim();
         if part.is_empty() {
             continue;
+        }
+        if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}']) {
+            return Err(MsError::InvalidInput(format!(
+                "field expression {part:?} is not implemented yet (#54); use IDs, names or simple * patterns"
+            )));
         }
         if part.contains('*') {
             let matched = collect_matching_field_names(ms, part)?;
@@ -615,16 +637,18 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
 fn resolve_field_names(ms: &MeasurementSet, names: &[&str]) -> MsResult<Vec<i32>> {
     let field = ms.field()?;
     let mut ids = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if names.iter().any(|candidate| candidate == &name) {
-            ids.push(row as i32);
+    for name in names {
+        let start = ids.len();
+        for row in 0..field.row_count() {
+            if !field.flag_row(row)? && field.name(row)?.trim() == *name {
+                ids.push(row as i32);
+            }
         }
-    }
-    if ids.is_empty() {
-        return Err(MsError::VersionError(format!(
-            "field selector names {names:?} did not match any FIELD rows"
-        )));
+        if ids.len() == start {
+            return Err(MsError::VersionError(format!(
+                "field selector name {name:?} did not match any FIELD rows"
+            )));
+        }
     }
     Ok(dedup_i32(ids))
 }
@@ -634,8 +658,8 @@ fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<
     let mut matches = Vec::new();
     for row in 0..field.row_count() {
         let name = field.name(row)?;
-        if matches_simple_glob(pattern, &name) {
-            matches.push(name);
+        if !field.flag_row(row)? && matches_simple_glob(pattern, name.trim()) {
+            matches.push(name.trim().to_string());
         }
     }
     Ok(dedup_strings(matches))

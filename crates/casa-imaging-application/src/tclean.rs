@@ -332,14 +332,6 @@ impl<'a> Tclean<'a> {
         // classes never read it (`task_tclean.py`).
         self.ignore(&["selectdata", "timerange", "antenna", "scan", "observation"])?;
         let field = self.text("field")?;
-        // `none` is the catalog's absence, as `''` is CASA's.
-        if field != "none" && field.chars().any(|c| c.is_ascii_alphabetic() || c == '*') {
-            return Err(TcleanRefusal::not_yet(
-                "field",
-                format!("{field:?} (casa-rs selects fields by id)"),
-                980,
-            ));
-        }
         self.set("field", field);
         for name in ["spw", "uvrange", "intent"] {
             let value = self.text(name)?;

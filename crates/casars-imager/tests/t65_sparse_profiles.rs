@@ -111,7 +111,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
         assert_eq!(request.vis, PathBuf::from(measurement_set));
         match name {
             "vlass-single" => {
-                assert_eq!(request.field.as_deref(), Some(&[1525][..]));
+                assert_eq!(request.field.as_deref(), Some("1525"));
                 assert_eq!(request.spw.as_deref(), Some("2~17"));
                 assert!(!request.parallel);
                 let Gridder::Awproject(AwProjection {
@@ -128,16 +128,16 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                 assert_eq!(cfcache, &PathBuf::from("cf-cache/vlass-spw2-17"));
             }
             "vlass-all" => {
-                let fields = request.field.as_deref().expect("expanded FIELD_IDs");
-                assert_eq!(fields.len(), 63);
-                assert_eq!(fields.first(), Some(&1107));
-                assert_eq!(fields.last(), Some(&1562));
+                assert_eq!(
+                    request.field.as_deref(),
+                    Some("1107~1127,1512~1532,1542~1562")
+                );
                 assert!(matches!(request.gridder, Gridder::Awproject(_)));
             }
             "standard-continuum" => {
                 assert_eq!(request.imsize, [1024; 2]);
                 assert_eq!(request.cell, [0.25; 2]);
-                assert_eq!(request.field.as_deref(), Some(&[0, 1, 2][..]));
+                assert_eq!(request.field.as_deref(), Some("0~2"));
                 assert_eq!(request.stokes, [PolarizationCoordinate::StokesQ]);
                 assert_eq!(request.deconvolver, Deconvolver::Multiscale);
                 assert_eq!(request.scales, [0.0, 4.0, 12.0]);

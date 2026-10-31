@@ -305,7 +305,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#980",
         ),
         (json!({ "niter": 10, "nmajor": 0 }), "nmajor", "#980"),
-        (json!({ "field": "J1331+305" }), "field", "#980"),
         (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
