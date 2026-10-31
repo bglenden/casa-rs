@@ -285,6 +285,7 @@ def command_rsread(table_path, out_json):
 STRUCTURE_TABLES = (
     "rows.table", "columns.table", "rows_columns.table", "renamed.ms", "removed.ms",
     "casa_renamed.ms", "casa_removed.ms", "casa_named.table", "casa_named_aipsio.table",
+    "shrink_user.table", "shrink_permanent.table", "tiled_multi.table",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -293,7 +294,12 @@ MS_RENAMES = [("ANTENNA1", "ANT1"), ("DATA", "DATA2"), ("FLAG_ROW", "FR"), ("TIM
 MS_REMOVED = ["DATA", "FLAG_ROW"]
 
 
-def structure_dump(tool, path):
+#: Columns whose cells the dump does not read, each with the issue that says
+#: why: casa-rs's lazy read of a `TiledDataStMan` id column is wrong (#1038).
+UNREAD_CELLS = {("tiled_multi.table", "id"): "#1038"}
+
+
+def structure_dump(tool, path, table_name=""):
     """What the tool reads of the table's rows and columns: the names, each
     column's description (with its storage manager's type and name, and its
     keywords) and its cells (every row of a small table, the first three of a
@@ -318,6 +324,9 @@ def structure_dump(tool, path):
             if key in description
         }
         cells = []
+        if (table_name, column) in UNREAD_CELLS:
+            result[f"cells:{column}"] = f"not read: {UNREAD_CELLS[(table_name, column)]}"
+            continue
         for row in range(rows if rows <= 16 else 3):
             if tool.iscelldefined(column, row):
                 cells.append(encode(tool.getcell(column, row), path))
@@ -337,7 +346,10 @@ def structure_dumps(tool_class, directory):
         tool = tool_class()
         tool.open(str(path.resolve()))
         dumps.update(
-            {f"{name}:{key}": value for key, value in structure_dump(tool, str(path.resolve())).items()}
+            {
+                f"{name}:{key}": value
+                for key, value in structure_dump(tool, str(path.resolve()), name).items()
+            }
         )
         tool.done()
     return dumps
@@ -376,6 +388,45 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     tool = tools.table()
     assert tool.open(str((out_dir / "removed.ms").resolve()), nomodify=False)
     assert tool.removecols(MS_REMOVED)
+    tool.done()
+    # Rows removed, then every other kind of write, under a write lock that is
+    # kept (Astra's review of #1036, finding 1): CASA does the same sequence.
+    for name, option in (("shrink_user.table", "user"), ("shrink_permanent.table", "permanent")):
+        shutil.copytree(fixture, out_dir / name)
+        tool = tools.table()
+        assert tool.open(
+            str((out_dir / name).resolve()), lockoptions={"option": option}, nomodify=False
+        )
+        if option == "user":
+            assert tool.lock()
+        assert tool.removerows([2])
+        assert tool.putkeyword("k", 1)
+        assert tool.putcell("id", 0, 9)
+        assert tool.renamecol("label", "name")
+        assert tool.addcols({"extra": {"valueType": "int"}})
+        if option == "user":
+            assert tool.unlock()
+        tool.done()
+    # casacore's TiledDataStMan table with two data columns and an id column:
+    # a data column is renamed, the id column refused (its name is also in the
+    # manager's hypercube values).
+    tiled = (
+        Path(__file__).resolve().parents[2]
+        / "crates/casa-tables/tests/data/tiled_data_stman/multi/big"
+    )
+    target = out_dir / "tiled_multi.table"
+    target.mkdir()
+    for file in ("table.dat", "table.f0", "table.f0_TSM0", "table.info"):
+        shutil.copy(tiled / file, target / file)
+    tool = tools.table()
+    assert tool.open(str(target.resolve()), nomodify=False)
+    assert tool.renamecol("a", "aa")
+    try:
+        tool.renamecol("id", "iz")
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit("the id column of a tiled manager was renamed")
     tool.done()
     write_json(out_json, structure_dumps(tools.table, out_dir))
 
