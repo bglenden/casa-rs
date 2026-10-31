@@ -93,15 +93,45 @@
 <a href=#93 id=93 data-nosnippet>93</a>    }
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Record a successful full save to `path`: when that is the table's own
-<a href=#96 id=96 data-nosnippet>96</a>    /// directory, its rows on disk now match this handle's.
-<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>note_full_save(<span class="kw-2">&amp;</span><span class="self">self</span>, path: <span class="kw-2">&amp;</span>Path) {
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">if </span><span class="self">self
-<a href=#99 id=99 data-nosnippet>99</a>            </span>.source_path
-<a href=#100 id=100 data-nosnippet>100</a>            .as_deref()
-<a href=#101 id=101 data-nosnippet>101</a>            .is_some_and(|source| locking::same_directory(source, path))
-<a href=#102 id=102 data-nosnippet>102</a>        {
-<a href=#103 id=103 data-nosnippet>103</a>            <span class="self">self</span>.inner.note_rows_persisted();
-<a href=#104 id=104 data-nosnippet>104</a>        }
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>}
+<a href=#96 id=96 data-nosnippet>96</a>    /// directory, its rows on disk now match this handle's, and so does all
+<a href=#97 id=97 data-nosnippet>97</a>    /// else it holds, so the release of a write lock has nothing to flush
+<a href=#98 id=98 data-nosnippet>98</a>    /// (a flush after a save that removed rows would raise `table.dat`'s
+<a href=#99 id=99 data-nosnippet>99</a>    /// counts back to the rows last published).
+<a href=#100 id=100 data-nosnippet>100</a>    ///
+<a href=#101 id=101 data-nosnippet>101</a>    /// A handle that holds the write lock also brings the row count in
+<a href=#102 id=102 data-nosnippet>102</a>    /// `table.lock`'s sync data to the rows saved, now, and moves no counter
+<a href=#103 id=103 data-nosnippet>103</a>    /// (other processes read the sync data only when they take a lock, so
+<a href=#104 id=104 data-nosnippet>104</a>    /// they cannot see it early). Until the release publishes the write, a
+<a href=#105 id=105 data-nosnippet>105</a>    /// metadata-only save, a partial save's admission and a reload all read
+<a href=#106 id=106 data-nosnippet>106</a>    /// that count back (taking the largest of it and `table.dat`'s), and a
+<a href=#107 id=107 data-nosnippet>107</a>    /// save that removed rows would have the old count raised again, leaving
+<a href=#108 id=108 data-nosnippet>108</a>    /// `table.dat` claiming rows the storage managers do not hold. The
+<a href=#109 id=109 data-nosnippet>109</a>    /// release still publishes, once, so the write is announced as before.
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>note_full_save(<span class="kw-2">&amp;</span><span class="self">self</span>, path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">if </span>!<span class="self">self
+<a href=#112 id=112 data-nosnippet>112</a>            </span>.source_path
+<a href=#113 id=113 data-nosnippet>113</a>            .as_deref()
+<a href=#114 id=114 data-nosnippet>114</a>            .is_some_and(|source| locking::same_directory(source, path))
+<a href=#115 id=115 data-nosnippet>115</a>        {
+<a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#117 id=117 data-nosnippet>117</a>        }
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="self">self</span>.inner.note_rows_persisted();
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="attr">#[cfg(unix)]
+<a href=#120 id=120 data-nosnippet>120</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.lock_state.as_ref() {
+<a href=#121 id=121 data-nosnippet>121</a>            state.flushed_generation.store(
+<a href=#122 id=122 data-nosnippet>122</a>                <span class="self">self</span>.inner.generation(),
+<a href=#123 id=123 data-nosnippet>123</a>                std::sync::atomic::Ordering::Relaxed,
+<a href=#124 id=124 data-nosnippet>124</a>            );
+<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">if </span>state.lock_file.has_lock(LockType::Write) {
+<a href=#126 id=126 data-nosnippet>126</a>                <span class="kw">crate</span>::lock::publish_persisted_rows(<span class="kw-2">&amp;</span>state.lock_file, <span class="kw-2">&amp;</span>state.path).map_err(
+<a href=#127 id=127 data-nosnippet>127</a>                    |e| TableError::LockIo {
+<a href=#128 id=128 data-nosnippet>128</a>                        path: state.path.display().to_string(),
+<a href=#129 id=129 data-nosnippet>129</a>                        message: e.to_string(),
+<a href=#130 id=130 data-nosnippet>130</a>                    },
+<a href=#131 id=131 data-nosnippet>131</a>                )<span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>            }
+<a href=#133 id=133 data-nosnippet>133</a>        }
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="prelude-val">Ok</span>(())
+<a href=#135 id=135 data-nosnippet>135</a>    }
+<a href=#136 id=136 data-nosnippet>136</a>}
 </code></pre></div></section></main></body></html>

@@ -607,50 +607,158 @@
 <a href=#607 id=607 data-nosnippet>607</a>            }))
 <a href=#608 id=608 data-nosnippet>608</a>    }
 <a href=#609 id=609 data-nosnippet>609</a>
-<a href=#610 id=610 data-nosnippet>610</a>    <span class="doccomment">/// `getcolkeyword(columnname, keyword)`.
-<a href=#611 id=611 data-nosnippet>611</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>getcolkeyword(
-<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#613 id=613 data-nosnippet>613</a>        column: <span class="kw-2">&amp;</span>str,
-<a href=#614 id=614 data-nosnippet>614</a>        key: <span class="kw-2">&amp;</span>KeywordRef,
-<a href=#615 id=615 data-nosnippet>615</a>        log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#616 id=616 data-nosnippet>616</a>    ) -&gt; Reply {
-<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
-<a href=#618 id=618 data-nosnippet>618</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(empty_array());
-<a href=#619 id=619 data-nosnippet>619</a>        };
-<a href=#620 id=620 data-nosnippet>620</a>        open.known(column)<span class="question-mark">?</span>;
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">let </span>found = open
-<a href=#622 id=622 data-nosnippet>622</a>            .table
-<a href=#623 id=623 data-nosnippet>623</a>            .column_keywords(column)
-<a href=#624 id=624 data-nosnippet>624</a>            .and_then(|record| keyword(record, key));
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">match </span>found {
-<a href=#626 id=626 data-nosnippet>626</a>            <span class="prelude-val">Some</span>(found) =&gt; <span class="prelude-val">Ok</span>(values::value(found, <span class="kw-2">&amp;</span>open.name)),
-<a href=#627 id=627 data-nosnippet>627</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">match </span>key {
-<a href=#628 id=628 data-nosnippet>628</a>                KeywordRef::Whole =&gt; <span class="prelude-val">Ok</span>(empty_array()),
-<a href=#629 id=629 data-nosnippet>629</a>                KeywordRef::Name(name) =&gt; {
-<a href=#630 id=630 data-nosnippet>630</a>                    runtime(<span class="macro">format!</span>(<span class="string">"Keyword {name} in column {column} does not exist"</span>))
-<a href=#631 id=631 data-nosnippet>631</a>                }
-<a href=#632 id=632 data-nosnippet>632</a>                KeywordRef::Index(<span class="kw">_</span>) =&gt; runtime(
-<a href=#633 id=633 data-nosnippet>633</a>                    <span class="string">"TableRecordRep: Failed AlwaysAssert whichField &gt;= 0 &amp;&amp; whichField &lt; Int(nused_p)"
-<a href=#634 id=634 data-nosnippet>634</a>                        </span>.into(),
-<a href=#635 id=635 data-nosnippet>635</a>                ),
-<a href=#636 id=636 data-nosnippet>636</a>            },
-<a href=#637 id=637 data-nosnippet>637</a>        }
-<a href=#638 id=638 data-nosnippet>638</a>    }
-<a href=#639 id=639 data-nosnippet>639</a>
-<a href=#640 id=640 data-nosnippet>640</a>    <span class="doccomment">/// `colfieldnames(columnname, keyword)`.
-<a href=#641 id=641 data-nosnippet>641</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>colfieldnames(
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#643 id=643 data-nosnippet>643</a>        column: <span class="kw-2">&amp;</span>str,
-<a href=#644 id=644 data-nosnippet>644</a>        key: <span class="kw-2">&amp;</span>KeywordRef,
-<a href=#645 id=645 data-nosnippet>645</a>        log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#646 id=646 data-nosnippet>646</a>    ) -&gt; Reply {
-<a href=#647 id=647 data-nosnippet>647</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
-<a href=#648 id=648 data-nosnippet>648</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(texts([]));
-<a href=#649 id=649 data-nosnippet>649</a>        };
-<a href=#650 id=650 data-nosnippet>650</a>        open.known(column)<span class="question-mark">?</span>;
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>empty = RecordValue::new(Vec::new());
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>record = open.table.column_keywords(column).unwrap_or(<span class="kw-2">&amp;</span>empty);
-<a href=#653 id=653 data-nosnippet>653</a>        Open::keyword_names(record, key, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Keyword in column {column}"</span>))
-<a href=#654 id=654 data-nosnippet>654</a>    }
-<a href=#655 id=655 data-nosnippet>655</a>}
+<a href=#610 id=610 data-nosnippet>610</a>    <span class="doccomment">/// `getcoldesc(columnname)`: the description of a column, as
+<a href=#611 id=611 data-nosnippet>611</a>    /// `TableProxy::getColumnDescription` makes it: `ndim` only for an array
+<a href=#612 id=612 data-nosnippet>612</a>    /// column, `shape` only for one of fixed shape, and `option` the sum of
+<a href=#613 id=613 data-nosnippet>613</a>    /// casacore's `ColumnDesc` flags (`Direct` 1, `Undefined` 2, `FixedShape` 4).
+<a href=#614 id=614 data-nosnippet>614</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>getcoldesc(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str, log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;) -&gt; Reply {
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
+<a href=#617 id=617 data-nosnippet>617</a>        };
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>schema = open.known(column)<span class="question-mark">?</span>;
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span>manager = open
+<a href=#620 id=620 data-nosnippet>620</a>            .table
+<a href=#621 id=621 data-nosnippet>621</a>            .data_manager_info()
+<a href=#622 id=622 data-nosnippet>622</a>            .iter()
+<a href=#623 id=623 data-nosnippet>623</a>            .find(|manager| manager.columns.iter().any(|name| name == column));
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>options = schema.options();
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">let </span><span class="kw-2">mut </span>option = i64::from(options.direct) | i64::from(options.undefined) &lt;&lt; <span class="number">1</span>;
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span><span class="kw-2">mut </span>fields = <span class="macro">vec!</span>[
+<a href=#627 id=627 data-nosnippet>627</a>            (<span class="string">"comment"</span>, CasaValue::Text(schema.comment().to_string())),
+<a href=#628 id=628 data-nosnippet>628</a>            (
+<a href=#629 id=629 data-nosnippet>629</a>                <span class="string">"dataManagerGroup"</span>,
+<a href=#630 id=630 data-nosnippet>630</a>                CasaValue::Text(
+<a href=#631 id=631 data-nosnippet>631</a>                    manager
+<a href=#632 id=632 data-nosnippet>632</a>                        .map(|manager| manager.name.clone())
+<a href=#633 id=633 data-nosnippet>633</a>                        .unwrap_or_default(),
+<a href=#634 id=634 data-nosnippet>634</a>                ),
+<a href=#635 id=635 data-nosnippet>635</a>            ),
+<a href=#636 id=636 data-nosnippet>636</a>            (
+<a href=#637 id=637 data-nosnippet>637</a>                <span class="string">"dataManagerType"</span>,
+<a href=#638 id=638 data-nosnippet>638</a>                CasaValue::Text(
+<a href=#639 id=639 data-nosnippet>639</a>                    manager
+<a href=#640 id=640 data-nosnippet>640</a>                        .map(|manager| manager.dm_type.clone())
+<a href=#641 id=641 data-nosnippet>641</a>                        .unwrap_or_default(),
+<a href=#642 id=642 data-nosnippet>642</a>                ),
+<a href=#643 id=643 data-nosnippet>643</a>            ),
+<a href=#644 id=644 data-nosnippet>644</a>            (
+<a href=#645 id=645 data-nosnippet>645</a>                <span class="string">"keywords"</span>,
+<a href=#646 id=646 data-nosnippet>646</a>                open.table
+<a href=#647 id=647 data-nosnippet>647</a>                    .column_keywords(column)
+<a href=#648 id=648 data-nosnippet>648</a>                    .map_or_else(CasaValue::empty_record, |record| {
+<a href=#649 id=649 data-nosnippet>649</a>                        values::record(record, <span class="kw-2">&amp;</span>open.name)
+<a href=#650 id=650 data-nosnippet>650</a>                    }),
+<a href=#651 id=651 data-nosnippet>651</a>            ),
+<a href=#652 id=652 data-nosnippet>652</a>            (<span class="string">"maxlen"</span>, CasaValue::Int(i64::from(schema.max_length()))),
+<a href=#653 id=653 data-nosnippet>653</a>            (<span class="string">"valueType"</span>, CasaValue::Text(data_type_name(schema).into())),
+<a href=#654 id=654 data-nosnippet>654</a>        ];
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">if let </span>ColumnType::Array(contract) = schema.column_type() {
+<a href=#656 id=656 data-nosnippet>656</a>            <span class="kw">match </span>contract {
+<a href=#657 id=657 data-nosnippet>657</a>                casa_tables::ArrayShapeContract::Fixed { shape } =&gt; {
+<a href=#658 id=658 data-nosnippet>658</a>                    option |= <span class="number">4</span>;
+<a href=#659 id=659 data-nosnippet>659</a>                    fields.push((<span class="string">"ndim"</span>, CasaValue::Int(shape.len() <span class="kw">as </span>i64)));
+<a href=#660 id=660 data-nosnippet>660</a>                    fields.push((
+<a href=#661 id=661 data-nosnippet>661</a>                        <span class="string">"shape"</span>,
+<a href=#662 id=662 data-nosnippet>662</a>                        CasaValue::Ints {
+<a href=#663 id=663 data-nosnippet>663</a>                            shape: <span class="macro">vec!</span>[shape.len()],
+<a href=#664 id=664 data-nosnippet>664</a>                            values: shape.iter().map(|<span class="kw-2">&amp;</span>extent| extent <span class="kw">as </span>i64).collect(),
+<a href=#665 id=665 data-nosnippet>665</a>                        },
+<a href=#666 id=666 data-nosnippet>666</a>                    ));
+<a href=#667 id=667 data-nosnippet>667</a>                }
+<a href=#668 id=668 data-nosnippet>668</a>                casa_tables::ArrayShapeContract::Variable { ndim } =&gt; {
+<a href=#669 id=669 data-nosnippet>669</a>                    fields.push((<span class="string">"ndim"</span>, CasaValue::Int(ndim.map_or(-<span class="number">1</span>, |ndim| ndim <span class="kw">as </span>i64))));
+<a href=#670 id=670 data-nosnippet>670</a>                }
+<a href=#671 id=671 data-nosnippet>671</a>            }
+<a href=#672 id=672 data-nosnippet>672</a>        } <span class="kw">else if </span>options.direct &amp;&amp; <span class="macro">matches!</span>(schema.column_type(), ColumnType::Scalar) {
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="comment">// A scalar column is of fixed shape, which casacore flags when
+<a href=#674 id=674 data-nosnippet>674</a>            // the column is `Direct` (a scalar `int` made with option 1 says 5).
+<a href=#675 id=675 data-nosnippet>675</a>            </span>option |= <span class="number">4</span>;
+<a href=#676 id=676 data-nosnippet>676</a>        }
+<a href=#677 id=677 data-nosnippet>677</a>        fields.push((<span class="string">"option"</span>, CasaValue::Int(option)));
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="prelude-val">Ok</span>(CasaValue::record(fields))
+<a href=#679 id=679 data-nosnippet>679</a>    }
+<a href=#680 id=680 data-nosnippet>680</a>
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="doccomment">/// `getdminfo()`: a record per storage manager (`*1`, `*2`, ... in the
+<a href=#682 id=682 data-nosnippet>682</a>    /// order the table lists them) with its columns, name, sequence number,
+<a href=#683 id=683 data-nosnippet>683</a>    /// type and `SPEC`. casa-tables keeps the `SPEC` of no manager, and
+<a href=#684 id=684 data-nosnippet>684</a>    /// `StManAipsIO`'s is empty, so a table of any other manager is refused.
+<a href=#685 id=685 data-nosnippet>685</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>getdminfo(<span class="kw-2">&amp;</span><span class="self">self</span>, log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;) -&gt; Reply {
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
+<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
+<a href=#688 id=688 data-nosnippet>688</a>        };
+<a href=#689 id=689 data-nosnippet>689</a>        <span class="kw">let </span>managers = open.table.data_manager_info();
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(other) = managers
+<a href=#691 id=691 data-nosnippet>691</a>            .iter()
+<a href=#692 id=692 data-nosnippet>692</a>            .find(|manager| manager.dm_type != <span class="string">"StManAipsIO"</span>)
+<a href=#693 id=693 data-nosnippet>693</a>        {
+<a href=#694 id=694 data-nosnippet>694</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Fail::Unsupported(<span class="macro">format!</span>(
+<a href=#695 id=695 data-nosnippet>695</a>                <span class="string">"table.getdminfo of a table with a {} storage manager is not yet implemented \
+<a href=#696 id=696 data-nosnippet>696</a>                 in casa-rs: casa-tables does not read the manager's SPEC (#1028)"</span>,
+<a href=#697 id=697 data-nosnippet>697</a>                other.dm_type
+<a href=#698 id=698 data-nosnippet>698</a>            )));
+<a href=#699 id=699 data-nosnippet>699</a>        }
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="prelude-val">Ok</span>(CasaValue::record(managers.iter().enumerate().map(
+<a href=#701 id=701 data-nosnippet>701</a>            |(position, manager)| {
+<a href=#702 id=702 data-nosnippet>702</a>                <span class="kw">let </span><span class="kw-2">mut </span>columns = manager.columns.clone();
+<a href=#703 id=703 data-nosnippet>703</a>                columns.sort();
+<a href=#704 id=704 data-nosnippet>704</a>                (
+<a href=#705 id=705 data-nosnippet>705</a>                    <span class="macro">format!</span>(<span class="string">"*{}"</span>, position + <span class="number">1</span>),
+<a href=#706 id=706 data-nosnippet>706</a>                    CasaValue::record([
+<a href=#707 id=707 data-nosnippet>707</a>                        (<span class="string">"COLUMNS"</span>, CasaValue::Texts(columns)),
+<a href=#708 id=708 data-nosnippet>708</a>                        (<span class="string">"NAME"</span>, CasaValue::Text(manager.name.clone())),
+<a href=#709 id=709 data-nosnippet>709</a>                        (<span class="string">"SEQNR"</span>, CasaValue::Int(i64::from(manager.seq_nr))),
+<a href=#710 id=710 data-nosnippet>710</a>                        (<span class="string">"SPEC"</span>, CasaValue::empty_record()),
+<a href=#711 id=711 data-nosnippet>711</a>                        (<span class="string">"TYPE"</span>, CasaValue::Text(manager.dm_type.clone())),
+<a href=#712 id=712 data-nosnippet>712</a>                    ]),
+<a href=#713 id=713 data-nosnippet>713</a>                )
+<a href=#714 id=714 data-nosnippet>714</a>            },
+<a href=#715 id=715 data-nosnippet>715</a>        )))
+<a href=#716 id=716 data-nosnippet>716</a>    }
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a>    <span class="doccomment">/// `getcolkeyword(columnname, keyword)`.
+<a href=#719 id=719 data-nosnippet>719</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>getcolkeyword(
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#721 id=721 data-nosnippet>721</a>        column: <span class="kw-2">&amp;</span>str,
+<a href=#722 id=722 data-nosnippet>722</a>        key: <span class="kw-2">&amp;</span>KeywordRef,
+<a href=#723 id=723 data-nosnippet>723</a>        log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#724 id=724 data-nosnippet>724</a>    ) -&gt; Reply {
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
+<a href=#726 id=726 data-nosnippet>726</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(empty_array());
+<a href=#727 id=727 data-nosnippet>727</a>        };
+<a href=#728 id=728 data-nosnippet>728</a>        open.known(column)<span class="question-mark">?</span>;
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>found = open
+<a href=#730 id=730 data-nosnippet>730</a>            .table
+<a href=#731 id=731 data-nosnippet>731</a>            .column_keywords(column)
+<a href=#732 id=732 data-nosnippet>732</a>            .and_then(|record| keyword(record, key));
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">match </span>found {
+<a href=#734 id=734 data-nosnippet>734</a>            <span class="prelude-val">Some</span>(found) =&gt; <span class="prelude-val">Ok</span>(values::value(found, <span class="kw-2">&amp;</span>open.name)),
+<a href=#735 id=735 data-nosnippet>735</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">match </span>key {
+<a href=#736 id=736 data-nosnippet>736</a>                KeywordRef::Whole =&gt; <span class="prelude-val">Ok</span>(empty_array()),
+<a href=#737 id=737 data-nosnippet>737</a>                KeywordRef::Name(name) =&gt; {
+<a href=#738 id=738 data-nosnippet>738</a>                    runtime(<span class="macro">format!</span>(<span class="string">"Keyword {name} in column {column} does not exist"</span>))
+<a href=#739 id=739 data-nosnippet>739</a>                }
+<a href=#740 id=740 data-nosnippet>740</a>                KeywordRef::Index(<span class="kw">_</span>) =&gt; runtime(
+<a href=#741 id=741 data-nosnippet>741</a>                    <span class="string">"TableRecordRep: Failed AlwaysAssert whichField &gt;= 0 &amp;&amp; whichField &lt; Int(nused_p)"
+<a href=#742 id=742 data-nosnippet>742</a>                        </span>.into(),
+<a href=#743 id=743 data-nosnippet>743</a>                ),
+<a href=#744 id=744 data-nosnippet>744</a>            },
+<a href=#745 id=745 data-nosnippet>745</a>        }
+<a href=#746 id=746 data-nosnippet>746</a>    }
+<a href=#747 id=747 data-nosnippet>747</a>
+<a href=#748 id=748 data-nosnippet>748</a>    <span class="doccomment">/// `colfieldnames(columnname, keyword)`.
+<a href=#749 id=749 data-nosnippet>749</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>colfieldnames(
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#751 id=751 data-nosnippet>751</a>        column: <span class="kw-2">&amp;</span>str,
+<a href=#752 id=752 data-nosnippet>752</a>        key: <span class="kw-2">&amp;</span>KeywordRef,
+<a href=#753 id=753 data-nosnippet>753</a>        log: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#754 id=754 data-nosnippet>754</a>    ) -&gt; Reply {
+<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(open) = <span class="self">self</span>.table(log) <span class="kw">else </span>{
+<a href=#756 id=756 data-nosnippet>756</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(texts([]));
+<a href=#757 id=757 data-nosnippet>757</a>        };
+<a href=#758 id=758 data-nosnippet>758</a>        open.known(column)<span class="question-mark">?</span>;
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>empty = RecordValue::new(Vec::new());
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>record = open.table.column_keywords(column).unwrap_or(<span class="kw-2">&amp;</span>empty);
+<a href=#761 id=761 data-nosnippet>761</a>        Open::keyword_names(record, key, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"Keyword in column {column}"</span>))
+<a href=#762 id=762 data-nosnippet>762</a>    }
+<a href=#763 id=763 data-nosnippet>763</a>}
 </code></pre></div></section></main></body></html>

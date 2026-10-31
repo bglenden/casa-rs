@@ -2122,6 +2122,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tbaddrows-with-a-negative-count-removes-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.addrows with a negative count removes rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.removerows and tb.addcols do part of a call that fails
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#importfits-reads-every-fits-date-as-utc" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2185,7 +2207,9 @@ CASA behaviours casa-rs does not follow:
 <a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> of an int beyond 32 bits</a>,
 <a href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices that abort the process</a>,
 <a href="#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell"><code>tb.putcell</code> of an int beyond 32 bits</a>,
-<a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows</a>.
+<a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows</a>,
+<a href="#tbaddrows-with-a-negative-count-removes-rows"><code>tb.addrows</code> with a negative count</a>,
+<a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> that fail part way</a>.
 Simulator behaviours casa-rs does not follow:
 <a href="#the-simulator-stores-tai-as-utc">TIME as TAI</a>,
 <a href="#the-simulator-charges-shadowing-to-the-antenna-in-front">shadowing the front antenna</a>,
@@ -4650,6 +4674,38 @@ row at a time, so a call that raises has still changed the table
 (<code>rows_vector</code> scenario). casa-rs checks every row first and raises with the
 table as it was. The recording follows the failed call with a write that puts
 row 0 back, so that its later reads agree.</p>
+<h2 id="tbaddrows-with-a-negative-count-removes-rows"><code>tb.addrows</code> with a negative count removes rows<a class="headerlink" href="#tbaddrows-with-a-negative-count-removes-rows" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-31</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1025, the <code>table</code> tool)</li>
+<li>Affected code: casacore <code>TableProxy::addRow</code> (the count is an <code>Int</code> handed
+  to <code>Table::addRow(rownr_t)</code>)</li>
+</ul>
+<p><code>tb.addrows(-1)</code> on a table of three rows returns <code>True</code> and leaves two;
+<code>addrows(-2)</code> leaves none, and the table reopens with no rows
+(<code>addrows_negative</code> scenario). The count converts to a huge unsigned number
+and the table's row count wraps. casa-rs raises <code>RuntimeError</code> ("the number
+of rows must not be negative") and changes nothing.</p>
+<h2 id="tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> do part of a call that fails<a class="headerlink" href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-31</li>
+<li>Status: CASA behaviour that casa-rs does not follow (#1025, the <code>table</code>
+  tool; Astra's review of #1036)</li>
+<li>Affected code: casacore <code>BaseTable::removeRow(Vector)</code> and
+  <code>TableProxy::addColumns</code></li>
+</ul>
+<p><code>tb.removerows([2, 2])</code> on a table of three rows removes the first row 2,
+then raises "rownr 2 too high ... (#rows=2)", leaving two rows: the row
+numbers are taken from the highest down and each is checked against the
+table as it then is. (A number beyond the table, even among valid ones, fails
+before any row goes: it is the highest.) <code>tb.addcols</code> of <code>aaa</code> and <code>id</code> on a
+table that has <code>id</code> adds <code>aaa</code> and then raises "column already exists":
+<code>addColumns</code> builds the whole description first (a malformed field fails the
+call with nothing added) and then adds the columns one by one, in the
+record's sorted order (<code>structure_partial</code> scenario). casa-rs checks the whole
+call before it changes anything: both raise CASA's message and leave the table
+as it was. The successful calls, repeats included (<code>removerows([0, 0])</code>
+removes two rows), are CASA's.</p>
 <h2 id="importfits-reads-every-fits-date-as-utc"><code>importfits</code> reads every FITS date as UTC<a class="headerlink" href="#importfits-reads-every-fits-date-as-utc" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-30</li>
