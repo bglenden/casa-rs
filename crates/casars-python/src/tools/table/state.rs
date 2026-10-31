@@ -3,6 +3,7 @@
 //! with.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use pyo3::PyErr;
@@ -92,6 +93,15 @@ impl LockSettings {
         )
     }
 
+    /// The request that opens a table with these settings again.
+    pub(super) fn request(&self) -> LockRequest {
+        LockRequest {
+            option: Some(self.option.to_string()),
+            interval: Some(self.interval),
+            maxwait: Some(self.maxwait),
+        }
+    }
+
     /// The seconds between a table's looks for a request for its lock.
     pub(super) fn interval(&self) -> f64 {
         self.interval
@@ -165,9 +175,28 @@ impl Open {
 }
 
 /// The tool's state: at most one open table.
-#[derive(Default)]
 pub(crate) struct State {
     pub(super) open: Option<Open>,
+    /// Tells the tool apart in the registry of the process's tools
+    /// (`registry.rs`).
+    pub(super) id: u64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl State {
+    /// The state of a tool with `open` attached.
+    pub(super) fn new(open: Option<Open>) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        Self {
+            open,
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 /// Logs the message CASA logs when a call needs a table and none is open.

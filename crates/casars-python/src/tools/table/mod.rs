@@ -17,12 +17,14 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod cell_convert;
 mod cell_value;
 mod copy;
 mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod read;
+mod registry;
 mod slices;
 mod state;
 mod stubs;
@@ -32,7 +34,7 @@ mod write;
 mod write_cells;
 mod write_structure;
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -68,7 +70,7 @@ const _: fn() = || {
 /// CASA's `table` tool.
 #[pyclass(name = "table", module = "casars.tools", frozen)]
 pub(crate) struct PyTableTool {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 impl PyTableTool {
@@ -275,7 +277,7 @@ impl PyTableTool {
     #[new]
     fn new() -> Self {
         Self {
-            state: Mutex::new(State::default()),
+            state: registry::track(State::default()),
         }
     }
 
@@ -839,12 +841,11 @@ impl PyTableTool {
         norows: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let new_name = text(newtablename, "newtablename")?;
-        // `deep` changes nothing by itself, as in casacore; `returnobject` is
-        // ignored by CASA, which always returns the tool.
-        flag(deep, false)?;
+        // `returnobject` is ignored by CASA, which always returns the tool.
         flag(returnobject, false)?;
         let request = CopyRequest {
             new_name,
+            deep: flag(deep, false)?,
             value_copy: flag(valuecopy, false)?,
             has_dminfo: match dminfo {
                 Some(dminfo) => !record_fields(dminfo)?.is_empty(),
@@ -858,9 +859,7 @@ impl PyTableTool {
         let copied = py.detach(|| self.guard().copy(&request, &mut lines));
         emit(py, LOGGER, &lines)?;
         let tool = Self {
-            state: Mutex::new(State {
-                open: Some(copied?),
-            }),
+            state: registry::track(State::new(Some(copied?))),
         };
         Ok(Py::new(py, tool)?.into_any())
     }

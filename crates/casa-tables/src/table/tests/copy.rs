@@ -100,3 +100,30 @@ fn a_shallow_copy_keeps_the_group_name_and_the_byte_order_it_is_given() {
     assert_eq!(table.row_count(), 3);
     assert_eq!(group_of(&source, "id"), "MyGroup");
 }
+
+#[test]
+fn a_reference_table_has_the_byte_order_of_the_table_it_refers_to() {
+    let parent = grouped_table("ref_endian", "", EndianFormat::BigEndian);
+    let table = Table::open(TableOptions::new(&parent)).expect("open");
+    assert!(!table.is_reference_table().expect("kind"));
+    let view = parent.with_file_name("view.table");
+    // The view's own header says little endian; the table it refers to says
+    // big, which is what casacore's `RefTable` reports.
+    table
+        .select_rows(&[0, 2])
+        .expect("select")
+        .save(
+            TableOptions::new(&view)
+                .with_data_manager(DataManagerKind::StManAipsIO)
+                .with_endian_format(EndianFormat::LittleEndian),
+        )
+        .expect("save the view");
+
+    let opened = Table::open(TableOptions::new(&view)).expect("open the view");
+    assert!(opened.is_reference_table().expect("kind"));
+    assert_eq!(opened.row_count(), 2);
+    assert_eq!(
+        opened.stored_endian_format().expect("read"),
+        Some(EndianFormat::BigEndian)
+    );
+}

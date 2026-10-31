@@ -1655,8 +1655,10 @@ impl Table {
     }
 
     /// The byte order of the files of this table as they are on disk, from
-    /// the marker in `table.dat`; `None` for a table that has no directory or
-    /// is not a plain table.
+    /// the marker in `table.dat`; for a reference table, the byte order of the
+    /// table it refers to, as casacore's `RefTable` reports it. `None` for a
+    /// table that has no directory, a concatenation of tables, or a reference
+    /// chain that is too deep or cannot be read.
     ///
     /// # C++ equivalent
     ///
@@ -1665,19 +1667,21 @@ impl Table {
         let Some(path) = self.source_path.as_ref() else {
             return Ok(None);
         };
+        Ok(stored_endian_format_of(path, 0))
+    }
+
+    /// Whether the directory of this table holds a reference table (a view
+    /// of rows and columns of another table, as a selection makes), rather
+    /// than a table of its own.
+    pub fn is_reference_table(&self) -> Result<bool, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(false);
+        };
         let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
-        Ok(
-            match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
-                crate::storage::table_control::TableDatResult::Plain(table_dat) => {
-                    Some(if table_dat.big_endian {
-                        EndianFormat::BigEndian
-                    } else {
-                        EndianFormat::LittleEndian
-                    })
-                }
-                _ => None,
-            },
-        )
+        Ok(matches!(
+            crate::storage::table_control::read_table_dat_dispatch(&control_path)?,
+            crate::storage::table_control::TableDatResult::Ref(_)
+        ))
     }
 
     /// The options that write this table in full as it is laid out on disk,
@@ -2181,5 +2185,24 @@ fn current_value_for_column(
             Err(TableError::ColumnNotFound { .. }) => Ok(None),
             Err(err) => Err(err),
         }
+    }
+}
+
+/// The byte order of the table at `path`, following reference tables to the
+/// table they refer to (`depth` bounds a chain that loops).
+fn stored_endian_format_of(path: &Path, depth: usize) -> Option<EndianFormat> {
+    use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+    let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+    match read_table_dat_dispatch(&control_path).ok()? {
+        TableDatResult::Plain(table_dat) => Some(if table_dat.big_endian {
+            EndianFormat::BigEndian
+        } else {
+            EndianFormat::LittleEndian
+        }),
+        TableDatResult::Ref(reference) if depth < 32 => stored_endian_format_of(
+            &crate::table_path::add_directory_for_link(&reference.parent_relative_path, path),
+            depth + 1,
+        ),
+        _ => None,
     }
 }

@@ -1007,6 +1007,159 @@ COPYROWS = [
     ["copyrows", [PLACEHOLDER + ".out"], {}],
 ]
 
+#: `copyrows` of a table onto itself when the rows written include rows still
+#: to be read (casacore copies row by row), and when they do not: each case on
+#: a fresh copy of the table.
+COPYROWS_ORDER = [
+    step
+    for number, (start_in, start_out, count) in enumerate(
+        [(0, 1, 2), (0, 1, 3), (1, 0, 2), (0, -1, 2), (0, 0, 3), (1, 2, 1), (0, 2, 3), (0, 3, 2)]
+    )
+    for step in [
+        ["open", [PLACEHOLDER], {}],
+        ["copy", [PLACEHOLDER + f".r{number}"], {}, {"bind": f"r{number}"}],
+        ["close", [], {}, {"on": f"r{number}"}],
+        ["open", [PLACEHOLDER + f".r{number}"], {"nomodify": False}],
+        ["copyrows", [PLACEHOLDER + f".r{number}", start_in, start_out, count], {}],
+        ["nrows", [], {}],
+        *[["getcell", [column, row], {}] for row in range(8) for column in ("id", "label")],
+        ["close", [], {}],
+    ]
+]
+
+#: The tool of a copy onto the table's own name, and `copyrows` of a table
+#: opened `nomodify` onto itself (CASA opens the output for update).
+SELF_COPIES = [
+    ["open", [PLACEHOLDER], {}],
+    ["iswritable", [], {}],
+    ["copy", [PLACEHOLDER], {}, {"bind": "ro"}],
+    *inspect("ro"),
+    ["close", [], {}, {"on": "ro"}],
+    ["copyrows", [PLACEHOLDER], {}],
+    ["nrows", [], {}],
+    ["iswritable", [], {}],
+    ["getcell", ["id", 4], {}],
+    ["open", [PLACEHOLDER], {"nomodify": False}],
+    ["copy", [PLACEHOLDER], {}, {"bind": "rw"}],
+    *inspect("rw"),
+    ["close", [], {}, {"on": "rw"}],
+    ["open", [PLACEHOLDER], {"nomodify": False, "lockoptions": {"option": "user"}}],
+    ["copy", [PLACEHOLDER], {"deep": True}, {"bind": "us"}],
+    *inspect("us"),
+    ["close", [], {}, {"on": "us"}],
+    ["open", [PLACEHOLDER], {"nomodify": False, "lockoptions": {"option": "usernoread", "maxwait": 7}}],
+    ["copy", [PLACEHOLDER], {}, {"bind": "un"}],
+    *on("un", [["lockoptions", [], {}], ["iswritable", [], {}]]),
+    ["close", [], {}, {"on": "un"}],
+    ["close", [], {}],
+]
+
+#: A table that keeps its write lock announces what it has written when it
+#: is flushed, once; the lock is kept.
+FLUSH_PUBLISHES = [
+    step
+    for option in ("user", "permanent")
+    for step in [
+        ["open", [PLACEHOLDER], {"nomodify": False, "lockoptions": {"option": option}}],
+        *([["lock", [], {"write": True}]] if option == "user" else []),
+        ["datachanged", [], {}],
+        ["datachanged", [], {}],
+        ["putcell", ["id", 0, 11], {}],
+        ["datachanged", [], {}],
+        ["flush", [], {}],
+        ["haslock", [], {"write": True}],
+        ["datachanged", [], {}],
+        ["datachanged", [], {}],
+        ["flush", [], {}],
+        ["datachanged", [], {}],
+        ["putcell", ["id", 1, 12], {}],
+        ["flush", [], {}],
+        ["flush", [], {}],
+        ["datachanged", [], {}],
+        ["datachanged", [], {}],
+        ["getcell", ["id", 1], {}],
+        ["close", [], {}],
+    ]
+]
+
+#: `clearlocks` releases the automatic locks of every table of the process,
+#: and leaves a lock the user took.
+CLEARLOCKS = [
+    ["open", [PLACEHOLDER], {"nomodify": False, "lockoptions": {"option": "user"}}],
+    ["lock", [], {"write": False}],
+    ["copy", [PLACEHOLDER + ".k1"], {}, {"bind": "a"}],
+    ["copy", [PLACEHOLDER + ".k2"], {}, {"bind": "b"}],
+    ["getcell", ["id", 0], {}, {"on": "a"}],
+    ["getcell", ["id", 0], {}, {"on": "b"}],
+    ["haslock", [], {"write": False}],
+    ["haslock", [], {"write": False}, {"on": "a"}],
+    ["haslock", [], {"write": False}, {"on": "b"}],
+    ["clearlocks", [], {}, {"on": "a"}],
+    ["haslock", [], {"write": False}],
+    ["haslock", [], {"write": False}, {"on": "a"}],
+    ["haslock", [], {"write": False}, {"on": "b"}],
+    ["getcell", ["id", 1], {}, {"on": "b"}],
+    ["haslock", [], {"write": False}, {"on": "b"}],
+    ["clearlocks", [], {}],
+    ["haslock", [], {"write": False}],
+    ["haslock", [], {"write": False}, {"on": "b"}],
+    ["close", [], {}, {"on": "a"}],
+    ["close", [], {}, {"on": "b"}],
+    ["close", [], {}],
+]
+
+#: `copyrows` between columns of the same name and different types: the
+#: output has its column made again with the type given, the input is the
+#: python fixture table (`id` is an Int64, `gain` a DComplex, `label` a
+#: string, `spectrum` a fixed 2x2 Float array, `vary` a variable Double array).
+#: The last field says whether CASA accepts the conversion. After a refusal
+#: CASA has added the rows and left their cells unset (garbage), which is not
+#: compared: casa-rs refuses before it changes anything.
+COPYROWS_TYPES_CASES = [
+    ("id", {"valueType": "double"}, True),
+    ("id", {"valueType": "int"}, True),
+    ("id", {"valueType": "uint"}, True),
+    ("id", {"valueType": "short"}, False),
+    ("id", {"valueType": "boolean"}, False),
+    ("id", {"valueType": "string"}, False),
+    ("id", {"valueType": "complex"}, True),
+    ("gain", {"valueType": "complex"}, True),
+    ("gain", {"valueType": "double"}, False),
+    ("label", {"valueType": "int"}, False),
+    ("spectrum", {"valueType": "double", "ndim": 2, "shape": [2, 2]}, True),
+    ("spectrum", {"valueType": "dcomplex", "ndim": 2, "shape": [2, 2]}, True),
+    ("spectrum", {"valueType": "int", "ndim": 2, "shape": [2, 2]}, False),
+    ("vary", {"valueType": "float", "ndim": 1}, True),
+    ("vary", {"valueType": "int", "ndim": 1}, False),
+    ("vary", {"valueType": "complex", "ndim": 1}, True),
+]
+
+COPYROWS_TYPES = [
+    step
+    for number, (column, description, accepted) in enumerate(COPYROWS_TYPES_CASES)
+    for step in [
+        ["open", [PLACEHOLDER], {}],
+        ["copy", [PLACEHOLDER + f".t{number}"], {"norows": True}, {"bind": f"t{number}"}],
+        ["close", [], {}, {"on": f"t{number}"}],
+        ["open", [PLACEHOLDER + f".t{number}"], {"nomodify": False}],
+        ["removecols", [[column]], {}],
+        ["addcols", [{column: description}], {}],
+        ["open", [PLACEHOLDER], {}],
+        ["copyrows", [PLACEHOLDER + f".t{number}"], {}],
+        *(
+            [
+                ["open", [PLACEHOLDER + f".t{number}"], {}],
+                ["nrows", [], {}],
+                ["getcoldesc", [column], {}],
+                *[["getcell", [column, row], {}] for row in range(3)],
+            ]
+            if accepted
+            else []
+        ),
+        ["close", [], {}],
+    ]
+]
+
 #: The scenario the MeasurementSet gets: for each column of the main table,
 #: its description and, for the first rows, its cells. Built from the table
 #: itself, so a column is probed whatever the fixture holds.
@@ -1466,6 +1619,11 @@ def main():
     scenarios["state_ms"] = {"fixture": "ms", "steps": STATE_MS, "source": arguments.ms}
     scenarios["copies"] = {"fixture": "table", "steps": COPIES, "source": arguments.fixture}
     scenarios["copyrows"] = {"fixture": "table", "steps": COPYROWS, "source": arguments.fixture}
+    scenarios["copyrows_order"] = {"fixture": "table", "steps": COPYROWS_ORDER, "source": arguments.fixture}
+    scenarios["self_copies"] = {"fixture": "table", "steps": SELF_COPIES, "source": arguments.fixture}
+    scenarios["flush_publishes"] = {"fixture": "table", "steps": FLUSH_PUBLISHES, "source": arguments.fixture}
+    scenarios["clearlocks"] = {"fixture": "table", "steps": CLEARLOCKS, "source": arguments.fixture}
+    scenarios["copyrows_types"] = {"fixture": "table", "steps": COPYROWS_TYPES, "source": arguments.fixture}
     for name, (fixture, steps) in REVIEW_SCENARIOS.items():
         source = arguments.ms if fixture == "ms" else arguments.fixture
         scenarios[name] = {"fixture": fixture, "steps": steps, "source": source}
