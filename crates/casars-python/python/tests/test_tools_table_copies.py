@@ -378,3 +378,33 @@ def test_a_copy_onto_the_name_of_a_table_open_for_update_under_permanent_locking
     with pytest.raises(NotImplementedError, match="permanent locking"):
         tool.copy(str(path))
     tool.done()
+
+
+def test_a_copyrows_of_an_integer_that_does_not_fit_the_column_is_refused_where_casa_wraps_it(
+    fixtures: dict[str, Path], tmp_path: Path  # noqa: F811
+) -> None:
+    """CASA 6.7.6.14 puts a Short -5 into a uChar column as 251, as it wraps an
+    int beyond 32 bits in `putcell`; casa-rs refuses the value, before the
+    output is touched, rather than store a wrong number."""
+    source = fixture_copy(fixtures, tmp_path, "source.table")
+    out = tmp_path.resolve() / "out.table"
+    maker = tools.table()
+    assert maker.open(str(source), nomodify=False)
+    assert maker.putcell("id", 1, 2**40)
+    maker.copy(str(out), norows=True).done()
+    editor = tools.table()
+    assert editor.open(str(out), nomodify=False)
+    assert editor.removecols(["id"])
+    assert editor.addcols({"id": {"valueType": "int"}})
+    editor.done()
+    kept = table_files(out)
+    with pytest.raises(RuntimeError, match="out of range for a column of Int"):
+        maker.copyrows(str(out))
+    assert table_files(out) == kept
+    # Rows that fit are copied.
+    assert maker.copyrows(str(out), 0, -1, 1)
+    maker.done()
+    reader = tools.table()
+    assert reader.open(str(out))
+    assert reader.nrows() == 1 and reader.getcell("id", 0) == 1
+    reader.done()

@@ -8,9 +8,11 @@
 //! and arrays:
 //!
 //! - a Boolean goes to a Boolean only, and so does a string to a string;
-//! - an integer goes to every numeric type, wrapping as a C cast does
-//!   (Short -5 to uChar is 251) but to an `Int64` only from an `Int64` and
-//!   not to a narrower integer than `Int` from one;
+//! - an integer goes to every numeric type, but to an `Int64` only from an
+//!   `Int64` and not to a narrower integer than `Int` from one. CASA wraps
+//!   a value that does not fit as a C cast does (Short -5 to uChar is 251);
+//!   casa-rs refuses it, as it refuses an out-of-range `putcell`, rather than
+//!   store a wrong number;
 //! - a floating point number goes to the floating point and complex types,
 //!   a complex number to the complex types;
 //! - a scalar `Int` also goes to a Boolean (non-zero is true).
@@ -56,10 +58,9 @@ pub(super) fn convertible(column: &ColumnType, from: PrimitiveType, to: Primitiv
     }
 }
 
-/// What CASA raises when a cell of another type is put into a column of
-/// type `to`.
-pub(super) fn refusal(column: &ColumnType, name: &str, to: PrimitiveType) -> Fail {
-    let accessor = match to {
+/// How CASA names a type in `RecordInterface::as...`.
+fn type_name(to: PrimitiveType) -> &'static str {
+    match to {
         PrimitiveType::Bool => "Bool",
         PrimitiveType::UInt8 => "uChar",
         PrimitiveType::UInt16 => "uShort",
@@ -71,10 +72,18 @@ pub(super) fn refusal(column: &ColumnType, name: &str, to: PrimitiveType) -> Fai
         PrimitiveType::Float64 => "Double",
         PrimitiveType::Complex32 => "Complex",
         PrimitiveType::Complex64 => "DComplex",
-        PrimitiveType::String => "",
-    };
-    if matches!(column, ColumnType::Scalar) && !accessor.is_empty() {
-        Fail::Runtime(format!("RecordInterface::as{accessor} - invalid data type"))
+        PrimitiveType::String => "String",
+    }
+}
+
+/// What CASA raises when a cell of another type is put into a column of
+/// type `to`.
+pub(super) fn refusal(column: &ColumnType, name: &str, to: PrimitiveType) -> Fail {
+    if matches!(column, ColumnType::Scalar) && to != PrimitiveType::String {
+        Fail::Runtime(format!(
+            "RecordInterface::as{} - invalid data type",
+            type_name(to)
+        ))
     } else {
         Fail::Runtime(format!(
             "TableRecordRep::get_pointer - incorrect data type used for field {name}"
@@ -82,12 +91,23 @@ pub(super) fn refusal(column: &ColumnType, name: &str, to: PrimitiveType) -> Fai
     }
 }
 
-/// `value` as a cell of type `to`, which [`convertible`] has allowed.
-pub(super) fn convert(value: Value, to: PrimitiveType) -> Value {
+/// A cell holds a number the column's type cannot hold.
+fn out_of_range(to: PrimitiveType) -> Fail {
+    Fail::Runtime(format!(
+        "a value is out of range for a column of {}",
+        type_name(to)
+    ))
+}
+
+/// `value` as a cell of type `to`, which [`convertible`] has allowed; an
+/// integer that does not fit `to` is refused.
+pub(super) fn convert(value: Value, to: PrimitiveType) -> Result<Value, Fail> {
     match value {
-        Value::Scalar(scalar) => Value::Scalar(from_number(number_of(&scalar), to)),
-        Value::Array(array) => Value::Array(convert_array(&array, to)),
-        other => other,
+        Value::Scalar(scalar) => from_number(number_of(&scalar), to)
+            .map(Value::Scalar)
+            .ok_or_else(|| out_of_range(to)),
+        Value::Array(array) => convert_array(&array, to).map(Value::Array),
+        other => Ok(other),
     }
 }
 
@@ -109,17 +129,18 @@ fn number_of(scalar: &ScalarValue) -> Number {
     }
 }
 
-/// The scalar of type `to` for `number`; the casts wrap, as C's do.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn from_number(number: Number, to: PrimitiveType) -> ScalarValue {
-    match (number, to) {
+/// The scalar of type `to` for `number`, or `None` for an integer `to` cannot
+/// hold.
+#[allow(clippy::cast_possible_truncation)]
+fn from_number(number: Number, to: PrimitiveType) -> Option<ScalarValue> {
+    Some(match (number, to) {
         (Number::Integer(v), PrimitiveType::Bool) => ScalarValue::Bool(v != 0),
-        (Number::Integer(v), PrimitiveType::UInt8) => ScalarValue::UInt8(v as u8),
-        (Number::Integer(v), PrimitiveType::UInt16) => ScalarValue::UInt16(v as u16),
-        (Number::Integer(v), PrimitiveType::UInt32) => ScalarValue::UInt32(v as u32),
-        (Number::Integer(v), PrimitiveType::Int16) => ScalarValue::Int16(v as i16),
-        (Number::Integer(v), PrimitiveType::Int32) => ScalarValue::Int32(v as i32),
-        (Number::Integer(v), PrimitiveType::Int64) => ScalarValue::Int64(v as i64),
+        (Number::Integer(v), PrimitiveType::UInt8) => ScalarValue::UInt8(v.try_into().ok()?),
+        (Number::Integer(v), PrimitiveType::UInt16) => ScalarValue::UInt16(v.try_into().ok()?),
+        (Number::Integer(v), PrimitiveType::UInt32) => ScalarValue::UInt32(v.try_into().ok()?),
+        (Number::Integer(v), PrimitiveType::Int16) => ScalarValue::Int16(v.try_into().ok()?),
+        (Number::Integer(v), PrimitiveType::Int32) => ScalarValue::Int32(v.try_into().ok()?),
+        (Number::Integer(v), PrimitiveType::Int64) => ScalarValue::Int64(v.try_into().ok()?),
         (Number::Integer(v), PrimitiveType::Float32) => ScalarValue::Float32(v as f32),
         (Number::Integer(v), PrimitiveType::Float64) => ScalarValue::Float64(v as f64),
         (Number::Integer(v), PrimitiveType::Complex32) => {
@@ -143,7 +164,7 @@ fn from_number(number: Number, to: PrimitiveType) -> ScalarValue {
             ScalarValue::Complex64(Complex64::new(re, im))
         }
         _ => unreachable!("convertible() allows only the pairs handled above"),
-    }
+    })
 }
 
 /// The numbers of `array` in storage order.
@@ -173,28 +194,30 @@ fn numbers_of(array: &ArrayValue) -> Vec<Number> {
 }
 
 /// `array` with its elements converted to `to`, in the same shape.
-fn convert_array(array: &ArrayValue, to: PrimitiveType) -> ArrayValue {
+fn convert_array(array: &ArrayValue, to: PrimitiveType) -> Result<ArrayValue, Fail> {
     let shape = array.shape().to_vec();
     let cells = numbers_of(array)
         .into_iter()
-        .map(|number| from_number(number, to));
+        .map(|number| from_number(number, to).ok_or_else(|| out_of_range(to)));
     macro_rules! collect {
         ($variant:ident) => {
             ArrayValue::$variant(
                 ArrayD::from_shape_vec(
                     shape,
                     cells
-                        .map(|cell| match cell {
-                            ScalarValue::$variant(v) => v,
-                            _ => unreachable!("from_number gives the type asked for"),
+                        .map(|cell| {
+                            cell.map(|cell| match cell {
+                                ScalarValue::$variant(v) => v,
+                                _ => unreachable!("from_number gives the type asked for"),
+                            })
                         })
-                        .collect(),
+                        .collect::<Result<Vec<_>, Fail>>()?,
                 )
                 .expect("the shape of the source holds as many elements"),
             )
         };
     }
-    match to {
+    Ok(match to {
         PrimitiveType::Bool => collect!(Bool),
         PrimitiveType::UInt8 => collect!(UInt8),
         PrimitiveType::UInt16 => collect!(UInt16),
@@ -207,7 +230,7 @@ fn convert_array(array: &ArrayValue, to: PrimitiveType) -> ArrayValue {
         PrimitiveType::Complex32 => collect!(Complex32),
         PrimitiveType::Complex64 => collect!(Complex64),
         PrimitiveType::String => unreachable!("convertible() sends a string to a string only"),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -387,21 +410,42 @@ mod tests {
     }
 
     fn scalar(value: ScalarValue, to: PrimitiveType) -> ScalarValue {
-        match convert(Value::Scalar(value), to) {
+        match convert(Value::Scalar(value), to).expect("converts") {
             Value::Scalar(converted) => converted,
             other => panic!("not a scalar: {other:?}"),
         }
     }
 
     #[test]
-    fn integers_wrap_as_a_c_cast_does_and_an_int_is_true_when_it_is_not_zero() {
+    fn an_integer_that_does_not_fit_is_refused_where_casa_wraps_it() {
+        // CASA 6.7.6.14 puts Short -5 into a uChar column as 251 and into a
+        // uInt column as 4294967291.
+        for (value, to) in [
+            (ScalarValue::Int16(-5), T::UInt8),
+            (ScalarValue::Int16(-5), T::UInt32),
+            (ScalarValue::Int32(300), T::UInt8),
+            (ScalarValue::UInt32(4_000_000_000), T::Int32),
+            (ScalarValue::Int64(1 << 40), T::Int32),
+        ] {
+            let Err(Fail::Runtime(message)) = convert(Value::Scalar(value.clone()), to) else {
+                panic!("{value:?} -> {to:?} was not refused");
+            };
+            assert!(
+                message.starts_with("a value is out of range for a column of "),
+                "{message}"
+            );
+        }
+        let fits = ArrayD::from_shape_vec(vec![2], vec![1_i32, 70_000]).expect("array");
+        assert!(convert(Value::Array(ArrayValue::Int32(fits)), T::UInt32).is_ok());
+        let negative = ArrayD::from_shape_vec(vec![2], vec![1_i32, -1]).expect("array");
+        assert!(convert(Value::Array(ArrayValue::Int32(negative)), T::UInt32).is_err());
+    }
+
+    #[test]
+    fn an_integer_that_fits_converts_and_an_int_is_true_when_it_is_not_zero() {
         assert_eq!(
-            scalar(ScalarValue::Int16(-5), T::UInt8),
-            ScalarValue::UInt8(251)
-        );
-        assert_eq!(
-            scalar(ScalarValue::Int16(-5), T::UInt32),
-            ScalarValue::UInt32(4_294_967_291)
+            scalar(ScalarValue::Int16(5), T::UInt8),
+            ScalarValue::UInt8(5)
         );
         assert_eq!(
             scalar(ScalarValue::Int32(3), T::UInt8),
@@ -439,7 +483,7 @@ mod tests {
     #[test]
     fn an_array_keeps_its_shape_and_order() {
         let source = ArrayD::from_shape_vec(vec![2, 3], vec![1_i32, 2, 3, 4, 5, 6]).expect("array");
-        let Value::Array(ArrayValue::Float64(converted)) =
+        let Ok(Value::Array(ArrayValue::Float64(converted))) =
             convert(Value::Array(ArrayValue::Int32(source)), T::Float64)
         else {
             panic!("not a double array");

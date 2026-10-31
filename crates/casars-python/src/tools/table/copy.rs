@@ -9,7 +9,10 @@
 //! again in full, which casa-tables can do for one `StManAipsIO` group only
 //! (`Table::single_stman_aipsio_options`), the other layouts refusing with
 //! `NotImplementedError` before anything is written. The result is a tool
-//! open read-only on the copy under the default locking.
+//! open read-only on the copy under the default locking; a copy onto the
+//! table's own name is that table opened again, with the same lock options
+//! and as writable as the first tool (CASA shares one table, locks held
+//! included; here each tool has its own lock).
 //!
 //! `copyrows` writes the rows into the output table as `addrows` does, a
 //! table of one `StManAipsIO` group in full; it takes the columns both
@@ -334,8 +337,11 @@ fn read_rows(source: &Table, shared: &[Shared], rows: &[usize]) -> Result<Rows, 
         let cells = match column.convert_to {
             Some(to) => cells
                 .into_iter()
-                .map(|cell| cell.map(|value| cell_convert::convert(value, to)))
-                .collect(),
+                .map(|cell| {
+                    cell.map(|value| cell_convert::convert(value, to))
+                        .transpose()
+                })
+                .collect::<Result<_, _>>()?,
             None => cells,
         };
         columns.push(column.name.clone());

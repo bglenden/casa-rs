@@ -2759,3 +2759,30 @@ axes are. The transposed pair's result is the transpose of the
 direction-first pair's (`casa-images` `casa_axis_maps` test
 `feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
 result is checked against CASA's in `image_analysis_casa`.
+
+## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1039)
+- Affected code: casacore `TableCopy::copyRows` and `ROTableRow`/`TableRow::put`
+  (`RecordInterface::as...`)
+
+`copyRows` adds an output row and then puts its cells one by one. When a
+shared column has a type the input's cell cannot be converted to (a `double`
+output column for a `dcomplex` input, `RecordInterface::asDouble - invalid
+data type`; an `int` output column for a `float` array input,
+`TableRecordRep::get_pointer - incorrect data type used for field ...`), the
+call raises with the rows already added and their cells never set: reading
+them gives whatever the heap held (`copyrows_types` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which does not
+compare the table after a refusal). casa-rs checks the types before it changes
+anything and raises with the output table as it was.
+
+Which conversions CASA accepts was probed pair by pair and is what casa-rs
+accepts (`tools/table/cell_convert.rs`), with one exception: an integer that
+does not fit the output column's type is wrapped as a C cast does (a `Short`
+-5 becomes the `uChar` 251, a `uInt` 4294967291), the same narrowing as
+`putcell` above. casa-rs raises `RuntimeError: a value is out of range for a
+column of ...`, before the output is touched, rather than store a wrong
+number.
