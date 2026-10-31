@@ -995,6 +995,7 @@ fn entry_bytes(
         .iter()
         .map(|group| size_of::<DataGroupEntry>() + heap::group_bytes(group))
         .sum();
+    let receptor_count = (2 * grid.baselines.len()).min(antennas);
     size_of::<PartitionEntry>()
         + setup
         + intents
@@ -1002,7 +1003,8 @@ fn entry_bytes(
         + size_of_val(grid.baselines.as_slice())
         + grid.states.len() * size_of::<StateId>()
         + groups
-        + (2 * grid.baselines.len()).min(antennas) * receptors
+        + casa_types::memory::btree_node_bytes::<AntennaId, Receptors>(receptor_count)
+        + receptor_count * receptors
 }
 
 /// The receptors of each antenna `baselines` name, through the feed pair
