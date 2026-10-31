@@ -188,7 +188,7 @@ fn a_count_the_fit_takes_is_never_refused_later() {
         completed.extend(outcomes.into_iter().filter_map(|(_, workers)| workers));
         let budgets = (1_u64 << 20..=8 << 20).step_by(128 << 10);
         let outcomes = fit_sweep(root.path(), &format!("cube-{nmajor}"), budgets, |name| {
-            let cycled = json!({ "minor_cycle_length": 1, "gain": 0.37 });
+            let cycled = json!({ "cycleniter": 1, "gain": 0.37 });
             cleaned_cube(&measurement_set, name, nmajor, cycled)
         });
         completed.extend(outcomes.into_iter().filter_map(|(_, workers)| workers));
