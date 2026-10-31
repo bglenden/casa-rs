@@ -17,7 +17,8 @@ use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 
 use super::metadata::{
-    has_node, invalid, open_array, require_layout, require_units, storage, text, time_reference,
+    chunk_bytes, has_node, invalid, open_array, require_layout, require_units, storage, text,
+    time_reference,
 };
 use super::opening::handle_bytes;
 use super::read::Msv4Observation;
@@ -56,31 +57,6 @@ fn antenna_workspace(requested: usize) -> usize {
 /// array handles and coordinates. The conversion API grants 1 MiB for a
 /// pointing read.
 const POINTING_WORKSPACE_BYTES: usize = 64 << 10;
-
-/// The largest chunk one serial Zarr read may decode. Non-regular grids
-/// conservatively charge the whole array, since their chunks may vary.
-fn chunk_bytes(array: &Array<FilesystemStore>) -> usize {
-    let regular = serde_json::to_value(array.chunk_grid().metadata())
-        .ok()
-        .and_then(|metadata| metadata.get("name")?.as_str().map(str::to_owned))
-        .is_some_and(|name| name == "regular");
-    let shape = if regular {
-        array
-            .chunk_grid()
-            .chunk_shape_u64(&vec![0; array.shape().len()])
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| array.shape().to_vec())
-    } else {
-        array.shape().to_vec()
-    };
-    shape
-        .iter()
-        .fold(1_usize, |product, extent| {
-            product.saturating_mul(usize::try_from(*extent).unwrap_or(usize::MAX))
-        })
-        .saturating_mul(array.data_type().fixed_size().unwrap_or(0))
-}
 
 /// The decoded coordinates, directions and final series, with the array
 /// handles, string-label decode and per-antenna bookkeeping held alongside.
@@ -142,9 +118,9 @@ impl Msv4Observation {
             .saturating_add(handle_bytes(&time))
             .saturating_add(handle_bytes(&names))
             .saturating_add(labels)
-            .saturating_add(chunk_bytes(beam).saturating_mul(2))
-            .saturating_add(chunk_bytes(&time).saturating_mul(2))
-            .saturating_add(chunk_bytes(&names).saturating_mul(2)))
+            .saturating_add(chunk_bytes(beam)?.saturating_mul(2))
+            .saturating_add(chunk_bytes(&time)?.saturating_mul(2))
+            .saturating_add(chunk_bytes(&names)?.saturating_mul(2)))
     }
 
     /// The most bytes a pointing query reads and holds

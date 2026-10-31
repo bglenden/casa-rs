@@ -15,6 +15,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
@@ -29,6 +30,8 @@ use casa_observation::{
 use casa_tables::ColumnSchema;
 use casa_types::PrimitiveType;
 use casa_types::{ArrayValue, Value};
+use zarrs::array::{Array, ArraySubset};
+use zarrs::filesystem::FilesystemStore;
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -306,6 +309,68 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
     a_pointing_query_holds_at_most_its_charge(&stores[5].1);
     a_pointing_query_holds_at_most_its_charge(&stores[9].1);
     a_pointing_projection_charges_full_chunks_and_refuses_before_time_decode(&stores[4].1);
+    a_source_chunk_larger_than_its_logical_array_stays_within_the_opening_grant(&stores[3].1);
+}
+
+/// A one-line SOURCE variable can store its value in a much larger Zstd
+/// chunk. Admission must charge that physical decode before opening it.
+fn a_source_chunk_larger_than_its_logical_array_stays_within_the_opening_grant(path: &Path) {
+    let dataset = std::fs::read_dir(path)
+        .expect("store entries")
+        .map(|entry| entry.expect("entry").path())
+        .find(|entry| {
+            entry
+                .join("field_and_source_base_xds/LINE_REST_FREQUENCY")
+                .is_dir()
+        })
+        .expect("source dataset");
+    let variable = dataset.join("field_and_source_base_xds/LINE_REST_FREQUENCY");
+    let name = dataset.file_name().expect("dataset name").to_string_lossy();
+    let key = format!("/{name}/field_and_source_base_xds/LINE_REST_FREQUENCY");
+    let store = Arc::new(FilesystemStore::new(path).expect("store"));
+    let original = Array::open(store.clone(), &key).expect("line array");
+    let values: Vec<f64> = original
+        .retrieve_array_subset(&ArraySubset::new_with_shape(original.shape().to_vec()))
+        .expect("original lines");
+    let metadata = variable.join("zarr.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&metadata).expect("line metadata"))
+            .expect("line document");
+    let chunk_lines = 1_048_576;
+    document["chunk_grid"]["configuration"]["chunk_shape"][1] = chunk_lines.into();
+    std::fs::write(
+        &metadata,
+        serde_json::to_vec(&document).expect("line document"),
+    )
+    .expect("oversized chunk metadata");
+    let array = Array::open(store, &key).expect("oversized line array");
+    let mut chunk = vec![f64::NAN; chunk_lines as usize];
+    chunk[..values.len()].copy_from_slice(&values);
+    array
+        .store_chunk(&[0, 0], &chunk)
+        .expect("compressed chunk");
+    assert!(
+        std::fs::metadata(variable.join("c/0/0"))
+            .expect("stored chunk")
+            .len()
+            < 1 << 20,
+        "the large decoded chunk must remain compressed on disk"
+    );
+    drop(Msv4Observation::open(path).expect("warm oversized source"));
+    let mut granted = 0;
+    let (opened, peak, _) = measured(|| {
+        Msv4Observation::open_granted(
+            path,
+            &OpenOptions::default(),
+            &mut recording(usize::MAX, &mut granted),
+        )
+        .expect("open oversized source")
+    });
+    assert_eq!(opened.catalogue().sources.len(), 1);
+    assert!(
+        peak <= granted as u64,
+        "oversized source chunk held {peak} bytes, beyond its {granted} grant"
+    );
 }
 
 /// Enlarging a regular label chunk increases the universal bound, and an

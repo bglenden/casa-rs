@@ -64,7 +64,10 @@ fn variable(
         )));
     }
     let values = array
-        .retrieve_array_subset(&ArraySubset::new_with_shape(expected.to_vec()))
+        .retrieve_array_subset_opt(
+            &ArraySubset::new_with_shape(expected.to_vec()),
+            &super::codec_options(),
+        )
         .map_err(storage)?;
     Ok(Some((values, array.attributes().clone())))
 }
