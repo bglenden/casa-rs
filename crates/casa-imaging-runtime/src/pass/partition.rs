@@ -472,7 +472,12 @@ impl WaveDemand<'_> {
         }
         DomainStages {
             held,
-            gridding: tiles,
+            gridding: tiles
+                + if self.backend == BackendChoice::Metal {
+                    casa_imaging_metal::partial_grid_bytes(tiles)
+                } else {
+                    0
+                },
             finishing: merging.max(accumulator + images),
             appending: 2 * images + normal,
         }
