@@ -117,8 +117,18 @@ impl Msv4Observation {
         beam: &Array<FilesystemStore>,
         time_axis: &str,
     ) -> Result<usize, ObservationError> {
+        if beam.shape().len() < 3 {
+            return Err(invalid(format!(
+                "{path}/POINTING_BEAM has no pointing axes"
+            )));
+        }
         let time = open_array(&self.store, &format!("{path}/{time_axis}"))?;
         let names = open_array(&self.store, &format!("{path}/antenna_name"))?;
+        if time.shape() != [beam.shape()[0]] || names.shape() != [beam.shape()[1]] {
+            return Err(invalid(format!(
+                "{path}/POINTING_BEAM does not span its coordinates"
+            )));
+        }
         let fixed = names.data_type().fixed_size().unwrap_or(0);
         let labels = usize::try_from(names.shape()[0])
             .unwrap_or(usize::MAX)
@@ -133,7 +143,8 @@ impl Msv4Observation {
             .saturating_add(handle_bytes(&names))
             .saturating_add(labels)
             .saturating_add(chunk_bytes(beam).saturating_mul(2))
-            .saturating_add(chunk_bytes(&time).saturating_mul(2)))
+            .saturating_add(chunk_bytes(&time).saturating_mul(2))
+            .saturating_add(chunk_bytes(&names).saturating_mul(2)))
     }
 
     /// The most bytes a pointing query reads and holds
@@ -150,16 +161,16 @@ impl Msv4Observation {
                 continue;
             }
             let beam = open_array(&self.store, &beam_path)?;
-            let shape = beam.shape();
-            let [times, antennas] = [shape[0], shape.get(1).copied().unwrap_or(0)]
-                .map(|extent| usize::try_from(extent).unwrap_or(usize::MAX));
-            let search = times.min(MOST_SEARCH_TIMES as usize);
             let time_axis = if has_node(&self.store, &format!("{path}/time_pointing"))? {
                 "time_pointing"
             } else {
                 "time"
             };
             let metadata = self.pointing_metadata(&path, &beam, time_axis)?;
+            let shape = beam.shape();
+            let [times, antennas] =
+                [shape[0], shape[1]].map(|extent| usize::try_from(extent).unwrap_or(usize::MAX));
+            let search = times.min(MOST_SEARCH_TIMES as usize);
             most = most.max(pointing_charge(
                 times,
                 times,
@@ -245,7 +256,13 @@ impl Msv4Observation {
                 what: "an MSv4 pointing frame other than fk5, icrs or altaz",
             })?;
         let metadata = self.pointing_metadata(&path, &beam, time_axis)?;
-        let minimum = metadata.saturating_add(antenna_workspace(request.antennas.len()));
+        let minimum = metadata
+            .saturating_add(antenna_workspace(request.antennas.len()))
+            .saturating_add(
+                usize::try_from(shape[0])
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(size_of::<f64>()),
+            );
         if minimum > request.budget_bytes {
             return Err(ObservationError::OverBudget {
                 what: "an MSv4 pointing query",

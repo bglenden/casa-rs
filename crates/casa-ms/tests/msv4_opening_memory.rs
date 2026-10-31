@@ -305,6 +305,70 @@ fn the_msv4_opening_holds_at_most_its_grant_and_its_count() {
     a_pointing_query_holds_at_most_its_charge(&stores[4].1);
     a_pointing_query_holds_at_most_its_charge(&stores[5].1);
     a_pointing_query_holds_at_most_its_charge(&stores[9].1);
+    a_pointing_projection_charges_full_chunks_and_refuses_before_time_decode(&stores[4].1);
+}
+
+/// Enlarging a regular label chunk increases the universal bound, and an
+/// oversized time coordinate is refused from metadata before it is decoded.
+fn a_pointing_projection_charges_full_chunks_and_refuses_before_time_decode(path: &Path) {
+    let opened = Msv4Observation::open(path).expect("open pointing store");
+    let dataset = std::fs::read_dir(path)
+        .expect("store entries")
+        .map(|entry| entry.expect("entry").path())
+        .find(|entry| entry.join("pointing_xds").is_dir())
+        .expect("pointing dataset");
+    let pointing = dataset.join("pointing_xds");
+    let name_metadata = pointing.join("antenna_name/zarr.json");
+    let mut names: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&name_metadata).expect("name metadata"))
+            .expect("name document");
+    let original = names["chunk_grid"]["configuration"]["chunk_shape"][0]
+        .as_u64()
+        .expect("name chunk");
+    let width = names["data_type"]["configuration"]["length_bytes"]
+        .as_u64()
+        .expect("name width");
+    let before = opened.pointing_bytes().expect("pointing bound");
+    let enlarged = original * 4;
+    names["chunk_grid"]["configuration"]["chunk_shape"][0] = enlarged.into();
+    std::fs::write(
+        &name_metadata,
+        serde_json::to_vec(&names).expect("name document"),
+    )
+    .expect("larger name chunk");
+    let after = opened.pointing_bytes().expect("larger pointing bound");
+    assert!(
+        after >= before + 2 * (enlarged - original) as usize * width as usize,
+        "pointing bound {before} -> {after} omits the enlarged name chunk"
+    );
+
+    for variable in ["POINTING_BEAM", "time_pointing"] {
+        let metadata = pointing.join(variable).join("zarr.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata).expect("array metadata"))
+                .expect("array document");
+        document["shape"][0] = 1_000_000_u64.into();
+        std::fs::write(
+            &metadata,
+            serde_json::to_vec(&document).expect("array document"),
+        )
+        .expect("long time coordinate");
+    }
+    let request = PointingRequest {
+        partition: PartitionId(0),
+        direction: PointingDirection::Beam,
+        antennas: (0..opened.catalogue().antennas.len())
+            .map(|antenna| AntennaId(antenna as u32))
+            .collect(),
+        times: 0.0..=1.0,
+        budget_bytes: 1 << 20,
+    };
+    let (answer, peak, _) = measured(|| opened.pointing(&request));
+    assert!(matches!(answer, Err(ObservationError::OverBudget { .. })));
+    assert!(
+        peak <= request.budget_bytes as u64,
+        "refusal read {peak} bytes before the time coordinate admission"
+    );
 }
 
 /// Reading a full dense pointing span must fit the request's decoded-array

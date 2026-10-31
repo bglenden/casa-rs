@@ -26,11 +26,48 @@ use casa_observation::{
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use serde_json::{Map, Value};
+use zarrs::array::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
 
 use super::metadata::{
-    direction_frame, frequency_frame, has_node, invalid, numbers, require_units, strings,
+    direction_frame, frequency_frame, has_node, invalid, open_array, require_layout, require_units,
+    storage, strings,
 };
+
+type NumericSourceVariable = Option<(Vec<f64>, Map<String, Value>)>;
+
+/// A source variable in field-major order, with its second axis named by
+/// `axis`. A flat element count alone cannot distinguish a transposed array.
+fn variable(
+    store: &Arc<FilesystemStore>,
+    path: &str,
+    name: &str,
+    rows: usize,
+    per_row: usize,
+    axis: &str,
+) -> Result<NumericSourceVariable, ObservationError> {
+    let path = format!("{path}/{name}");
+    if !has_node(store, &path)? {
+        return Ok(None);
+    }
+    let array = open_array(store, &path)?;
+    require_layout(&array, &path, "float64", &["field_name", axis])?;
+    let expected = [
+        u64::try_from(rows).unwrap_or(u64::MAX),
+        u64::try_from(per_row).unwrap_or(u64::MAX),
+    ];
+    if array.shape() != expected {
+        return Err(invalid(format!(
+            "{path} has shape {:?}, not {expected:?}",
+            array.shape()
+        )));
+    }
+    let values = array
+        .retrieve_array_subset(&ArraySubset::new_with_shape(expected.to_vec()))
+        .map_err(storage)?;
+    Ok(Some((values, array.attributes().clone())))
+}
 
 /// The record each of the `rows` fields of the `field_and_source` dataset
 /// at `path` states of its source for `window`: `None` for a field whose
@@ -67,26 +104,18 @@ impl Stated {
         path: &str,
         rows: usize,
     ) -> Result<Self, ObservationError> {
-        let lines = if has_node(store, &format!("{path}/line_label"))? {
-            strings(store, &format!("{path}/line_label"))?.len()
+        let label = format!("{path}/line_label");
+        let lines = if has_node(store, &label)? {
+            let array = open_array(store, &label)?;
+            require_layout(&array, &label, "fixed_length_utf32", &["line_label"])?;
+            if array.shape().len() != 1 {
+                return Err(invalid(format!("{label} is not one-dimensional")));
+            }
+            strings(store, &label)?.len()
         } else {
             0
         };
-        let variable = |name: &str, per_row: usize| {
-            let variable = format!("{path}/{name}");
-            if !has_node(store, &variable)? {
-                return Ok(None);
-            }
-            let (values, attributes) = numbers::<f64>(store, &variable)?;
-            if values.len() != rows * per_row {
-                return Err(invalid(format!(
-                    "{variable} holds {} values for {rows} fields of {per_row}",
-                    values.len()
-                )));
-            }
-            Ok(Some((values, attributes)))
-        };
-        let directions = variable("SOURCE_DIRECTION", 2)?
+        let directions = variable(store, path, "SOURCE_DIRECTION", rows, 2, "sky_dir_label")?
             .map(|(values, attributes)| {
                 require_units(&attributes, "rad", "SOURCE_DIRECTION")?;
                 Ok::<_, ObservationError>((
@@ -95,31 +124,56 @@ impl Stated {
                 ))
             })
             .transpose()?;
-        let rest = variable("LINE_REST_FREQUENCY", lines)?
-            .map(|(values, attributes)| {
-                Ok::<_, ObservationError>((
-                    values,
-                    frequency_frame(&attributes, "LINE_REST_FREQUENCY")?,
-                ))
-            })
-            .transpose()?;
-        let velocities = variable("LINE_SYSTEMIC_VELOCITY", lines)?
-            .map(|(values, attributes)| {
-                require_units(&attributes, "m/s", "LINE_SYSTEMIC_VELOCITY")?;
-                Ok::<_, ObservationError>(values)
-            })
-            .transpose()?;
+        let rest = variable(
+            store,
+            path,
+            "LINE_REST_FREQUENCY",
+            rows,
+            lines,
+            "line_label",
+        )?
+        .map(|(values, attributes)| {
+            Ok::<_, ObservationError>((
+                values,
+                frequency_frame(&attributes, "LINE_REST_FREQUENCY")?,
+            ))
+        })
+        .transpose()?;
+        let velocities = variable(
+            store,
+            path,
+            "LINE_SYSTEMIC_VELOCITY",
+            rows,
+            lines,
+            "line_label",
+        )?
+        .map(|(values, attributes)| {
+            require_units(&attributes, "m/s", "LINE_SYSTEMIC_VELOCITY")?;
+            Ok::<_, ObservationError>(values)
+        })
+        .transpose()?;
         let mut names = None;
         for coordinate in ["line_name", "line_names"] {
             let coordinate = format!("{path}/{coordinate}");
             if names.is_none() && has_node(store, &coordinate)? {
-                let stated = strings(store, &coordinate)?;
-                if stated.len() != rows * lines {
+                let array = open_array(store, &coordinate)?;
+                require_layout(
+                    &array,
+                    &coordinate,
+                    "fixed_length_utf32",
+                    &["field_name", "line_label"],
+                )?;
+                let expected = [
+                    u64::try_from(rows).unwrap_or(u64::MAX),
+                    u64::try_from(lines).unwrap_or(u64::MAX),
+                ];
+                if array.shape() != expected {
                     return Err(invalid(format!(
-                        "{coordinate} holds {} names for {rows} fields of {lines} lines",
-                        stated.len()
+                        "{coordinate} has shape {:?}, not {expected:?}",
+                        array.shape()
                     )));
                 }
+                let stated = strings(store, &coordinate)?;
                 names = Some(stated);
             }
         }
@@ -273,4 +327,62 @@ fn same_record(a: &SourceRecord, b: &SourceRecord) -> bool {
         && direction(a) == direction(b)
         && rest(a) == rest(b)
         && velocities(a) == velocities(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use serde_json::json;
+
+    use super::*;
+
+    /// Two fields have the same flattened element count after transposition;
+    /// their values must still be refused before field-major interpretation.
+    #[test]
+    fn source_variables_require_field_major_axes_and_shape() {
+        let root = tempfile::tempdir().expect("root");
+        let store = Arc::new(FilesystemStore::new(root.path()).expect("store"));
+        for (name, axis) in [
+            ("SOURCE_DIRECTION", "sky_dir_label"),
+            ("LINE_REST_FREQUENCY", "line_label"),
+            ("LINE_SYSTEMIC_VELOCITY", "line_label"),
+        ] {
+            let path = root.path().join("field").join(name);
+            fs::create_dir_all(&path).expect("array directory");
+            let metadata = |shape: [u64; 2], dimensions: [&str; 2]| {
+                json!({
+                    "zarr_format": 3,
+                    "node_type": "array",
+                    "shape": shape,
+                    "data_type": "float64",
+                    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": shape}},
+                    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+                    "fill_value": "NaN",
+                    "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}],
+                    "attributes": {},
+                    "dimension_names": dimensions,
+                    "storage_transformers": []
+                })
+            };
+            fs::write(
+                path.join("zarr.json"),
+                serde_json::to_vec(&metadata([2, 2], [axis, "field_name"])).expect("metadata"),
+            )
+            .expect("transposed array");
+            assert!(matches!(
+                variable(&store, "/field", name, 2, 2, axis),
+                Err(ObservationError::InvalidStore { .. })
+            ));
+            fs::write(
+                path.join("zarr.json"),
+                serde_json::to_vec(&metadata([1, 4], ["field_name", axis])).expect("metadata"),
+            )
+            .expect("wrong shape");
+            assert!(matches!(
+                variable(&store, "/field", name, 2, 2, axis),
+                Err(ObservationError::InvalidStore { .. })
+            ));
+        }
+    }
 }
