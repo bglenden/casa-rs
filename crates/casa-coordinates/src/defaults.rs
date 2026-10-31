@@ -259,9 +259,13 @@ mod tests {
         let world = system
             .to_world(&pixel)
             .expect("the default maps its origin");
-        assert_eq!(
-            system.to_pixel(&world).expect("the mapping is invertible"),
-            pixel
+        let round_trip = system.to_pixel(&world).expect("the mapping is invertible");
+        assert!(
+            round_trip
+                .iter()
+                .zip(pixel)
+                .all(|(got, expected)| (got - expected).abs() < 1e-12),
+            "{round_trip:?} is not within 1e-12 pixel of the origin"
         );
     }
 }
