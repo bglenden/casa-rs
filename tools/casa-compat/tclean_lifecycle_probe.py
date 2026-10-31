@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -68,6 +69,7 @@ def stokes_probe(args, common, source):
     """Reuse #970's small-fixture comparator; this is not a T2 science row."""
     from casatasks import tclean
     from casatools import image
+    import numpy as np
     model = args.work / "q-start.model"
     shutil.copytree(str(source) + ".model", model)
     ia = image()
@@ -110,6 +112,22 @@ def stokes_probe(args, common, source):
         if "sumwt" in row:
             ours, casa = row["sumwt"]
             assert abs(ours - casa) <= 5e-5 * abs(casa), row
+        if row.get("beam"):
+            ours, casa = row["beam"]
+            assert ours is not None and casa is not None, row
+            for a, b in zip(ours[:2], casa[:2]):
+                assert abs(a - b) <= 1e-3 * abs(b), row
+    ours, om, _ = t15.read(str(rust_dir / "image.model"))
+    theirs, tm, _ = t15.read(str(casa_dir / "image.model"))
+    fluxes = [float(ours[om].sum()), float(theirs[tm].sum())]
+    assert abs(fluxes[0] - fluxes[1]) <= 1e-5 * abs(fluxes[1]), fluxes
+    centroids = []
+    for values, mask in [(ours, om), (theirs, tm)]:
+        weight = np.where(mask, np.abs(values), 0.0)
+        total = weight.sum()
+        assert total > 0
+        centroids.append([float((np.indices(values.shape)[axis] * weight).sum() / total) for axis in (0, 1)])
+    assert max(abs(a - b) for a, b in zip(*centroids)) <= 1e-3, centroids
     stokes = []
     for prefix in [casa_dir / "image", rust_dir / "image"]:
         ia = image()
@@ -119,7 +137,8 @@ def stokes_probe(args, common, source):
         coords.done()
         ia.done()
     assert stokes == [["I"], ["I"]], stokes
-    return dict(products=rows, output_model_stokes=stokes, warning_observed=True,
+    return dict(products=rows, model_fluxes=fluxes, model_centroids_xy=centroids,
+                output_model_stokes=stokes, warning_observed=True,
                 scope="single Q-labelled seed into I; small production-path T1.5 diagnostic, not representative T2")
 
 
@@ -143,6 +162,8 @@ def main() -> None:
     assert casatasks.version_string() == "6.7.6.14"
     assert casatools.version_string() == "6.7.6-14"
     args.work.mkdir(parents=True, exist_ok=False)
+    os.chdir(args.work)
+    casatasks.casalog.setlogfile(str(args.work / "oracle.log"))
     setup = Path(__file__).with_name("record_casa_returns.py")
     spec = importlib.util.spec_from_file_location("record_returns", setup)
     module = importlib.util.module_from_spec(spec)
@@ -155,7 +176,10 @@ def main() -> None:
     tb.close()
     common = dict(vis=str(vis), datacolumn="data", imsize=[64], cell="2arcsec", weighting="natural",
                   niter=10, gain=0.1, threshold="0Jy", pblimit=-0.1)
-    prefix = args.work / "casa"
+    # CASA 6.7.6.14's incrementImageNameList incorrectly drops the first
+    # two directory characters for absolute prefixes. Probe the ordinary
+    # relative workflow separately and retain the absolute-path failure.
+    prefix = Path("casa")
     first = casatasks.tclean(imagename=str(prefix), **common)
     first_flux = model_flux(prefix)
     second = casatasks.tclean(imagename=str(prefix), **common)
@@ -167,6 +191,11 @@ def main() -> None:
     except Exception as error:
         conflict = {"type": type(error).__name__, "message": str(error)}
     assert conflict is not None, "CASA must refuse startmodel with its existing model"
+    absolute_numbering = None
+    try:
+        casatasks.tclean(imagename=str(args.work / "casa"), restart=False, **common)
+    except Exception as error:
+        absolute_numbering = {"type": type(error).__name__, "message": str(error)}
     numbered = []
     for expected in ["casa_2", "casa_3"]:
         before = snapshot(args.work)
@@ -199,6 +228,7 @@ def main() -> None:
         native=dict(first_status=initial["reply"].get("status"), repeated=repeated,
                     unchanged_output_files=len(before)),
         stokes_startmodel=stokes_result,
+        casa_absolute_restart_false_error=absolute_numbering,
         result="passed lifecycle assertions; restart equivalence remains unfinished",
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
