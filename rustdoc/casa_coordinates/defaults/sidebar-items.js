@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HI_REST_FREQUENCY_HZ"],"fn":["coordinate_system_for_shape","direction_coordinate","linear_coordinate","obs_info","spectral_coordinate","stokes_coordinate"]};

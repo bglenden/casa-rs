@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["coordinate","coordinate_system","direction","error","fits","linear","obs_info","projection","spectral","stokes","tabular"]};
+window.SIDEBAR_ITEMS = {"mod":["coordinate","coordinate_system","defaults","direction","error","fits","linear","obs_info","projection","spectral","stokes","tabular"]};
