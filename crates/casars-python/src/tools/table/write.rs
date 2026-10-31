@@ -233,6 +233,11 @@ impl State {
                 }
             });
         }
+        // A memory table has no disk or lock file; changes stay in its handle.
+        if open.table.is_memory() {
+            change(&mut open.table)?;
+            return Ok(CasaValue::Bool(true));
+        }
         let automatic = open.lock.automatic();
         if automatic {
             if !open.table.lock(LockType::Write, open.lock.attempts())? {

@@ -22,18 +22,25 @@ use crate::storage::{CompositeStorage, StorageSnapshot, TableInfo};
 use crate::table::columns::collect_undefined_cells_for_schema;
 use crate::table_impl::TableImpl;
 
+mod cache_paths;
 mod columns;
+mod description;
 mod generated_array;
+mod incremental_check;
 mod io;
 mod locking;
 mod mutation;
 mod persisted_rows;
 mod query;
+mod root_rows;
 mod streamed_scalar;
 mod structure;
 mod virtual_columns;
 
+pub use cache_paths::table_cache_name;
+pub use description::StoredTableDescription;
 pub use generated_array::{GeneratedArrayColumn, GeneratedArrayValueRun};
+pub use incremental_check::{IncrementalCorruption, IncrementalLayoutCheck};
 pub use streamed_scalar::{
     STREAMING_SCALAR_COLUMN_BUFFER_BYTES, StreamedScalarColumn, StreamedScalarType,
     StreamedScalarValues, StreamingScalarColumnWriter,

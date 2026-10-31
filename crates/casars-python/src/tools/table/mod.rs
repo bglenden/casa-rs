@@ -17,18 +17,25 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod cache;
 mod cell_convert;
 mod cell_value;
 mod copy;
+mod create;
+mod create_multi_move;
+mod description;
 mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod read;
 mod registry;
+mod rownumbers;
 mod slices;
 mod state;
+mod statistics;
 mod stubs;
 pub(crate) mod surface;
+mod testincr;
 mod values;
 mod write;
 mod write_cells;

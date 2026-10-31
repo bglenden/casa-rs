@@ -291,6 +291,7 @@ STRUCTURE_TABLES = (
     "shrink_user.table", "shrink_permanent.table", "tiled_multi.table",
     "copy_plain.table", "copy_values_big.table", "copy_rows.table", "copy_self.table",
     "copy_ms.ms", "casa_copy_values.table", "casa_copyrows.table", "casa_copy_ms.ms",
+    "created_aips.table", "casa_created_aips.table", "casa_created_default.table",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -358,6 +359,22 @@ def structure_dumps(tool_class, directory):
         )
         tool.done()
     return dumps
+
+
+def create_interop_table(tool_class, path, *, aipsio):
+    """Create a small table whose layout and cells the other library reads."""
+    description = {"id": {"valueType": "int"}, "value": {"valueType": "double"}}
+    options = {}
+    if aipsio:
+        options["dminfo"] = {
+            "*1": {"TYPE": "StManAipsIO", "NAME": "", "COLUMNS": ["id", "value"], "SPEC": {}}
+        }
+    tool = tool_class()
+    assert tool.create(str(path.resolve()), description, nrow=2, **options)
+    for row in range(2):
+        assert tool.putcell("id", row, 10 + row)
+        assert tool.putcell("value", row, 0.5 + row)
+    assert tool.done()
 
 
 def command_structure_write(fixture, ms, out_dir, out_json):
@@ -456,6 +473,7 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     assert tool.open(str(Path(ms).resolve()))
     tool.copy(str((out_dir / "copy_ms.ms").resolve())).done()
     tool.done()
+    create_interop_table(tools.table, out_dir / "created_aips.table", aipsio=True)
     write_json(out_json, structure_dumps(tools.table, out_dir))
 
 
@@ -548,6 +566,8 @@ def command_structure_casa_write(ms, out_dir, fixture):
         tool.putcell("a", row, row + 1)
         tool.putcell("b", row, 0.5 * row)
     tool.close()
+    create_interop_table(table, out_dir / "casa_created_aips.table", aipsio=True)
+    create_interop_table(table, out_dir / "casa_created_default.table", aipsio=False)
     source = table()
     source.open(str(fixture))
     for name in ("casa_copy_values.table", "casa_copyrows.table", "casa_copy_ms.ms"):

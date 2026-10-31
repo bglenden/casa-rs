@@ -60,7 +60,7 @@ pub(crate) struct CopyRequest {
 }
 
 /// `makeEndianFormat`: the byte order a name asks for.
-fn endian_format(name: &str) -> Result<EndianFormat, Fail> {
+pub(super) fn endian_format(name: &str) -> Result<EndianFormat, Fail> {
     match name.to_ascii_lowercase().as_str() {
         "big" => Ok(EndianFormat::BigEndian),
         "little" => Ok(EndianFormat::LittleEndian),
@@ -150,7 +150,7 @@ fn resolved(path: &Path) -> Result<PathBuf, Fail> {
 }
 
 /// Whether two paths name the same directory.
-fn same_directory(a: &Path, b: &Path) -> bool {
+pub(super) fn same_directory(a: &Path, b: &Path) -> bool {
     match (fs::canonicalize(a), fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
@@ -161,7 +161,7 @@ fn same_directory(a: &Path, b: &Path) -> bool {
 /// directory into itself or remove the table it copies. The places are
 /// compared with their symbolic links resolved, so that a link to the table
 /// (or to a directory it lies in) cannot hide the nesting.
-fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
+pub(super) fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
     let (real_target, real_source) = (resolved(target)?, resolved(source)?);
     if real_target.starts_with(&real_source) || real_source.starts_with(&real_target) {
         return Err(Fail::Runtime(format!(
@@ -177,7 +177,7 @@ fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
 /// table (a directory with a `table.dat`) or an empty directory. casacore
 /// removes any directory there; casa-rs refuses anything else, so that a slip
 /// of the name does not delete a directory of other files.
-fn check_target(target: &Path) -> Result<(), Fail> {
+pub(super) fn check_target(target: &Path) -> Result<(), Fail> {
     let refusal = || {
         Fail::Runtime(format!(
             "Table {} already exists (and is not a true table directory)",
@@ -202,7 +202,7 @@ fn check_target(target: &Path) -> Result<(), Fail> {
 /// to replace a table its own process has open; a table another process has
 /// open would be replaced under its feet, and that process would write its
 /// stale rows into the new table.
-fn used_by_another_process(target: &Path) -> bool {
+pub(super) fn used_by_another_process(target: &Path) -> bool {
     target.join("table.dat").is_file()
         && Table::open_with_lock(
             TableOptions::new(target),
@@ -212,7 +212,7 @@ fn used_by_another_process(target: &Path) -> bool {
 }
 
 /// A name beside `target` for a copy to be made under until it is complete.
-fn staging_path(target: &Path) -> PathBuf {
+pub(super) fn staging_path(target: &Path) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let name = target
         .file_name()
@@ -228,7 +228,10 @@ fn staging_path(target: &Path) -> PathBuf {
 /// Makes the copy with `build` at a name beside `target`, then puts it in
 /// place of what is at `target`. A copy that fails part-way is removed and
 /// leaves the table at `target` as it was.
-fn replace_with(target: &Path, build: impl FnOnce(&Path) -> Result<(), Fail>) -> Result<(), Fail> {
+pub(super) fn replace_with(
+    target: &Path,
+    build: impl FnOnce(&Path) -> Result<(), Fail>,
+) -> Result<(), Fail> {
     let staging = staging_path(target);
     let placed = build(&staging).and_then(|()| {
         check_target(target)?;
@@ -636,7 +639,7 @@ impl State {
     /// (casacore's `prepareCopyRename` looks the target up in its table
     /// cache): that tool would go on writing its rows into the new table. A
     /// tool busy in another thread may be using it, and counts as using it.
-    fn refuse_open_target(&self, target: &Path) -> Result<(), Fail> {
+    pub(super) fn refuse_open_target(&self, target: &Path) -> Result<(), Fail> {
         let mut in_use = false;
         registry::for_each_other(self.id, |tool| {
             in_use |= tool.is_none_or(|tool| {

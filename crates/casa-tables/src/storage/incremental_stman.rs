@@ -40,6 +40,10 @@ use super::{ColumnSources, EncodedCells, RequiredScalarColumnData, StorageError}
 use crate::table::GeneratedScalarValueRun;
 
 mod cells;
+mod check_layout;
+
+pub use check_layout::IncrementalCorruption;
+pub(crate) use check_layout::check_incremental_layout;
 
 use cells::{decode_array_cell, encode_cell, flatten_array_cells};
 
@@ -100,6 +104,7 @@ struct IsmHeader {
 /// `rows[nused]` is the total row count sentinel.
 #[derive(Debug, Clone)]
 struct IsmIndex {
+    used: usize,
     rows: Vec<u64>,
     bucket_nrs: Vec<u32>,
 }
@@ -207,6 +212,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
 
     if index_data.is_empty() {
         return Ok(IsmIndex {
+            used: 0,
             rows: vec![0],
             bucket_nrs: vec![],
         });
@@ -215,7 +221,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     let mut buf = AipsIoSliceReader::new(&index_data, header.io_order)?;
     let version = buf.getstart("ISMIndex")?;
 
-    let _nused = buf.read_u32()?;
+    let used = buf.read_u32()? as usize;
 
     let rows = if version == 1 {
         buf.read_block_u32()?
@@ -229,7 +235,11 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     let bucket_nrs = buf.read_block_u32()?;
     buf.getend()?;
 
-    Ok(IsmIndex { rows, bucket_nrs })
+    Ok(IsmIndex {
+        used,
+        rows,
+        bucket_nrs,
+    })
 }
 
 // ---------------------------------------------------------------------------

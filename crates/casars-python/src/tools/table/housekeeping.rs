@@ -47,6 +47,7 @@ impl State {
     /// with no table open.
     pub(super) fn endianformat(&self, log: &mut Vec<LogLine>) -> Reply {
         let big = match self.open.as_ref() {
+            Some(open) if open.table.is_memory() => cfg!(target_endian = "big"),
             Some(open) => match open.table.stored_endian_format()? {
                 Some(format) => format == EndianFormat::BigEndian,
                 None => {
@@ -92,6 +93,9 @@ impl State {
             no_table_specified(log);
             return Ok(CasaValue::Bool(false));
         };
+        if open.table.is_memory() {
+            return Ok(CasaValue::Bool(true));
+        }
         if open.table.has_lock(LockType::Read) {
             open.table.resync_locked()?;
         } else {
@@ -116,6 +120,9 @@ impl State {
             no_table_specified(log);
             return Ok(CasaValue::Bool(false));
         };
+        if open.table.is_memory() {
+            return Ok(CasaValue::Bool(false));
+        }
         let took_lock = !open.table.has_lock(LockType::Read);
         if took_lock && !open.table.lock(LockType::Read, 1)? {
             return Ok(CasaValue::Bool(true));

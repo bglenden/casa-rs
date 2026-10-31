@@ -2,6 +2,7 @@
 //! The table the tool has open, its lock settings, and what a call may fail
 //! with.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -126,7 +127,7 @@ impl LockSettings {
         u32::try_from(self.maxwait.max(0)).unwrap_or(u32::MAX)
     }
 
-    fn from_request(request: &LockRequest) -> Result<Self, Fail> {
+    pub(super) fn from_request(request: &LockRequest) -> Result<Self, Fail> {
         let name = request.option.as_deref().unwrap_or("default");
         let (_, mode, reported) = OPTIONS
             .iter()
@@ -153,6 +154,8 @@ pub(super) struct Open {
     pub(super) name: PathBuf,
     pub(super) writable: bool,
     pub(super) lock: LockSettings,
+    /// Memory columns added after creation have a different CASA description.
+    pub(super) memory_added_columns: HashSet<String>,
     /// The modify counter the last `datachanged()` saw (casacore starts a
     /// table at 0).
     pub(super) last_modify_counter: u32,
@@ -178,6 +181,7 @@ impl Open {
             name,
             writable,
             lock,
+            memory_added_columns: HashSet::new(),
             last_modify_counter: 0,
         })
     }

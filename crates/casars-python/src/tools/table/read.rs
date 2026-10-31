@@ -8,7 +8,7 @@
 //! `getcol` of a column of `int64` raises "Unknown casa DataType!"; casa-rs
 //! returns the `int64` array.
 
-use casa_tables::{ColumnSchema, ColumnType};
+use casa_tables::{ColumnSchema, ColumnType, Table, TableOptions};
 use casa_types::{PrimitiveType, RecordValue, ScalarValue, Value};
 
 use super::state::{Fail, Open, State, no_table_specified};
@@ -621,7 +621,47 @@ impl State {
             .data_manager_info()
             .iter()
             .find(|manager| manager.columns.iter().any(|name| name == column));
+        let reference_manager = if manager.is_none() && open.table.is_reference_table()? {
+            let root = open.table.simple_reference_root()?.ok_or_else(|| {
+                Fail::Unsupported("table.getcoldesc for this reference table is not yet implemented in casa-rs (#1028)".into())
+            })?;
+            let root_table = Table::open(TableOptions::new(root))?;
+            let manager = root_table
+                .data_manager_info()
+                .iter()
+                .find(|manager| manager.columns.iter().any(|name| name == column))
+                .ok_or_else(|| {
+                    Fail::Runtime(format!("No manager found for reference column {column}"))
+                })?;
+            Some((manager.dm_type.clone(), manager.name.clone()))
+        } else {
+            None
+        };
         let options = schema.options();
+        let default_type = || {
+            if open.table.is_memory() {
+                if open.memory_added_columns.contains(column) {
+                    "MemoryStMan"
+                } else {
+                    "StandardStMan"
+                }
+                .to_string()
+            } else {
+                String::new()
+            }
+        };
+        let default_group = || {
+            if open.table.is_memory() {
+                if open.memory_added_columns.contains(column) {
+                    "MSMTAB"
+                } else {
+                    "StandardStMan"
+                }
+                .to_string()
+            } else {
+                String::new()
+            }
+        };
         let mut option = i64::from(options.direct) | i64::from(options.undefined) << 1;
         let mut fields = vec![
             ("comment", CasaValue::Text(schema.comment().to_string())),
@@ -630,7 +670,8 @@ impl State {
                 CasaValue::Text(
                     manager
                         .map(|manager| manager.name.clone())
-                        .unwrap_or_default(),
+                        .or_else(|| reference_manager.as_ref().map(|(_, group)| group.clone()))
+                        .unwrap_or_else(default_group),
                 ),
             ),
             (
@@ -638,7 +679,8 @@ impl State {
                 CasaValue::Text(
                     manager
                         .map(|manager| manager.dm_type.clone())
-                        .unwrap_or_default(),
+                        .or_else(|| reference_manager.as_ref().map(|(kind, _)| kind.clone()))
+                        .unwrap_or_else(default_type),
                 ),
             ),
             (
@@ -680,12 +722,36 @@ impl State {
 
     /// `getdminfo()`: a record per storage manager (`*1`, `*2`, ... in the
     /// order the table lists them) with its columns, name, sequence number,
-    /// type and `SPEC`. casa-tables keeps the `SPEC` of no manager, and
-    /// `StManAipsIO`'s is empty, so a table of any other manager is refused.
+    /// type and `SPEC`. MemoryStMan and StManAipsIO have an empty `SPEC`;
+    /// other on-disk managers are refused because casa-tables does not yet
+    /// retain their specifications.
     pub(super) fn getdminfo(&self, log: &mut Vec<LogLine>) -> Reply {
         let Some(open) = self.table(log) else {
             return Ok(CasaValue::empty_record());
         };
+        if open.table.is_memory() {
+            let mut columns: Vec<String> = open
+                .table
+                .schema()
+                .into_iter()
+                .flat_map(|schema| schema.columns())
+                .map(|column| column.name().to_string())
+                .collect();
+            if columns.is_empty() {
+                return Ok(CasaValue::empty_record());
+            }
+            columns.sort();
+            return Ok(CasaValue::record([(
+                "*1",
+                CasaValue::record([
+                    ("COLUMNS", CasaValue::Texts(columns)),
+                    ("NAME", CasaValue::Text("MSMTAB".into())),
+                    ("SEQNR", CasaValue::Int(0)),
+                    ("SPEC", CasaValue::empty_record()),
+                    ("TYPE", CasaValue::Text("MemoryStMan".into())),
+                ]),
+            )]));
+        }
         let managers = open.table.data_manager_info();
         if let Some(other) = managers
             .iter()

@@ -18,6 +18,9 @@ Departures, each recorded in `docs/CASA (C++) bugs.md`:
   ("TSM: ..."); only the start of the message is compared.
 * An empty string array has a NumPy width of its own in CASA; only its kind
   is compared.
+* The new `statistics` recordings compare floating-point results to 1e-7
+  relative tolerance: CASA switches accumulation algorithms with data size,
+  which changes rounding. Field names, types and counts are still exact.
 
 Log messages (CASA's INFO "No table opened." and the like) go to the Python
 logger `casars.tools.table` and are not compared.
@@ -234,7 +237,20 @@ def test_the_tool_answers_as_casa_does(
                 same_error(got["error"], step["error"], where)
         else:
             assert "value" in got, f"{where}: CASA gave a value, casa-rs raised {got['error']}"
-            same_value(got["value"], step["value"], where)
+            if scenario in {"statistics_scalar", "statistics_ms"} and step["method"] == "statistics":
+                actual = decode_value(got["value"], path)
+                expected = decode_value(step["value"], path)
+                assert actual.keys() == expected.keys(), where
+                for name in expected:
+                    assert actual[name].keys() == expected[name].keys(), where
+                    for field in expected[name]:
+                        assert type(actual[name][field]) is float, where
+                        if field == "npts":
+                            assert actual[name][field] == expected[name][field], where
+                        else:
+                            assert actual[name][field] == pytest.approx(expected[name][field], rel=1e-7, abs=0), where
+            else:
+                same_value(got["value"], step["value"], where)
     tool.done()
     for other in bound.values():
         other.done()

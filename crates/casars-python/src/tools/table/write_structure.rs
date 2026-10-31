@@ -123,7 +123,8 @@ impl State {
     /// `renamecol(oldname, newname)`.
     pub(super) fn renamecol(&mut self, old: String, new: String, log: &mut Vec<LogLine>) -> Reply {
         let path = self.table_path();
-        self.write_with(
+        let (old_memory, new_memory) = (old.clone(), new.clone());
+        let result = self.write_with(
             Target::Structure("Table::renameColumn"),
             log,
             move |table| {
@@ -138,16 +139,27 @@ impl State {
                         "Table::renameColumn; new column {new} already exists in table {path}"
                     )));
                 }
-                table.rename_column_in_place(&old, &new)?;
+                if table.is_memory() {
+                    table.rename_column(&old, &new)?;
+                } else {
+                    table.rename_column_in_place(&old, &new)?;
+                }
                 Ok(Persist::Done)
             },
-        )
+        );
+        if matches!(&result, Ok(CasaValue::Bool(true)))
+            && let Some(open) = self.open.as_mut()
+            && open.memory_added_columns.remove(&old_memory)
+        {
+            open.memory_added_columns.insert(new_memory);
+        }
+        result
     }
 
     /// `removecols(columnames)`: all or none of the columns go.
     pub(super) fn removecols(&mut self, columns: Vec<String>, log: &mut Vec<LogLine>) -> Reply {
         let path = self.table_path();
-        self.write_with(
+        let result = self.write_with(
             Target::Structure("Table::removeColumn"),
             log,
             move |table| {
@@ -172,6 +184,12 @@ impl State {
                 // One StManAipsIO group keeps every column in one file, so a
                 // column cannot be taken out of it in place: the table is
                 // written again without it.
+                if table.is_memory() {
+                    for name in &distinct {
+                        table.remove_column(name)?;
+                    }
+                    return Ok(Persist::Done);
+                }
                 match table.single_stman_aipsio_options()? {
                     Some(options) => {
                         for name in &distinct {
@@ -183,7 +201,15 @@ impl State {
                 }
                 Ok(Persist::Done)
             },
-        )
+        );
+        if let Some(open) = self.open.as_mut()
+            && open.table.is_memory()
+        {
+            let schema = open.table.schema();
+            open.memory_added_columns
+                .retain(|name| schema.and_then(|schema| schema.column(name)).is_some());
+        }
+        result
     }
 
     /// `addcols(desc, dminfo)`: columns of default values (a cell of an array
@@ -197,7 +223,19 @@ impl State {
         with_dminfo: bool,
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Structure("Table::addColumn"), log, move |table| {
+        let before = self
+            .open
+            .as_ref()
+            .filter(|open| open.table.is_memory())
+            .map(|open| {
+                open.table
+                    .schema()
+                    .into_iter()
+                    .flat_map(|schema| schema.columns())
+                    .map(|column| column.name().to_string())
+                    .collect::<std::collections::HashSet<_>>()
+            });
+        let result = self.write_with(Target::Structure("Table::addColumn"), log, move |table| {
             // The description is a record, whose fields casatools sorts by
             // name: the columns are added in that order.
             let mut description = description;
@@ -228,7 +266,11 @@ impl State {
                         .to_string(),
                 ));
             }
-            let options = whole_table(table, "addcols")?;
+            let options = if table.is_memory() {
+                None
+            } else {
+                Some(whole_table(table, "addcols")?)
+            };
             for column in columns {
                 let name = column.schema.name().to_string();
                 let default = default_value(&column.schema);
@@ -237,13 +279,26 @@ impl State {
                     table.set_column_keywords(&name, keywords);
                 }
             }
-            table.save(options)?;
-            // The new columns are in the manager now: the handle takes its
-            // description of the managers from the disk (no row is removed,
-            // so the count last published is the table's).
-            table.resync()?;
+            if let Some(options) = options {
+                table.save(options)?;
+                // Refresh the data-manager description after a full save.
+                table.resync()?;
+            }
             Ok(Persist::Done)
-        })
+        });
+        if let (Some(before), Some(open)) = (before, self.open.as_mut()) {
+            for column in open
+                .table
+                .schema()
+                .into_iter()
+                .flat_map(|schema| schema.columns())
+            {
+                if !before.contains(column.name()) {
+                    open.memory_added_columns.insert(column.name().to_string());
+                }
+            }
+        }
+        result
     }
 
     /// `addrows(nrow)`: rows of default values, a cell of an array of
@@ -258,12 +313,18 @@ impl State {
             if count == 0 {
                 return Ok(Persist::Nothing);
             }
-            let options = whole_table(table, "addrows")?;
+            let options = if table.is_memory() {
+                None
+            } else {
+                Some(whole_table(table, "addrows")?)
+            };
             let row = default_row(table);
             for _ in 0..count {
                 table.add_row(row.clone())?;
             }
-            table.save(options)?;
+            if let Some(options) = options {
+                table.save(options)?;
+            }
             Ok(Persist::Done)
         })
     }
@@ -313,9 +374,15 @@ impl State {
                     !stays
                 })
                 .collect();
-            let options = whole_table(table, "removerows")?;
+            let options = if table.is_memory() {
+                None
+            } else {
+                Some(whole_table(table, "removerows")?)
+            };
             table.remove_rows(&removed)?;
-            table.save(options)?;
+            if let Some(options) = options {
+                table.save(options)?;
+            }
             Ok(Persist::Done)
         })
     }
