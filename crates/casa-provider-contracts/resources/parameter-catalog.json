@@ -46,7 +46,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Calibration workflow to run from the launcher form",
+        "summary": "Calibration workflow to run",
         "details": null,
         "examples": [
           "apply"
