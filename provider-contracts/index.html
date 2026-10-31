@@ -972,11 +972,13 @@ parameter surface has exactly one task-application entry that references the
 surface by stable ID, and every application is a task: the catalog's 26
 entries are its 26 task surfaces. Display name, category, and protocol
 family are projected from the referenced surface rather than copied into
-another inventory. Each application adds only executable/package identity,
-its explicit override variable, interaction and presentation metadata, and
-packaging visibility. (ADR-0017 keeps the older presentation fields, such as
-<code>shell_kind</code> and <code>interaction</code>, until the CASA-shaped Python work reshapes
-them.) Several surfaces may share one executable, a family whose first word
+another inventory. Each application adds only executable/package identity
+(<code>launch</code>), its explicit override variable, the kinds of dataset it reads,
+and packaging visibility (<code>include_in_suite</code>). Catalog schema 2 (#972)
+dropped the presentation fields only the retired terminal and Swift
+frontends read (<code>kind</code>, <code>shell_kind</code>, <code>interaction</code>, <code>show_in_tui</code>,
+<code>show_in_swift</code>), and an entry carrying any other field is refused. Several
+surfaces may share one executable, a family whose first word
 names the surface: <code>imhead</code> and <code>imstat</code> run <code>imexplore</code>; <code>plotms</code> runs
 <code>msexplore</code>; <code>split</code> runs <code>mstransform</code>; and <code>gaincal</code>, <code>bandpass</code>,
 <code>applycal</code>, <code>fluxscale</code>, and <code>gencal</code> run <code>calibrate</code>, whose own <code>calibrate</code>

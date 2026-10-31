@@ -751,9 +751,12 @@
   its task's own executable.</li>
 <li><code>casars.tools</code> provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
-  its imports (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>), <code>measures</code> (<code>me</code>) and
-  <code>quanta</code> (<code>qa</code>). Methods casa-rs does not implement yet raise
-  <code>NotImplementedError</code>. A tool's constructor takes only casa-rs's controls,
+  its imports (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>), <code>measures</code> (<code>me</code>),
+  <code>quanta</code> (<code>qa</code>), <code>componentlist</code> (<code>cl</code>), <code>image</code> (<code>ia</code>), <code>coordsys</code>
+  (<code>cs</code>), <code>table</code> (<code>tb</code>), <code>msmetadata</code> (<code>msmd</code>) and <code>ms</code>. Each has every
+  method of CASA 6.7.6.14's binding; a method casa-rs does not implement yet
+  raises <code>NotImplementedError</code> naming the issue that records it (#1027 to
+  #1030 for the last five). A tool's constructor takes only casa-rs's controls,
   keyword-only: <code>simulator(*, memory_budget=None, backend='auto',
   workers=None)</code> caps the memory <code>close</code> holds (bytes), names the device to
   predict on (<code>'auto'</code>, <code>'cpu'</code> or <code>'metal'</code>) and the threads to keep busy;
