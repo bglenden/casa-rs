@@ -137,8 +137,13 @@ def stokes_probe(args, common, source):
         coords.done()
         ia.done()
     assert stokes == [["I"], ["I"]], stokes
+    casa_members = sorted(p.name for p in casa_dir.iterdir() if p.name.startswith("image.") and p.is_dir())
+    native_members = sorted(p.name for p in rust_dir.iterdir() if p.name.startswith("image.") and p.is_dir())
     return dict(products=rows, model_fluxes=fluxes, model_centroids_xy=centroids,
                 output_model_stokes=stokes, warning_observed=True,
+                casa_members=casa_members, native_members=native_members,
+                missing_native_members=sorted(set(casa_members) - set(native_members)),
+                extra_native_members=sorted(set(native_members) - set(casa_members)),
                 scope="single Q-labelled seed into I; small production-path T1.5 diagnostic, not representative T2")
 
 
