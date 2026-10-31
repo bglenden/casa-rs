@@ -4,6 +4,9 @@
 
 use std::ops::Range;
 
+#[cfg(feature = "grouped-spread-prototype")]
+mod grouped_spread;
+
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CfKey, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
     DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
@@ -82,6 +85,8 @@ pub struct MetalBackend<'cf> {
     noise_rows: Option<Buffer>,
     noise_terms: Option<Buffer>,
     noise_command: Option<Command>,
+    #[cfg(feature = "grouped-spread-prototype")]
+    grouping: Option<grouped_spread::Grouping>,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -94,6 +99,7 @@ pub struct MetalBackend<'cf> {
 struct Usage {
     applies: u64,
     samples: u64,
+    dispatched_samples: u64,
     predicted: u64,
     sub_blocks: u64,
     prepare: std::time::Duration,
@@ -248,6 +254,8 @@ impl<'cf> MetalBackend<'cf> {
             noise_rows: None,
             noise_terms: None,
             noise_command: None,
+            #[cfg(feature = "grouped-spread-prototype")]
+            grouping: None,
         })
     }
 
@@ -668,7 +676,8 @@ impl<'cf> MetalBackend<'cf> {
                     sumwt.as_deref_mut(),
                 );
                 self.usage.prepare += started.elapsed();
-                filled?;
+                let prepared = filled?;
+                self.usage.dispatched_samples += prepared as u64;
                 self.commit(
                     slot,
                     kernel,
@@ -676,7 +685,7 @@ impl<'cf> MetalBackend<'cf> {
                     model,
                     native,
                     params,
-                    start..start + count,
+                    start..start + prepared,
                 )?;
                 self.ring[slot].reads_back = reads_back;
                 start += count;
@@ -730,7 +739,7 @@ impl<'cf> MetalBackend<'cf> {
         segments: &[(usize, Range<usize>)],
         targets: &Targets<'_>,
         mut sumwt: Option<&mut [f64]>,
-    ) -> Result<(), OperatorError> {
+    ) -> Result<usize, OperatorError> {
         let npol = parts[0].npol;
         let count = segments.iter().map(|(_, range)| range.len()).sum::<usize>();
         let slot = &mut self.ring[slot];
@@ -793,7 +802,14 @@ impl<'cf> MetalBackend<'cf> {
             }
             at += range.len();
         }
-        Ok(())
+        #[cfg(feature = "grouped-spread-prototype")]
+        if kernel == Kernel::Spread {
+            let grouping = self
+                .grouping
+                .get_or_insert_with(grouped_spread::Grouping::new);
+            return Ok(grouping.reduce(records, values, weights, npol));
+        }
+        Ok(count)
     }
 
     /// Encode and commit `kernel` over the samples (or, for
@@ -1042,6 +1058,7 @@ impl Drop for MetalBackend<'_> {
         let Usage {
             applies,
             samples,
+            dispatched_samples,
             predicted,
             sub_blocks,
             prepare,
@@ -1056,6 +1073,7 @@ impl Drop for MetalBackend<'_> {
                 completed = !failed && !std::thread::panicking(),
                 applies,
                 samples,
+                dispatched_samples,
                 predicted,
                 sub_blocks,
                 kernel_cells = self.tables.len(),

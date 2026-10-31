@@ -68,12 +68,27 @@ const SAMPLE_BYTES: usize = 40;
 const SOURCE_BYTES: usize = 24;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 
-/// The most device memory one backend's ring holds for blocks of `npol`
-/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
+/// The most host/device memory one backend's ring and optional experimental
+/// grouping scratch hold for blocks of `npol` visibility polarizations;
+/// its kernel copies add [`kernel_bytes`], and a
 /// native prediction its batch ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
     (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+        + grouping_bytes()
+}
+
+/// Extra host scratch charged per backend for the local #991 grouping
+/// experiment: bounded hash buckets and four-correlation f64 sums. Zero in
+/// ordinary builds; the scratch is reused across ring-slot preparations.
+#[must_use]
+pub const fn grouping_bytes() -> u64 {
+    if cfg!(feature = "grouped-spread-prototype") {
+        let buckets = (MAX_SUB * 8).div_ceil(7).next_power_of_two();
+        (buckets * (SAMPLE_BYTES + size_of::<usize>() + 1) + MAX_SUB * 96 + 256) as u64
+    } else {
+        0
+    }
 }
 
 /// Device bytes of one kernel table record (`records::TableRecord`).

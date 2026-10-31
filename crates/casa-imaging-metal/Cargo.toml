@@ -10,6 +10,10 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# Local #991 contribution-reduction experiment, not production adoption.
+grouped-spread-prototype = []
+
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-numerics = { path = "../casa-numerics" }
