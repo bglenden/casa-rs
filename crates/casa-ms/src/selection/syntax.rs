@@ -213,6 +213,52 @@ fn parse_channel_selection(value: &str) -> MsResult<ChannelSelection> {
     Ok(ChannelSelection { segments })
 }
 
+/// One element of a CASA `intent` selector: a `STATE_ID` (from a number or
+/// a range `a~b`), or an `OBS_MODE` pattern, matched against a whole
+/// `OBS_MODE`, with `*` matching any run of characters
+/// ([`IntentSelector::matches`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IntentSelector {
+    /// A state number.
+    State(i32),
+    /// An `OBS_MODE` pattern.
+    Mode(String),
+}
+
+impl IntentSelector {
+    /// Whether this element selects `obs_mode` as a pattern does; a state
+    /// number matches no mode.
+    #[must_use]
+    pub fn matches(&self, obs_mode: &str) -> bool {
+        match self {
+            Self::State(_) => false,
+            Self::Mode(pattern) => super::parser::matches_simple_glob(pattern, obs_mode),
+        }
+    }
+}
+
+/// The elements of the CASA `intent` selector `text`: comma-separated state
+/// numbers, state ranges and `OBS_MODE` patterns, in order, empty elements
+/// skipped.
+#[must_use]
+pub fn parse_intent_selector(text: &str) -> Vec<IntentSelector> {
+    let mut selectors = Vec::new();
+    for part in text
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if let Some((start, end)) = parse_numeric_range(part) {
+            selectors.extend((start..=end).map(IntentSelector::State));
+        } else if let Ok(id) = part.parse::<i32>() {
+            selectors.push(IntentSelector::State(id));
+        } else {
+            selectors.push(IntentSelector::Mode(part.to_string()));
+        }
+    }
+    selectors
+}
+
 pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
     let (start, end) = value.split_once('~')?;
     let start = start.trim().parse::<i32>().ok()?;

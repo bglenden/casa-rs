@@ -19,11 +19,10 @@ use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
     Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, admit, free_memory, run_phase,
 };
-use casa_ms::observation_io::Msv2Observation;
 use casa_observation::FieldEphemeris;
 use casa_types::measures::MeasuresProvider;
 
-use crate::compile::resolve_partitions;
+use crate::compile::{OpenedStore, resolve_partitions};
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
@@ -32,9 +31,9 @@ use crate::{
 
 /// The observation compile opened, and what its geometry evaluates with.
 pub(crate) struct OpenedObservation {
-    /// The MeasurementSet's observation, with the charge of its index
-    /// while it is open ([`crate::compile::open_observation`]).
-    pub(crate) store: Admitted<Msv2Observation>,
+    /// The observation, in its store, with the charge of what its opening
+    /// holds while it is open ([`crate::compile::open_observation`]).
+    pub(crate) store: Admitted<OpenedStore>,
     /// The run's one Measures provider: compile's geometry and the batches'
     /// evaluate with it.
     pub(crate) measures: Arc<dyn MeasuresProvider>,
@@ -157,12 +156,13 @@ pub(crate) fn batch_route(
         measures,
         phase_table,
     } = observation;
-    let selection = resolve_partitions(problem, &opened)
+    let selection = resolve_partitions(problem, opened.observation())
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let plan = GeometryPlan::compile(problem, opened.catalogue(), measures, phase_table)
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let pointing_budget = if plan.reads_pointing() {
         opened
+            .observation()
             .pointing_bytes()
             .map_err(|error| NativeError::Other(Box::new(error)))?
     } else {
@@ -172,7 +172,7 @@ pub(crate) fn batch_route(
         value: batching,
         reservation,
     } = imaging::admit_batches(
-        (problem, &opened, &selection, &plan),
+        (problem, opened.observation(), &selection, &plan),
         imaging::row_samples(problem)?,
         pointing_budget,
         (&runtime.host, &runtime.resource_policy),
@@ -184,7 +184,7 @@ pub(crate) fn batch_route(
                 .map_err(|error| NativeError::Other(Box::new(error)))?,
         ))
     } else {
-        imaging::RouteStore::Read(Box::new(opened))
+        imaging::RouteStore::Read(opened.into_observation())
     };
     Ok(Admitted {
         value: imaging::BatchRoute {

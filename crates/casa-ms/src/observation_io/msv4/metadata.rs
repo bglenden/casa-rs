@@ -229,6 +229,53 @@ pub(crate) fn open_array(
     Array::open(store.clone(), path).map_err(storage)
 }
 
+/// Largest decoded physical chunk of `array`. A regular grid has one shape;
+/// varying grids are inspected up to a bounded number of chunks so opening
+/// never understates a chunk extending beyond the logical array extent.
+pub(crate) fn chunk_bytes(array: &Array<FilesystemStore>) -> Result<usize, ObservationError> {
+    let grid = array.chunk_grid();
+    let metadata = serde_json::to_value(grid.metadata()).map_err(storage)?;
+    let size = array.data_type().fixed_size().unwrap_or(0);
+    let bytes = |shape: &[u64]| {
+        shape.iter().fold(size, |product, extent| {
+            product.saturating_mul(usize::try_from(*extent).unwrap_or(usize::MAX))
+        })
+    };
+    let chunk = |indices: &[u64]| -> Result<usize, ObservationError> {
+        let shape = grid.chunk_shape_u64(indices).map_err(storage)?.ok_or(
+            ObservationError::Unsupported {
+                what: "an MSv4 chunk grid without known chunk shapes",
+            },
+        )?;
+        Ok(bytes(&shape))
+    };
+    let mut indices = vec![0; array.shape().len()];
+    if metadata.get("name").and_then(Value::as_str) == Some("regular") {
+        return chunk(&indices);
+    }
+    let grid_shape = grid.grid_shape();
+    let chunks = grid_shape.iter().fold(1_usize, |count, extent| {
+        count.saturating_mul(usize::try_from(*extent).unwrap_or(usize::MAX))
+    });
+    if chunks > 4096 {
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 varying chunk grid with more than 4096 chunks",
+        });
+    }
+    let mut most = 0;
+    for _ in 0..chunks {
+        most = most.max(chunk(&indices)?);
+        for (index, extent) in indices.iter_mut().zip(grid_shape).rev() {
+            *index += 1;
+            if *index < *extent {
+                break;
+            }
+            *index = 0;
+        }
+    }
+    Ok(most)
+}
+
 /// Every element of a one-dimensional `fixed_length_utf32` coordinate.
 pub(crate) fn strings(
     store: &Arc<FilesystemStore>,
@@ -236,7 +283,9 @@ pub(crate) fn strings(
 ) -> Result<Vec<String>, ObservationError> {
     let array = open_array(store, path)?;
     let subset = ArraySubset::new_with_shape(array.shape().to_vec());
-    let values: Vec<Vec<char>> = array.retrieve_array_subset(&subset).map_err(storage)?;
+    let values: Vec<Vec<char>> = array
+        .retrieve_array_subset_opt(&subset, &super::codec_options())
+        .map_err(storage)?;
     Ok(values
         .into_iter()
         .map(|chars| chars.into_iter().collect())
@@ -250,7 +299,9 @@ pub(crate) fn numbers<T: zarrs::array::ElementOwned>(
 ) -> Result<(Vec<T>, Map<String, Value>), ObservationError> {
     let array = open_array(store, path)?;
     let subset = ArraySubset::new_with_shape(array.shape().to_vec());
-    let values = array.retrieve_array_subset(&subset).map_err(storage)?;
+    let values = array
+        .retrieve_array_subset_opt(&subset, &super::codec_options())
+        .map_err(storage)?;
     Ok((values, array.attributes().clone()))
 }
 

@@ -129,7 +129,7 @@ fn msv4(path: PathBuf, weight_scale: f32, ledger: &mut Ledger) -> Result<Input, 
         })?;
     // The catalogue is shared with the opening, not copied.
     let catalogue = Arc::clone(observation.catalogue());
-    let kept = observation.held_bytes() + catalogue_bytes(&catalogue);
+    let kept = observation.held_bytes();
     ledger.trim("an input's opening", granted, kept)?;
     let mut first: Vec<Option<f64>> = vec![None; catalogue.observations.len()];
     for id in catalogue.partition_ids() {

@@ -246,16 +246,21 @@ its position (`input_ordinal`), a provenance that is only the MeasurementSet
 locator, the canonical field, UV-distance and intent predicate, the selected
 partitions of the observation boundary (`PartitionSelection`: each one's
 spectral window and correlation products), the windows' selected channels,
-the selected data, flag and weight columns, whether MAIN has
-`CORRECTED_DATA`, and how many samples the selection holds. Neither the
+the selected data, flag and weight columns, whether the store holds the
+corrected data, and how many samples the selection holds. Neither the
 snapshot nor its sources carry an identity, and no sample list is kept: each
 pass binds the selected partitions' fields and channels on the boundary,
 which delivers whole times of them, and tests the UV distance per sample.
 
 The run reads its observation through the observation boundary
-(`casa-observation`, `docs/measurement-set/contracts.md`). Compile opens the
-MeasurementSet once as an `Msv2Observation`, whose opening grids MAIN's key
-columns into partitions in bounded row chunks, and surveys the partitions the
+(`casa-observation`, `docs/measurement-set/contracts.md`), from either store:
+an MSv4 processing set (XRADIO's schema on local Zarr v3) images as a
+MeasurementSet does (imaging port step 6c, owner decision 5). Compile opens
+the store once, a MeasurementSet as an `Msv2Observation`, whose opening grids
+MAIN's key columns into partitions in bounded row chunks, or a processing set
+as an `Msv4Observation`; reads the request's windows, fields, sources,
+observations, intents and antennas from its catalogue and its frames from
+`MsCalEngine::from_catalogue`; and surveys the partitions the
 request selects with one traversal that reads no visibilities (UVW only when
 a UV-distance interval or a W-projecting gridder needs it): their selected
 samples, fields, times, observations, W range and the epochs at which each
@@ -308,7 +313,10 @@ per-member recovery ledger.
 `MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
 pass writes selected cells in place through the observation boundary's
 update session (`casa_ms::observation_io`) under casacore's table lock,
-creating `MODEL_DATA` when MAIN lacks it, as CASA does. Each batch is a
+creating `MODEL_DATA` when MAIN lacks it, as CASA does. An MSv4's session
+replaces whole chunks of its `model` and `corrected` groups and cannot add a
+group, so a run that saves the model into an MSv4 without one is refused
+before it images. Each batch is a
 bounded mutation of its rows that patches their tiles, so the session
 accepts only destinations in `TiledShapeStMan` or `TiledColumnStMan`, the
 managers CASA and casa-rs store visibilities in. It refuses any other

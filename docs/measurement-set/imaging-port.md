@@ -562,6 +562,80 @@ catalogue (`SPECTRAL_WINDOW`, `FIELD`, `OBSERVATION`, `STATE`,
 `DATA_DESCRIPTION`) and its frames through `MsCalEngine`; 6c moves them to the
 catalogue, so an MSv4 compiles.
 
+**As landed (step 6c).** Compile opens the request's store, an MSv4
+processing set when its root holds `zarr.json`, else a MeasurementSet
+(`compile/opening.rs`, `OpenedStore`), and reads the catalogue alone. Two
+things only a MeasurementSet states stay MSv2-only: a `ddid` selection (an
+MSv4 refuses it, `PrepareError::NoDataDescriptions`) and the `PHASE_DIR`
+polynomial check of an analytic primary beam. The run reads the same
+`&dyn Observation`, and writes the model or the corrected data through the
+update session of either store. The catalogue's frames come from
+`MsCalEngine::from_catalogue`, which equals the MeasurementSet's engine bit
+for bit on the trial's fixed, ICRS-variable and moving fields (the law
+`the_catalogue_engine_is_the_measurement_set_engine`).
+- **Windows.** `spw` numbers the catalogue's windows: a MeasurementSet's
+  `SPECTRAL_WINDOW` rows, an MSv4's windows in the order its datasets name
+  them. A window's axis and frame are its first partition's.
+- **Intents.** An intent selection resolves to observing modes
+  (`compile/intents.rs`): an MSv2 `STATE` row's `OBS_MODE`, or an MSv4
+  partition's intents joined by commas in the catalogue's (sorted) order.
+  A name or a pattern selects a mode when it matches any of the mode's
+  comma-separated intents, as casacore's `MSStateIndex` splits `OBS_MODE`
+  before it matches, and a flagged `STATE` row is selected by none. Today's
+  selector matched the whole mode, so an exact name missed a mode of two
+  intents. A state number names an MSv2 `STATE` row and matches nothing on
+  an MSv4. `IntentSelection::Only` holds the modes. A selection by number
+  that takes some of the states sharing an `OBS_MODE` is still refused,
+  since the MSv2 adapter partitions their rows together.
+- **Visibility column.** It is chosen once the request's partitions are
+  named (`partitions::selected`), from them. A MeasurementSet holds
+  `CORRECTED_DATA` or `DATA` when MAIN has the column (its adapter declares
+  the `base` group whether or not MAIN has `DATA`), as CASA asks. An MSv4,
+  whose partitions each state their own data groups, holds it when every
+  selected partition has the `corrected` or `base` data group, so a
+  partition the request leaves out does not choose the column for those it
+  takes. The partitions read the group of that name. An MSv4's weights are
+  per channel (`WEIGHT_SPECTRUM` in the manifest).
+- **Fields and sources.** A fixed field's direction is the catalogue's
+  phase centre, in its stored frame. A moving field with no reference epoch
+  (an MSv4's) is evaluated, when asked at no time, at its first selected
+  time, as the MSv4 → MSv2 converter writes its `FIELD.TIME`, which an MSv4
+  does not carry (the conversion reports it lost): an image centred there
+  moves with the body between the two times. The cube's
+  default rest frequency is the first line of each of the field's source
+  records for a selected window (`Catalogue::source_records`), which must
+  agree: MSv2 `SOURCE::REST_FREQUENCY`, MSv4 `LINE_REST_FREQUENCY` (#976).
+- **Instrument.** Telescope names, observers and dish diameters come from
+  the catalogue's observations and antennas.
+- **Native AW's feed angle** is antenna 0's first receptor angle in the
+  window. CASA's AW projection reads it as casacore's `MSIter::setFeedInfo`
+  states feed 0's (`feed_pa`: `receptorAngles().xyPlane(0)`): whatever
+  feeds MAIN's rows name, whether or not antenna 0 has a selected
+  baseline, and the last of `FEED` rows that vary in time. On an MSv2 the
+  adapter states that row (`Msv2Observation::feed_receptors`); today's
+  compile took the row valid at the first cross-correlation sample's time,
+  which differs only for a `FEED` stating receptors per time, which the
+  MSv2 adapter warns of. An MSv4 numbers no feeds: each partition's
+  `antenna_xds` states its antennas' receptors, so there the angle is
+  antenna 0's as the window's partitions, selected or not, state it, which
+  must agree.
+- **Write-back.** An MSv4 cannot add a data group: a run that saves the
+  model into an MSv4 without a `model` group is refused when its update
+  session opens, before it images.
+- **Admission.** Both stores open through one admitted opening
+  (`compile/opening.rs`): the opening asks for what it will hold before it
+  allocates it, each increase admitted, and the charge is then trimmed to
+  what the opened store holds. An MSv4 asks once, before it decodes any
+  dataset, for a projection from the arrays' shapes and element sizes: what
+  each dataset holds once open and the largest dataset's decoding beside
+  it (`msv4/opening.rs`). Open, it holds `Msv4Observation::held_bytes`, by
+  capacity: its catalogue (`Catalogue::held_bytes`), its times, each time's
+  scan and each data group's field per time, and its array handles with
+  their metadata. The counting law `msv4_opening_memory` holds the peak to
+  the grant and what stays to the count over XRADIO's fixtures and
+  conversions growing in times, baselines, channels and data groups, and
+  refuses a store beyond its budget before it decodes.
+
 ### 2.5 Weights, `WeightCache`, errors
 
 - **Weight slots.** `WeightCache` keeps one slot per delivered sample, in
@@ -876,6 +950,11 @@ cache state, as `TESTING.md` "Imaging tiers and evidence" and
 
 **Protocol:**
 - A B B A on the Mac mini, with one worker beside four at every bar.
+- Build both release binaries once, before alternating, with the same FFTW
+  library and compiler settings. `IMAGER_BENCH_PREBUILT=1` makes each benchmark
+  run use its already built binary: a Cargo dependency walk immediately before
+  the timed command perturbs its cache state and biased step 6c's comparison.
+  Record each binary's hash with the receipts.
 - The baseline is today's route at the commit the cutover branches from; it
   is re-run if `main` moves.
 - The noise band comes from the baseline's own repeats.
@@ -912,7 +991,16 @@ at one part in eight (`OVERLAPPED_BLOCKS`, 2faaa18f53) made all twelve pass:
 The T1.5 route law holds at 2faaa18f53 on all 56 refim and kernels cases
 (worst NRMS 3.0e-9, a weight image of a native AW MT-MFS case).
 Receipts are on the NAS under `casa-rs/issue-932/step6-preview-20261029/`.
-The cutover's own comparison is still due, at its branch point.
+**Step 6c (2026-10-31).** On the Mac mini's external disk, the #1012 head
+`a5580c16e3` and the MSv4 candidate `26c752ae65` ran the twelve blocking
+rows with matched FFTW 3.3.11 and prebuilt release binaries. All passed:
+paired wall deltas ranged from -0.97% to +1.05%, the largest peak RSS ratio
+was 1.0099, and the worst product NRMS was 5.38e-14. Per-run Cargo checks
+had added about 50–65 ms outside imaging's timed stages to the candidate on
+the shortest rows; direct and staged probes with prebuilt binaries did not
+show that offset. The binary hashes, comparison receipts, diagnostic method,
+and validation logs are on the NAS under
+`casa-rs/issue-932/step6c-final-20261031/`.
 
 ## 6. Risks
 

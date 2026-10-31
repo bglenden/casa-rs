@@ -83,6 +83,20 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// A `ddid` selection names a data description of an observation that
+    /// has none: an MSv4 processing set.
+    #[error("DATA_DESC_ID {ddid} is selected, but the observation has no data descriptions")]
+    NoDataDescriptions {
+        /// The data description.
+        ddid: i32,
+    },
+    /// An `intent` selector selects no observing mode: a pattern no mode
+    /// matches, or a state number the observation has no state for.
+    #[error("the intent selection {selector:?} matches no observing mode")]
+    UnmatchedIntent {
+        /// The selector, or the whole selection when it selects nothing.
+        selector: String,
+    },
     /// An acquired sample has unusable coordinates; padding is excluded
     /// using the store's acquisition index, not coordinate finiteness.
     #[error(
@@ -96,9 +110,6 @@ pub enum PrepareError {
         /// Catalogue antenna identifiers.
         antennas: [u32; 2],
     },
-    /// The `spw` or `ddid` selection names no data description.
-    #[error("selection resolved to no data descriptions")]
-    NoSelectedDataDescriptions,
     /// A requested `DATA_DESC_ID` is not a `DATA_DESCRIPTION` row, or binds
     /// a negative spectral-window or polarization id.
     #[error("DATA_DESC_ID {ddid} does not bind a spectral window and polarization")]
@@ -158,14 +169,6 @@ pub enum PrepareError {
     SpectralWindowCoordinates {
         /// The spectral window.
         spw_id: usize,
-    },
-    /// A selected spectral window's `MEAS_FREQ_REF` is not a frequency frame.
-    #[error("SPW {spw_id} has an unknown frequency frame code {code}")]
-    UnknownSourceFrame {
-        /// The spectral window.
-        spw_id: usize,
-        /// The stored `MEAS_FREQ_REF`.
-        code: i32,
     },
     /// A continuum run's selected channels convert to no finite LSRK
     /// interval.
@@ -352,9 +355,6 @@ pub enum PrepareError {
     /// Native EVLA AW images Stokes I or one circular parallel hand.
     #[error("native EVLA AW currently supports Stokes I or one circular parallel hand")]
     NativeAwPolarization,
-    /// The FEED table's `RECEPTOR_ANGLE` is not `Float64`.
-    #[error("native EVLA feed receptor angles require Float64 metadata")]
-    FeedAngleType,
     /// A FEED row has no finite first receptor angle.
     #[error("native EVLA feed has no finite receptor-zero angle")]
     FeedAngleNotFinite,
