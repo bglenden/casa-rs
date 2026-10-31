@@ -1128,6 +1128,40 @@ fn refused_before_the_device(defer: bool) {
         <f32 as GridScalar>::cells(cpu.storage()),
         "the committed sub-blocks",
     );
+    // #991: after a mid-dispatch panic, reset must clear device-only
+    // correction storage as well. A tiny fresh signal exposes stale losses.
+    let mut tiny = SampleBuffer::new(2);
+    for placement in &committed.block().placements[..32] {
+        tiny.push(*placement, &[Complex32::new(1e-12, -1e-12); 2], &[1e-12; 2]);
+    }
+    tiled.reset();
+    cpu.reset();
+    CpuBackend::new()
+        .apply(
+            &tiny.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut cpu,
+            },
+        )
+        .expect("fresh cpu");
+    metal
+        .apply(
+            &tiny.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut tiled,
+            },
+        )
+        .expect("fresh device after reset");
+    metal.complete().expect("fresh device completed");
+    assert_same_grids(
+        &tiled,
+        &cpu,
+        "fresh signal after interrupted apply and reset",
+    );
     let mut host = operator.accumulator(planes, None, ModeSet::DATA);
     let message = panic_message(catch_unwind(AssertUnwindSafe(|| {
         let _ = metal.apply(

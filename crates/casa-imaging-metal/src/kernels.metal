@@ -56,6 +56,7 @@ struct Params {
     uint2 grid_shape;
     char adjoint[2][16];    // [w > 0][gpol * 4 + vpol]: Mueller plane or -1
     char forward[2][16];
+    ulong compensation;
 };
 
 #define NO_CELL 0xffffffffu
@@ -169,6 +170,40 @@ static inline Routes routes_of(constant char *table, uint gpols, uint npol) {
     return r;
 }
 
+// Each atomic add returns the preceding sum. TwoSum recovers that add's
+// rounding loss, independently of the interleaving of other threads. A second
+// f32 grid collects these much smaller corrections. No reassociation/FMA.
+static inline void accumulate(device atomic_float *grid, ulong at, float value, ulong correction) {
+#pragma clang fp contract(off)
+#pragma clang fp reassociate(off)
+    float previous = atomic_fetch_add_explicit(&grid[at], value, memory_order_relaxed);
+#if COMPENSATED_GRID
+    float sum = previous + value;
+    float part = sum - previous;
+    float error = (previous - (sum - part)) + (value - part);
+    if (isfinite(error) && error != 0.0f) {
+        float low = atomic_fetch_add_explicit(&grid[correction + at], error, memory_order_relaxed);
+        float low_sum = low + error;
+        float low_part = low_sum - low;
+        float low_error = (low - (low_sum - low_part)) + (error - low_part);
+        if (isfinite(low_error) && low_error != 0.0f) {
+            atomic_fetch_add_explicit(&grid[2 * correction + at], low_error, memory_order_relaxed);
+        }
+    }
+#endif
+}
+
+#if COMPENSATED_GRID
+kernel void fold_grid(device float *grid [[buffer(0)]], constant ulong &count [[buffer(1)]],
+                      uint index [[thread_position_in_grid]]) {
+    if (ulong(index) < count) {
+        grid[index] += grid[count + index] + grid[2 * count + index];
+        grid[count + index] = 0.0f;
+        grid[2 * count + index] = 0.0f;
+    }
+}
+#endif
+
 // Spread `values` (one per visibility polarization) of sample `s` over its
 // support through the adjoint table, lanes striding over the taps. The
 // values a route carries are summed first, skipping zero weights, so each
@@ -214,8 +249,8 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
                 float2 value = contribution * powers[term];
                 ulong block = ulong((s.plane * p.gpols + gpol) * p.terms + p.term_base + term);
                 ulong at = 2 * (block * tile_cells + cell);
-                atomic_fetch_add_explicit(&grid[at], value.x, memory_order_relaxed);
-                atomic_fetch_add_explicit(&grid[at + 1], value.y, memory_order_relaxed);
+                accumulate(grid, at, value.x, p.compensation);
+                accumulate(grid, at + 1, value.y, p.compensation);
             }
         }
     }

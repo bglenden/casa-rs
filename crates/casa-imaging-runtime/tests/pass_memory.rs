@@ -530,12 +530,15 @@ fn a_metal_spread_backend_holds_at_most_its_charged_scratch() {
     for _ in 0..(1 << 18) {
         buffer.push(placement, &[Complex32::new(1.0, 0.0); 2], &[1.0; 2]);
     }
-    let mut acc = casa_imaging_metal::MetalBackend::accumulator(operator.accumulator_layout(
-        PlaneRange::single(0),
-        None,
-        ModeSet::DATA_PSF,
-    ))
-    .unwrap();
+    let layout = operator.accumulator_layout(PlaneRange::single(0), None, ModeSet::DATA_PSF);
+    let admitted_grid = layout.cells() as u64 * size_of::<Complex32>() as u64
+        + casa_imaging_metal::accumulator_extra_bytes(layout.cells() as u64);
+    let before_grid = casa_imaging_metal::device_bytes();
+    let mut acc = casa_imaging_metal::MetalBackend::accumulator(layout).unwrap();
+    assert_eq!(
+        casa_imaging_metal::device_bytes() - before_grid,
+        admitted_grid
+    );
     let apply = |backend: &mut casa_imaging_metal::MetalBackend<'_>, acc: &mut _| {
         backend
             .apply(

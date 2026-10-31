@@ -4,6 +4,9 @@
 
 use std::ops::Range;
 
+#[cfg(feature = "compensated-f32-prototype")]
+mod compensation;
+
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CfKey, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
     DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
@@ -139,6 +142,8 @@ struct Reserve {
 /// One ring slot: the buffers of one sub-block and the command using them.
 struct Slot {
     command: Option<Command>,
+    #[cfg(feature = "compensated-f32-prototype")]
+    fold_command: Option<Command>,
     /// Whether the command's output is read back; a grid-only command,
     /// perhaps left running by an earlier `apply`, is only waited for.
     reads_back: bool,
@@ -211,6 +216,8 @@ impl<'cf> MetalBackend<'cf> {
         for _ in 0..RING {
             ring.push(Slot {
                 command: None,
+                #[cfg(feature = "compensated-f32-prototype")]
+                fold_command: None,
                 reads_back: false,
                 range: 0..0,
                 capacity: 0,
@@ -418,7 +425,8 @@ impl<'cf> MetalBackend<'cf> {
     pub fn accumulator(layout: AccumulatorLayout) -> Result<GridAccumulator, OperatorError> {
         let device = Device::shared()?;
         let cells = layout.cells();
-        let buffer = device.buffer(cells * size_of::<Complex32>())?;
+        let extra = crate::accumulator_extra_bytes(cells as u64) as usize;
+        let buffer = device.buffer(cells * size_of::<Complex32>() + extra)?;
         let pointer = buffer.contents().cast::<Complex32>();
         // SAFETY: the buffer holds `cells` zeroed, 16-byte aligned complex
         // values and lives as long as its owner box (and as long as any
@@ -427,7 +435,8 @@ impl<'cf> MetalBackend<'cf> {
         // which holds `&mut` to the accumulator, and afterwards only while
         // work recorded with `DeviceCells::defer` runs, which the cells wait
         // for before the host reaches them.
-        let cells = unsafe { DeviceCells::new(pointer, cells, Box::new(buffer)) };
+        let clear_len = cells + extra / size_of::<Complex32>();
+        let cells = unsafe { DeviceCells::new(pointer, cells, clear_len, Box::new(buffer)) };
         Ok(GridAccumulator::with_storage(
             layout,
             GridStorage::Device(cells),
@@ -592,6 +601,14 @@ impl<'cf> MetalBackend<'cf> {
             )),
             adjoint: table(false),
             forward: table(true),
+            compensation: if cfg!(feature = "compensated-f32-prototype") {
+                targets
+                    .adjoint
+                    .as_ref()
+                    .map_or(0, |(layout, _)| 2 * layout.cells() as u64)
+            } else {
+                0
+            },
         }
     }
 
@@ -686,6 +703,10 @@ impl<'cf> MetalBackend<'cf> {
                 self.ring[slot].reads_back = reads_back;
                 start += count;
             }
+            #[cfg(feature = "compensated-f32-prototype")]
+            if let Some(grid) = grid {
+                self.finish_grid(grid, params.compensation)?;
+            }
             Ok::<_, OperatorError>(())
         }));
         if leave_running && matches!(dispatched, Ok(Ok(()))) {
@@ -693,7 +714,10 @@ impl<'cf> MetalBackend<'cf> {
         }
         if defer && matches!(dispatched, Ok(Ok(()))) {
             let last = (self.next + RING - 1) % RING;
-            if let Some(command) = self.ring[last].command.clone() {
+            let pending = self.ring[last].command.clone();
+            #[cfg(feature = "compensated-f32-prototype")]
+            let pending = self.ring[last].fold_command.clone().or(pending);
+            if let Some(command) = pending {
                 let cells = cells.expect("deferred work has cells");
                 // SAFETY: every command that writes these cells, from any
                 // backend, goes to the one process-wide queue
@@ -926,18 +950,29 @@ impl<'cf> MetalBackend<'cf> {
     /// reads back, when it reads any.
     fn wait(&mut self, slot: usize) -> Result<Option<Range<usize>>, OperatorError> {
         let slot = &mut self.ring[slot];
-        let Some(Command(command)) = slot.command.take() else {
+        let Some(command) = slot.command.take() else {
             return Ok(None);
         };
+        #[cfg(feature = "compensated-f32-prototype")]
+        let fold = slot.fold_command.take();
+        #[cfg(not(feature = "compensated-f32-prototype"))]
+        let fold = None;
+        let commands = [Some(command), fold];
         let started = std::time::Instant::now();
-        command.waitUntilCompleted();
-        self.usage.wait += started.elapsed();
-        if self.stage_timing {
-            self.usage.completed(&command);
+        let mut failure = None;
+        for Command(command) in commands.into_iter().flatten() {
+            command.waitUntilCompleted();
+            if self.stage_timing {
+                self.usage.completed(&command);
+            }
+            if command.status() == MTLCommandBufferStatus::Error {
+                let code = command.error().map_or(-1, |error| error.code() as i64);
+                failure.get_or_insert(OperatorError::Device(DeviceFailure::CommandFailed { code }));
+            }
         }
-        if command.status() == MTLCommandBufferStatus::Error {
-            let code = command.error().map_or(-1, |error| error.code() as i64);
-            return Err(OperatorError::Device(DeviceFailure::CommandFailed { code }));
+        self.usage.wait += started.elapsed();
+        if let Some(error) = failure {
+            return Err(error);
         }
         Ok(slot.reads_back.then(|| slot.range.clone()))
     }

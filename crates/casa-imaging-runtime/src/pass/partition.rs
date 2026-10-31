@@ -417,6 +417,21 @@ impl WaveDemand<'_> {
                 (tiles, tiles + merged)
             }
         };
+        let extra = if self.backend == BackendChoice::Metal {
+            let extra = |tile| {
+                casa_imaging_metal::accumulator_extra_bytes(
+                    operator.accumulator_layout(one, tile, self.modes).cells() as u64,
+                )
+            };
+            (match &domain.partition {
+                Partition::Planes { .. } => extra(None),
+                Partition::Regions { regions, .. } => {
+                    regions.iter().map(|region| extra(Some(region.tile))).sum()
+                }
+            }) * planes_u64
+        } else {
+            0
+        };
         let [width, height] = operator.geometry().image().shape;
         let image_cells = (width * height) as u64;
         let basis = operator.basis();
@@ -472,8 +487,8 @@ impl WaveDemand<'_> {
         }
         DomainStages {
             held,
-            gridding: tiles,
-            finishing: merging.max(accumulator + images),
+            gridding: tiles + extra,
+            finishing: merging.max(accumulator + images) + extra,
             appending: 2 * images + normal,
         }
     }

@@ -296,6 +296,7 @@ impl PartialEq for GridStorage {
 pub struct DeviceCells {
     cells: std::ptr::NonNull<Complex32>,
     len: usize,
+    clear_len: usize,
     owner: Box<dyn std::any::Any + Send + Sync>,
     /// Waits for device work that may still write the cells.
     pending: std::sync::Mutex<Option<DeferredWork>>,
@@ -318,8 +319,10 @@ impl DeviceCells {
     ///
     /// # Safety
     ///
-    /// `cells` must point to `len` initialised, aligned `Complex32` values
-    /// that stay valid for as long as `owner` lives, and nothing may read or
+    /// `cells` must point to `clear_len >= len` initialised, aligned
+    /// `Complex32` values. The first `len` are exposed to the host; a reset
+    /// also zeros any trailing device accumulation scratch. All values must
+    /// stay valid for as long as `owner` lives, and nothing may read or
     /// write them except through the returned value: a device may write
     /// them only while its backend holds `&mut` access to this value, or
     /// afterwards while the work it recorded with [`Self::defer`] runs.
@@ -327,11 +330,14 @@ impl DeviceCells {
     pub unsafe fn new(
         cells: std::ptr::NonNull<Complex32>,
         len: usize,
+        clear_len: usize,
         owner: Box<dyn std::any::Any + Send + Sync>,
     ) -> Self {
+        assert!(clear_len >= len, "clear span includes exposed device cells");
         Self {
             cells,
             len,
+            clear_len,
             owner,
             pending: std::sync::Mutex::new(None),
         }
@@ -394,6 +400,13 @@ impl DeviceCells {
         // SAFETY: `new`'s contract; `&mut self` is the only access and the
         // device's work is done.
         unsafe { std::slice::from_raw_parts_mut(self.cells.as_ptr(), self.len) }
+    }
+
+    fn clear(&mut self) {
+        self.settle();
+        // SAFETY: the constructor guarantees this full initialized span;
+        // exclusive access and settlement exclude host/device access.
+        unsafe { self.cells.as_ptr().write_bytes(0, self.clear_len) };
     }
 
     /// The allocation that keeps the cells alive.
@@ -461,7 +474,7 @@ impl GridStorage {
         match self {
             Self::F32(cells) => cells.fill(Complex32::default()),
             Self::F64(cells) => cells.fill(Complex64::default()),
-            Self::Device(cells) => cells.cells_mut().fill(Complex32::default()),
+            Self::Device(cells) => cells.clear(),
         }
     }
 }
