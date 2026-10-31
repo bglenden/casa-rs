@@ -2165,6 +2165,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tbcopyrows-adds-the-rows-before-it-finds-a-cell-it-cannot-convert-and-wraps-integers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tb.copyrows adds the rows before it finds a cell it cannot convert, and wraps integers
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4743,6 +4754,31 @@ axes are. The transposed pair's result is the transpose of the
 direction-first pair's (<code>casa-images</code> <code>casa_axis_maps</code> test
 <code>feather_takes_the_direction_wherever_its_axes_are</code>), and the direction-first
 result is checked against CASA's in <code>image_analysis_casa</code>.</p>
+<h2 id="tbcopyrows-adds-the-rows-before-it-finds-a-cell-it-cannot-convert-and-wraps-integers"><code>tb.copyrows</code> adds the rows before it finds a cell it cannot convert, and wraps integers<a class="headerlink" href="#tbcopyrows-adds-the-rows-before-it-finds-a-cell-it-cannot-convert-and-wraps-integers" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-31</li>
+<li>Status: CASA behaviour that casa-rs does not follow (#1025, the <code>table</code>
+  tool; Astra's review of #1039)</li>
+<li>Affected code: casacore <code>TableCopy::copyRows</code> and <code>ROTableRow</code>/<code>TableRow::put</code>
+  (<code>RecordInterface::as...</code>)</li>
+</ul>
+<p><code>copyRows</code> adds an output row and then puts its cells one by one. When a
+shared column has a type the input's cell cannot be converted to (a <code>double</code>
+output column for a <code>dcomplex</code> input, <code>RecordInterface::asDouble - invalid
+data type</code>; an <code>int</code> output column for a <code>float</code> array input,
+<code>TableRecordRep::get_pointer - incorrect data type used for field ...</code>), the
+call raises with the rows already added and their cells never set: reading
+them gives whatever the heap held (<code>copyrows_types</code> scenario of
+<code>crates/casars-python/python/tests/data/casa_table_tool.json</code>, which does not
+compare the table after a refusal). casa-rs checks the types before it changes
+anything and raises with the output table as it was.</p>
+<p>Which conversions CASA accepts was probed pair by pair and is what casa-rs
+accepts (<code>tools/table/cell_convert.rs</code>), with one exception: an integer that
+does not fit the output column's type is wrapped as a C cast does (a <code>Short</code>
+-5 becomes the <code>uChar</code> 251, a <code>uInt</code> 4294967291), the same narrowing as
+<code>putcell</code> above. casa-rs raises <code>RuntimeError: a value is out of range for a
+column of ...</code>, before the output is touched, rather than store a wrong
+number.</p>
 
 
 

@@ -149,7 +149,7 @@
 <a href=#149 id=149 data-nosnippet>149</a>    }
 <a href=#150 id=150 data-nosnippet>150</a>
 <a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// A column of the table, or CASA's "unknown" refusal.
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">fn </span>known(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>ColumnSchema, Fail&gt; {
+<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>known(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>ColumnSchema, Fail&gt; {
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="self">self</span>.column(name, || <span class="macro">format!</span>(<span class="string">"Table column {name} is unknown"</span>))
 <a href=#154 id=154 data-nosnippet>154</a>    }
 <a href=#155 id=155 data-nosnippet>155</a>
