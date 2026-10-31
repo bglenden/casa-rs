@@ -26,6 +26,20 @@ fn snapshot(directory: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     files
 }
 
+fn assert_unchanged(
+    before: &BTreeMap<std::path::PathBuf, Vec<u8>>,
+    after: &BTreeMap<std::path::PathBuf, Vec<u8>>,
+) {
+    assert_eq!(before.len(), after.len(), "output file count changed");
+    for (path, bytes) in before {
+        assert!(
+            after.get(path) == Some(bytes),
+            "previous output changed: {}",
+            path.display()
+        );
+    }
+}
+
 #[test]
 fn a_second_tclean_preserves_every_previous_product_and_its_summary() {
     let point = Component {
@@ -53,9 +67,11 @@ fn a_second_tclean_preserves_every_previous_product_and_its_summary() {
     values["niter"] = json!(40);
     match json_run(&directory, values) {
         TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
-        reply => panic!("restart must be refused until implemented: {reply:?}"),
+        TaskReply::Succeeded { .. } => {
+            panic!("restart succeeded before continuation was implemented")
+        }
     }
-    assert_eq!(before, snapshot(&directory));
+    assert_unchanged(&before, &snapshot(&directory));
 }
 
 #[test]
@@ -80,7 +96,7 @@ fn an_existing_outlier_is_refused_before_the_main_image_or_summary_is_written() 
         TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
         reply => panic!("outlier namespace must be checked before opening the MS: {reply:?}"),
     }
-    assert_eq!(before, snapshot(directory.path()));
+    assert_unchanged(&before, &snapshot(directory.path()));
 }
 
 #[test]
@@ -104,5 +120,5 @@ fn outlier_preflight_preserves_a_trailing_slash_and_does_not_allocate_its_mask()
         TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
         reply => panic!("occupied outlier should fail without compiling a mask: {reply:?}"),
     }
-    assert_eq!(before, snapshot(directory.path()));
+    assert_unchanged(&before, &snapshot(directory.path()));
 }
