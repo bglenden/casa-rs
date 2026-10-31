@@ -163,7 +163,9 @@ def main() -> None:
     repo = Path(__file__).resolve().parents[2]
     head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["git", "-C", str(repo), "cat-file", "-e", args.revision + "^{commit}"], check=True)
-    subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", args.revision, "--", "crates"], check=True)
+    subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", args.revision, "--",
+                    ":(glob)crates/*/src/**", ":(glob)crates/*/resources/**",
+                    ":(glob)crates/*/Cargo.toml", "Cargo.toml", "Cargo.lock"], check=True)
     assert casatasks.version_string() == "6.7.6.14"
     assert casatools.version_string() == "6.7.6-14"
     args.work.mkdir(parents=True, exist_ok=False)
@@ -228,6 +230,7 @@ def main() -> None:
         kind="small lifecycle/refusal oracle; not representative science",
         casa_tasks=casatasks.version_string(), casa_tools=casatools.version_string(),
         oracle_python=sys.executable, casars_revision=args.revision, recipe_revision=head,
+        revision_scope="production crate sources, runtime resources and Cargo manifests/lock; test-only changes are separate",
         command=sys.argv, inputs="record_casa_returns.make_ms; noiseless unit DATA",
         parameters=common, native_backend="cpu", native_gridprecision="f64",
         casa=dict(first_iterdone=int(first["iterdone"]), second_iterdone=int(second["iterdone"]),
