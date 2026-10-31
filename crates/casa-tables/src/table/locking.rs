@@ -49,9 +49,14 @@ impl Table {
 
         // Acquire the initial lock the mode asks for, with casacore's number
         // of attempts (`TableLockData::makeLock`, `PlainTable`).
+        let permanent_lock = if lock_opts.read_only {
+            LockType::Read
+        } else {
+            LockType::Write
+        };
         let initial = match lock_opts.mode {
-            LockMode::PermanentLocking => Some((LockType::Write, 1)),
-            LockMode::PermanentLockingWait => Some((LockType::Write, 0)),
+            LockMode::PermanentLocking => Some((permanent_lock, 1)),
+            LockMode::PermanentLockingWait => Some((permanent_lock, 0)),
             LockMode::AutoLocking | LockMode::DefaultLocking => Some((LockType::Read, 0)),
             // AutoNoReadLocking skips the read lock on open; only write
             // locks are acquired.
@@ -99,7 +104,7 @@ impl Table {
             options: lock_opts,
             data_manager: options.data_manager,
             endian_format: options.endian_format,
-            flushed_generation: table.inner.generation(),
+            flushed_generation: std::sync::atomic::AtomicU64::new(table.inner.generation()),
             unpublished_write: std::sync::atomic::AtomicBool::new(false),
             table_dat_before_write: std::sync::OnceLock::new(),
         });
@@ -148,11 +153,9 @@ impl Table {
                 operation: "lock".into(),
             })?;
 
-        // NoRead modes skip the file-level read lock entirely.
-        if lock_type == LockType::Read && state.options.mode.skip_read_lock() {
-            return Ok(true);
-        }
-
+        // The NoRead modes only spare a table the read lock it takes on
+        // open (`skip_read_lock`); an explicit request takes it, as
+        // casacore's `PlainTable::lock` does.
         // A table already locked needs no synchronization: no other process
         // can have written it (casacore's `PlainTable::lock`). Requesting a
         // read lock while holding the write lock keeps the write lock and
@@ -168,43 +171,177 @@ impl Table {
             .is_acquired();
 
         if acquired && !already_locked {
-            // Read sync data and check if we need to reload.
-            if let Some(new_sync) =
-                state
-                    .lock_file
-                    .read_sync_data()
-                    .map_err(|e| TableError::LockIo {
-                        path: state.path.display().to_string(),
-                        message: e.to_string(),
-                    })?
-                && state.sync_data.needs_reload(&new_sync)
-            {
-                // Another process modified the table — reload.
-                let storage = CompositeStorage;
-                let snapshot = storage
-                    .load_with_row_hint(&state.path, Some(new_sync.nrrow))
-                    .map_err(|e| TableError::LockIo {
-                        path: state.path.display().to_string(),
-                        message: e.to_string(),
-                    })?;
-                self.virtual_columns = snapshot.virtual_columns;
-                self.inner.replace_from_snapshot(
-                    snapshot.rows,
-                    snapshot.undefined_cells,
-                    snapshot.keywords,
-                    snapshot.column_keywords,
-                    snapshot.schema,
-                );
-                // Update our stored sync data. The reloaded table is what is
-                // on disk, so there is nothing to flush.
-                if let Some(s) = self.lock_state.as_mut() {
-                    s.sync_data = new_sync;
-                    s.flushed_generation = self.inner.generation();
-                }
-            }
+            self.reload_if_published()?;
         }
 
         Ok(acquired)
+    }
+
+    /// Reloads the table when the lock file's sync data says a change was
+    /// published since this handle last synchronized, and returns whether it
+    /// did. The caller holds a lock, so no writer is publishing.
+    #[cfg(unix)]
+    fn reload_if_published(&mut self) -> Result<bool, TableError> {
+        let state = self
+            .lock_state
+            .as_ref()
+            .ok_or_else(|| TableError::NotLocked {
+                operation: "resync".into(),
+            })?;
+        let lock_io = |message: String| TableError::LockIo {
+            path: state.path.display().to_string(),
+            message,
+        };
+        let Some(new_sync) = state
+            .lock_file
+            .read_sync_data()
+            .map_err(|e| lock_io(e.to_string()))?
+        else {
+            return Ok(false);
+        };
+        if !state.sync_data.needs_reload(&new_sync) {
+            return Ok(false);
+        }
+        // Another handle or process modified the table — reload.
+        let storage = CompositeStorage;
+        let snapshot = storage
+            .load_with_row_hint(&state.path, Some(new_sync.nrrow))
+            .map_err(|e| lock_io(e.to_string()))?;
+        self.virtual_columns = snapshot.virtual_columns;
+        // The storage managers and the table info are what another
+        // process may have changed too (a renamed or removed column).
+        self.dm_info = snapshot.dm_info;
+        self.table_info = snapshot.table_info;
+        self.inner.replace_from_snapshot(
+            snapshot.rows,
+            snapshot.undefined_cells,
+            snapshot.keywords,
+            snapshot.column_keywords,
+            snapshot.schema,
+        );
+        // Update our stored sync data. The reloaded table is what is
+        // on disk, so there is nothing to flush.
+        if let Some(s) = self.lock_state.as_mut() {
+            s.sync_data = new_sync;
+            s.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        Ok(true)
+    }
+
+    /// Brings a table that holds a read lock up to date with what other
+    /// handles of the table (in this process or another) have published
+    /// since: the lock file's sync data is read again and the table is
+    /// reloaded if its modify counter moved. The lock stays held. Returns
+    /// whether the table was reloaded.
+    ///
+    /// [`lock`](Table::lock) synchronizes only when it takes a lock the
+    /// handle did not hold, as casacore's `PlainTable::lock` does; a handle
+    /// that keeps its lock between calls uses this to see a change another
+    /// handle of the same process published (casacore shares one table
+    /// between them). A handle holding the write lock is the table's only
+    /// writer and is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`TableError::NotLocked`] when no lock is held.
+    ///
+    /// C++ equivalent: `Table::resync()` (which reads the lock file without
+    /// holding a lock).
+    #[cfg(unix)]
+    pub fn resync_locked(&mut self) -> Result<bool, TableError> {
+        let held = self.lock_state.as_ref().map(|state| {
+            (
+                state.lock_file.has_lock(LockType::Read),
+                state.lock_file.has_lock(LockType::Write),
+            )
+        });
+        match held {
+            Some((true, false)) => self.reload_if_published(),
+            Some((_, true)) => Ok(false),
+            _ => Err(TableError::NotLocked {
+                operation: "resync_locked".into(),
+            }),
+        }
+    }
+
+    /// The modify counter the lock file publishes now, read while a lock is
+    /// held. Unlike [`locked_modify_counter`](Table::locked_modify_counter),
+    /// which is the counter this handle last synchronized with, it includes a
+    /// change another handle has published since, and a write this handle has
+    /// published with [`publish_writes`](Table::publish_writes). `0` when
+    /// nothing has been published.
+    ///
+    /// # Errors
+    ///
+    /// [`TableError::NotLocked`] when no lock is held.
+    #[cfg(unix)]
+    pub fn published_modify_counter(&self) -> Result<u32, TableError> {
+        let state = self
+            .lock_state
+            .as_ref()
+            .filter(|state| state.lock_file.has_lock(LockType::Read))
+            .ok_or_else(|| TableError::NotLocked {
+                operation: "published_modify_counter".into(),
+            })?;
+        Ok(state
+            .lock_file
+            .read_sync_data()
+            .map_err(|e| TableError::LockIo {
+                path: state.path.display().to_string(),
+                message: e.to_string(),
+            })?
+            .map_or(0, |sync| sync.modify_counter))
+    }
+
+    /// Publishes the writes this handle has made to the disk under the write
+    /// lock it holds, as [`unlock`](Table::unlock) does, and keeps the lock:
+    /// the lock file's modify counter rises, so another process (or handle)
+    /// that takes a lock next re-reads the table, and the release of the lock
+    /// does not announce the same writes again. Returns whether anything was
+    /// published; a handle without the write lock, or without a write on the
+    /// disk that is not yet published, publishes nothing.
+    ///
+    /// It does not write the table: a change held only in memory stays
+    /// there. A writer that persists each change when it makes it (the
+    /// `table` tool) calls this to make the changes it has persisted visible,
+    /// as casacore's `Table::flush` does by writing and announcing at once.
+    ///
+    /// C++ equivalent: the announcement made by `Table::flush()`
+    /// (`PlainTable::putFile`).
+    #[cfg(unix)]
+    pub fn publish_writes(&mut self) -> Result<bool, TableError> {
+        if self.kind == TableKind::Memory {
+            return Ok(false);
+        }
+        self.publish_pending_write()
+    }
+
+    /// Publishes the unpublished write the held write lock covers, if any.
+    #[cfg(unix)]
+    fn publish_pending_write(&mut self) -> Result<bool, TableError> {
+        let Some(state) = self.lock_state.as_mut() else {
+            return Ok(false);
+        };
+        if !(state.lock_file.has_lock(LockType::Write) && state.has_unpublished_write()) {
+            return Ok(false);
+        }
+        state.sync_data = publish_persisted_write(
+            &state.lock_file,
+            &state.path,
+            state.table_dat_before_write.get().map(Vec::as_slice),
+        )
+        .map_err(|e| TableError::LockIo {
+            path: state.path.display().to_string(),
+            message: e.to_string(),
+        })?;
+        state
+            .unpublished_write
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        state.table_dat_before_write.take();
+        Ok(true)
     }
 
     /// Releases the current lock.
@@ -222,9 +359,11 @@ impl Table {
     /// announces only what changed.
     ///
     /// casacore announces each flush when it writes it; casa-rs announces the
-    /// lock period's writes once, when the lock is released. Other processes
-    /// read the announcement only when they take a lock, which they cannot do
-    /// before the write lock is released, so they see the same change.
+    /// lock period's writes once, when the lock is released, or earlier when
+    /// [`publish_writes`](Table::publish_writes) is called (a write already
+    /// published is not announced again). Other processes read the
+    /// announcement only when they take a lock, which they cannot do before
+    /// the write lock is released, so they see the same change.
     ///
     /// If the flush or the publication fails, the error is returned and the
     /// lock is kept, with the write still to be published by a later
@@ -264,18 +403,73 @@ impl Table {
     pub fn unlock_metadata_only_or_discard(&mut self) -> Result<(), TableError> {
         let released = self.unlock_metadata_only();
         if released.is_err() && self.has_lock(LockType::Write) {
-            if self.resync().is_err() {
-                // Unreloadable, the changes are discarded all the same:
-                // nothing is left to flush, so a drop only publishes.
-                let generation = self.inner.generation();
-                if let Some(state) = self.lock_state.as_mut() {
-                    state.flushed_generation = generation;
-                }
-            }
+            let _ = self.resync_or_discard();
             let _ = self.unlock_metadata_only();
         }
         released
     }
+
+    /// Reloads the table from disk, as [`resync`](Self::resync) does and,
+    /// when the reload fails, discards the changes not yet written all the
+    /// same: the table is left as it was in memory, but with nothing to
+    /// flush, so that closing or dropping it while it holds the write lock
+    /// only publishes what reached the disk and never writes the table in
+    /// full. Returns the reload's error.
+    ///
+    /// A writer that persists its changes itself (`save_metadata_only`,
+    /// `save_selected_rows`) calls this after a failure, to leave nothing
+    /// for the full write of a drop to find.
+    #[cfg(unix)]
+    pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
+        let reloaded = self.resync();
+        if reloaded.is_err() {
+            let generation = self.inner.generation();
+            if let Some(state) = self.lock_state.as_mut() {
+                state
+                    .flushed_generation
+                    .store(generation, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        reloaded
+    }
+
+    /// Reloads the table from disk, as [`resync`](Self::resync) does.
+    /// Without locks there is no write lock holding unflushed changes to
+    /// discard.
+    #[cfg(not(unix))]
+    pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
+        self.resync()
+    }
+
+    /// Whether the handle holds changes the disk does not have, which the
+    /// release of its write lock would write in full.
+    #[cfg(unix)]
+    pub(super) fn holds_unflushed_changes(&self) -> bool {
+        self.lock_state
+            .as_ref()
+            .is_some_and(|state| state.has_unflushed_changes(&self.inner))
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn holds_unflushed_changes(&self) -> bool {
+        false
+    }
+
+    /// Records that the handle has nothing the disk lacks: a disk-only
+    /// operation that began by counting as a change (every write operation
+    /// does) was refused before it wrote anything.
+    #[cfg(unix)]
+    pub(super) fn mark_flushed(&self) {
+        if let Some(state) = self.lock_state.as_ref() {
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn mark_flushed(&self) {}
 
     #[cfg(unix)]
     fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
@@ -318,28 +512,17 @@ impl Table {
             }
             let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
-            state.flushed_generation = generation;
-        }
-
-        // Publish every write this lock period made to the disk, describing
-        // the table as persisted, as casacore's putFile does.
-        let state = self.lock_state.as_mut().expect("lock_state present");
-        if state.lock_file.has_lock(LockType::Write) && state.has_unpublished_write() {
-            state.sync_data = publish_persisted_write(
-                &state.lock_file,
-                &state.path,
-                state.table_dat_before_write.get().map(Vec::as_slice),
-            )
-            .map_err(|e| TableError::LockIo {
-                path: state.path.display().to_string(),
-                message: e.to_string(),
-            })?;
             state
-                .unpublished_write
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            state.table_dat_before_write.take();
+                .flushed_generation
+                .store(generation, std::sync::atomic::Ordering::Relaxed);
         }
 
+        // Publish every write this lock period made to the disk (and not
+        // yet published by `publish_writes`), describing the table as
+        // persisted, as casacore's putFile does.
+        self.publish_pending_write()?;
+
+        let state = self.lock_state.as_mut().expect("lock_state present");
         state.lock_file.release().map_err(|e| TableError::LockIo {
             path: state.path.display().to_string(),
             message: e.to_string(),

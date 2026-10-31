@@ -9,9 +9,15 @@
 //! `chanaverage=True` with `chanbin`. Its condition may therefore name only
 //! values a profile set: it is a conjunction of [`Predicate::IsSet`] and
 //! [`Predicate::Equals`], so no step can pin a default the profile omitted.
-//! A conjunction may also say that a value it names as set is not one
-//! value, [`Predicate::Not`] of an `Equals`: flagdata's old explicit
-//! `timedev` is a threshold unless it is the old absence `'none'`.
+//!
+//! A conjunction holding at least one explicit value may also narrow it
+//! with a [`Predicate::Not`]:
+//! - of an `IsSet`, a parameter the step depends on was left unset: the old
+//!   gaincal's explicit `gain_model_source='point'` meant a 1 Jy model when
+//!   `smodel` was omitted;
+//! - of an `Equals` on a parameter the conjunction names as set, that value
+//!   is not one value: flagdata's old explicit `timedev` is a threshold
+//!   unless it is the old absence `'none'`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,17 +26,17 @@ use super::{ContractValidationError, ParameterValue, Predicate, SurfaceDefinitio
 impl Predicate {
     /// Whether this condition holds of a profile's explicit `overrides`, by
     /// the parameter names they carry: `IsSet` when the profile set the
-    /// parameter, `Equals` when it set it to exactly `value`, `Not` of an
-    /// `Equals` when it did not, `All` when every part holds. Any other
-    /// predicate never holds here; contract validation refuses it in a
-    /// migration, and a `Not` outside a conjunction naming its parameter
-    /// as set.
+    /// parameter, `Equals` when it set it to exactly `value`, `Not` of
+    /// either when that does not hold, `All` when every part holds. Any
+    /// other predicate never holds here; contract validation refuses it in
+    /// a migration, and a `Not` outside a conjunction holding an explicit
+    /// value.
     pub fn holds_for_overrides(&self, overrides: &BTreeMap<String, ParameterValue>) -> bool {
         match self {
             Self::IsSet { parameter } => overrides.contains_key(parameter),
             Self::Equals { parameter, value } => overrides.get(parameter) == Some(value),
             Self::Not { predicate } => {
-                matches!(**predicate, Self::Equals { .. })
+                matches!(**predicate, Self::IsSet { .. } | Self::Equals { .. })
                     && !predicate.holds_for_overrides(overrides)
             }
             Self::All { predicates } => {
@@ -44,10 +50,10 @@ impl Predicate {
     }
 }
 
-/// Whether `when` names only values a profile set: a `Not` of an `Equals`
-/// only in a conjunction that names the same parameter with `IsSet` or
-/// `Equals`, so it narrows a value the profile set and never holds of an
-/// omitted one.
+/// Whether `when` names only values a profile set: an `IsSet` or `Equals`,
+/// or a conjunction of at least one of them with any number of `Not` of an
+/// `IsSet`, or of an `Equals` on a parameter the conjunction names, so it
+/// never holds of a profile that set none of the values it names.
 fn names_only_set_values(when: &Predicate) -> bool {
     match when {
         Predicate::IsSet { .. } | Predicate::Equals { .. } => true,
@@ -61,12 +67,13 @@ fn names_only_set_values(when: &Predicate) -> bool {
                     _ => None,
                 })
                 .collect::<BTreeSet<_>>();
-            !predicates.is_empty()
+            !named.is_empty()
                 && predicates.iter().all(|predicate| match predicate {
-                    Predicate::Not { predicate } => matches!(
-                        &**predicate,
-                        Predicate::Equals { parameter, .. } if named.contains(parameter)
-                    ),
+                    Predicate::Not { predicate } => match &**predicate {
+                        Predicate::IsSet { .. } => true,
+                        Predicate::Equals { parameter, .. } => named.contains(parameter),
+                        _ => false,
+                    },
                     other => names_only_set_values(other),
                 })
         }
@@ -89,8 +96,8 @@ pub(super) fn validate_condition(
             ContractValidationError::new(
                 "migration_set_condition",
                 "a migration's set step needs a condition of explicit values only: \
-                 is_set and equals, or all of them, where not equals may narrow a \
-                 parameter the conjunction names",
+                 is_set or equals, or all of at least one of them with any not(is_set) \
+                 and not(equals) of a parameter the conjunction names",
             )
             .at(surface.id(), Some(parameter)),
         );
@@ -105,6 +112,14 @@ mod tests {
         Predicate::Equals {
             parameter: parameter.into(),
             value: ParameterValue::String(value.into()),
+        }
+    }
+
+    fn unset(parameter: &str) -> Predicate {
+        Predicate::Not {
+            predicate: Box::new(Predicate::IsSet {
+                parameter: parameter.into(),
+            }),
         }
     }
 
@@ -137,11 +152,7 @@ mod tests {
     fn a_condition_that_could_pin_an_omitted_default_is_refused() {
         let pins = [
             Predicate::Always,
-            Predicate::Not {
-                predicate: Box::new(Predicate::IsSet {
-                    parameter: "mode".into(),
-                }),
-            },
+            unset("mode"),
             Predicate::Any {
                 predicates: vec![equals("mode", "manual")],
             },
@@ -157,6 +168,10 @@ mod tests {
             Predicate::Not {
                 predicate: Box::new(equals("timedev", "none")),
             },
+            // An unset parameter alone names no explicit value.
+            Predicate::All {
+                predicates: vec![unset("smodel")],
+            },
         ];
         for when in pins {
             assert!(!names_only_set_values(&when), "{when:?}");
@@ -170,6 +185,24 @@ mod tests {
             ],
         }));
         assert!(names_only_set_values(&explicit_threshold()));
+    }
+
+    #[test]
+    fn a_condition_may_require_a_parameter_left_unset_beside_an_explicit_value() {
+        // The old gaincal's explicit point model meant 1 Jy when smodel was
+        // omitted, and the explicit smodel otherwise.
+        let point = Predicate::All {
+            predicates: vec![equals("gain_model_source", "point"), unset("smodel")],
+        };
+        assert!(names_only_set_values(&point));
+        let mut overrides = BTreeMap::from([(
+            "gain_model_source".to_string(),
+            ParameterValue::String("point".into()),
+        )]);
+        assert!(point.holds_for_overrides(&overrides));
+        overrides.insert("smodel".into(), ParameterValue::Array(Vec::new()));
+        assert!(!point.holds_for_overrides(&overrides));
+        assert!(!point.holds_for_overrides(&BTreeMap::new()));
     }
 
     /// flagdata's old `timedev` set to a threshold, not its old absence.

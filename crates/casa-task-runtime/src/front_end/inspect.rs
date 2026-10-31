@@ -152,7 +152,7 @@ pub fn validate_profile_text(
     let profile = parse_profile(source).map_err(format_profile_error)?;
     let named;
     let bundle = match bundle {
-        Some(bundle) if bundle.surface.id() == profile.header.surface => bundle,
+        Some(bundle) if bundle.surface.answers_to(&profile.header.surface) => bundle,
         Some(bundle) => {
             return Err(format!(
                 "the profile is for {:?}, not {:?}",

@@ -93,14 +93,44 @@ impl Table {
     }
 
     /// Record a successful full save to `path`: when that is the table's own
-    /// directory, its rows on disk now match this handle's.
-    pub(super) fn note_full_save(&self, path: &Path) {
-        if self
+    /// directory, its rows on disk now match this handle's, and so does all
+    /// else it holds, so the release of a write lock has nothing to flush
+    /// (a flush after a save that removed rows would raise `table.dat`'s
+    /// counts back to the rows last published).
+    ///
+    /// A handle that holds the write lock also brings the row count in
+    /// `table.lock`'s sync data to the rows saved, now, and moves no counter
+    /// (other processes read the sync data only when they take a lock, so
+    /// they cannot see it early). Until the release publishes the write, a
+    /// metadata-only save, a partial save's admission and a reload all read
+    /// that count back (taking the largest of it and `table.dat`'s), and a
+    /// save that removed rows would have the old count raised again, leaving
+    /// `table.dat` claiming rows the storage managers do not hold. The
+    /// release still publishes, once, so the write is announced as before.
+    pub(super) fn note_full_save(&self, path: &Path) -> Result<(), TableError> {
+        if !self
             .source_path
             .as_deref()
             .is_some_and(|source| locking::same_directory(source, path))
         {
-            self.inner.note_rows_persisted();
+            return Ok(());
         }
+        self.inner.note_rows_persisted();
+        #[cfg(unix)]
+        if let Some(state) = self.lock_state.as_ref() {
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            if state.lock_file.has_lock(LockType::Write) {
+                crate::lock::publish_persisted_rows(&state.lock_file, &state.path).map_err(
+                    |e| TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    },
+                )?;
+            }
+        }
+        Ok(())
     }
 }

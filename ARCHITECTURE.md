@@ -125,11 +125,12 @@ installed in the build, and either invokes that implementation or returns a
 typed unavailable result before planning. A selected production failure is
 terminal; there is no alternate
 implementation, retry path, or stage-level delegation. Its input is one
-`ImagingRequest`, deserialized from the imager parameters the provider
-catalog resolves and validated once. Every route (command line,
-`--json-run` and Python) reaches it through the same
+`ImagingRequest`, read from the `tclean` parameters the provider catalog
+resolves (CASA's, then casa-rs's own controls) and validated once. Every
+route (command line, `--json-run` and Python) reaches it through the same
 catalog resolution, so the catalog is the only source of defaults and refuses
-a parameter its gridder does not read. `casars-imager` is a thin frontend over
+a casa-rs control its gridder does not read; a CASA parameter its mode does
+not use is ignored, as CASA's tclean ignores it. `casars-imager` is a thin frontend over
 this interface: it resolves its parameters through the catalog and presents
 the result. Unsupported capabilities remain typed unavailable until their
 ticket adds one final-owner implementation.
@@ -482,8 +483,9 @@ the host's next access wait, and a wave calls `MetalBackend::complete`, which
 waits for every dispatch and reports the first failure, on each Metal owner
 and predictor before it reads an accumulator.
 
-Imager task protocol v12 carries the resolved imager parameters by catalog
-name, on stdin for `--json-run`; the result echoes them. The imager emits no
+Imager task protocol v13 carries the resolved `tclean` parameters by catalog
+name, on stdin for `--json-run`; the result echoes them, and the reply's
+value is CASA's tclean summary record. The imager emits no
 progress events; the cycle loop logs worker counts and cycle records through
 `tracing`, and the run summary records each phase. The request's
 diagnostics (`stage_timing`, `metal_stage_timing`, `science_trace`, plan

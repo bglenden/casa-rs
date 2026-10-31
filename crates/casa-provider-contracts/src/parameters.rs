@@ -10,8 +10,16 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
+#[path = "migration.rs"]
+mod migration;
+#[path = "migration_list.rs"]
+mod migration_list;
 #[path = "migration_set.rs"]
 mod migration_set;
+
+use migration::validate_migrations;
+pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
+pub use migration_list::ListElement;
 
 pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
 
@@ -296,6 +304,10 @@ pub enum NormalizationRule {
     Quantity {
         canonical_unit: String,
     },
+    /// A number given for a text value is read as its text, as CASA's
+    /// variant parameters take one: `tclean`'s `phasecenter=3` names field
+    /// 3 and `width=2` two channels (#931).
+    NumberAsText,
     Sequence {
         rules: Vec<NormalizationRule>,
     },
@@ -752,18 +764,6 @@ impl fmt::Display for SurfaceKind {
     }
 }
 
-/// Ordered migration between consecutive surface-contract versions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct SurfaceMigration {
-    pub from_contract: u32,
-    pub to_contract: u32,
-    #[serde(default)]
-    pub steps: Vec<MigrationStep>,
-    /// Omitted values whose meaning changes because the current default changed.
-    #[serde(default)]
-    pub changed_defaults: Vec<String>,
-}
-
 /// Machine-readable stdout format produced by a managed task invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -885,56 +885,6 @@ pub struct ProviderInvocation {
     pub stdin: Option<String>,
 }
 
-/// Migration of explicit sparse overrides only.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MigrationStep {
-    Rename {
-        from: String,
-        to: String,
-    },
-    Remove {
-        parameter: String,
-    },
-    ReplaceValue {
-        parameter: String,
-        from: ParameterValue,
-        to: ParameterValue,
-    },
-    Transform {
-        parameter: String,
-        transform: MigrationTransform,
-    },
-    /// Set `parameter` to `value` when the profile's explicit overrides
-    /// satisfy `when`: a value that moves between parameters (#931). `when`
-    /// holds only of values a profile set, so an omitted value still adopts
-    /// the current default (ADR-0006); see [`Predicate::holds_for_overrides`].
-    Set {
-        parameter: String,
-        value: ParameterValue,
-        when: Predicate,
-    },
-}
-
-/// Closed set of safe deterministic migration transforms.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MigrationTransform {
-    ScalarToArray {
-        length: usize,
-    },
-    SingletonArrayToScalar,
-    IntegerToString,
-    QuantityUnit {
-        canonical_unit: String,
-    },
-    Lowercase,
-    Trim,
-    /// Comma-separated numbers (`"0.1,10"`) as a list of numbers, and the
-    /// old explicit absence (`"none"` or empty) as CASA's `-1` (#931).
-    NumberList,
-}
-
 /// One-shot surface definition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskDefinition {
@@ -948,6 +898,11 @@ pub struct TaskDefinition {
     /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub casa_task: Option<String>,
+    /// The ids this surface had before it was renamed, which a saved
+    /// profile may still name: `imager`, re-surfaced as CASA's `tclean`
+    /// (#931). Its migrations carry such a profile to the current contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub former_ids: Vec<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
     pub bindings: Vec<SurfaceParameterBinding>,
@@ -988,6 +943,16 @@ impl SurfaceDefinition {
     /// The CASA task the surface mimics, when it presents CASA's signature.
     pub fn casa_task(&self) -> Option<&str> {
         self.task().casa_task.as_deref()
+    }
+
+    /// The ids the surface had before it was renamed.
+    pub fn former_ids(&self) -> &[String] {
+        &self.task().former_ids
+    }
+
+    /// Whether `id` names this surface, now or before it was renamed.
+    pub fn answers_to(&self, id: &str) -> bool {
+        self.id() == id || self.former_ids().iter().any(|former| former == id)
     }
 
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
@@ -1038,8 +1003,13 @@ pub struct SurfaceCatalogBundle {
 }
 
 impl SurfaceCatalogBundle {
+    /// The surface `id` names, now or, for a saved profile's header, before
+    /// it was renamed.
     pub fn surface(&self, id: &str) -> Option<&SurfaceDefinition> {
-        self.surfaces.iter().find(|surface| surface.id() == id)
+        self.surfaces
+            .iter()
+            .find(|surface| surface.id() == id)
+            .or_else(|| self.surfaces.iter().find(|surface| surface.answers_to(id)))
     }
 
     pub fn embedded_surface(&self, id: &str) -> Option<SurfaceContractBundle> {
@@ -1138,11 +1108,17 @@ fn validate_surface_bundles_internal(
                 ),
             ));
         }
-        if !surface_ids.insert(bundle.surface.id().to_string()) {
-            errors.push(ContractValidationError::new(
-                "duplicate_surface",
-                format!("duplicate surface {}", bundle.surface.id()),
-            ));
+        // A former id names the surface in saved profiles, so it may name no
+        // other surface, now or before.
+        for id in std::iter::once(bundle.surface.id())
+            .chain(bundle.surface.former_ids().iter().map(String::as_str))
+        {
+            if !surface_ids.insert(id.to_string()) {
+                errors.push(ContractValidationError::new(
+                    "duplicate_surface",
+                    format!("duplicate surface {id}"),
+                ));
+            }
         }
         for concept in &bundle.catalog.concepts {
             let key = (concept.id.clone(), concept.semantic_revision);
@@ -1569,6 +1545,12 @@ pub fn validate_parameter_value(
                 special_values,
             },
         ) => validate_quantity_value(value, *dimension, canonical_unit, special_values),
+        // A bare number is a quantity in its canonical unit, as CASA's
+        // `threshold=0.0` is in Jy (#931).
+        (ParameterValue::Integer(_), ParameterType::Quantity { .. }) => Ok(()),
+        (ParameterValue::Float(value), ParameterType::Quantity { .. }) if value.is_finite() => {
+            Ok(())
+        }
         (ParameterValue::Integer(_), ParameterType::Float)
         | (ParameterValue::Float(_), ParameterType::Float) => Ok(()),
         (ParameterValue::String(value), ParameterType::Choice { values }) => {
@@ -2022,91 +2004,6 @@ fn detects_cycle(
     false
 }
 
-fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractValidationError>) {
-    // An empty migration set is an explicit current-only contract: readers
-    // accept exactly `contract_version` and retain no compatibility path.
-    if surface.migrations().is_empty() {
-        for binding in surface.bindings() {
-            if !binding.aliases.is_empty() {
-                errors.push(
-                    ContractValidationError::new(
-                        "current_only_alias",
-                        "current-only surfaces cannot retain compatibility aliases",
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-        }
-        return;
-    }
-    let mut expected = 1;
-    let known = surface
-        .bindings()
-        .iter()
-        .map(|binding| binding.name.as_str())
-        .collect::<BTreeSet<_>>();
-    for migration in surface.migrations() {
-        if migration.from_contract != expected
-            || migration.to_contract != migration.from_contract.saturating_add(1)
-        {
-            errors.push(
-                ContractValidationError::new(
-                    "migration_chain",
-                    "migrations must be ordered and advance exactly one contract version",
-                )
-                .at(surface.id(), None),
-            );
-        }
-        for name in &migration.changed_defaults {
-            if !known.contains(name.as_str()) {
-                errors.push(
-                    ContractValidationError::new(
-                        "unknown_changed_default",
-                        format!("migration names unknown changed-default parameter {name:?}"),
-                    )
-                    .at(surface.id(), Some(name)),
-                );
-            }
-        }
-        for step in &migration.steps {
-            let current_name = match step {
-                MigrationStep::Rename { to, .. } => Some(to),
-                MigrationStep::ReplaceValue { parameter, .. }
-                | MigrationStep::Transform { parameter, .. }
-                | MigrationStep::Set { parameter, .. } => Some(parameter),
-                MigrationStep::Remove { .. } => None,
-            };
-            if let MigrationStep::Set {
-                parameter, when, ..
-            } = step
-            {
-                migration_set::validate_condition(surface, parameter, when, errors);
-            }
-            if let Some(name) = current_name
-                && !known.contains(name.as_str())
-            {
-                errors.push(
-                    ContractValidationError::new(
-                        "unknown_migration_target",
-                        format!("migration targets unknown current parameter {name:?}"),
-                    )
-                    .at(surface.id(), Some(name)),
-                );
-            }
-        }
-        expected = migration.to_contract;
-    }
-    if expected != surface.contract_version() {
-        errors.push(
-            ContractValidationError::new(
-                "migration_target",
-                "migration chain must end at the current contract version",
-            )
-            .at(surface.id(), None),
-        );
-    }
-}
-
 fn validate_repeated_names(
     bundles: &[SurfaceContractBundle],
     errors: &mut Vec<ContractValidationError>,
@@ -2233,6 +2130,7 @@ mod tests {
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![binding],
                 migrations: Vec::new(),
@@ -2863,6 +2761,7 @@ mod tests {
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![first_binding, second_binding],
                 migrations: Vec::new(),

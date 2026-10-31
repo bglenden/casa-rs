@@ -1427,6 +1427,7 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve");
@@ -1535,6 +1536,7 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-field bandpass solve");
@@ -1643,6 +1645,7 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-scan bandpass solve");
@@ -1751,6 +1754,7 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-scan-field bandpass solve");
@@ -1856,6 +1860,7 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve with parang");
@@ -1961,6 +1966,7 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve with solnorm");
@@ -2063,6 +2069,7 @@ fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust BPOLY bandpass solve");

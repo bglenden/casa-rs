@@ -197,7 +197,7 @@ fn msv4_subtables(
     options: &OpenOptions,
 ) -> Result<(MeasurementSet, Vec<u32>, Arc<Catalogue>), ObservationError> {
     let observation = super::Msv4Observation::open_with(source, options)?;
-    let (subtables, windows) = super::convert::catalogue_subtables(&observation)?;
+    let (subtables, windows) = super::creation::catalogue_subtables(&observation)?;
     let windows = windows.into_iter().map(|row| row as u32).collect();
     Ok((subtables, windows, Arc::clone(observation.catalogue())))
 }

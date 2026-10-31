@@ -242,7 +242,12 @@ fn pointing_brackets_hold_each_stores_samples_and_survive_conversion() {
         &back,
         &casa_ms::observation_io::convert::ConversionOptions {
             data_groups: None,
-            accept: vec![LossKind::Sigma, LossKind::Tables, LossKind::Columns],
+            accept: vec![
+                LossKind::Sigma,
+                LossKind::Tables,
+                LossKind::Columns,
+                LossKind::Defaulted,
+            ],
             batch_bytes: 1 << 20,
             workers: 1,
             chunks: [0, 0, 0, 0],
@@ -445,7 +450,11 @@ fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
         let report = if to_v4 {
             casa_ms::observation_io::convert::to_msv4(path, &out, &conversion())
         } else {
-            casa_ms::observation_io::convert::to_msv2(path, &out, &conversion())
+            // The mosaic's OBSERVATION LOG, which an MSv2 written from the
+            // catalogue does not carry.
+            let mut accepting = conversion();
+            accepting.accept.push(LossKind::Columns);
+            casa_ms::observation_io::convert::to_msv2(path, &out, &accepting)
         }
         .expect("convert");
         let pointing: Vec<String> = report
@@ -613,7 +622,7 @@ fn pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4() {
 fn conversion() -> casa_ms::observation_io::convert::ConversionOptions {
     casa_ms::observation_io::convert::ConversionOptions {
         data_groups: None,
-        accept: vec![LossKind::Sigma, LossKind::Tables],
+        accept: vec![LossKind::Sigma, LossKind::Tables, LossKind::Defaulted],
         batch_bytes: 1 << 20,
         workers: 1,
         chunks: [4, 0, 0, 0],

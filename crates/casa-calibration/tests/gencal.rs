@@ -105,17 +105,38 @@ fn gencal_opacity_expands_selected_spws_across_antennas() {
         assert_fparam(&table, row, &[0.22]);
     }
 
+    // One opacity holds for every selected window, as in CASA's specifycal.
+    let one_path = dir.path().join("one-opacity.cal");
+    gencal(&GencalRequest {
+        measurement_set: ms_path.clone(),
+        output_table: one_path.clone(),
+        caltype: GencalType::Opac,
+        antenna: String::new(),
+        spw: "0,1".to_string(),
+        parameter: vec![0.05],
+        gaincurve_table: None,
+    })
+    .expect("one opacity for two windows");
+    let table = Table::open(TableOptions::new(&one_path)).expect("open opacity table");
+    for row in 0..6 {
+        assert_fparam(&table, row, &[0.05]);
+    }
+
     let err = gencal(&GencalRequest {
         measurement_set: ms_path,
         output_table: dir.path().join("bad-opacity.cal"),
         caltype: GencalType::Opac,
         antenna: String::new(),
         spw: "0,1".to_string(),
-        parameter: vec![0.11],
+        parameter: vec![0.11, 0.22, 0.33],
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(err.to_string().contains("one parameter per selected SPW"));
+    assert!(
+        err.to_string()
+            .contains("one opacity, or one for each selected SPW"),
+        "{err}"
+    );
 }
 
 #[test]

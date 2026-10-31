@@ -20,7 +20,14 @@ CASA behaviours casa-rs does not follow:
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
-[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
+[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
+[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
+[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
+[`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
+[`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
+[`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
+[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -74,6 +81,13 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
+Concatenation behaviours casa-rs does not follow:
+[a merged source record's time](#concat-leaves-a-merged-source-rows-time-unchanged),
+[source equivalence decided by its last column](#concats-source-equivalence-lets-its-last-optional-column-decide),
+[merged sources' numbering](#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle),
+[observation IDs after removing duplicates](#concat-leaves-gaps-in-observation-ids-after-removing-duplicates),
+[an input without states](#concat-drops-every-state-when-one-input-has-none),
+[writing into its inputs](#concat-writes-into-the-measurementsets-it-appends).
 ATM data errors casa-rs corrects (`tools/atmosphere/atm-corrections.patch`):
 [HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
 [sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
@@ -102,6 +116,10 @@ Calibration behaviours casa-rs does not follow:
 Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
+Coordinate behaviours casa-rs does not follow:
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
+[a FITS date's time scale](#importfits-reads-every-fits-date-as-utc),
+[`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2397,6 +2415,98 @@ project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.
 
+## `concat` leaves a merged SOURCE row's TIME unchanged
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`:
+  `sourceCol.interval().put(j, newTime)` before
+  `sourceCol.interval().put(j, newInterval)`)
+
+When two `SOURCE` rows of one window are equivalent, `updateSource` keeps the
+first and widens its validity to span both: it computes the union's centre
+and length, then writes the centre into `INTERVAL` and overwrites it with the
+length. `TIME` is never written, so the kept row is valid over an interval
+centred on its old time, which misses the end of the other row's validity.
+casa-rs centres the record on the union
+(`casa_observation::merge`, `sources.rs`, `widen`).
+
+## `concat`'s source equivalence lets its last optional column decide
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc`
+  (`sourceRowsEquivalent`)
+
+`sourceRowsEquivalent` compares the required columns with `&&`, then tests
+each optional column present (`POSITION`, `PULSAR_ID`, `REST_FREQUENCY`,
+`SYSVEL`, `TRANSITION`) by assigning its result to `areEquivalent`, so the last
+optional column tested decides: two rows with different rest frequencies but
+equal transitions are equivalent, and their lines are merged into one.
+casa-rs requires every member to be equal (an optional one stated by both or
+by neither).
+
+## `concat` renumbers merged sources so that one can split and fields dangle
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`, "renumber
+  consecutively"; `copyField`, `newSourceIndex2_p`)
+
+After removing redundant `SOURCE` rows, `updateSource` renumbers source IDs
+row by row: a row whose ID exceeds the count so far gets the next number. A
+source of several rows (one per window) after a removed ID therefore gets one
+number for its first row and another for the next, splitting it. The IDs it
+changes are applied to the fields `copyField` appends, not to the fields
+already in the output, which can then name a source ID no row has. casa-rs
+numbers merged sources in the order they first appear, every record of a
+source keeping its number, and maps every field
+(`casa_observation::merge`, `sources.rs`, `regroup`).
+
+## `concat` leaves gaps in observation IDs after removing duplicates
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`copyObservation`)
+
+`copyObservation` appends the incoming `OBSERVATION` rows, removes each row
+equivalent to an earlier one, and maps it to the last earlier equivalent. It
+does not shift the IDs of the rows after a removed one, as `copyProcessor`
+does with `removedSoFar`, so an input of several observations can have its
+rows mapped past the end of the table, or onto another observation, once a
+duplicate is removed. casa-rs maps each duplicate to its first equivalent and
+numbers the distinct observations consecutively, for processors and
+observations alike (`casa_observation::merge`, `distinct`).
+
+## `concat` drops every state when one input has none
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`concatenate`, "merge
+  STATE")
+
+When one of the two MeasurementSets has no `STATE` rows, `concatenate` writes
+no states at all: it deletes the first MeasurementSet's `STATE` rows and sets
+every row's `STATE_ID` to -1, so the intents of the input that had them are
+lost. casa-rs keeps them: the rows of an input without states have
+`STATE_ID` -1, and the others keep their merged states
+(`casa_observation::merge`, `states`).
+
+## `concat` writes into the MeasurementSets it appends
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casatools `src/tools/ms/ms_cmpt.cc` (`ms::concatenate`,
+  line 6497)
+
+After appending a MeasurementSet, `ms::concatenate` writes a `HISTORY` row
+("… appended to …", with its parameters) into the appended MeasurementSet,
+an input, rather than into the output; the inputs' own `HISTORY` is never
+copied. A task that reads several MeasurementSets to make another should
+leave them as they were. casa-rs never writes an input: the output's
+`HISTORY` holds what the creating task records of itself
+(`CreationOptions::history`), and the inputs' `HISTORY` is a declared loss.
+
 ## `tclean` reads a `uvtaper` with no unit as radians
 
 - Date noted: 2026-10-28
@@ -2468,3 +2578,211 @@ unknown: 13", then aborts the Python process with an uncaught
 `std::out_of_range` from `map::at`; there is no summary. casa-rs names
 every correlation by casacore's `Stokes::name`, so the summary keys those
 correlations `RX`, `RY`, `LX` and `LY` (`listobs::stokes_name`).
+
+## A subimage offsets a tabular coordinate's world values instead of moving its table
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#1001, PR #1005 review)
+- Affected code: casacore `coordinates/Coordinates/CoordinateSystem.cc`
+  (`subImageInSitu`) and `TabularCoordinate.cc` (`toWorld`,
+  `setReferencePixel`)
+
+A `TabularCoordinate` with a nonlinear table converts a pixel through its
+channel corrector first and its linear part (`crval`, `cdelt`, `crpix`)
+second. `subImageInSitu` moves a tabular coordinate's reference pixel by the
+subimage's start, as for a linear axis, but the corrector stays in the input's
+pixels. A subimage's world values are therefore the input's at the same
+pixel, offset by `cdelt × start`, not the input's at the pixel they were cut
+from. For a table at pixels `[0, 1, 3, 4]` with world values
+`[10, 11, 15, 22]`, `coordsys.subimage(originshft=[0, 1])` gives world values
+`[13, 14, 16]` at pixels 0 to 2, where the input has `[11, 13, 15]` (CASA
+6.7.6). A tabular spectral coordinate is not affected: `subImageInSitu`
+rebuilds its table over the subimage's channels. casa-rs moves the table's
+pixels with the reference pixel (`casa_images` `imsubimage`), so a subimage
+reads the input's world values at the pixels it was cut from. CASA's
+`imsubimage` ignores a box on an image without a direction coordinate, the
+only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
+CASA.
+
+## `tb.getcol` refuses a column of `int64`
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `src/code/stdcasa/StdCasa/CasacSupport.cc`
+  (`fromValueHolder`)
+
+`tb.getcol` of a scalar column of `Int64` raises `RuntimeError: Unknown casa
+DataType!` in CASA 6.7.6.14, while `tb.getcell` of the same column returns the
+value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
+`int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
+the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
+(the converter for records in the same file has both). The recording is
+`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
+`int64` array, as it does for every other integer column.
+
+## `tb.putkeyword` stores an int beyond 32 bits as 0
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion for table keywords
+
+`tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
+gives `0`, both for a new keyword and for an existing 32-bit `Int` one
+(CASA 6.7.6.14; the `casa_bugs` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
+stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
+refuses such a value for an existing 32-bit keyword with
+`RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
+bits`, rather than store a wrong number.
+
+## `tb` slices with a wrong rank or a start outside the array abort the process
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `table::getcellslice`, `getcolslice`, `putcellslice`
+  and `putcolslice`, over casacore's `Slicer`
+
+In CASA 6.7.6.14 a slice whose `blc`, `trc` or `incr` has the wrong number of
+elements for the array, or whose `blc` lies outside the array, throws an
+`ArraySlicerError` that nothing catches, and the Python process ends
+(`libc++abi: terminating due to uncaught exception of type
+casacore::ArraySlicerError`, exit status 134). The default `incr=[1]` is such a
+slice for an array of more than one axis, so `tb.getcellslice('DATA', 0, [0, 0],
+[1, 3])` aborts. casa-rs raises a `RuntimeError` for each of them and takes a
+one-element `incr` as the step of every axis. The recording
+(`crates/casars-python/python/tests/data/casa_table_tool.json`, `slices` and
+`ms_slices`) holds only the cases CASA survives. CASA is also inconsistent
+about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
+than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
+follows both.
+
+## `tb.putcell` and `putcol` wrap an int beyond 32 bits in an int cell
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion to a column's type
+
+`tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
+`-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
+(CASA 6.7.6.14; the `int_overflow` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
+to the 32-bit column type without a range check, as for `putkeyword` above.
+casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
+leaves the cell, rather than store a wrong number. Astra's review of #1034
+noted the departure.
+
+## `tb.putcell` with several rows writes those before a missing one
+
+- Date noted: 2026-10-30
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::putCell`
+
+`tb.putcell('id', [0, 3], 22)` on a table of three rows writes row 0, then
+fails on row 3 with `no such row`: `TableProxy::putCell` checks and writes one
+row at a time, so a call that raises has still changed the table
+(`rows_vector` scenario). casa-rs checks every row first and raises with the
+table as it was. The recording follows the failed call with a write that puts
+row 0 back, so that its later reads agree.
+
+## `tb.addrows` with a negative count removes rows
+
+- Date noted: 2026-10-31
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::addRow` (the count is an `Int` handed
+  to `Table::addRow(rownr_t)`)
+
+`tb.addrows(-1)` on a table of three rows returns `True` and leaves two;
+`addrows(-2)` leaves none, and the table reopens with no rows
+(`addrows_negative` scenario). The count converts to a huge unsigned number
+and the table's row count wraps. casa-rs raises `RuntimeError` ("the number
+of rows must not be negative") and changes nothing.
+
+## `tb.removerows` and `tb.addcols` do part of a call that fails
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1036)
+- Affected code: casacore `BaseTable::removeRow(Vector)` and
+  `TableProxy::addColumns`
+
+`tb.removerows([2, 2])` on a table of three rows removes the first row 2,
+then raises "rownr 2 too high ... (#rows=2)", leaving two rows: the row
+numbers are taken from the highest down and each is checked against the
+table as it then is. (A number beyond the table, even among valid ones, fails
+before any row goes: it is the highest.) `tb.addcols` of `aaa` and `id` on a
+table that has `id` adds `aaa` and then raises "column already exists":
+`addColumns` builds the whole description first (a malformed field fails the
+call with nothing added) and then adds the columns one by one, in the
+record's sorted order (`structure_partial` scenario). casa-rs checks the whole
+call before it changes anything: both raise CASA's message and leave the table
+as it was. The successful calls, repeats included (`removerows([0, 0])`
+removes two rows), are CASA's.
+
+## `importfits` reads every FITS date as UTC
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1017)
+- Affected code: casacore `coordinates/Coordinates/FITSCoordinateUtil.cc`
+  (`getObsInfo`, which reads `TIMESYS` from the header record, and the WCS
+  date wcslib holds)
+
+`exportfits` writes an image's observation date in the epoch's own time
+scale, `DATE-OBS` with `TIMESYS` naming the scale (`ObsInfo::toFITS`).
+`importfits` gives the date back with the same calendar value but labelled
+UTC, whatever `TIMESYS` says. An image observed at 2020-05-31 12:00 TAI
+exported by CASA 6.7.6 with `TIMESYS = 'TAI'` imports at 2020-05-31 12:00
+UTC, 37 seconds later. Where the scale is lost was not pinned down:
+`getObsInfo` reads `TIMESYS` from the header record and the date from
+wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
+when it names none (`casa_coordinates::fits::from_fits_header`), so the
+round trip keeps the date.
+
+## `feather` fails on an image whose direction is not on its first two axes
+
+- Date noted: 2026-10-30
+- Status: CASA limitation; casa-rs does not follow it (#1002, PR #1022
+  review)
+- Affected code: casatools `synthesis/MeasurementEquations/Feather.cc`
+  (its FFT, cursor and weight-image paths)
+
+`feather` finds an image's direction axes for part of its setup, but its
+lattice cursors and FFTs assume the direction plane is the first two axes.
+CASA 6.7.6.14's `feather` of a pair of 16 by 16 pixel images, one Stokes and
+two channels, with 2″ and 6″ beams, succeeds over [RA, Dec, Stokes, Freq].
+The same pair over [Stokes, RA, Dec, Freq] or [Freq, RA, Dec, Stokes], as
+`imtrans` makes it, fails with `LatticeStepper::setCursorShape: cursorShape
+<=0 or > latticeShape`. casa-rs feathers each direction plane wherever its
+axes are. The transposed pair's result is the transpose of the
+direction-first pair's (`casa-images` `casa_axis_maps` test
+`feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
+result is checked against CASA's in `image_analysis_casa`.
+
+## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1039)
+- Affected code: casacore `TableCopy::copyRows` and `ROTableRow`/`TableRow::put`
+  (`RecordInterface::as...`)
+
+`copyRows` adds an output row and then puts its cells one by one. When a
+shared column has a type the input's cell cannot be converted to (a `double`
+output column for a `dcomplex` input, `RecordInterface::asDouble - invalid
+data type`; an `int` output column for a `float` array input,
+`TableRecordRep::get_pointer - incorrect data type used for field ...`), the
+call raises with the rows already added and their cells never set: reading
+them gives whatever the heap held (`copyrows_types` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which does not
+compare the table after a refusal). casa-rs checks the types before it changes
+anything and raises with the output table as it was.
+
+Which conversions CASA accepts was probed pair by pair and is what casa-rs
+accepts (`tools/table/cell_convert.rs`), with one exception: an integer that
+does not fit the output column's type is wrapped as a C cast does (a `Short`
+-5 becomes the `uChar` 251, a `uInt` 4294967291), the same narrowing as
+`putcell` above. casa-rs raises `RuntimeError: a value is out of range for a
+column of ...`, before the output is touched, rather than store a wrong
+number.

@@ -12,43 +12,31 @@ const APPLICATION_CATALOG_JSON: &str = include_str!(concat!(
     "/resources/application-catalog.json"
 ));
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationKind {
-    Task,
-}
+/// The catalog schema this crate reads. Version 2 (#972) dropped the
+/// presentation fields only the retired terminal and Swift frontends read
+/// (`kind`, `shell_kind`, `interaction`, `show_in_tui`, `show_in_swift`).
+pub const APPLICATION_CATALOG_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationShellKind {
-    Inspect,
-    Workflow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationInteraction {
-    OneShot,
-}
-
+/// How a task's executable is found and built.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplicationLaunchDescriptor {
     pub executable: String,
     pub cargo_package: String,
     pub override_env: String,
 }
 
+/// One task application: the surface it runs and how it is launched and
+/// packaged. Every application is a task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplicationDefinition {
     /// Stable application identity. Task identities reference a canonical surface with this ID.
     pub id: String,
-    pub kind: ApplicationKind,
     pub launch: ApplicationLaunchDescriptor,
-    pub shell_kind: ApplicationShellKind,
-    pub interaction: ApplicationInteraction,
+    /// The kinds of dataset the task reads, such as `measurement_set`.
     pub dataset_kinds: Vec<String>,
-    pub show_in_tui: bool,
-    pub show_in_swift: bool,
+    /// Whether `scripts/install-suite.sh` installs the executable.
     pub include_in_suite: bool,
 }
 
@@ -64,6 +52,7 @@ impl ApplicationDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplicationCatalog {
     pub schema_version: u32,
     pub applications: Vec<ApplicationDefinition>,
@@ -78,7 +67,7 @@ impl ApplicationCatalog {
 
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
-        if self.schema_version != 1 {
+        if self.schema_version != APPLICATION_CATALOG_SCHEMA_VERSION {
             errors.push(format!(
                 "unsupported application catalog version {}",
                 self.schema_version
@@ -175,7 +164,6 @@ mod tests {
         let catalog = builtin_application_catalog().expect("valid application catalog");
         assert_eq!(catalog.applications.len(), 26);
         for application in &catalog.applications {
-            assert_eq!(application.kind, ApplicationKind::Task);
             assert_eq!(
                 application.surface_bundle().unwrap().surface.id(),
                 application.id
@@ -189,12 +177,45 @@ mod tests {
     fn task_presentation_is_owned_by_the_referenced_surface() {
         let application = builtin_application_catalog()
             .unwrap()
-            .application("imager")
+            .application("tclean")
             .unwrap();
         let surface = application.surface_bundle().unwrap();
-        assert_eq!(surface.surface.display_name(), "Imager");
+        assert_eq!(surface.surface.display_name(), "Tclean");
         assert_eq!(surface.surface.category(), "Imaging");
         assert_eq!(application.protocol_family().unwrap(), "imager");
+    }
+
+    /// Version 2 (#972) holds only what a launch and the suite read: a
+    /// version-1 entry's presentation fields are refused, as is the old
+    /// version number.
+    #[test]
+    fn the_retired_presentation_fields_are_refused() {
+        let catalog = builtin_application_catalog().unwrap();
+        assert_eq!(catalog.schema_version, APPLICATION_CATALOG_SCHEMA_VERSION);
+        let mut entry = serde_json::to_value(&catalog.applications[0]).unwrap();
+        // As a set: serde_json keeps insertion order when another crate in
+        // the build enables its `preserve_order` feature.
+        assert_eq!(
+            entry
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["dataset_kinds", "id", "include_in_suite", "launch"])
+        );
+        entry["show_in_tui"] = serde_json::json!(true);
+        let error = serde_json::from_value::<ApplicationDefinition>(entry).unwrap_err();
+        assert!(error.to_string().contains("show_in_tui"), "{error}");
+        let mut old = catalog.clone();
+        old.schema_version = 1;
+        let errors = old.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("unsupported application catalog version 1")),
+            "{errors:?}"
+        );
     }
 
     #[test]

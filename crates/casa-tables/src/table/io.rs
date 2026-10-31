@@ -266,7 +266,7 @@ impl Table {
                 error
             })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -421,7 +421,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -508,7 +508,7 @@ impl Table {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path);
+        self.note_full_save(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = row_count,
@@ -1162,6 +1162,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: source_dm.type_name,
+                name: target_data_manager_name.to_string(),
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
@@ -1323,6 +1324,7 @@ impl Table {
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: "TiledShapeStMan".to_string(),
+                name: column.to_string(),
                 seq_nr,
                 columns: vec![column.to_string()],
             });
@@ -1638,14 +1640,118 @@ impl Table {
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
+        self.dm_info = std::mem::take(&mut reloaded.dm_info);
         // Preserve source_path, kind, marked_for_delete, and lock_state. The
         // reloaded state is what is on disk, so a lock has nothing to flush;
         // a write already persisted under it stays to be published.
         #[cfg(unix)]
         if let Some(state) = self.lock_state.as_mut() {
-            state.flushed_generation = self.inner.generation();
+            state.flushed_generation.store(
+                self.inner.generation(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         Ok(())
+    }
+
+    /// The byte order of the files of this table as they are on disk, from
+    /// the marker in `table.dat`; for a reference table, the byte order of the
+    /// table it refers to, as casacore's `RefTable` reports it. `None` for a
+    /// table that has no directory, a concatenation of tables, or a reference
+    /// chain that is too deep or cannot be read.
+    ///
+    /// # C++ equivalent
+    ///
+    /// `Table::endianFormat()`.
+    pub fn stored_endian_format(&self) -> Result<Option<EndianFormat>, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        Ok(stored_endian_format_of(path, 0))
+    }
+
+    /// Whether the directory of this table holds a reference table (a view
+    /// of rows and columns of another table, as a selection makes), rather
+    /// than a table of its own.
+    pub fn is_reference_table(&self) -> Result<bool, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(false);
+        };
+        let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+        Ok(matches!(
+            crate::storage::table_control::read_table_dat_dispatch(&control_path)?,
+            crate::storage::table_control::TableDatResult::Ref(_)
+        ))
+    }
+
+    /// The options that write this table in full as it is laid out on disk,
+    /// when that layout is a single `StManAipsIO` group holding every column:
+    /// the group's name and the byte order of its files are kept. `None` for
+    /// any other layout (several groups, another manager, a table that is
+    /// not on disk, a manager that has a name of its own in the header of its
+    /// file, which the writer would drop), which a full
+    /// [`save`](Table::save) would change.
+    ///
+    /// `StManAipsIO` keeps its columns in one file written in full, as
+    /// casacore writes it, so such a table can be saved in full where a
+    /// partial in-place save is not supported (for example with a record
+    /// column) without changing its layout.
+    pub fn single_stman_aipsio_options(&self) -> Result<Option<TableOptions>, TableError> {
+        let Some(path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+        let crate::storage::table_control::TableDatResult::Plain(table_dat) =
+            crate::storage::table_control::read_table_dat_dispatch(&control_path)?
+        else {
+            return Ok(None);
+        };
+        let managers = &table_dat.column_set.data_managers;
+        let groups: std::collections::HashSet<&str> = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .map(|column| column.data_manager_group.as_str())
+            .collect();
+        let [manager] = managers.as_slice() else {
+            return Ok(None);
+        };
+        let (Some(group), 1) = (groups.iter().next(), groups.len()) else {
+            return Ok(None);
+        };
+        if manager.type_name != "StManAipsIO"
+            || manager.seq_nr != 0
+            || table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|column| column.data_manager_type != "StManAipsIO")
+        {
+            return Ok(None);
+        }
+        // A full save writes the empty manager name casa-rs always writes in
+        // the file's header, where casacore keeps the name the manager was
+        // bound with; a manager with a name of its own would lose it, so such
+        // a table is not one to rewrite.
+        let stored_name = crate::storage::stman_aipsio::name_from_file(&path.join(format!(
+            "{}{}",
+            crate::storage::TABLE_DATA_FILE_PREFIX,
+            manager.seq_nr
+        )));
+        if stored_name.is_some_and(|name| !name.is_empty()) {
+            return Ok(None);
+        }
+        let format = if table_dat.big_endian {
+            EndianFormat::BigEndian
+        } else {
+            EndianFormat::LittleEndian
+        };
+        Ok(Some(
+            TableOptions::new(path)
+                .with_data_manager(DataManagerKind::StManAipsIO)
+                .with_data_manager_group(*group)
+                .with_endian_format(format),
+        ))
     }
 
     /// Marks this table for deletion when it is dropped.
@@ -1715,28 +1821,24 @@ impl Table {
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.validate()?;
-        let snapshot = StorageSnapshot {
-            row_count: 0,
-            rows: Vec::new(),
-            undefined_cells: Vec::new(),
-            keywords: self.inner.keywords().clone(),
-            column_keywords: self.inner.all_column_keywords().clone(),
-            schema: self.inner.schema().cloned(),
-            table_info: self.table_info.clone(),
-            virtual_columns: std::collections::HashSet::new(),
-            virtual_bindings: Vec::new(),
-            dm_info: vec![],
-            retained_read_metadata: None,
-        };
         self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
-        storage.save(
+        storage.save_borrowed(
             &opts.path,
-            &snapshot,
+            &[],
+            &[],
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &std::collections::HashSet::new(),
+            &[],
             opts.data_manager,
+            opts.data_manager_group.as_deref(),
             opts.endian_format.is_big_endian(),
             opts.tile_shape.as_deref(),
         )?;
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&opts.path);
         Ok(())
     }
 }
@@ -2083,5 +2185,24 @@ fn current_value_for_column(
             Err(TableError::ColumnNotFound { .. }) => Ok(None),
             Err(err) => Err(err),
         }
+    }
+}
+
+/// The byte order of the table at `path`, following reference tables to the
+/// table they refer to (`depth` bounds a chain that loops).
+fn stored_endian_format_of(path: &Path, depth: usize) -> Option<EndianFormat> {
+    use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+    let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
+    match read_table_dat_dispatch(&control_path).ok()? {
+        TableDatResult::Plain(table_dat) => Some(if table_dat.big_endian {
+            EndianFormat::BigEndian
+        } else {
+            EndianFormat::LittleEndian
+        }),
+        TableDatResult::Ref(reference) if depth < 32 => stored_endian_format_of(
+            &crate::table_path::add_directory_for_link(&reference.parent_relative_path, path),
+            depth + 1,
+        ),
+        _ => None,
     }
 }

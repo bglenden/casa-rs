@@ -33,8 +33,8 @@ def load(path: Path) -> dict[str, object]:
 def main() -> int:
     applications = load(APPLICATIONS_PATH)
     surfaces = load(SURFACES_PATH)
-    if applications.get("schema_version") != 1:
-        fail("application catalog schema_version must be 1")
+    if applications.get("schema_version") != 2:
+        fail("application catalog schema_version must be 2")
     if surfaces.get("schema_version") != 1:
         fail("parameter surface schema_version must be 1")
 
@@ -48,20 +48,17 @@ def main() -> int:
     if duplicates:
         fail(f"duplicate application IDs: {duplicates}")
 
-    task_ids = {
-        entry["id"]
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("kind") == "task"
-    }
     # Every application is a task: Python starts each one directly, and the
-    # casars launcher is retired (#931).
-    others = sorted(
-        str(entry.get("id"))
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("kind") != "task"
-    )
-    if others:
-        fail(f"applications that are not tasks: {others}")
+    # casars launcher is retired (#931). Version 2 keeps only what a launch
+    # and the suite read (#972).
+    task_ids = {entry["id"] for entry in entries if isinstance(entry, dict)}
+    fields = {"id", "launch", "dataset_kinds", "include_in_suite"}
+    for entry in entries:
+        if isinstance(entry, dict) and set(entry) != fields:
+            fail(
+                f"application {entry.get('id')!r} fields {sorted(entry)} "
+                f"are not {sorted(fields)}"
+            )
     surface_ids = {
         surface["id"] for surface in definitions if isinstance(surface, dict)
     }

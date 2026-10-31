@@ -8,9 +8,12 @@
   its task's own executable.
 - `casars.tools` provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
-  its imports (ADR-0019): `simulator` (CASA's `sm`), `measures` (`me`) and
-  `quanta` (`qa`). Methods casa-rs does not implement yet raise
-  `NotImplementedError`. A tool's constructor takes only casa-rs's controls,
+  its imports (ADR-0019): `simulator` (CASA's `sm`), `measures` (`me`),
+  `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`), `coordsys`
+  (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`. Each has every
+  method of CASA 6.7.6.14's binding; a method casa-rs does not implement yet
+  raises `NotImplementedError` naming the issue that records it (#1027 to
+  #1030 for the last five). A tool's constructor takes only casa-rs's controls,
   keyword-only: `simulator(*, memory_budget=None, backend='auto',
   workers=None)` caps the memory `close` holds (bytes), names the device to
   predict on (`'auto'`, `'cpu'` or `'metal'`) and the threads to keep busy;
@@ -32,8 +35,8 @@ Rust-owned parameter and result contracts. A call resolves its parameters in
 Rust, starts the task's executable as a child process with `--json-run -`,
 passes the task's log lines to `sys.stderr` as they arrive. A task whose
 surface names its CASA task (the image tasks, the MeasurementSet and
-flagging tasks and `simobserve` so far) has CASA's exact signature and
-returns CASA's value; the others return a
+flagging tasks, the calibration tasks and `simobserve` so far) has CASA's
+exact signature and returns CASA's value; the others return a
 `TaskCompletion` until their families are converted (#931). A task that
 refuses its parameters raises `casars.tasks.TaskParameterError`, a
 `ValueError`, and one that does not succeed
@@ -60,11 +63,11 @@ from casars import parameters, tasks
 p = parameters.load("profiles/target-imaging.toml", workspace="project")
 p.update(niter=20000, threshold="1mJy")
 
-result = tasks.run("imager", p)   # runs in the draft's workspace, project/
+result = tasks.run("tclean", p)   # runs in the draft's workspace, project/
 ```
 
 A loaded profile also runs through a CASA-named wrapper, in the current
-directory: `tasks.imager(**parameters.load("profiles/target-imaging.toml"))`.
+directory: `tasks.tclean(**parameters.load("profiles/target-imaging.toml"))`.
 
 The call saves no Last profile. `parameters.last(...)` reads the Last that a
 command-line run saved.
@@ -75,9 +78,10 @@ updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
 `casars.tasks` is generated from the 26 task definitions and supplies one
-CASA-named keyword wrapper and typing stub per task. Their signatures
-deliberately use an unset sentinel instead of copying catalog defaults into
-Python.
+CASA-named wrapper and typing stub per task. A task that mimics CASA's has
+CASA 6.7.6.14's signature, defaults and return value (#931); the casa-rs
+tasks (`calibrate`, `msexplore`) and `plotms` take keywords with an unset
+sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
 It carries task parameters, task results and MeasurementSet plot documents as

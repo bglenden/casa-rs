@@ -12,9 +12,9 @@ use std::time::Instant;
 use casa_tables::{
     ColumnBinding, ColumnOverrides, STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType,
     StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
-    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableError, TableOptions,
-    TableWriteLock, install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
+    StreamingTiledShapeWriter, Table, TableError, TableOptions, TableWriteLock,
+    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
     install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
     streamed_scalar_columns_resident_bytes,
@@ -28,6 +28,7 @@ use thiserror::Error;
 use crate::{MeasurementSet, MsSelectionIoBudget, SubtableColumnOverrides};
 
 mod scalars;
+mod variable_budget;
 mod visibility_columns;
 
 pub use scalars::ScalarColumnId;
@@ -1250,21 +1251,10 @@ impl MeasurementSetWriteSession {
         {
             let mut writers = HashMap::with_capacity(plan.array_columns.len());
             for column in &plan.array_columns {
-                let layouts = column
-                    .shapes
-                    .iter()
-                    .map(|shape| {
-                        StreamedTiledShapeCubeLayout::new(
-                            shape.cell_shape.clone(),
-                            shape.row_count,
-                            shape.tile_shape.clone(),
-                        )
-                    })
-                    .collect();
                 let writer = StreamingTiledShapeWriter::create(
                     output.join(format!(".casa-rs.{}.table.f.tmp", column.name)),
                     column.value_type,
-                    layouts,
+                    column.layouts(),
                     plan.array_column_memory_budget_bytes,
                     false,
                 )

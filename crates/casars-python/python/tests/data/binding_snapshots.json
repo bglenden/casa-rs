@@ -29,6 +29,34 @@
            },
            "elements": {
             "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "null": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[bool](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[float](kind)": {
               "kind": {
                "str": null
@@ -58,9 +86,7 @@
                "str": null
               },
               "special_values": {
-               "list": {
-                "str": null
-               }
+               "list": {}
               }
              },
              "dict[string](kind)": {
@@ -118,11 +144,6 @@
               },
               "elements": {
                "list": {
-                "dict[integer](kind)": {
-                 "kind": {
-                  "str": null
-                 }
-                },
                 "dict[path](kind,resource_kind)": {
                  "kind": {
                   "str": null
@@ -137,7 +158,6 @@
                "int": null
               },
               "max_items": {
-               "int": null,
                "null": null
               },
               "allow_scalar": {
@@ -865,6 +885,34 @@
            },
            "elements": {
             "list": {
+             "dict[array](kind,elements,min_items,max_items,allow_scalar)": {
+              "kind": {
+               "str": null
+              },
+              "elements": {
+               "list": {
+                "dict[integer](kind)": {
+                 "kind": {
+                  "str": null
+                 }
+                }
+               }
+              },
+              "min_items": {
+               "int": null
+              },
+              "max_items": {
+               "null": null
+              },
+              "allow_scalar": {
+               "bool": null
+              }
+             },
+             "dict[bool](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
              "dict[float](kind)": {
               "kind": {
                "str": null
@@ -894,9 +942,7 @@
                "str": null
               },
               "special_values": {
-               "list": {
-                "str": null
-               }
+               "list": {}
               }
              },
              "dict[string](kind)": {
@@ -954,11 +1000,6 @@
               },
               "elements": {
                "list": {
-                "dict[integer](kind)": {
-                 "kind": {
-                  "str": null
-                 }
-                },
                 "dict[path](kind,resource_kind)": {
                  "kind": {
                   "str": null
@@ -973,7 +1014,6 @@
                "int": null
               },
               "max_items": {
-               "int": null,
                "null": null
               },
               "allow_scalar": {
@@ -1137,6 +1177,7 @@
    "float": null,
    "int": null,
    "list": {
+    "bool": null,
     "float": null,
     "int": null,
     "str": null
@@ -3721,7 +3762,7 @@
   },
   "malformed successful task result": {
    "error": "TaskResultError",
-   "message": "imager produced a successful but invalid result: reason='unknown managed result for \"imager\": invalid type: string \"runner stdout\", expected struct ImagerOutputWire at line 1 column 15'"
+   "message": "tclean produced a successful but invalid result: reason='unknown managed result for \"tclean\": invalid type: string \"runner stdout\", expected struct ImagerOutputWire at line 1 column 15'"
   }
  }
 }

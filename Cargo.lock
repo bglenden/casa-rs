@@ -324,6 +324,7 @@ dependencies = [
  "num-complex",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sha2",
  "tar",
  "tempfile",
@@ -2052,6 +2053,7 @@ version = "0.28.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91fd8e38a3b50ed1167fb981cd6fd60147e091784c427b8f7183a7ee32c31c12"
 dependencies = [
+ "inventory",
  "libc",
  "once_cell",
  "portable-atomic",

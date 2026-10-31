@@ -67,12 +67,12 @@ fn the_catalog_view_projects_every_task_surface() {
 
 #[test]
 fn resolution_keeps_override_origins_and_renders_them() {
-    let defaults = defaults("imager");
+    let defaults = defaults("tclean");
     assert!(!defaults.dirty);
     assert_eq!(defaults.states["niter"].origin, "default");
 
     let resolved = resolve(
-        "imager",
+        "tclean",
         ProfileBase::Defaults,
         None,
         values(&[
@@ -97,7 +97,7 @@ fn resolution_keeps_override_origins_and_renders_them() {
             .contains("niter = 7")
     );
     let unset = resolve(
-        "imager",
+        "tclean",
         ProfileBase::Defaults,
         None,
         BTreeMap::new(),
@@ -129,9 +129,9 @@ fn simobserve_invocation_carries_casas_parameters() {
 }
 
 #[test]
-fn imager_invocation_carries_the_imager_parameters() {
+fn tclean_invocation_carries_the_tclean_parameters() {
     let invocation = provider_invocation(
-        "imager",
+        "tclean",
         values(&[
             ("vis", text("input.ms")),
             ("imagename", text("products/image")),
@@ -150,7 +150,7 @@ fn imager_invocation_carries_the_imager_parameters() {
     );
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
-    assert_eq!(request["surface"], "imager");
+    assert_eq!(request["surface"], "tclean");
     assert_eq!(request["values"]["vis"], serde_json::json!(["input.ms"]));
     assert_eq!(request["values"]["imagename"], "products/image");
     assert_eq!(request["values"]["parallel"], false);
@@ -165,7 +165,7 @@ fn one_profile_resolves_alike_through_the_runtime_and_the_binding() {
     ));
     let direct = ParameterRuntime::default()
         .open_session(OpenSessionRequest {
-            bundle: builtin_surface_bundle("imager").expect("builtin imager surface"),
+            bundle: builtin_surface_bundle("tclean").expect("builtin tclean surface"),
             workspace: PathBuf::from("."),
             source: BaseSource::File(source_path.clone()),
             profile_text: Some(profile_toml.to_string()),
@@ -183,7 +183,7 @@ fn one_profile_resolves_alike_through_the_runtime_and_the_binding() {
     );
 
     let snapshot = resolve(
-        "imager",
+        "tclean",
         ProfileBase::File(source_path),
         Some(profile_toml.to_string()),
         BTreeMap::new(),
@@ -198,7 +198,7 @@ fn one_profile_resolves_alike_through_the_runtime_and_the_binding() {
     // Python projects the values set explicitly, as its `provider_invocation`
     // does: the profile's, never the defaults (#974).
     let invocation = provider_invocation(
-        "imager",
+        "tclean",
         snapshot
             .states
             .iter()
@@ -237,17 +237,17 @@ fn explicit_and_managed_profiles_round_trip() {
         ("niter", ParameterValue::Integer(42)),
     ]);
     let profile_path = temp.path().join("profiles/imager.toml");
-    let saved = save("imager", draft.clone(), &profile_path).expect("save profile");
+    let saved = save("tclean", draft.clone(), &profile_path).expect("save profile");
     assert_eq!(saved.path, profile_path.to_string_lossy());
     assert!(saved.bytes_written > 0);
     assert_eq!(saved.managed_kind, None);
 
     let profile_toml = fs::read_to_string(&profile_path).expect("read profile");
-    assert!(profile_toml.contains("surface = \"imager\""));
+    assert!(profile_toml.contains("surface = \"tclean\""));
     assert!(profile_toml.contains("niter = 42"));
     assert!(!profile_toml.contains("cell ="));
     let loaded = resolve(
-        "imager",
+        "tclean",
         ProfileBase::File(profile_path),
         Some(profile_toml),
         BTreeMap::new(),
@@ -261,10 +261,10 @@ fn explicit_and_managed_profiles_round_trip() {
     );
 
     let workspace = temp.path().join("workspace");
-    let written = write_managed("imager", &workspace, draft.clone(), false).expect("write Last");
+    let written = write_managed("tclean", &workspace, draft.clone(), false).expect("write Last");
     assert!(written.path.ends_with("last.toml"), "{}", written.path);
     assert_eq!(written.managed_kind.as_deref(), Some("last"));
-    let last_view = last("imager", &workspace, false)
+    let last_view = last("tclean", &workspace, false)
         .expect("load Last")
         .expect("Last exists");
     assert_eq!(
@@ -273,13 +273,13 @@ fn explicit_and_managed_profiles_round_trip() {
     );
 
     assert!(
-        last("imager", &workspace, true)
+        last("tclean", &workspace, true)
             .expect("look up Last Successful")
             .is_none()
     );
-    write_managed("imager", &workspace, draft, true).expect("write Last Successful");
+    write_managed("tclean", &workspace, draft, true).expect("write Last Successful");
     assert!(
-        last("imager", &workspace, true)
+        last("tclean", &workspace, true)
             .expect("load Last Successful")
             .is_some()
     );
@@ -292,11 +292,11 @@ fn explicit_and_managed_profiles_round_trip() {
 #[test]
 fn managed_lookup_distinguishes_missing_from_corrupt() {
     let workspace = tempfile::tempdir().unwrap();
-    assert!(last("imager", workspace.path(), false).unwrap().is_none());
+    assert!(last("tclean", workspace.path(), false).unwrap().is_none());
     ManagedStateStore::for_workspace(workspace.path())
-        .write("imager", ManagedProfileKind::Last, "not valid profile TOML")
+        .write("tclean", ManagedProfileKind::Last, "not valid profile TOML")
         .unwrap();
-    let error = last("imager", workspace.path(), false)
+    let error = last("tclean", workspace.path(), false)
         .expect_err("corrupt Last must not be treated as missing");
     assert!(error.contains("open parameter session"), "{error}");
 }

@@ -41,8 +41,8 @@ pub use semantic::{
 #[cfg(test)]
 mod tests;
 pub use application::{
-    ApplicationCatalog, ApplicationDefinition, ApplicationInteraction, ApplicationKind,
-    ApplicationLaunchDescriptor, ApplicationShellKind, builtin_application_catalog,
+    APPLICATION_CATALOG_SCHEMA_VERSION, ApplicationCatalog, ApplicationDefinition,
+    ApplicationLaunchDescriptor, builtin_application_catalog,
 };
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};
 pub use executable::{SUITE_ROOT_ENV, installed_suite_root, resolve_task_executable};

@@ -16,9 +16,10 @@
 //! `close` then multiplies each row channel by channel by its antennas'
 //! phasors, which it works out once a batch for each antenna and solution
 //! the batch reaches, and admits with the batch. At 4,096 channels a
-//! batch's phasors hold megabytes, and what `close` holds more for a
-//! tropospheric term than for an `fbm` gain term (which takes the same path
-//! through `corrupt`, without phasors) is within what it is admitted more.
+//! batch's phasors hold megabytes, and what `close` holds apart from the
+//! write batches more for a tropospheric term than for an `fbm` gain term
+//! (which takes the same path through `corrupt`, without phasors) is within
+//! what it is admitted more.
 //!
 //! The first law's base and ten-times-the-rows cases, with and without the
 //! term's table, and the patch's rows law hold with an `individual` term
@@ -27,11 +28,12 @@
 //! Each law runs alone in its process ([`super::alone`]).
 
 use casa_simulation::{GainSpec, Simulator, TroposphereSpec};
+use num_complex::Complex32;
 
 use super::jones::{TROPOSPHERE, session_law, table_law};
 use super::{
-    EXCESS, LIVE, Ordering, PEAK, ReservationWindow, alone, charge_process_caches, configured,
-    excess_now, reserved_memory, resources, scan,
+    BATCH_ALLOCATED, EXCESS, LIVE, OWN_LIVE, OWN_PEAK, Ordering, PEAK, ReservationWindow, alone,
+    charge_process_caches, configured, excess_now, reserved_memory, resources, scan,
 };
 
 /// The setter law's budget beside the process caches: ample for the
@@ -123,7 +125,8 @@ const CHANNELS: usize = 4_096;
 /// Heap `close` may hold beyond its reservations at any allocation.
 const CLOSE_ALLOWANCE_BYTES: i64 = 512 * 1024;
 
-/// Measured `close`s of each term, of which the least peak is compared.
+/// Measured `close`s of each term: the troposphere's worst is compared with
+/// the gain's least.
 const CLOSE_RUNS: usize = 3;
 
 /// A term on a session, named.
@@ -150,9 +153,11 @@ const TERMS: [Term; 2] = [
 /// plan keeps room for batches it does not always hold), so the law
 /// compares a tropospheric term with an `fbm` gain term, whose rows take
 /// the same path through `corrupt` without phasors: what `close` holds
-/// more for the troposphere, on the least of [`CLOSE_RUNS`] runs, is
-/// within what it is admitted more, and the heap is within the
-/// reservations at every allocation of either.
+/// apart from the write batches more for the troposphere, on the worst of
+/// [`CLOSE_RUNS`] runs against the gain's least, is within what it is
+/// admitted more, and the heap with the batches is within the reservations
+/// at every allocation of either. The batches are left out because how
+/// many are live at the peak is the writer's pace ([`super::heap`]).
 #[test]
 fn close_admits_each_batchs_tropospheric_phasors() {
     if !alone("troposphere::close_admits_each_batchs_tropospheric_phasors") {
@@ -170,6 +175,9 @@ fn close_admits_each_batchs_tropospheric_phasors() {
         let unset = reserved_memory();
         let baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
+        let own = OWN_LIVE.load(Ordering::Relaxed);
+        OWN_PEAK.store(own, Ordering::Relaxed);
+        let batched = BATCH_ALLOCATED.load(Ordering::Relaxed);
         let window = ReservationWindow::open();
         let before = excess_now();
         EXCESS.store(before, Ordering::Relaxed);
@@ -177,10 +185,18 @@ fn close_admits_each_batchs_tropospheric_phasors() {
         let pass = pass.expect("the pass summary");
         let closed = (
             PEAK.load(Ordering::Relaxed) - baseline,
+            OWN_PEAK.load(Ordering::Relaxed) - own,
             window.close() - unset,
             EXCESS.load(Ordering::Relaxed) - before,
         );
         drop(window);
+        let batch_data = pass.batch_rows * (2 * CHANNELS * size_of::<Complex32>()) as u64;
+        let batches = BATCH_ALLOCATED.load(Ordering::Relaxed) - batched;
+        assert!(
+            batches >= batch_data,
+            "{name}: the write batches are told apart ({batches} bytes, a batch's DATA \
+             {batch_data})"
+        );
         (closed, pass.batches)
     };
     // Once unmeasured each, so what a process keeps once it has written is
@@ -188,25 +204,27 @@ fn close_admits_each_batchs_tropospheric_phasors() {
     for (name, set) in TERMS {
         close(&format!("warm-{name}.ms"), &set, 20);
     }
-    let mut least = [u64::MAX; 2];
+    let (mut least, mut most) = ([u64::MAX; 2], [0; 2]);
     let mut admitted = [0; 2];
     for run in 0..CLOSE_RUNS {
         for (index, (name, set)) in TERMS.into_iter().enumerate() {
-            let ((peak, charged, beyond), batches) = close(&format!("{run}-{index}.ms"), &set, 200);
+            let ((peak, own, charged, beyond), batches) =
+                close(&format!("{run}-{index}.ms"), &set, 200);
             println!(
-                "{name}: {batches} batches at {CHANNELS} channels: heap peak {peak}, admitted \
-                 {charged}, at most {beyond} beyond"
+                "{name}: {batches} batches at {CHANNELS} channels: heap peak {peak}, {own} apart \
+                 from the batches, admitted {charged}, at most {beyond} beyond"
             );
             assert!(batches > 1, "the session is written in several batches");
             assert!(
                 beyond <= CLOSE_ALLOWANCE_BYTES,
                 "{name}: the heap went {beyond} bytes beyond what the reservations held"
             );
-            least[index] = least[index].min(peak);
+            least[index] = least[index].min(own);
+            most[index] = most[index].max(own);
             admitted[index] = charged;
         }
     }
-    let held = least[1] as i64 - least[0] as i64;
+    let held = most[1] as i64 - least[0] as i64;
     let charged = admitted[1] as i64 - admitted[0] as i64;
     println!("troposphere - fbm gain: held {held}, admitted {charged}");
     assert!(

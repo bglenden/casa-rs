@@ -889,6 +889,40 @@ fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader, StorageErr
     Ok(read_tiled_stman_base_versioned(io)?.0)
 }
 
+/// The tiled manager's name (`DataManager::dataManagerName()`, the
+/// hypercolumn name its header holds), read from the head of the header file
+/// without the hypercubes. It is the NAME the manager was bound with, which
+/// need not be the group its columns' descriptions declare. `None` when the
+/// file is missing or does not parse.
+pub(crate) fn name_from_file(path: &Path) -> Option<String> {
+    let mut io = AipsIo::open(path, AipsOpenOption::Old).ok()?;
+    let outer_type = io.get_next_type().ok()?;
+    io.getstart(&outer_type).ok()?;
+    match outer_type.as_str() {
+        // The default tile shape comes before the base class in these.
+        "TiledColumnStMan" | "TiledCellStMan" => {
+            read_iposition(&mut io).ok()?;
+        }
+        "TiledShapeStMan" | "TiledDataStMan" => {}
+        _ => return None,
+    }
+    let version = io.getstart("TiledStMan").ok()?;
+    if version >= 2 {
+        io.get_bool().ok()?;
+    }
+    io.get_u32().ok()?;
+    if version >= 3 {
+        io.get_u64().ok()?;
+    } else {
+        io.get_u32().ok()?;
+    }
+    let ncol = io.get_u32().ok()?;
+    for _ in 0..ncol {
+        io.get_i32().ok()?;
+    }
+    io.get_string().ok()
+}
+
 /// [`read_tiled_stman_base`], also returning the `TiledStMan` object
 /// version, which `TiledDataStMan` version 1 needs to size `nrrowLast`.
 fn read_tiled_stman_base_versioned(
@@ -6993,27 +7027,8 @@ impl StreamingTiledShapeWriter {
         let mut default_tile_shape = Vec::new();
         let mut working_set = ShapeCubeWorkingSet::default();
 
+        // Each layout's extents are checked as its cube is created.
         for (cube_index, layout) in layouts.into_iter().enumerate() {
-            if layout.row_count == 0 {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape layout {:?} has no rows",
-                    layout.cell_shape
-                )));
-            }
-            if layout.cell_shape.is_empty() || layout.cell_shape.contains(&0) {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape cell dimensions must be positive: {:?}",
-                    layout.cell_shape
-                )));
-            }
-            if layout.tile_shape.len() != layout.cell_shape.len() + 1
-                || layout.tile_shape.contains(&0)
-            {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape tile rank must be cell rank + row axis; cell={:?} tile={:?}",
-                    layout.cell_shape, layout.tile_shape
-                )));
-            }
             match cell_rank {
                 Some(rank) if rank != layout.cell_shape.len() => {
                     return Err(StorageError::FormatMismatch(
@@ -7069,17 +7084,13 @@ impl StreamingTiledShapeWriter {
             )));
         }
         // Each cube assembles its bands in memory when they fit the budget
-        // beside the working set and the largest row map the rows can need.
+        // beside the working set and the largest row map the rows can need
+        // ([`Self::resident_bytes`]).
         let band_bytes = cubes
             .iter()
             .map(DirectShapeCubeWriter::band_bytes)
             .sum::<usize>();
-        let largest_row_map = row_count.saturating_mul(3 * std::mem::size_of::<u32>());
-        if working_bytes
-            .saturating_add(band_bytes)
-            .saturating_add(largest_row_map)
-            <= memory_budget_bytes
-        {
+        if shape_cube::buffered_bytes(working_bytes, band_bytes, row_count) <= memory_budget_bytes {
             cubes
                 .iter_mut()
                 .for_each(DirectShapeCubeWriter::buffer_bands);

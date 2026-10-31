@@ -11,8 +11,9 @@ use casa_observation::{
     Catalogue, FieldEphemeris, Observation, ObservationError, PartitionId, Roles,
 };
 
-use super::pointing_plan::{self, PointingPlan};
-use super::{ConversionOptions, ConversionReport, Loss, lockstep, losses};
+use super::{ConversionOptions, ConversionReport, Loss};
+use crate::observation_io::creation::pointing_plan::{self, PointingPlan};
+use crate::observation_io::creation::{lockstep, losses};
 use crate::observation_io::msv4::{STATION_NAMED, check_fields, kept_samples, unix_times};
 use crate::observation_io::update::storage;
 use crate::observation_io::{
@@ -76,11 +77,11 @@ pub fn to_msv4(
     } = open_named(source)?;
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
-    let mut found = losses::inventory(source, catalogue, &groups, losses::Destination::Msv4)?;
+    let mut found = losses::inventory(source, catalogue, &groups, losses::Store::Msv4)?;
     let (pointing, lost) = pointing_plan::plan(
         source,
         observation.as_ref(),
-        losses::Destination::Msv4,
+        losses::Store::Msv4,
         options.batch_bytes,
     )?;
     found.extend(lost);

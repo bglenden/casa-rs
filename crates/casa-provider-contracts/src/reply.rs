@@ -187,7 +187,7 @@ mod tests {
         );
         let interrupted: TaskReply = serde_json::from_value(json!({
             "status": "failed",
-            "surface": "imager",
+            "surface": "tclean",
             "kind": "interrupted",
             "message": "interrupted; nothing was published",
         }))
