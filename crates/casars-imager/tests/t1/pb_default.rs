@@ -42,6 +42,7 @@ fn a_default_dirty_run_writes_a_readable_pb_and_an_explicit_opt_out_does_not() {
         } else {
             let pb = PagedImage::<f32>::open(path).expect("persisted PB reopens");
             assert_eq!(&pb.shape()[..2], &geometry.image_size);
+            assert!(pb.get().unwrap().iter().all(|value| value.is_finite()));
         }
     }
 }
@@ -83,6 +84,11 @@ fn alma_labelled_seven_metre_dishes_write_the_aca_primary_beam_by_default() {
         );
     }
     assert_eq!(beams[0].shape(), beams[1].shape());
+    assert!(
+        beams
+            .iter()
+            .all(|beam| beam.iter().all(|value| value.is_finite()))
+    );
     let worst = beams[0]
         .iter()
         .zip(&beams[1])

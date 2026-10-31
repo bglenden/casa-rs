@@ -118,8 +118,11 @@ The internal disk is small. Do not fill it.
   add, change or remove them whenever that serves the work (a measured
   performance gain, a simpler design) and record the change on the issue or
   PR
-- Changing dependency direction, the runtime or concurrency model, or a major
-  performance algorithm
+- Adopting changes to dependency direction, the runtime or concurrency model,
+  or a major performance algorithm in production. Local performance
+  experiments, including new algorithms and ideas, are authorized without
+  further permission; preserve scientific semantics, agreed resource limits,
+  and the required verification and review gates
 - Editing accepted ADRs
 - Reducing approved scope or acceptance checks, or weakening tests without a
   replacement

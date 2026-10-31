@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "tclean",
   "casa_version": "6.7.6.14",
-  "audit_revision": "68a45e10747edfcddcc1319e3ff2747bd7d91e56",
+  "audit_revision": "5ad410a88eb9957e2a0de177218e766d89095d3a",
   "parameters": {
     "vis": {
       "status": "Partial",
@@ -28,10 +28,11 @@
     },
     "field": {
       "status": "Partial",
-      "scope": "Empty becomes no field; IDs/ranges pass; alphabetic names and * are refused (issue 980).",
+      "scope": "IDs and inclusive ranges, exact FIELD names and simple * patterns, including mixed lists, resolve natively from metadata once per survey. Name matching trims stored names and skips flagged FIELD entries; each missing name is an error, including in a mixed list. FIELD CODE/numeric-name fallback, quoted/regex/comparison/extended-glob expressions and full numeric-ID validation remain unfinished.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "field-selection"
       ],
       "behaviors": [
         "selection"
@@ -128,7 +129,8 @@
       "scope": "A fresh output namespace only. Existing scientific products in the main or outlier namespace are refused before execution (#944); continuation and restart=False numbering are unfinished.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "lifecycle"
       ],
       "behaviors": [
         "restart"
@@ -191,11 +193,12 @@
     },
     "startmodel": {
       "status": "Partial",
-      "scope": "One real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31); this change is not yet paired-verified. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused.",
+      "scope": "One real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31). A single Q-to-I seed is CASA-paired verified; permuted multi-plane copying has focused native tests only and unequal plane counts remain unassessed. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused.",
       "evidence": [
         "signature",
         "reader",
-        "additions"
+        "additions",
+        "default-products"
       ],
       "behaviors": [
         "restart"
@@ -1007,10 +1010,11 @@
       "title": "Selection and multi-MS inputs",
       "status": "Partial",
       "scope": "vis, field, spw, timerange, uvrange, antenna, scan, observation, intent, datacolumn and selectdata (#54).",
-      "gap": "IDs/ranges, SPW/channel text, intent and UV limits are routed natively. Multi-MS, field names/patterns and four row selectors are refused. Prove selected MAIN row identities/order, flags, channel membership and data-column fallback before image comparison; do not infer selection equivalence from a plausible image.",
+      "gap": "IDs/ranges, names/simple patterns, mixed field lists, SPW/channel text, intent and UV limits are routed natively. Sixteen field cases compare exact physical MAIN row order or refusal with CASA, including flagged and padded FIELD metadata. Production T1 also compares ID/name selections on both native routes with selectdata=False. CODE/numeric-name fallback, advanced field forms, multi-MS and four row selectors remain unfinished/refused. Image-science comparisons for selected real datasets, flags, channel membership and data-column fallback remain separate required evidence.",
       "evidence": [
         "reader",
-        "representative"
+        "representative",
+        "field-selection"
       ]
     },
     {
@@ -1041,11 +1045,12 @@
       "title": "Gridder, weighting and beam combinations",
       "status": "Partial",
       "scope": "standard/W/mosaic/AW, rectangular geometry, facets, normtype, beam terms and density weighting.",
-      "gap": "Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings are incomplete. A native CF path is required; importing a CASA oracle cache is not proof of general native AW equivalence.",
+      "gap": "Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings are incomplete. A native CF path is required; importing a CASA oracle cache is not proof of general native AW equivalence. Ordinary tclean now defaults casa-rs write_pb to True (contract 30), matching CASA artifact production on the verified small fixed-field case. ALMA-labelled homogeneous 7m arrays now select the existing ACA beam as upstream does. Analytic PB still refuses moving phase centres/fields, nonconstant PHASE_DIR, mixed/unsupported dish classes, unsupported telescopes and VLA frequencies outside implemented bands; explicit write_pb=False retains the previous scope. These are unfinished combinations, not agreed exclusions.",
       "evidence": [
         "reader",
         "additions",
-        "representative"
+        "representative",
+        "default-products"
       ]
     },
     {
@@ -1064,11 +1069,12 @@
       "title": "Return values, exceptions and metadata",
       "status": "Partial",
       "scope": "Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.",
-      "gap": "The recorded 22-key structure exists. maxpsfsidelobe, dirty peak, outside-mask peaks, next cyclethreshold, seeded fluxes and multi-plane summary values are not fully measured and are NaN. Errors/refusal types and valid-but-unsupported combinations need paired checks. Existing return-structure recordings contain no numeric acceptance. Persistence requires independent CASA reopen and native reopen.",
+      "gap": "The recorded 22-key structure exists. maxpsfsidelobe, dirty peak, outside-mask peaks, next cyclethreshold, seeded fluxes and multi-plane summary values are not fully measured and are NaN. Errors/refusal types and valid-but-unsupported combinations need paired checks. Existing return-structure recordings contain no numeric acceptance. Persistence requires independent CASA reopen and native reopen. A small CPU/f64/W1 seeded MFS run now matches all six CASA product members, masks, shape, brightness units, Stokes, reference pixels/values/increments and beams within the receipt limits; this is not a full metadata or representative-science pass.",
       "evidence": [
         "returns",
         "reader",
-        "representative"
+        "representative",
+        "default-products"
       ]
     },
     {
@@ -1076,11 +1082,12 @@
       "title": "Precision, backend and resource acceptance",
       "status": "Partial",
       "scope": "backend=auto/cpu/gpu, gridprecision and all scientific products (#991).",
-      "gap": "Auto may select Metal/f32. #991 reported compact-array PSF NRMS about 0.019, with f64 CPU about 7.4e-8, against older CASA 6.7.5. Reproduce with 6.7.6.14; the old f32 decision does not automatically approve this larger error. Do not widen tolerances or substitute worker/GPU results for required serial acceptance. Preserve memory admissions, native computation and per-mode performance requirements.",
+      "gap": "Fresh CASA 6.7.6.14 reproduction at 5ad410a88eb9957e2a0de177218e766d89095d3a confirms #991: compact-array PSF NRMS CPU/f64 8.35e-8, CPU/f32 0.01919, auto/Metal/f32 about 0.01884. Native PB was explicitly disabled to isolate gridding. Two auto runs differ by PSF 1.63e-6 and residual 2.08e-5; atomic order does not account for the larger CASA error. Current Metal selected-observation versus observation-batch T1 laws also fail their existing 1e-6 bound, including explicit write_pb=False. The owner approved a bounded native partial-grid/f64-merge prototype; no algorithm correction, widened tolerance or full-task acceptance is claimed yet. Preserve admissions, native computation and per-mode performance requirements.",
       "evidence": [
         "reader",
         "accuracy-issue",
-        "representative"
+        "representative",
+        "accuracy-current"
       ]
     }
   ],
@@ -1142,15 +1149,43 @@
     },
     {
       "id": "startmodel-stokes",
-      "state": "Unfinished",
+      "state": "Previously agreed",
       "inputs": "Start-model Stokes labels differ from the target; equal plane counts.",
       "casa": "Copies planes by position without converting polarization, since only direction and spectral axes are regridded.",
-      "ours": "Owner-directed implementation now copies by position and warns; focused and paired verification are pending.",
+      "ours": "Copies equal-count planes by position and warns; focused native warning/permuted-plane tests pass, and the single Q-to-I case is paired with CASA 6.7.6.14. Multi-plane paired and unequal-count behavior remain unverified.",
       "rationale": "Match CASA's behavior, while making the label mismatch visible.",
       "impact": "A Q model can seed I and permuted Stokes planes are copied positionally; this is not a physical polarization conversion. Unequal-plane-count behavior still needs oracle assessment.",
       "owner_decision": "Owner, 2026-10-31, this chat: Match but issue a warning. This supersedes the prior refusal.",
       "evidence": [
         "additions",
+        "reader",
+        "default-products"
+      ]
+    },
+    {
+      "id": "restart-absolute-directory",
+      "state": "Previously agreed",
+      "inputs": "restart=False with an absolute imagename and existing products.",
+      "casa": "6.7.6.14 incrementImageNameList slices dirname[2:], corrupting an absolute directory before creating the next numbered image; the probe fails to create its PSF.",
+      "ours": "The approved implementation target preserves the correct absolute directory. Native restart=False numbering is still unfinished; the current task refuses it.",
+      "rationale": "Avoid a reproducible CASA path-handling bug while preserving the intended numbering behavior.",
+      "impact": "Future numbered products will stay in the requested directory; this approval does not imply numbering is implemented.",
+      "owner_decision": "Owner, 2026-10-31, this chat: Use the correct absolute directory. Recorded on #944.",
+      "evidence": [
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "native-write-pb-default",
+      "state": "Previously agreed",
+      "inputs": "Ordinary casa-rs tclean calls that omit the casa-rs-only write_pb option; profiles from contract 29 or earlier.",
+      "casa": "Ordinary supported tclean imaging creates a .pb product; CASA has no write_pb parameter.",
+      "ours": "Contract 30 defaults the extra write_pb option to True. Explicit False remains an opt-out; migrating an omitted old default warns and adopts True. All 92 CASA parameters/defaults and pbcor=False are unchanged.",
+      "rationale": "Make ordinary product production agree with CASA without patching CASA or changing its parameter defaults.",
+      "impact": "The PB file is now produced within implemented PB scope. Moving-field, telescope and frequency limitations remain unfinished work and can currently require explicit False.",
+      "owner_decision": "Owner, 2026-10-31, this chat: Approve the casa-rs default change.",
+      "evidence": [
+        "default-products",
         "reader"
       ]
     }
@@ -1206,13 +1241,19 @@
       ]
     },
     "lifecycle": {
-      "kind": "Paired lifecycle probe and refusal regression",
-      "state": "not run",
-      "scope": "Planned fresh CASA 6.7.6.14 continuation, numbering and startmodel-conflict probes; native sequential rerun/outlier refusal must preserve previous bytes. This does not establish implemented restart.",
+      "kind": "CASA lifecycle characterization and native preservation check",
+      "state": "passed",
+      "scope": "Small fixed-field case: CASA continuation increases model flux; restart=False chooses _2 then _3; explicit startmodel conflicts with an existing model. Native rerun refusal preserves 43 output files. This verifies a safety refusal, not CASA-equivalent restart. The absolute-directory bug is separately observed.",
       "links": [
-        "https://github.com/bglenden/casa-rs/issues/944",
-        "crates/casars-imager/tests/t1/restart.rs"
-      ]
+        "resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json",
+        "tools/casa-compat/tclean_lifecycle_probe.py",
+        "crates/casars-imager/tests/t1/restart.rs",
+        "https://github.com/bglenden/casa-rs/issues/944#issuecomment-6548323855"
+      ],
+      "revision": "ad40d127779ef75d5bfbe30475be85e61e52bf3a",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "CASA Python -I tools/casa-compat/tclean_lifecycle_probe.py --work <SSD>/probe-final-2 --imager target/release/casars-imager --revision ad40d127779ef75d5bfbe30475be85e61e52bf3a --stokes --out <SSD>/lifecycle-stokes-final-2.json",
+      "receipt": "resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json; inputs/products durably archived at /Volumes/home/casa-rs/tclean/20261031/probe-final-2.tar"
     },
     "mvc-decision": {
       "kind": "Prior owner scope decision",
@@ -1225,8 +1266,8 @@
     },
     "accuracy-issue": {
       "kind": "Unresolved accuracy report",
-      "state": "open; not reproduced here",
-      "scope": "#991 measurements use CASA 6.7.5 and 8b35089888; they identify a gap rather than current 6.7.6.14 acceptance.",
+      "state": "reproduced with pinned oracle",
+      "scope": "The original report uses CASA 6.7.5. The separate accuracy-current receipt reproduces the ordinary fixed-field failure with CASA 6.7.6.14; this is an unresolved correctness gap, not a passing comparison.",
       "links": [
         "https://github.com/bglenden/casa-rs/issues/991"
       ]
@@ -1238,6 +1279,50 @@
       "links": [
         "https://github.com/bglenden/casa-rs/issues/980"
       ]
+    },
+    "default-products": {
+      "kind": "CASA-paired default products and single Q-to-I startmodel",
+      "state": "passed",
+      "scope": "Small noiseless standard-MFS seed, niter=0, natural weights, pblimit=-0.1, CPU/f64/W1. Exact six-product membership and masks; all valid samples finite; shape/units/Stokes, WCS reference pixel/value/increment, sumwt and beam comparisons pass. Worst product NRMS is PB 0.0001779001; five others <=4.114e-7. Not representative T2, full metadata coverage, general PB, multi-plane polarization, or numeric return acceptance.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-default-products-20261031.json",
+        "crates/casars-imager/tests/t1/pb_default.rs",
+        "crates/casars-imager/tests/pb_default.rs"
+      ],
+      "revision": "add245da9ba5d0bb66d0ca45a0e000fd1e27cd94",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "CASA Python -I /private/tmp/probe-tclean-default-products.py (executed; recipe retained on NAS)",
+      "receipt": "resources/casa-compat/evidence/tclean-default-products-20261031.json; recipe, figure, PDF and native products durably retained at /Volumes/home/casa-rs/tclean/20261031/default-products-contract30.tar and sibling recipe files"
+    },
+    "field-selection": {
+      "kind": "CASA physical-row oracle and native production selection laws",
+      "state": "passed",
+      "scope": "16 field cases: 11 exact ordered physical MAIN-row matches and five refusal matches on the unchanged public fixture or recorded private FLAG_ROW/NAME transformations. Three native production ID-versus-name/pattern/mixed pairs pass, including selectdata=False and PB products. The row oracle is CASA-paired; the production image comparison is native-to-native, not an additional CASA science pass. Other selectors in the receipt are oracle-only and not claimed implemented.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-selection-casa-20261031.json",
+        "resources/casa-compat/evidence/tclean-selection-metadata-casa-20261031.json",
+        "tools/casa-compat/tclean_selection_oracle.py",
+        "crates/casa-ms/tests/field_selection_oracle.rs",
+        "crates/casars-imager/tests/t1/selection.rs"
+      ],
+      "revision": "5ad410a88eb9957e2a0de177218e766d89095d3a",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "CARGO_INCREMENTAL=0 cargo nextest run -p casa-ms --test field_selection_oracle; production T1 selection::field_names_patterns_and_mixed_lists_image_the_same_rows_as_ids",
+      "receipt": "resources/casa-compat/evidence/tclean-selection{,-metadata}-casa-20261031.json; native logs in /Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/field-selection-{reviewed,restored,t1}.log. Deliberately erasing selection fails the oracle test; correct source restored."
+    },
+    "accuracy-current": {
+      "kind": "CASA-paired unresolved f32 accuracy diagnostic",
+      "state": "failed accuracy target",
+      "source_revision": "29d69f761f1b7c880924ad74cda5287a45807dc2",
+      "scope": "Fixed-field compact ALMA data, MFS64, natural, DATA, niter0, cell0.1arcsec, pblimit-0.1, native write_pb=False. CPU f64 PSF NRMS8.35e-8; CPU f32 0.01919; two auto/Metal f32 runs0.01884. All valid samples finite; no skipped run or signature test is counted as acceptance. Recipe and products are durably on the NAS.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-accuracy-991-20261031.json",
+        "https://github.com/bglenden/casa-rs/issues/991"
+      ],
+      "revision": "5ad410a88eb9957e2a0de177218e766d89095d3a",
+      "casa_version": "casatasks6.7.6.14; casatools6.7.6-14",
+      "command": "CASA Python -I /private/tmp/probe-tclean-accuracy-991.py",
+      "receipt": "resources/casa-compat/evidence/tclean-accuracy-991-20261031.json; /Volumes/home/casa-rs/tclean/20261031/accuracy-991-20261031.tar"
     }
   }
 }

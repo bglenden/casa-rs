@@ -1,0 +1,518 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "casars_revision": "29d69f761f1b7c880924ad74cda5287a45807dc2",
+  "command": "CASA Python -I /private/tmp/probe-tclean-alma7-pb.py",
+  "parameters": {
+    "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/alma_ephemobj_icrs.ms",
+    "field": "J0006-0623",
+    "spw": "0",
+    "datacolumn": "data",
+    "imsize": [
+      64
+    ],
+    "cell": "0.1arcsec",
+    "niter": 0,
+    "weighting": "natural",
+    "pblimit": -0.1
+  },
+  "resolved_write_pb": true,
+  "members": [
+    "image.image",
+    "image.model",
+    "image.pb",
+    "image.psf",
+    "image.residual",
+    "image.sumwt"
+  ],
+  "products": {
+    "image.image": {
+      "nrms": 1.134130785029878e-07,
+      "mask_mismatch": 0,
+      "beam": [
+        [
+          7.748331,
+          4.386522,
+          -89.166939
+        ],
+        [
+          7.748331,
+          4.386522,
+          -89.166939
+        ]
+      ],
+      "native_metadata": {
+        "unit": "Jy/beam",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "Jy/beam",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    },
+    "image.model": {
+      "nrms": 0.0,
+      "mask_mismatch": 0,
+      "beam": [
+        null,
+        null
+      ],
+      "native_metadata": {
+        "unit": "Jy/pixel",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "Jy/pixel",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    },
+    "image.pb": {
+      "nrms": 0.0,
+      "mask_mismatch": 0,
+      "beam": [
+        null,
+        null
+      ],
+      "native_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    },
+    "image.psf": {
+      "nrms": 8.353861312256547e-08,
+      "mask_mismatch": 0,
+      "beam": [
+        [
+          7.748331,
+          4.386522,
+          -89.166939
+        ],
+        [
+          7.748331,
+          4.386522,
+          -89.166939
+        ]
+      ],
+      "native_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    },
+    "image.residual": {
+      "nrms": 1.134130785029878e-07,
+      "mask_mismatch": 0,
+      "beam": [
+        null,
+        null
+      ],
+      "native_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    },
+    "image.sumwt": {
+      "nrms": 0.0,
+      "mask_mismatch": 0,
+      "beam": [
+        null,
+        null
+      ],
+      "native_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.848136811095359e-07,
+          4.848136811095359e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "stokes": [
+          "I"
+        ],
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.02719026625066316,
+          -0.11158149283319142,
+          1.0,
+          230451915032.17694
+        ],
+        "increment": [
+          -4.84813681109536e-07,
+          4.84813681109536e-07,
+          1.0,
+          125029467.91235352
+        ],
+        "referencecodes": [
+          "ICRS",
+          "",
+          "LSRK"
+        ]
+      }
+    }
+  },
+  "backend": "cpu",
+  "precision": "f64",
+  "workers": 1,
+  "scope": "Small real ALMA-labelled 7m field-name MFS with ordinary PB default; not representative T2, moving/mixed-array support, all metadata or numeric return acceptance"
+}

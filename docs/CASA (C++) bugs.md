@@ -2526,6 +2526,24 @@ image depends on the value and the baselines, and a small enough one does
 not. casa-rs refuses a `uvtaper` entry without a unit and asks for an angle
 or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
+## `tclean` corrupts an absolute directory when numbering a restart
+
+- Date noted: 2026-10-31
+- Status: CASA bug; owner approved preserving the correct directory (#944).
+  Native `restart=False` numbering is still unfinished.
+- Affected build/code: CASA 6.7.6.14, casatasks
+  `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
+
+With existing products and `restart=False`, CASA finds the next shared
+numbered image prefix. Its Python helper removes the first two characters
+of each directory with `dirnames[immod][2:]`, assuming a `./` prefix. For an
+absolute imagename under `/Volumes/`, this instead produces `olumes/` and
+fails to create the numbered PSF. Relative prefixes in the same probe
+correctly produce `_2` and `_3`. The exact build, parameters and failure
+are recorded on #944 and in the lifecycle receipt linked from the generated
+compatibility reference. The approved casa-rs target keeps the requested
+absolute directory; this decision is not evidence that restart is complete.
+
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28
