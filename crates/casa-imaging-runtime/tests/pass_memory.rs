@@ -503,8 +503,7 @@ fn held_in_a_clean_window<T>(label: &str, mut run: impl FnMut() -> T) -> (u64, T
 }
 
 /// The native spread backend's actual host allocations and live device
-/// buffers fit its charged ring/kernel storage, including #991 grouping
-/// scratch when the experiment is enabled. Enough samples fill the ring.
+/// buffers fit its charged ring/kernel storage. Enough samples fill the ring.
 #[test]
 fn a_metal_spread_backend_holds_at_most_its_charged_scratch() {
     if !alone("a_metal_spread_backend_holds_at_most_its_charged_scratch") {

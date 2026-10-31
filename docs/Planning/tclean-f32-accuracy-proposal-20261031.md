@@ -1,6 +1,6 @@
 # Bounded proposal: repair dense-cell f32 gridding accuracy
 
-Truth class: retired experiment
+Truth class: retired experiments
 Work issue: #991, under the tclean-first work in #980.
 
 Owner approval, 2026-10-31: the bounded prototype is approved. The owner also
@@ -28,10 +28,58 @@ so this also did not establish a full-pass error bound.
 
 The compact receipt is
 `resources/casa-compat/evidence/tclean-partial-grid-experiment-20261031.json`.
-The next investigation follows the existing weight-image contribution
-reducer: sum identical gridding contributions before stamping them, reducing
-both repeated work and f32 additions. This is a new bounded hypothesis,
-not tuning or retaining the rejected whole-grid merge.
+## Second outcome: contribution grouping retired
+
+The next bounded candidate summed bit-identical located spread records in
+native host f64 before the existing Metal f32 kernel. It is preserved at
+`40bddd122825d758f194e48add6f0ce3540daa73`. It added no grid and charged
+6,357,248 bytes of bounded grouping scratch per backend. Six regression
+tests covered routing keys, cancellation, masked NaNs, signed weights and
+overflow. Actual host-plus-device allocation laws passed for candidate
+and control.
+
+The compact candidate's PSF NRMS was 1.8786e-6 against the control's
+approximately 0.01884, with its recorded product, mask, finite, sumwt and
+beam checks passing. On ordinary `refim_point.ms`, both candidate and
+control passed the recorded image NRMS bound but failed the beam checks;
+the candidate did not establish scientific acceptance. Broader native
+tests ran 109 cases: 103 passed and the same six Metal route-comparison
+laws failed their unchanged 1e-6 bound.
+
+The first timing window overlapped compilation and other tests and is
+explicitly excluded from performance conclusions. A separate quiet
+ABBAABBA window used the same-source control and candidate, Metal/f32,
+one worker, niter=0, with four observations of each. No matched CASA
+timing was measured. Median seconds were:
+
+| Workload | Control task wall | Grouped task wall | Control major cycle | Grouped major cycle |
+|---|---:|---:|---:|---:|
+| Compact ALMA, 64 square | 0.2831 | 0.2746 | 0.1880 | 0.1707 |
+| Ordinary VLA, 100 square | 0.3384 | 0.6123 | 0.2226 | 0.4861 |
+
+The ordinary task was 81% slower, with its major cycle 2.18 times the
+control's cost. The candidate is retired, including its experimental
+feature, hash storage, implementation and counters. Do not retry this
+hash-based grouping candidate or treat its dense-case improvement as a
+production result. The full compact receipt and raw quiet observations
+are `resources/casa-compat/evidence/tclean-grouped-spread-experiment-20261031.json`;
+recipes, logs and products are archived on the NAS.
+
+The allocation measurement separately exposed a previously uncharged
+`Vec<Slot>` allocation. Its exact `RING * size_of::<Slot>()` charge and
+the counting law remain, reviewed independently with no findings. This
+changes admission accounting only, not the scientific computation.
+
+## Current state and next action
+
+Both candidates are retired; #991 remains unresolved and no tolerance has
+been widened. The ordinary VLA beam miss and six route-law failures remain
+explicit failures. Before another algorithm candidate, follow the first
+divergent accumulation through the native and CASA paths and distinguish
+the remaining gridding error from beam fitting. Use the frozen references
+and existing phase counters. New local experiments need no renewed owner
+permission; production adoption and final science acceptance retain their
+normal gates.
 
 The current small compact-array case is outside scientific acceptance.
 CASA is an oracle only; the proposed computation stays native Rust.
