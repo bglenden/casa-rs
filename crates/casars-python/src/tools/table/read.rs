@@ -674,6 +674,43 @@ impl State {
         Ok(CasaValue::record(fields))
     }
 
+    /// `getdminfo()`: a record per storage manager (`*1`, `*2`, ... in the
+    /// order the table lists them) with its columns, name, sequence number,
+    /// type and `SPEC`. casa-tables keeps the `SPEC` of no manager, and
+    /// `StManAipsIO`'s is empty, so a table of any other manager is refused.
+    pub(super) fn getdminfo(&self, log: &mut Vec<LogLine>) -> Reply {
+        let Some(open) = self.table(log) else {
+            return Ok(CasaValue::empty_record());
+        };
+        let managers = open.table.data_manager_info();
+        if let Some(other) = managers
+            .iter()
+            .find(|manager| manager.dm_type != "StManAipsIO")
+        {
+            return Err(Fail::Unsupported(format!(
+                "table.getdminfo of a table with a {} storage manager is not yet implemented \
+                 in casa-rs: casa-tables does not read the manager's SPEC (#1028)",
+                other.dm_type
+            )));
+        }
+        Ok(CasaValue::record(managers.iter().enumerate().map(
+            |(position, manager)| {
+                let mut columns = manager.columns.clone();
+                columns.sort();
+                (
+                    format!("*{}", position + 1),
+                    CasaValue::record([
+                        ("COLUMNS", CasaValue::Texts(columns)),
+                        ("NAME", CasaValue::Text(manager.name.clone())),
+                        ("SEQNR", CasaValue::Int(i64::from(manager.seq_nr))),
+                        ("SPEC", CasaValue::empty_record()),
+                        ("TYPE", CasaValue::Text(manager.dm_type.clone())),
+                    ]),
+                )
+            },
+        )))
+    }
+
     /// `getcolkeyword(columnname, keyword)`.
     pub(super) fn getcolkeyword(
         &self,

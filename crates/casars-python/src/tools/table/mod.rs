@@ -17,6 +17,7 @@
 
 mod cell_value;
 mod keyword_value;
+mod new_column;
 mod read;
 mod slices;
 mod state;
@@ -682,6 +683,30 @@ impl PyTableTool {
     fn addreadmeline(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let line = text(value, "value")?;
         self.call(py, move |state, log| state.addreadmeline(line, log))
+    }
+
+    /// Add columns, each described by a record.
+    #[pyo3(signature = (desc, dminfo = None), text_signature = "($self, desc, dminfo={})")]
+    fn addcols(
+        &self,
+        py: Python<'_>,
+        desc: &Bound<'_, PyAny>,
+        dminfo: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let columns = record_fields(desc)?;
+        let with_dminfo = match dminfo {
+            Some(dminfo) => !record_fields(dminfo)?.is_empty(),
+            None => false,
+        };
+        self.call(py, move |state, log| {
+            state.addcols(columns, with_dminfo, log)
+        })
+    }
+
+    /// The storage managers of the table, with their columns.
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn getdminfo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.read(py, |state, log| state.getdminfo(log))
     }
 
     /// Add rows of default values at the end.

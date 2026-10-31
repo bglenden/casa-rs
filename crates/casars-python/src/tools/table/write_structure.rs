@@ -14,10 +14,12 @@
 //! `addrows` of a negative count removes rows there (the count wraps); here
 //! it is refused.
 
-use casa_tables::{ArrayShapeContract, ColumnType, Table, TableOptions};
+use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table, TableOptions};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
+use super::keyword_value::Incoming;
+use super::new_column::parse;
 use super::state::{Fail, State};
 use super::write::{Persist, Target};
 use crate::convert::value::CasaValue;
@@ -49,21 +51,26 @@ fn default_row(table: &Table) -> RecordValue {
     let Some(schema) = table.schema() else {
         return RecordValue::default();
     };
-    let mut fields = Vec::new();
-    for column in schema.columns() {
-        let value = match (column.column_type(), column.data_type()) {
-            (ColumnType::Scalar, Some(ty)) => Some(Value::Scalar(default_scalar(ty))),
-            (ColumnType::Array(ArrayShapeContract::Fixed { shape }), Some(ty)) => {
-                Some(Value::Array(default_array(ty, shape)))
-            }
-            (ColumnType::Record, _) => Some(Value::Record(RecordValue::default())),
-            _ => None,
-        };
-        if let Some(value) = value {
-            fields.push(RecordField::new(column.name(), value));
-        }
-    }
+    let fields = schema
+        .columns()
+        .iter()
+        .filter_map(|column| {
+            default_value(column).map(|value| RecordField::new(column.name(), value))
+        })
+        .collect();
     RecordValue::new(fields)
+}
+
+/// What `column` holds in a row nobody has written (see [`default_row`]).
+fn default_value(column: &ColumnSchema) -> Option<Value> {
+    match (column.column_type(), column.data_type()) {
+        (ColumnType::Scalar, Some(ty)) => Some(Value::Scalar(default_scalar(ty))),
+        (ColumnType::Array(ArrayShapeContract::Fixed { shape }), Some(ty)) => {
+            Some(Value::Array(default_array(ty, shape)))
+        }
+        (ColumnType::Record, _) => Some(Value::Record(RecordValue::default())),
+        _ => None,
+    }
 }
 
 fn default_scalar(ty: PrimitiveType) -> ScalarValue {
@@ -176,6 +183,62 @@ impl State {
                 Ok(Persist::Done)
             },
         )
+    }
+
+    /// `addcols(desc, dminfo)`: columns of default values (a cell of an array
+    /// of variable shape undefined), all or none of them added. A column goes
+    /// into the table's one storage manager; naming another, or a `dminfo`,
+    /// is not implemented.
+    pub(super) fn addcols(
+        &mut self,
+        description: Vec<(String, Incoming)>,
+        with_dminfo: bool,
+        log: &mut Vec<LogLine>,
+    ) -> Reply {
+        self.write_with(Target::Structure("Table::addColumn"), log, move |table| {
+            // The description is a record, whose fields casatools sorts by
+            // name: the columns are added in that order.
+            let mut description = description;
+            description.sort_by(|a, b| a.0.cmp(&b.0));
+            let columns = description
+                .iter()
+                .map(|(name, column)| parse(name, column))
+                .collect::<Result<Vec<_>, _>>()?;
+            let schema = table.schema();
+            if let Some(existing) = columns.iter().find(|column| {
+                schema.is_some_and(|schema| schema.column(column.schema.name()).is_some())
+            }) {
+                return Err(Fail::Runtime(format!(
+                    "Invalid description of column {}: column already exists",
+                    existing.schema.name()
+                )));
+            }
+            if columns.is_empty() {
+                return Ok(Persist::Nothing);
+            }
+            if with_dminfo || columns.iter().any(|column| column.names_manager) {
+                return Err(Fail::Unsupported(
+                    "table.addcols with a storage manager of its own is not yet implemented in \
+                     casa-rs: a column goes into the table's one StManAipsIO group (#1028)"
+                        .to_string(),
+                ));
+            }
+            let options = whole_table(table, "addcols")?;
+            for column in columns {
+                let name = column.schema.name().to_string();
+                let default = default_value(&column.schema);
+                table.add_column(column.schema, default)?;
+                if let Some(keywords) = column.keywords {
+                    table.set_column_keywords(&name, keywords);
+                }
+            }
+            table.save(options)?;
+            // The new columns are in the manager now: the handle takes its
+            // description of the managers from the disk (no row is removed,
+            // so the count last published is the table's).
+            table.resync()?;
+            Ok(Persist::Done)
+        })
     }
 
     /// `addrows(nrow)`: rows of default values, a cell of an array of

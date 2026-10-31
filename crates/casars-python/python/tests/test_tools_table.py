@@ -189,9 +189,10 @@ def same_cells_as_getcell(
     assert value["data"] == expected, where
 
 
-#: Recorded from CASA but not implemented yet (`getdminfo` and `addcols`,
-#: which `rows_columns` uses); a scenario leaves this set as its methods land.
-PENDING: set[str] = {"rows_columns"}
+#: Recorded from CASA but not implemented yet; a scenario leaves this set as
+#: its methods land. (`rows_columns`, every structural call in one sequence,
+#: waits for nothing now.)
+PENDING: set[str] = set()
 
 #: Recorded from CASA but not followed: its own faults
 #: (`docs/CASA (C++) bugs.md`), each with a test of its own below.
@@ -744,6 +745,10 @@ def test_a_table_of_several_managers_refuses_rows_before_anything_changes(
     assert tool.open(str(path), nomodify=False)
     with pytest.raises(NotImplementedError, match="StManAipsIO group"):
         tool.addrows(2)
+    with pytest.raises(NotImplementedError, match="StManAipsIO group"):
+        tool.addcols({"extra": {"valueType": "double"}})
+    with pytest.raises(NotImplementedError, match="getdminfo.*IncrementalStMan|getdminfo.*Tiled"):
+        tool.getdminfo()
     with pytest.raises(RuntimeError, match="Rows cannot be removed from table .*do not support it"):
         tool.removerows([0])
     assert tool.nrows() == 1058

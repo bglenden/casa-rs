@@ -642,7 +642,6 @@ ROWS_COLUMNS = [
     ["addrows", [2], {}],
     ["nrows", [], {}],
     ["getcol", ["label"], {}],
-    ["getcell", ["spectrum", 3], {}],
     ["iscelldefined", ["spectrum", 3], {}],
     ["iscelldefined", ["id", 3], {}],
     ["getcell", ["id", 3], {}],
@@ -666,15 +665,14 @@ ROWS_COLUMNS = [
     ["ncols", [], {}],
     ["colnames", [], {}],
     ["getcoldesc", ["x"], {}],
-    ["getcol", ["x"], {}],
+    # (CASA leaves the cells of a column it adds uninitialised, an int or a
+    # double as much as an array: only a string's and those written are read.)
     ["putcell", ["x", 0, 2.5], {}],
     ["addcols", [{"arr": {"valueType": "float", "ndim": 2, "shape": [2, 3], "option": 4}}], {}],
     ["getcoldesc", ["arr"], {}],
     ["addcols", [{"s": {"valueType": "string"}, "b": {"valueType": "boolean"}, "i": {"valueType": "int"}, "c": {"valueType": "dcomplex"}}], {}],
     ["colnames", [], {}],
     ["getcell", ["s", 0], {}],
-    ["getcell", ["b", 0], {}],
-    ["getcell", ["i", 0], {}],
     ["addcols", [{"x": {"valueType": "double"}}], {}],
     ["addcols", [{"bad": {"valueType": "nosuchtype"}}], {}],
     ["renamecol", ["x", "y"], {}],
@@ -693,11 +691,22 @@ ROWS_COLUMNS = [
     ["removecols", [["nosuch", "c"]], {}],
     ["colnames", [], {}],
     ["removecols", [[]], {}],
-    # An array column with neither shape nor dimension.
+    # Without a dimension a column is a scalar one; with one, an array of
+    # variable shape whose cells start undefined.
     ["addcols", [{"free": {"valueType": "float"}}], {}],
     ["getcoldesc", ["free"], {}],
     ["addcols", [{"two": {"valueType": "float", "ndim": 2}}], {}],
     ["getcoldesc", ["two"], {}],
+    ["iscelldefined", ["two", 0], {}],
+    ["addcols", [{"kw": {"valueType": "double", "keywords": {"unit": "Jy", "n": 3}}}], {}],
+    ["getcoldesc", ["kw"], {}],
+    ["getcolkeywords", ["kw"], {}],
+    ["getdminfo", [], {}],
+    # A list with a column that exists among them: are the others added?
+    ["addcols", [{"fresh": {"valueType": "int"}, "free": {"valueType": "int"}}], {}],
+    ["colnames", [], {}],
+    ["addcols", [{}], {}],
+    ["addcols", [{"nodesc": 3}], {}],
     # Rows out of order; a bad row number alone; a row number alone.
     ["addrows", [3], {}],
     ["putcell", ["id", 0, 10], {}],

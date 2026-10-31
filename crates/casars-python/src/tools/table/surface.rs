@@ -30,7 +30,7 @@ const METHODS: &[Method] = &[
             param("dminfo", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "addreadmeline",
@@ -282,7 +282,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("getdminfo", &[], R::Any, No),
+    method("getdminfo", &[], R::Any, Yes),
     method(
         "getkeyword",
         &[param("keyword", K::Any, Empty)],

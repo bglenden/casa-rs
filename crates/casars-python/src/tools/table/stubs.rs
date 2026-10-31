@@ -15,16 +15,6 @@ use super::{PyTableTool, stub};
 )]
 impl PyTableTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (desc, dminfo = None), text_signature = "($self, desc, dminfo={})")]
-    fn addcols(
-        &self,
-        desc: &Bound<'_, PyAny>,
-        dminfo: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addcols")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn browse(&self) -> PyResult<Py<PyAny>> {
         stub("browse")
@@ -181,12 +171,6 @@ impl PyTableTool {
     #[pyo3(signature = (actual = None), text_signature = "($self, actual=True)")]
     fn getdesc(&self, actual: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("getdesc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn getdminfo(&self) -> PyResult<Py<PyAny>> {
-        stub("getdminfo")
     }
 
     /// Not yet implemented in casa-rs.

@@ -95,6 +95,52 @@ impl Incoming {
         Wide::from_python(obj).map(Self::Wide)
     }
 
+    /// The value as one string, when it is one.
+    pub(super) fn text(&self) -> Option<&str> {
+        match self {
+            Self::Wide(Wide {
+                shape: None,
+                data: Data::Texts(texts),
+            }) if texts.len() == 1 => Some(&texts[0]),
+            _ => None,
+        }
+    }
+
+    /// The value as integers, when it is an integer or a list of them.
+    pub(super) fn integers(&self) -> Option<&[i64]> {
+        match self {
+            Self::Wide(Wide {
+                data: Data::Ints(ints),
+                ..
+            }) => Some(ints),
+            _ => None,
+        }
+    }
+
+    /// The fields of a sub-record, when the value is one.
+    pub(super) fn fields(&self) -> Option<&[(String, Incoming)]> {
+        match self {
+            Self::Record(fields) => Some(fields),
+            Self::Wide(_) => None,
+        }
+    }
+
+    /// casacore's name of the value's type, padded to the eight characters
+    /// `RecordRep`'s messages give it.
+    pub(super) fn type_label(&self) -> &'static str {
+        match self {
+            Self::Record(_) => "Record  ",
+            Self::Wide(Wide { shape: Some(_), .. }) => "Array   ",
+            Self::Wide(Wide { data, .. }) => match data {
+                Data::Bools(_) => "Bool    ",
+                Data::Ints(_) => "Int     ",
+                Data::Floats(_) => "Double  ",
+                Data::Complexes(_) => "DComplex",
+                Data::Texts(_) => "String  ",
+            },
+        }
+    }
+
     /// The value as a new keyword.
     pub(super) fn natural(self) -> Result<Value, Fail> {
         match self {
