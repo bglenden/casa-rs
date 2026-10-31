@@ -7,17 +7,19 @@ Run with CASA's Python, which imports `casatools` 6.7.6.14:
     python -I tools/casa-compat/image_tool_oracle.py --json FILE
 
 Each script in `SCRIPTS` is a list of calls on named tools. A script starts
-with a fresh `image` tool `ia` and `coordsys` tool `cs`, in a fresh working
-directory that `{tmp}` names in arguments; a call can bind a tool it returns
-(`"as"`) for later calls. The JSON record holds every call with what it
-returned, typed so a replay can check types and dtypes, or the type and
-first line of what it raised. `casars.tools.image`'s and
-`casars.tools.coordsys`'s tests replay the same scripts
-(`crates/casars-python/python/tests/data/casa_image_tool.json`).
+with a fresh `image` tool `ia` and `coordsys` tool `cs`, and writes any
+temporary files beneath a fresh temporary directory that `{tmp}` names in
+arguments; a call can bind a tool it returns (`"as"`) for later calls. The
+JSON record holds every call with what it returned, typed so a future replay
+can check types and dtypes, or the type and first line of what it raised.
 
-Encoding, shared with the replay (`test_tools_image.py`):
+This is recorder groundwork only: no fixture or casa-rs replay test is
+included yet. A later replay may share this encoding.
 
-- a NumPy array is `{"ndarray": nested lists, "dtype": name, "shape": [...]}`
+Encoding for a future replay:
+
+- a NumPy array is `{"ndarray": nested lists, "dtype": display name,
+  "dtype_descriptor": reconstructible descriptor, "shape": [...]}`
   (complex values as `[re, im]` pairs), in arguments and results;
 - a complex number is `{"complex": [re, im]}`;
 - a returned tool is `{"tool": "image"}` or `{"tool": "coordsys"}`;
@@ -54,7 +56,12 @@ def encode(value):
             items = np.stack([value.real, value.imag], axis=-1).tolist()
         else:
             items = value.tolist()
-        return {"ndarray": items, "dtype": value.dtype.name, "shape": list(value.shape)}
+        return {
+            "ndarray": items,
+            "dtype": value.dtype.name,
+            "dtype_descriptor": value.dtype.str,
+            "shape": list(value.shape),
+        }
     if isinstance(value, tuple):
         return {"tuple": [encode(item) for item in value]}
     if isinstance(value, list):
@@ -245,13 +252,15 @@ def decode(value, tmp: str):
     """An encoded argument as Python, with `{tmp}` replaced."""
     if isinstance(value, dict):
         if "ndarray" in value:
-            dtype = np.dtype(value["dtype"])
+            dtype = np.dtype(value.get("dtype_descriptor", value["dtype"]))
             items = np.array(value["ndarray"], dtype=np.float64 if dtype.kind == "c" else dtype)
             if dtype.kind == "c":
                 items = (items[..., 0] + 1j * items[..., 1]).astype(dtype)
             return items.reshape(value["shape"])
         if "complex" in value:
             return complex(*value["complex"])
+        if "tuple" in value:
+            return tuple(decode(item, tmp) for item in value["tuple"])
         return {key: decode(item, tmp) for key, item in value.items()}
     if isinstance(value, list):
         return [decode(item, tmp) for item in value]
@@ -285,7 +294,10 @@ def run_script(calls: list[dict]) -> list[dict]:
                 result = getattr(target, entry["method"])(**args)
             except Exception as error:  # noqa: BLE001 - recorded for the replay
                 message = str(error).strip().splitlines()
-                outcome["raises"] = [type(error).__name__, message[0] if message else ""]
+                outcome["raises"] = [
+                    type(error).__name__,
+                    untmp(message[0], tmp) if message else "",
+                ]
             else:
                 outcome["returns"] = untmp(encode(result), tmp)
                 if "as" in entry:
