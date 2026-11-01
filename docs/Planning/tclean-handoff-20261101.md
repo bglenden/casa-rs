@@ -60,7 +60,8 @@ the external disk is the fast working copy.
    answered the pending activation question. `AGENTS.md` requires asking before
    provider-contract bundle changes. See
    [`tclean-numeric-selection-contract-proposal-20261101.md`](tclean-numeric-selection-contract-proposal-20261101.md)
-   and the preserved candidate archive below. Candidate SHA256:
+   and the [unapplied candidate patch](tclean-provider33-candidate-20261101.patch.gz).
+   Its complete context is also in the preserved archive below. Candidate SHA256:
    `fa7f7af6aee69c6b5928f3fd044b847b523d57806787dbee351ffa31dddaf084`.
    It was prepared against the raw experiment preserved in commit `50d565e372`;
    it no longer applies directly to the cleaned active tree. Rebase/review its

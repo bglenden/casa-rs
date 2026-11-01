@@ -43,10 +43,14 @@ their refusals. No persisted format or diagnostic schema changes.
 A verified durable source/patch/gate copy is preserved on NAS under
 `/Volumes/home/casa-rs/tclean/20261031/scan-observation-contract-proposal-20261101.tar`.
 
-- [Unapplied full patch](/private/tmp/tclean-selector-semantic-candidate-20261101/candidate.patch),
-  SHA256 `fa7f7af6aee69c6b5928f3fd044b847b523d57806787dbee351ffa31dddaf084`; proposed tclean33 fingerprint `20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9`.
-- [File inventory and limits](/private/tmp/tclean-selector-semantic-candidate-20261101/README.md).
-  History/generator/signature checks and `git apply --check` pass.
+- [Unapplied full patch](tclean-provider33-candidate-20261101.patch.gz),
+  gzip-compressed to preserve exact patch whitespace; uncompressed SHA256
+  `fa7f7af6aee69c6b5928f3fd044b847b523d57806787dbee351ffa31dddaf084`; proposed tclean33 fingerprint `20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9`.
+- The supporting file inventory, preparation and limits are in the NAS
+  proposal archive. History/generator/signature checks and `git apply --check`
+  passed against the mixed committed/work-in-progress state preserved in
+  `50d565e372`; the cleaned current tree needs a context rebase. The patch is
+  a review artifact, not an applied contract or runtime declaration.
 - The cloned candidate executes the actual native profile→projected JSON→
   re-resolution→plain imager-reader→sparse-save corpus, including old-profile
   exact-match migration. It does not depend on selector `given()` restoration.
