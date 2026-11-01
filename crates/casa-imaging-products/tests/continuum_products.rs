@@ -1031,7 +1031,61 @@ fn a_published_masked_product_keeps_its_mask_after_the_image_is_moved() {
 }
 
 #[test]
-fn primary_beam_plan_rejects_a_cube_crossing_the_vla_band_boundary() {
+fn primary_beam_plan_rejects_a_cube_crossing_the_evla_c_band_boundary() {
+    let products = [ProductKind::Psf, ProductKind::PrimaryBeam];
+    let template = continuum_problem_with_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let problem = continuum_problem_with_domains_and_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+        [7.880e9, 128.0e6],
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(SHAPE[0], SHAPE[1]),
+            template.geometry().domains()[0].direction(),
+            FacetLayout::Single,
+            axes(),
+        )],
+    );
+    let round = run_continuum_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let unsupported = |error| {
+        matches!(
+            error,
+            ProductsError::UnsupportedPrimaryBeamFrequency {
+                model: AnalyticPrimaryBeamModel::CasaEvlaCommon,
+                output_channel: 1,
+                frequency_hz,
+            } if frequency_hz == 8.008e9
+        )
+    };
+    assert!(unsupported(
+        PlannedContinuumGeneration::new(&inputs, &controls)
+            .expect_err("unsupported frequency must fail during planning, not production")
+    ));
+    assert!(unsupported(
+        controls
+            .validate_for_problem(&problem)
+            .expect_err("unsupported frequency")
+    ));
+}
+
+#[test]
+fn primary_beam_cube_crosses_from_vla_q_to_nvss() {
     let products = [ProductKind::Psf, ProductKind::PrimaryBeam];
     let template = continuum_problem_with_reconstruction(
         111,
@@ -1063,25 +1117,30 @@ fn primary_beam_plan_rejects_a_cube_crossing_the_vla_band_boundary() {
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
-    let unsupported = |error| {
-        matches!(
-            error,
-            ProductsError::UnsupportedPrimaryBeamFrequency {
-                model: AnalyticPrimaryBeamModel::CasaVlaBand,
-                output_channel: 1,
-                frequency_hz,
-            } if frequency_hz == 55.008e9
-        )
-    };
-    assert!(unsupported(
-        PlannedContinuumGeneration::new(&inputs, &controls)
-            .expect_err("unsupported frequency must fail during planning, not production")
-    ));
-    assert!(unsupported(
-        controls
-            .validate_for_problem(&problem)
-            .expect_err("unsupported frequency")
-    ));
+    controls
+        .validate_for_problem(&problem)
+        .expect("VLA Q and NVSS coverage");
+    let planned = planned_for(&inputs, &controls);
+    let generated = generate_for(&planned, &inputs);
+    let pb = generated
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam");
+    assert_eq!(pb.payload().len(), SHAPE[0] * SHAPE[1] * 2);
+    for channel in 0..2 {
+        let plane = pb.payload().iter().skip(channel).step_by(2);
+        assert!(plane.clone().all(|value| value.is_finite()));
+        assert_eq!(plane.clone().copied().reduce(f32::max), Some(1.0));
+        assert!(plane.copied().any(|value| value < 1.0));
+    }
+    assert!(
+        pb.payload()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .any(|pixel| pixel[0] != pixel[1])
+    );
 }
 
 #[test]
