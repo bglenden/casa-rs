@@ -116,13 +116,38 @@ at `ac41519a63` passes 4,676 workspace tests (45 skipped), doctests, workspace
 clippy, architecture/SPDX/format, 21 CLI hosts and 827 performance-tool tests
 with 307 subtests. Skips do not establish scientific acceptance.
 
-The [scoped receipt](../../resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json)
-records exact revisions, remaining failures and NAS archive identity. The
-actual-product plots and raw verdicts are retained; no failed check has been
-silently reclassified. Single wall times are not matched performance evidence.
-The next bounded implementation is same-grid default restart continuation.
-Numbering, stage reuse, representative T2, numeric returns, persistence and
-the remaining task gaps still prevent claiming complete tclean equivalence.
+The next representative standard-MT-MFS check uses the original #607 MS
+content (90 files match its historical hash; 125 AppleDouble sidecars explain
+the archive-tree difference), 512 square, four SPWs and 1,336,320 nominal
+correlation-channel samples. All three dirty paths and CPU/f64/Metal/f32
+CLEAN pass. CPU/f32 CLEAN fails `.model.tt1` NRMS at 0.0012759712. All
+other recorded product checks pass. One instrumented retry confirms the same
+components and a correct native linear solve for its supplied inputs; it
+does not establish the entire upstream cause. The raw failure remains.
+
+Independent review supports proposing an identity-bound exception: the ideal
+published model intensity differs by at most 5.7469e-7 across its common-frame
+MFS interval, despite the weak coefficient's larger relative error. Both this
+model proposal and the separate weight-moment proposal await owner agreement.
+No criterion or verdict has changed. The single diagnosis retry is spent;
+another unchanged native run is not the next action.
+
+Same-grid default restart is checkpointed at `0319f6d016`: native T1 verifies
+model/binary-mask reuse and refusals, with admitted mask ownership and its
+counting law. The review's spectral-mapping scope finding is fixed. The full
+normal gate passes 4,683 tests (45 skipped), doctests, clippy, architecture,
+SPDX/format, 21 CLI hosts and 827 performance-tool tests/307 subtests. Paired
+CASA restart and broader persistence remain pending; priority returned to the
+representative f32 decision before further restart work.
+
+The [current receipt](../../resources/casa-compat/evidence/tclean-standard-mtmfs-t2-20261031.json)
+and [previous wave receipt](../../resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json)
+bind revisions, remaining failures, measured proposals and verified NAS archives.
+The actual-product plots and raw verdicts are retained. Single wall times are
+not matched performance evidence. After the owner decisions, finish affected
+f32 acceptance and continue CASA-paired restart, numbering, stage reuse,
+remaining representative modes, numeric returns and persistence. The task is
+still unfinished.
 
 ## Approved decision: measured cost of the retained correction
 

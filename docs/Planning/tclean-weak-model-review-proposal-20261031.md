@@ -11,7 +11,7 @@ failure as the review trigger. This changes no algorithm, CASA parameter,
 default, output value or provider bundle. It grants no general exception
 for other weak coefficients, outputs or future runs.
 
-The bound inputs and products are in the current T2 receipt and its diagnostic
+The bound inputs and products are in the [current T2 receipt](../../resources/casa-compat/evidence/tclean-standard-mtmfs-t2-20261031.json) and its diagnostic
 `model-review-measurement.json`: native revision
 `b6a87fa91271e5bf809b86c68e40a979974c1368`, CPU/f32, standard two-term MFS,
 512 square, four SPWs, 1,336,320 nominal correlation-channel samples,

@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "record": "tclean-standard-mtmfs-t2-and-restart-checkpoint",
+  "date": "2026-10-31",
+  "status": "Mixed representative results; two scientific acceptance decisions pending; tclean unfinished",
+  "native_revision": "b6a87fa91271e5bf809b86c68e40a979974c1368",
+  "native_binary_sha256": "c32e26cdde18cc0f5f17b327ed623f658227f64ba1522d77cd9801ad896be153",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "input": {
+    "tree_sha256_excluding_table_lock": "e1f1e030a1d1968b627863b3b5386e03fc7ed5770760698a1f6b603f4e885548",
+    "file_count_excluding_table_lock": 215,
+    "bytes_excluding_table_lock": 31216574,
+    "selected_rows": 41760,
+    "selected_correlation_channel_samples": 1336320,
+    "frequency_min_hz": 84430929999.9,
+    "frequency_max_hz": 100055930000.0,
+    "fractional_frequency_span": 0.1693887575527978,
+    "active_spw_polarization_rows": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "selected_rows_per_active_ddid": [
+      10440,
+      10440,
+      10440,
+      10440
+    ]
+  },
+  "input_reconciliation": {
+    "raw_full_tree_identity": "e1f1e030a1d1968b627863b3b5386e03fc7ed5770760698a1f6b603f4e885548",
+    "measurement_set_files_excluding_table_lock_and_AppleDouble_sha256": "06a6668898d0c193fe55f83e9bf0226bcbd02a1da07d278243c9dfe56c2eb8b7",
+    "files": 90,
+    "bytes": 31196199,
+    "AppleDouble_files": 125,
+    "historical_issue607_source_sha256": "06a6668898d0c193fe55f83e9bf0226bcbd02a1da07d278243c9dfe56c2eb8b7",
+    "historical_source_content_matches": true,
+    "interpretation": "All 90 MeasurementSet content files match the historical source exactly. The different raw archive-tree identity includes 125 filesystem AppleDouble sidecars. Raw receipts and acceptance verdicts are unchanged; the fresh current oracle remains the comparison reference."
+  },
+  "scope": "Production CLI standard Stokes-I two-term MT-MFS, 512 square, four SPWs; dirty and eight-iteration CLEAN, CPU64/CPU32/Metal32 W1. Five of six pass recorded checks; CPU32 CLEAN model.tt1 fails. This is not the full representative matrix, runtime visibility prediction, numeric-return or whole-task acceptance.",
+  "cases": {
+    "clean8": {
+      "parameters": {
+        "cell": "1.0arcsec",
+        "cyclefactor": 1.0,
+        "cycleniter": 2,
+        "datacolumn": "data",
+        "deconvolver": "mtmfs",
+        "field": "0",
+        "gain": 0.1,
+        "gridder": "standard",
+        "imsize": 512,
+        "interactive": false,
+        "maxpsffraction": 0.8,
+        "minpsffraction": 0.05,
+        "niter": 8,
+        "nterms": 2,
+        "parallel": false,
+        "pbcor": true,
+        "pblimit": 0.2,
+        "phasecenter": 0,
+        "savemodel": "none",
+        "scales": [
+          0,
+          5
+        ],
+        "smallscalebias": 0.0,
+        "specmode": "mfs",
+        "spw": "0~3",
+        "stokes": "I",
+        "threshold": "0Jy",
+        "weighting": "natural",
+        "restoringbeam": "common"
+      },
+      "casa_task_summary": {
+        "iterdone": 8,
+        "nmajordone": 5,
+        "stopcode": 1,
+        "stopDescription": "iteration limit"
+      },
+      "products": 19,
+      "runs": {
+        "cpu64": {
+          "passed": true,
+          "failures": [],
+          "backend": "cpu",
+          "precision": "f64",
+          "workers": 1,
+          "maximum_raw_nrms": 0.00033521277491625415,
+          "maximum_raw_nrms_product": "image.model.tt1",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 1
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 1
+            }
+          }
+        },
+        "cpu32": {
+          "passed": false,
+          "failures": [
+            "image.model.tt1"
+          ],
+          "backend": "cpu",
+          "precision": "f32",
+          "workers": 1,
+          "maximum_raw_nrms": 0.0012759712077457415,
+          "maximum_raw_nrms_product": "image.model.tt1",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 1
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 1
+            }
+          }
+        },
+        "gpu32": {
+          "passed": true,
+          "failures": [],
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "maximum_raw_nrms": 0.0002864738992626144,
+          "maximum_raw_nrms_product": "image.image.tt1.pbcor",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 1
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 1
+            }
+          }
+        }
+      }
+    },
+    "dirty": {
+      "parameters": {
+        "cell": "1.0arcsec",
+        "cyclefactor": 1.0,
+        "cycleniter": 2,
+        "datacolumn": "data",
+        "deconvolver": "mtmfs",
+        "field": "0",
+        "gain": 0.1,
+        "gridder": "standard",
+        "imsize": 512,
+        "interactive": false,
+        "maxpsffraction": 0.8,
+        "minpsffraction": 0.05,
+        "niter": 0,
+        "nterms": 2,
+        "parallel": false,
+        "pbcor": true,
+        "pblimit": 0.2,
+        "phasecenter": 0,
+        "savemodel": "none",
+        "scales": [
+          0,
+          5
+        ],
+        "smallscalebias": 0.0,
+        "specmode": "mfs",
+        "spw": "0~3",
+        "stokes": "I",
+        "threshold": "0Jy",
+        "weighting": "natural",
+        "restoringbeam": "common"
+      },
+      "casa_task_summary": {
+        "iterdone": 0,
+        "nmajordone": 1,
+        "stopcode": 3,
+        "stopDescription": "Zero iterations performed"
+      },
+      "products": 18,
+      "runs": {
+        "cpu64": {
+          "passed": true,
+          "failures": [],
+          "backend": "cpu",
+          "precision": "f64",
+          "workers": 1,
+          "maximum_raw_nrms": 0.00028708646073569334,
+          "maximum_raw_nrms_product": "image.image.tt1.pbcor",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 2
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 2
+            }
+          }
+        },
+        "cpu32": {
+          "passed": true,
+          "failures": [],
+          "backend": "cpu",
+          "precision": "f32",
+          "workers": 1,
+          "maximum_raw_nrms": 0.00028702024821378256,
+          "maximum_raw_nrms_product": "image.image.tt1.pbcor",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 2
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 2
+            }
+          }
+        },
+        "gpu32": {
+          "passed": true,
+          "failures": [],
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "maximum_raw_nrms": 0.00028701159087176216,
+          "maximum_raw_nrms_product": "image.image.tt1.pbcor",
+          "alpha_mask_mismatches": {
+            "image.alpha": {
+              "within_pb": 0,
+              "outside_pb": 2
+            },
+            "image.alpha.error": {
+              "within_pb": 0,
+              "outside_pb": 2
+            }
+          }
+        }
+      }
+    }
+  },
+  "unchanged_rules": {
+    "product_nrms": 0.001,
+    "sumwt_relative": 5e-05,
+    "odd_sumwt": "Existing #690 scale-aware rule; distinct from proposed weight-image rule",
+    "alpha": "Existing #607 exact validity within CASA PB support; outside differences counted. The core MS source matches #607 exactly.",
+    "metadata": "Recorded unit/Stokes/frame/WCS-value limits, not every metadata field",
+    "beam": "Axes 1e-3 relative and PA .01 degree when noncircular",
+    "flux": "TT0 image/model integrated sums 1e-3; peak displacement at most one pixel"
+  },
+  "diagnostic_retry": {
+    "source_revision": "0319f6d016ed66cad4de1e78639173489458bc5a",
+    "instrumentation_patch_sha256": "1126901347aec9b59e886d4f05af1744a58e91b2c5f8f0712dd712e9c5658624",
+    "binary_sha256": "e41974053ca0e0cea9fb991dd2be5262f30e7fd91e0a607a6b1d52826a8dc35e",
+    "attempts": 1,
+    "remaining_retry_allowance": 0,
+    "scope": "Temporary Hessian/RHS and component logging only; no arithmetic changes; both model terms bitwise unchanged",
+    "findings": "All eight components share pixel256,256 and scale0. Native component solve agrees with 60-digit closed-form to better than7.4e-17Jy. Weak TT1 cancellation amplifies small upstream perturbations; this does not establish rounding as the sole cause.",
+    "instrumentation_removed_from_source": true
+  },
+  "pending_model_review": {
+    "owner_status": "Pending; raw failure unchanged",
+    "proposal": "docs/Planning/tclean-weak-model-review-proposal-20261031.md",
+    "case": "clean8/cpu32",
+    "raw_model_tt1_nrms": 0.0012759712077457415,
+    "model_payload_identities": {
+      "casa": [
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "5526e26797bce987fc1a46d15d012a757b65328ce9673afce2ff0ea48c8f0178",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        },
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "3afa79a8d7a6bb095623a314ea1d259441c3a3eff5a9c6082a62cf7223341bdf",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        }
+      ],
+      "cpu32": [
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "cff23b434b2a6e06d8b887a3dfdad5d81c2e48b733f648567372be21263703ff",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        },
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "c45d56343bbabadcc54836184269abe1a19e9d7649b4921af6806f96a667818a",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        }
+      ]
+    },
+    "interval_hz": [
+      84305555030.36191,
+      100180604526.17267
+    ],
+    "reference_hz": {
+      "casa": 92243079778.26729,
+      "cpu32": 92243079778.2673
+    },
+    "formula": "M(nu)=M0+((nu-nu0)/nu0)*M1, with each published model reference frequency in the shared spectral frame",
+    "maximum_ideal_published_model_relative_difference": 5.746867501651647e-07,
+    "maximum_absolute_difference_jy": 3.2727947341104624e-07,
+    "proposed_case_specific_limit": 1e-06,
+    "delete_tt1_counterexample_relative_difference": 4.026152245397515e-05,
+    "limit_scope": "Exact identity-bound published-model review; no general weak-coefficient waiver and no runtime prediction pass",
+    "review": "Separate-agent review supports owner consideration; Oracle Pro usage-limited, not a review pass",
+    "model_review_measurement_sha256": "2e3e0f013e545ef8c35f00fae54e688e59fa1b8aac2de9aaa28b3b3f68e5f8f8"
+  },
+  "separate_pending_weight_rule": "docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md; no activation or new verdict",
+  "restart_checkpoint": {
+    "revision": "0319f6d016ed66cad4de1e78639173489458bc5a",
+    "scope": "Default same-grid standard unfaceted single-term StokesI MFS; raw model reuse and admitted binary CLEAN-mask reuse. Unsupported embedded masks, nonlinear spectra, new explicit masks/auto-mask, outliers and false restart/calc flags remain unfinished.",
+    "focused_production_tests_passed": 5,
+    "independent_review": "One spectral-mapping scope finding fixed and confirmed",
+    "mask_memory_bytes": {
+      "read_peak": 2372046,
+      "read_limit": 4784128,
+      "retained": 524215,
+      "retained_limit": 524288
+    },
+    "paired_CASA_continuation": "Not yet run; priority returned to representative f32 failure",
+    "provider_bundle": "Unchanged at31; no CASA parameter/default changes"
+  },
+  "current_native_gates": {
+    "revision": "0319f6d016ed66cad4de1e78639173489458bc5a",
+    "command": "Normal quick-equivalent with nextest --no-fail-fast and existing perf-tools venv",
+    "workspace_passed": 4683,
+    "workspace_skipped": 45,
+    "workspace_seconds": 411.696,
+    "doctests": "pass",
+    "clippy_architecture_spdx_format": "pass",
+    "cli_hosts": 21,
+    "performance_tools_passed": 827,
+    "performance_subtests_passed": 307,
+    "normal_release_binary_sha256": "34ef96adbd27f5352416606c208cac237a55ada32882bd761275a7a3d325e3d2",
+    "normal_release_contains_diagnostic_strings": false,
+    "log": "/Volumes/home/casa-rs/tclean/20261031/restart-quick.log",
+    "log_sha256": "1b6535fe3c37ae2a84286fc842549294130dcd7eb449c34285b140b2bd3cf540",
+    "docs_and_inventory": "Passed separately;24 CASA6.7.6.14 tasks checked",
+    "python_package": "Earlier editable/wheel632passed15skipped each and sdist99pass at583cff5cc5; not repeated at this checkpoint"
+  },
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/t2-mtmfs-failure-archive-20261031.tar",
+    "sha256": "8a3a1346568e35cb6fe4aa4db9a21d45a1a154be9f8ffbc97147ab68aa1e50e0",
+    "bytes": 605409280,
+    "verified_manifest_entries": 2345,
+    "payload_bytes": 599975492,
+    "manifest_sha256": "0a0390faf74aefed35e17b25df85a2a653970b53bc303fa16c575a4079b2e9be",
+    "verification": "Byte-preserving Python tar; identical full reread SHA on SSD/NAS; extracted manifest verified on SSD. Both original raw failed verdicts and proposals retained.",
+    "post_archive_note": "Adjacent POST-ARCHIVE-NOTE.md corrects an embedded Summary hash placeholder; scientific receipts/manifest/archive remain unchanged.",
+    "post_archive_note_sha256": "3fc4fffd1b070fd61321b4c3e06828def58f5330f1e42f0ea944846c93910dfb"
+  },
+  "review_provenance": {
+    "requested_model_effort": "Astra Medium",
+    "actual_model_effort": "Runtime identity not exposed",
+    "Oracle_Pro": "Usage limited; no external Pro review was submitted or counted as a pass"
+  }
+}
