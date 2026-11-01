@@ -42,7 +42,6 @@ pub(crate) struct Device {
     pub native: Pipeline,
     /// The cell noise (`casa_numerics::cell_noise`).
     pub noise: Pipeline,
-    #[cfg(feature = "compensated-f32-prototype")]
     pub fold: Pipeline,
 }
 
@@ -88,11 +87,7 @@ impl Device {
         // The contract's kernels and the cell noise, which the source of
         // `casa_numerics::cell_noise` defines beside its CPU draws. The
         // noise comes last: it turns contraction off from its start on.
-        let compensated = u8::from(cfg!(feature = "compensated-f32-prototype"));
-        let source = format!(
-            "#define COMPENSATED_GRID {compensated}\n{SOURCE}\n{}",
-            cell_noise::metal_source()
-        );
+        let source = format!("{SOURCE}\n{}", cell_noise::metal_source());
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), Some(&options))
             .unwrap_or_else(|error| {
@@ -125,7 +120,6 @@ impl Device {
             residual: pipeline("residual"),
             native: pipeline("native_model"),
             noise: pipeline(cell_noise::METAL_KERNEL),
-            #[cfg(feature = "compensated-f32-prototype")]
             fold: pipeline("fold_grid"),
             device,
             queue,

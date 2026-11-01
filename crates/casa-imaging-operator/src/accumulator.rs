@@ -13,7 +13,7 @@ use crate::geometry::GridGeometry;
 /// Arithmetic precision of a grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GridPrecision {
-    /// Interleaved `f32` complex cells.
+    /// Interleaved `f32` complex cells with compensated accumulation.
     F32,
     /// Interleaved `f64` complex cells (default; taps and values stay `f32`).
     F64,
@@ -769,16 +769,14 @@ impl GridAccumulator {
         self.prepare_correction();
         let mine = &self.layout;
         match self.storage.precision() {
-            GridPrecision::F32 => {
-                add_tiles::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
-                    f32::cells_mut(&mut self.storage),
-                    f32::cells(&other.storage),
-                    &mut self.correction,
-                    &other.correction,
-                    mine,
-                    theirs,
-                )
-            }
+            GridPrecision::F32 => add_tiles::<f32, true>(
+                f32::cells_mut(&mut self.storage),
+                f32::cells(&other.storage),
+                &mut self.correction,
+                &other.correction,
+                mine,
+                theirs,
+            ),
             GridPrecision::F64 => add_tiles::<f64, false>(
                 f64::cells_mut(&mut self.storage),
                 f64::cells(&other.storage),
@@ -803,12 +801,12 @@ impl GridAccumulator {
         (&self.layout, &self.storage, sumwt)
     }
 
-    /// Extra bytes kept by a CPU accumulator through finishing when the
-    /// opt-in f32 accuracy experiment is enabled. Models and device owners
-    /// do not use this host correction; charge them separately.
+    /// Extra bytes kept by a CPU f32 accumulator through finishing.
+    /// Models and device owners do not use this host correction; charge
+    /// them separately.
     #[must_use]
     pub const fn cpu_correction_bytes(cells: u64, precision: GridPrecision) -> u64 {
-        if cfg!(feature = "compensated-f32-prototype") && matches!(precision, GridPrecision::F32) {
+        if matches!(precision, GridPrecision::F32) {
             cells * size_of::<Complex32>() as u64
         } else {
             0
@@ -824,8 +822,8 @@ impl GridAccumulator {
         }
     }
 
-    /// CPU kernel views at precision `T`. Correction is empty without the
-    /// f32 experiment; `sumwt` is absent when this accumulator skips weights.
+    /// CPU kernel views at precision `T`. Correction is empty for f64;
+    /// `sumwt` is absent when this accumulator skips weights.
     pub(crate) fn parts_mut<T: GridScalar>(&mut self) -> CpuGridParts<'_, T> {
         self.prepare_correction();
         let sumwt = self.sums_weights.then_some(self.sumwt.as_mut_slice());
@@ -875,7 +873,7 @@ fn add_tiles<T: GridScalar, const COMPENSATED: bool>(
     }
 }
 
-#[cfg(all(test, feature = "compensated-f32-prototype"))]
+#[cfg(test)]
 mod correction_laws {
     use super::*;
     use crate::{GridPadding, ImageExtent, PaddingFactor};

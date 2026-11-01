@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 30,
+      "contract_version": 31,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9515,7 +9515,7 @@
           "name": "hogbom_iteration_mode",
           "concept": {"id": "parameter.hogbom_iteration_mode", "semantic_revision": 1},
           "order": 95,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": "strict"}},
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "casa-inclusive"}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
@@ -9832,6 +9832,12 @@
           "to_contract": 30,
           "steps": [],
           "changed_defaults": ["write_pb"]
+        },
+        {
+          "from_contract": 30,
+          "to_contract": 31,
+          "steps": [],
+          "changed_defaults": ["hogbom_iteration_mode"]
         }
       ]
     },

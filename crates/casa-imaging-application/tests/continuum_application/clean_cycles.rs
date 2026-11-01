@@ -254,7 +254,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
 }
 
 #[test]
-fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
+fn application_defaults_to_reported_iterations_for_casa_inclusive_continuation() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
@@ -264,7 +264,6 @@ fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
         json!({
             "niter": 3,
             "cycleniter": 1,
-            "hogbom_iteration_mode": "casa-inclusive",
             "nmajor": -1,
             "gain": 0.37,
             "threshold": "1e-12Jy",

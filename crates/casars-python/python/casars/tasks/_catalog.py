@@ -268,7 +268,7 @@ def tclean(
     ddid: str = 'none',
     channel_start: int | Literal['none'] = 'none',
     channel_count: int | Literal['none'] = 'none',
-    hogbom_iteration_mode: str = 'strict',
+    hogbom_iteration_mode: str = 'casa-inclusive',
     write_pb: bool = True,
     fitspw: str = 'none',
     fitorder: int = 0,

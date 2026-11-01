@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! #991 experiment: renormalize GPU rounding losses once per apply, without
+//! #991: renormalize GPU rounding losses once per apply, without
 //! host I/O. Unrepresented remainders survive until the accumulator is reset.
 
 use objc2_metal::{

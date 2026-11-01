@@ -752,9 +752,9 @@ pub enum ReconstructionAlgorithm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HogbomIterationAccounting {
     /// Apply and report no more components than the requested budget.
-    #[default]
     Strict,
     /// Admit CASA's inclusive terminal component while preserving the reported budget.
+    #[default]
     CasaInclusive,
 }
 

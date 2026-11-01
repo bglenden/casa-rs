@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! A normalized two-float sum for the opt-in CPU accuracy experiment (#991).
+//! A normalized two-float sum for accurate CPU f32 gridding (#991).
 
 use crate::accumulator::GridScalar;
 use num_complex::{Complex, Complex32};
@@ -27,7 +27,7 @@ fn component(high: f32, low: &mut f32, value: f32) -> f32 {
 }
 
 /// Const dispatch removes the correction access and all extra arithmetic
-/// from f64 and ordinary f32 loops. The f64 multiplication order is intact.
+/// from f64 loops. The f64 multiplication order is intact.
 #[inline]
 pub(crate) fn add<T: GridScalar, const COMPENSATED: bool>(
     cell: &mut Complex<T>,
@@ -52,7 +52,7 @@ pub(crate) fn add<T: GridScalar, const COMPENSATED: bool>(
     }
 }
 
-#[cfg(all(test, feature = "compensated-f32-prototype"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

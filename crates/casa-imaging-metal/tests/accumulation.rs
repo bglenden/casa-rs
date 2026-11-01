@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! #991: repeated compact-array contributions must retain scientific accuracy.
 
-#![cfg(feature = "compensated-f32-prototype")]
-
 mod common;
 
 use casa_imaging_metal::MetalBackend;

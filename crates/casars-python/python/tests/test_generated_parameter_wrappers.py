@@ -69,6 +69,15 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
     }
 
 
+def test_tclean_hogbom_default_and_explicit_strict_override(monkeypatch) -> None:
+    captured = _capture_runs(monkeypatch)
+    assert inspect.signature(tasks.tclean).parameters["hogbom_iteration_mode"].default == "casa-inclusive"
+    tasks.tclean(vis="target.ms", imagename="target")
+    assert "hogbom_iteration_mode" not in captured["overrides"]
+    tasks.tclean(vis="target.ms", imagename="target", hogbom_iteration_mode="strict")
+    assert captured["overrides"]["hogbom_iteration_mode"] == "strict"
+
+
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
     # importvla takes CASA's signature (#931 PR 4c): its wrapper runs the
     # task through the runner's `run` and returns CASA's value.

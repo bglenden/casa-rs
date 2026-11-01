@@ -81,15 +81,11 @@ pub const fn ring_bytes(npol: usize) -> u64 {
     (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64 + host
 }
 
-/// Additional device-grid bytes for the local #991 rounding-loss experiment.
+/// Additional device-grid bytes for compensated f32 accumulation (#991).
 /// Two correction grids each hold an f32 complex pair per accumulation cell.
 #[must_use]
 pub const fn accumulator_extra_bytes(cells: u64) -> u64 {
-    if cfg!(feature = "compensated-f32-prototype") {
-        cells.saturating_mul(16)
-    } else {
-        0
-    }
+    cells.saturating_mul(16)
 }
 
 /// Device bytes of one kernel table record (`records::TableRecord`).

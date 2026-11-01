@@ -565,17 +565,10 @@ mod tests {
         let summed_f32 = relative(&weight_image(&f32_operator, &samples, false), &reference);
         let each_f32 = relative(&weight_image(&f32_operator, &samples, true), &reference);
         assert!(summed_f32 <= 1.0e-6, "summed on f32 grids: {summed_f32}");
-        if casa_imaging_operator::GridAccumulator::cpu_correction_bytes(1, GridPrecision::F32) > 0 {
-            assert!(
-                each_f32 <= 1.0e-6,
-                "compensated per-sample f32 grids: {each_f32}"
-            );
-        } else {
-            assert!(
-                each_f32 > 10.0 * summed_f32,
-                "per sample on f32 grids drifts: {each_f32} against {summed_f32}"
-            );
-        }
+        assert!(
+            each_f32 <= 1.0e-6,
+            "compensated per-sample f32 grids: {each_f32}"
+        );
     }
 
     /// With no group shared, every pointing gradient distinct (AW's case

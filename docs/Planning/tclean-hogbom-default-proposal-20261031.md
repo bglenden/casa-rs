@@ -1,6 +1,6 @@
-# Proposal: choose tclean's default Hogbom accounting
+# Approved change: tclean's default Hogbom accounting
 
-Truth class: proposed owner decision
+Truth class: approved owner decision (2026-10-31)
 Work issue: #980, after the #991 precision correction.
 
 ## Measured behavior
@@ -8,7 +8,7 @@ Work issue: #980, after the #991 precision correction.
 CASA 6.7.6.14 commits one more component than it reports when a positive
 Hogbom minor cycle reaches its iteration limit. This is the already
 documented CASA niter bug, not a new interpretation of the parameter.
-casa-rs's existing `strict` default limits physical updates; its existing
+casa-rs's former `strict` default limited physical updates; its existing
 `casa-inclusive` option reproduces CASA's behavior and reported counts.
 
 On the fresh pinned point-source case with niter=10 and gain=0.1:
@@ -21,14 +21,14 @@ On the fresh pinned point-source case with niter=10 and gain=0.1:
 | Corrected CPU/f32, explicit casa-inclusive | 0.686189234 |
 | Corrected GPU/f32, explicit casa-inclusive | 0.686189234 |
 
-Default strict residual NRMS is about 0.1111. Explicit inclusive mode makes
+The former default strict residual NRMS was about 0.1111. Explicit inclusive mode made
 all seven product/inventory/mask/finite/beam/sumwt checks pass against CASA.
 On the ALMA mosaic niter=50 case it also removes the common native-f64/f32
 clean-product mismatch; all recorded products pass. These results are in
 `resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json`.
 The exact recipe/source is 75155cd47f77cbfc4c1e1d6822774b7d1516d1ee.
 
-## Two concrete choices
+## Choices presented to the owner
 
 1. **Recommended: match CASA by default.** Change casa-rs's extra
    `hogbom_iteration_mode` binding default from `strict` to `casa-inclusive`.
@@ -41,15 +41,18 @@ The exact recipe/source is 75155cd47f77cbfc4c1e1d6822774b7d1516d1ee.
    impact as an explicit owner-approved exception. Users requesting CASA
    output parity would select the existing inclusive option.
 
-If choice 1 is approved, the concrete provider change is bundle 30 to 31:
+The approved choice 1 changes the provider bundle from 30 to 31:
 the binding in `crates/casa-provider-contracts/resources/parameter-surfaces.json`
-gets the new literal default, its catalog documentation and generated
+has the new literal default, its catalog documentation and generated
 references/wrappers are updated, and old omitted defaults receive a
 migration warning. Explicit old values are preserved. All 92 CASA
 parameter defaults and all other native option defaults stay unchanged.
 Focused migration/default/continuation tests and the normal contract,
 Python, imaging and review gates must pass before publication.
 
-No provider change or accepted-deviation decision has been applied.
-AGENTS.md's Ask First rule covers provider-contract changes. This choice
-is independent of the f32 correction's memory/performance tradeoff.
+The owner approved choice 1 on 2026-10-31. Contract 31 implements that choice;
+explicit strict controls remain available. The generic reconstruction-control
+constructor retains its canonical strict inactive policy for non-Hogbom
+algorithms; the production compiler selects the request's inclusive default
+for Hogbom. Publication remains subject to the gates above. This choice is
+independent of the f32 correction's memory/performance tradeoff.

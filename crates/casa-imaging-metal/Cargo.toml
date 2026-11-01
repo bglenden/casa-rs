@@ -10,10 +10,6 @@ publish = false
 [lints]
 workspace = true
 
-[features]
-# Local #991 GPU rounding-loss correction experiment; not production adoption.
-compensated-f32-prototype = ["casa-imaging-operator/compensated-f32-prototype"]
-
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-numerics = { path = "../casa-numerics" }

@@ -808,6 +808,6 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "compensated-f32-prototype"))]
+#[cfg(test)]
 #[path = "correction_laws.rs"]
 mod correction_laws;

@@ -2,7 +2,7 @@
   "casa_tasks": "6.7.6.14",
   "casa_tools": "6.7.6-14",
   "casars_revision": "75155cd47f77cbfc4c1e1d6822774b7d1516d1ee",
-  "state": "Experimental correction verified on scoped inputs; normal build remains unchanged pending owner decision.",
+  "state": "Historical scoped prototype evidence; owner-approved normal adoption is applied and its normal-build gates are in progress.",
   "implementation": {
     "gpu": "Native Metal f32 atomic TwoSum into two low grids; GPU renormalizes and preserves all remainders between applies.24 bytes per complex accumulation cell versus8 before, plus existing charges. Original route/CF/FFT retained.",
     "cpu": "Native statically dispatched normalized TwoSum with one lazy Complex32 correction per host f32 cell.16 bytes per complex accumulation cell versus8 before. Reset and merges preserve/clear both parts; models and f64 arithmetic unchanged.",
@@ -7126,8 +7126,15 @@
     },
     "command": "CASA Python -I /private/tmp/probe-casa-grid-precision.py"
   },
-  "owner_decisions_pending": [
-    "Adopt corrected f32 despite its measured time and charged storage cost, or continue seeking a cheaper correction. No CASA parameter/default change.",
-    "Make the existing native hogbom_iteration_mode casa-inclusive by default (provider bundle30\u219231 with old-omission migration warning), or explicitly agree to strict counting as a CASA departure. All92 CASA parameter defaults remain unchanged."
-  ]
+  "owner_decisions_pending": [],
+  "adoption": {
+    "owner_decision": "Owner approved both measured f32 resource tradeoff and CASA-inclusive Hogbom default on 2026-10-31 in this chat.",
+    "implementation": "Experimental feature and naive f32 alternatives removed; CPU/GPU correction always enabled for f32, f64 unchanged. Provider31 defaults the existing Hogbom policy to casa-inclusive, retaining explicit strict.",
+    "normal_acceptance": "in progress; prototype scientific/gate evidence above remains pinned to75155 and is not a normal-build test result.",
+    "independent_review": {
+      "result": "No actionable adoption code findings; final record/proposal wording repaired.",
+      "requested_configuration": "Astra Medium",
+      "actual_model_identity": "not exposed"
+    }
+  }
 }

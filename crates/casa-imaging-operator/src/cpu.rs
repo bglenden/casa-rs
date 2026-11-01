@@ -348,10 +348,7 @@ impl GridBackend for CpuBackend {
         );
         let result = match work {
             Work::Grid { mode, acc } => match acc.precision() {
-                GridPrecision::F32 => self
-                    .grid::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
-                        block, cf, mode, acc,
-                    ),
+                GridPrecision::F32 => self.grid::<f32, true>(block, cf, mode, acc),
                 GridPrecision::F64 => self.grid::<f64, false>(block, cf, mode, acc),
             },
             Work::Predict { model, out } => {
@@ -373,13 +370,7 @@ impl GridBackend for CpuBackend {
                 );
                 match acc.precision() {
                     GridPrecision::F32 => {
-                        self.residual::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
-                            block,
-                            cf,
-                            model,
-                            acc,
-                            residual_out,
-                        );
+                        self.residual::<f32, true>(block, cf, model, acc, residual_out);
                     }
                     GridPrecision::F64 => {
                         self.residual::<f64, false>(block, cf, model, acc, residual_out);
@@ -454,13 +445,7 @@ impl CpuBackend {
             ..*block
         };
         let result = match acc.precision() {
-            GridPrecision::F32 => self
-                .grid::<f32, { cfg!(feature = "compensated-f32-prototype") }>(
-                    &residual,
-                    cf,
-                    Mode::Data,
-                    acc,
-                ),
+            GridPrecision::F32 => self.grid::<f32, true>(&residual, cf, Mode::Data, acc),
             GridPrecision::F64 => self.grid::<f64, false>(&residual, cf, Mode::Data, acc),
         };
         self.batch = values;

@@ -41,9 +41,10 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 2);
+    assert_eq!(bundle.surface.migrations().len(), 3);
     assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
     assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
+    assert_eq!(bundle.surface.migrations()[2].from_contract, 30);
     assert!(
         bundle
             .surface
@@ -295,7 +296,15 @@ fn an_imager_profile_migrates_to_tclean() -> Result<(), Box<dyn Error>> {
         .filter(|diagnostic| diagnostic.code == DiagnosticCode::DefaultChanged)
         .filter_map(|diagnostic| diagnostic.parameter.clone())
         .collect::<Vec<_>>();
-    assert_eq!(warned, ["nterms", "perchanweightdensity", "write_pb"]);
+    assert_eq!(
+        warned,
+        [
+            "nterms",
+            "perchanweightdensity",
+            "write_pb",
+            "hogbom_iteration_mode"
+        ]
+    );
     let request = request_from_profile("old", source)?;
     assert_eq!(request.phasecenter_field, Some(3));
     assert_eq!(request.mask_box, [[1, 2, 10, 12]]);

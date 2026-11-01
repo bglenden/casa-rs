@@ -3641,7 +3641,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons",
+        "summary": "Hogbom iteration accounting policy: casa-inclusive (default) reproduces CASA's inclusive terminal component and reported count; strict limits physical updates to the requested budget",
         "details": null,
         "examples": [
           "strict"

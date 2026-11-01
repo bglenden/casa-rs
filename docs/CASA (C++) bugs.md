@@ -259,6 +259,13 @@ parity work that surfaced this CASA-side issue.
 In the current CASA `tclean(..., deconvolver='hogbom')` path, `niter=1` appears able to commit
 two clean components inside a single minor cycle while still reporting `iterdone = 1`.
 
+Since provider contract 31 (owner approved 2026-10-31), casa-rs defaults its
+extra `hogbom_iteration_mode` option to `casa-inclusive` to reproduce this
+behavior. Explicit `strict` limits physical updates to the requested budget.
+Migrating an older profile warns when that option was omitted and adopts the
+inclusive default; explicit values are preserved. CASA's 92 parameter defaults
+are unchanged.
+
 The effect is not limited to the top-level `niter=1` case. Any CASA Hogbom
 minor-cycle call that enters `hclean` with a positive `cycleNiter` may commit
 one more component than the reported minor-cycle count. In a Cotton-Schwab run,

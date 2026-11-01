@@ -1,6 +1,6 @@
 # Bounded proposal: repair dense-cell f32 gridding accuracy
 
-Truth class: current experiment and retired experiments
+Truth class: approved implementation and retired experiments
 Work issue: #991, under the tclean-first work in #980.
 
 Owner approval, 2026-10-31: the bounded prototype is approved. The owner also
@@ -72,11 +72,14 @@ changes admission accounting only, not the scientific computation.
 
 ## Current state and next action
 
-The first two candidates remain retired. A third native correction is now
-implemented at `75155cd47f77cbfc4c1e1d6822774b7d1516d1ee`, behind
-`casa-imaging-metal/compensated-f32-prototype`, which also enables its CPU
-counterpart. The feature is off by default; the ordinary release executable
-has been restored. No acceptance tolerance has been widened.
+The first two candidates remain retired. The owner approved adoption of the
+third correction and its measured resource cost on 2026-10-31, together with
+the separate CASA-inclusive Hogbom default. The tested prototype source is
+`75155cd47f77cbfc4c1e1d6822774b7d1516d1ee`. Its experimental Cargo gate and
+naive f32 alternatives have now been removed: corrected accumulation is the
+normal CPU/GPU f32 path. CPU/f64 remains unchanged. Normal-build, packaging
+and affected CASA checks are the current acceptance boundary; the original
+prototype passes below are not relabelled as those pending checks.
 
 The GPU records each atomic add's rounding loss using TwoSum, into two
 additional f32 grids. A GPU renormalization keeps its own remainder across
@@ -122,7 +125,7 @@ were repaired. Actual heap/device allocation laws pass; a deliberately
 broken reset fails the fresh-signal law. Python packaging after default
 adoption and representative T2 acceptance are not claimed.
 
-## Decision requested: measured cost of the retained correction
+## Approved decision: measured cost of the retained correction
 
 Quiet same-source W1 ABBAABBA measurements, four observations per build,
 include process startup and device initialization with a warm filesystem:
@@ -149,12 +152,12 @@ not whole-run RAM multipliers; f32 FFT/model storage is unchanged. Admission
 charges the actual correction owners, including host merge destinations,
 and may admit fewer planes or owners. Existing memory refusals remain.
 
-Recommendation: accept this cost to meet the scientific accuracy target,
-make the corrected implementation the normal f32 path and remove the
-experimental gate/naive path. Keep CPU/f64 unchanged. No CASA parameter or
-default changes. This adoption needs the owner's decision under AGENTS.md;
-it has not been applied. Further representative/packaging/review gates
-remain required before release.
+The owner accepted this cost to meet the scientific accuracy target. The
+corrected implementation is now the normal f32 path; the experimental gate
+and naive alternative are removed. CPU/f64 and all CASA parameters/defaults
+remain unchanged. Independent review found no adoption code defects. Normal
+verification and the remaining representative/packaging gates are required
+before publication; tclean is still incomplete.
 
 The complete scoped receipt is
 `resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json`.
@@ -181,11 +184,10 @@ These new products, raw receipts and exact recipes are in the separately
 reread-verified NAS supplement
 `compensated-f32-fixed512-20261031.tar`, SHA-256
 `c641b97ba5145db890f1561a562e58c9bac61c7ff97b6cff8ce1b5d7c0e9bc8c`.
-The previously verified archive retains the exact tested source. The two
-owner decisions above remain pending; neither production/default change
-has been applied. After adoption, the next action is to remove the f32
-experimental gate and naive path, run the affected normal-build/package
-checks, then address these remaining tclean gaps.
+The previously verified archive retains the exact tested prototype source.
+Both owner decisions are approved and their code changes are applied. The
+next action is to complete the normal-build/package checks and paired
+ordinary-default comparisons, then address these remaining tclean gaps.
 
 Oracle Pro was rechecked and remained unavailable due the signed-in
 account's usage limit. No prompt or substitute review was submitted.

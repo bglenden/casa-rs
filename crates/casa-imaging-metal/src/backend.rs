@@ -4,7 +4,6 @@
 
 use std::ops::Range;
 
-#[cfg(feature = "compensated-f32-prototype")]
 mod compensation;
 
 use casa_imaging_operator::{
@@ -142,7 +141,6 @@ struct Reserve {
 /// One ring slot: the buffers of one sub-block and the command using them.
 struct Slot {
     command: Option<Command>,
-    #[cfg(feature = "compensated-f32-prototype")]
     fold_command: Option<Command>,
     /// Whether the command's output is read back; a grid-only command,
     /// perhaps left running by an earlier `apply`, is only waited for.
@@ -216,7 +214,6 @@ impl<'cf> MetalBackend<'cf> {
         for _ in 0..RING {
             ring.push(Slot {
                 command: None,
-                #[cfg(feature = "compensated-f32-prototype")]
                 fold_command: None,
                 reads_back: false,
                 range: 0..0,
@@ -426,7 +423,7 @@ impl<'cf> MetalBackend<'cf> {
         let device = Device::shared()?;
         let cells = layout.cells();
         let extra = crate::accumulator_extra_bytes(cells as u64) as usize;
-        if cfg!(feature = "compensated-f32-prototype") && cells > u32::MAX as usize / 2 {
+        if cells > u32::MAX as usize / 2 {
             return Err(OperatorError::Device(DeviceFailure::Allocation {
                 bytes: cells as u64 * size_of::<Complex32>() as u64 + extra as u64,
             }));
@@ -606,14 +603,10 @@ impl<'cf> MetalBackend<'cf> {
             )),
             adjoint: table(false),
             forward: table(true),
-            compensation: if cfg!(feature = "compensated-f32-prototype") {
-                targets
-                    .adjoint
-                    .as_ref()
-                    .map_or(0, |(layout, _)| 2 * layout.cells() as u64)
-            } else {
-                0
-            },
+            compensation: targets
+                .adjoint
+                .as_ref()
+                .map_or(0, |(layout, _)| 2 * layout.cells() as u64),
         }
     }
 
@@ -708,7 +701,6 @@ impl<'cf> MetalBackend<'cf> {
                 self.ring[slot].reads_back = reads_back;
                 start += count;
             }
-            #[cfg(feature = "compensated-f32-prototype")]
             if let Some(grid) = grid {
                 self.finish_grid(grid, params.compensation)?;
             }
@@ -720,7 +712,6 @@ impl<'cf> MetalBackend<'cf> {
         if defer && matches!(dispatched, Ok(Ok(()))) {
             let last = (self.next + RING - 1) % RING;
             let pending = self.ring[last].command.clone();
-            #[cfg(feature = "compensated-f32-prototype")]
             let pending = self.ring[last].fold_command.clone().or(pending);
             if let Some(command) = pending {
                 let cells = cells.expect("deferred work has cells");
@@ -958,10 +949,7 @@ impl<'cf> MetalBackend<'cf> {
         let Some(command) = slot.command.take() else {
             return Ok(None);
         };
-        #[cfg(feature = "compensated-f32-prototype")]
         let fold = slot.fold_command.take();
-        #[cfg(not(feature = "compensated-f32-prototype"))]
-        let fold = None;
         let commands = [Some(command), fold];
         let started = std::time::Instant::now();
         let mut failure = None;

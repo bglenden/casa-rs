@@ -177,7 +177,6 @@ static inline void accumulate(device atomic_float *grid, ulong at, float value, 
 #pragma clang fp contract(off)
 #pragma clang fp reassociate(off)
     float previous = atomic_fetch_add_explicit(&grid[at], value, memory_order_relaxed);
-#if COMPENSATED_GRID
     float sum = previous + value;
     float part = sum - previous;
     float error = (previous - (sum - part)) + (value - part);
@@ -190,10 +189,8 @@ static inline void accumulate(device atomic_float *grid, ulong at, float value, 
             atomic_fetch_add_explicit(&grid[2 * correction + at], low_error, memory_order_relaxed);
         }
     }
-#endif
 }
 
-#if COMPENSATED_GRID
 kernel void fold_grid(device float *grid [[buffer(0)]], constant ulong &count [[buffer(1)]],
                       uint index [[thread_position_in_grid]]) {
 #pragma clang fp contract(off)
@@ -218,7 +215,6 @@ kernel void fold_grid(device float *grid [[buffer(0)]], constant ulong &count [[
         grid[2 * count + index] = isfinite(total) ? remainder_error : 0.0f;
     }
 }
-#endif
 
 // Spread `values` (one per visibility polarization) of sample `s` over its
 // support through the adjoint table, lanes striding over the taps. The
