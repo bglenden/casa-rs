@@ -109,12 +109,29 @@ enum NumericIdTerm {
     Range(i32, i32),
 }
 
-fn parse_numeric_id_terms(value: &str, label: &str) -> MsResult<Vec<NumericIdTerm>> {
+/// Legacy APIs permit empty list terms and Rust's explicit positive sign;
+/// the scan/observation grammar preserves CASA's stricter lexical rules.
+#[derive(Clone, Copy)]
+enum NumericIdSyntax {
+    Legacy,
+    Row,
+}
+
+fn parse_numeric_id_terms(
+    value: &str,
+    label: &str,
+    syntax: NumericIdSyntax,
+) -> MsResult<Vec<NumericIdTerm>> {
     value
         .split(',')
         .map(str::trim)
-        .filter(|part| !part.is_empty())
+        .filter(|part| matches!(syntax, NumericIdSyntax::Row) || !part.is_empty())
         .map(|part| {
+            if matches!(syntax, NumericIdSyntax::Row) && (part.is_empty() || part.contains('+')) {
+                return Err(MsError::InvalidInput(format!(
+                    "{label} selector {part:?} is not a supported numeric id or range"
+                )));
+            }
             if let Some((start, end)) = parse_numeric_range_endpoints(part) {
                 return Ok(NumericIdTerm::Range(start, end));
             }
@@ -129,7 +146,7 @@ fn parse_numeric_id_terms(value: &str, label: &str) -> MsResult<Vec<NumericIdTer
 
 /// Legacy numeric selectors normalize range direction before expansion.
 fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
-    let ranges = parse_numeric_id_terms(value, label)?
+    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Legacy)?
         .into_iter()
         .map(|term| match term {
             NumericIdTerm::Id(id) => (id, id),
@@ -144,7 +161,7 @@ fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>
 /// range bounds; a single nonnegative literal remains valid. Storage is bounded
 /// by the expression's term count, independently of interval width.
 pub(crate) fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
-    let ranges = parse_numeric_id_terms(value, label)?
+    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Row)?
         .into_iter()
         .map(|term| match term {
             NumericIdTerm::Id(id) if id >= 0 => Ok((id, id)),
@@ -351,6 +368,31 @@ mod tests {
         );
         assert_eq!(parse_numeric_range("1~0"), Some((0, 1)));
         assert_eq!(parse_numeric_range("0~0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn row_id_lexical_rules_preserve_legacy_numeric_syntax() {
+        for text in [
+            "", " ", ",1", "1,", "1,,2", ",", "+1", "+0~1", "0~+1", "none", "None",
+        ] {
+            assert!(
+                parse_numeric_row_id_ranges(text, "scan").is_err(),
+                "{text:?}"
+            );
+            assert!(
+                parse_numeric_row_id_ranges(text, "observation").is_err(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            parse_numeric_row_id_ranges(" 1 , 3 ~ 5 ", "scan").unwrap(),
+            [(1, 1), (3, 5)]
+        );
+        assert_eq!(
+            parse_numeric_id_selector(",+1,1,,+2~+3,", "legacy").unwrap(),
+            [1, 2, 3]
+        );
+        assert!(parse_numeric_id_selector(" ", "legacy").unwrap().is_empty());
     }
 
     #[test]

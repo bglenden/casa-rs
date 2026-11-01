@@ -43,8 +43,7 @@ impl SelectedObservationRowSelection {
         scan: Option<&str>,
         observation: Option<&str>,
     ) -> MsResult<Self> {
-        let resolve = |selector: Option<&str>, label| match selector
-            .filter(|text| !text.trim().is_empty())
+        let resolve = |selector: Option<&str>, label| match selector.filter(|text| !text.is_empty())
         {
             None => Ok(IdSelection::All),
             Some(text) => {
@@ -357,9 +356,26 @@ mod numeric_range_tests {
             selection.rows.observations().allocated_bytes(),
             narrow.rows.observations().allocated_bytes()
         );
-        let all = empty().with_numeric_row_selectors(Some(" "), None).unwrap();
+        let all = empty().with_numeric_row_selectors(Some(""), None).unwrap();
         assert!(all.rows.scans().is_all() && all.rows.observations().is_all());
-        for text in [",,", "-1~2147483647", ">1", "1~1", "3~1"] {
+        let padded = empty()
+            .with_numeric_row_selectors(Some(" 2 "), Some(" 0 "))
+            .unwrap();
+        assert!(padded.rows.scans().holds(2) && padded.rows.observations().holds(0));
+        for text in [
+            ",,",
+            "-1~2147483647",
+            ">1",
+            "1~1",
+            "3~1",
+            " ",
+            ",1",
+            "1,",
+            "1,,2",
+            "+1",
+            "none",
+            "None",
+        ] {
             assert!(
                 empty()
                     .with_numeric_row_selectors(Some(text), None)
