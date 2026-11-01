@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-01",
+  "record": "tclean-approved-comparisons-and-casa-restart",
+  "status": "Scoped comparisons accepted/passing; whole-task equivalence unfinished",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "owner_decisions": {
+    "source_revision": "93b2ef256f",
+    "record": "resources/casa-compat/evidence/tclean-owner-decisions-20261101.json",
+    "weight_rule": "Approved scoped matrix-scaled rule; no model/metadata waiver",
+    "model": "Only original b6a87 clean8/cpu32 output accepted by identity-bound owner review; raw failure retained; no automatic approval of future outputs"
+  },
+  "weight_runs": [
+    {
+      "case": "alma-mosaic-mtmfs-hogbom",
+      "path": "cpu64",
+      "source_revision": "4eed0a990e650e743b2f9b051202f63c75d0c792",
+      "recorded_checks_passed": true,
+      "raw_passed": true,
+      "raw_tt1_nrms": 2.5469722832660317e-07,
+      "scoped_weight_override": false,
+      "e2": 1.1875137329661863e-12,
+      "emax_reference_pb": 7.789230116703124e-12,
+      "restfreq_mismatch": false
+    },
+    {
+      "case": "alma-mosaic-mtmfs-hogbom",
+      "path": "cpu32",
+      "source_revision": "4eed0a990e650e743b2f9b051202f63c75d0c792",
+      "recorded_checks_passed": true,
+      "raw_passed": false,
+      "raw_tt1_nrms": 0.0019186807533375311,
+      "scoped_weight_override": true,
+      "e2": 8.94575790532166e-09,
+      "emax_reference_pb": 6.519422066055138e-08,
+      "restfreq_mismatch": false
+    },
+    {
+      "case": "alma-mosaic-mtmfs-hogbom",
+      "path": "gpu32",
+      "source_revision": "4eed0a990e650e743b2f9b051202f63c75d0c792",
+      "recorded_checks_passed": true,
+      "raw_passed": true,
+      "raw_tt1_nrms": 0.0008840036367430064,
+      "scoped_weight_override": false,
+      "e2": 4.121624980065493e-09,
+      "emax_reference_pb": 4.196578673558674e-08,
+      "restfreq_mismatch": false
+    },
+    {
+      "case": "mawproject-mtmfs-hogbom",
+      "path": "cpu64",
+      "source_revision": "4eed0a990e650e743b2f9b051202f63c75d0c792",
+      "recorded_checks_passed": true,
+      "raw_passed": false,
+      "raw_tt1_nrms": 0.0016186912948083193,
+      "scoped_weight_override": true,
+      "e2": 2.4973355987268907e-09,
+      "emax_reference_pb": 2.2909781284087715e-08,
+      "restfreq_mismatch": false
+    },
+    {
+      "case": "mawproject-mtmfs-hogbom",
+      "path": "cpu32",
+      "source_revision": "4eed0a990e650e743b2f9b051202f63c75d0c792",
+      "recorded_checks_passed": true,
+      "raw_passed": false,
+      "raw_tt1_nrms": 0.002217320219532237,
+      "scoped_weight_override": true,
+      "e2": 3.4209072080482766e-09,
+      "emax_reference_pb": 3.4655600695795804e-08,
+      "restfreq_mismatch": false
+    }
+  ],
+  "restart_runs": [
+    {
+      "pblimit": 0.2,
+      "sequence_source": "4eed0a990e",
+      "cross_source": "ed9f6d1b3ca095ed7de015859c4ba9b4f29e3168",
+      "sequence_receipt": {
+        "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/restart-default-pb-20261101/source-header-fixed/receipt.json",
+        "sha256": "876a2ff0300f3a28c9ba2bbd829b32caf20b5d1d7257fe5a57f3155893621a22"
+      },
+      "cross_receipt": {
+        "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/restart-default-pb-20261101/resolved-grid/receipt.json",
+        "sha256": "c6e90e315ca31b14477c53a6605d86ecc86e77f2c35f56b92bff5a7acc5a859e"
+      },
+      "sequence": {
+        "cpu64": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        },
+        "cpu32": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        },
+        "gpu32": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        }
+      },
+      "mask": {
+        "cpu64": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        },
+        "cpu32": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        },
+        "gpu32": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        }
+      },
+      "casa_to_native": {
+        "cpu64": {
+          "passed": true,
+          "backend": "cpu",
+          "precision": "f64",
+          "workers": 1,
+          "capacity_bytes": 15215886336
+        },
+        "cpu32": {
+          "passed": true,
+          "backend": "cpu",
+          "precision": "f32",
+          "workers": 1,
+          "capacity_bytes": 15220293632
+        },
+        "gpu32": {
+          "passed": true,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "capacity_bytes": 15230894080
+        }
+      },
+      "native_to_casa": true
+    },
+    {
+      "pblimit": -0.1,
+      "sequence_source": "4eed0a990e",
+      "cross_source": "ed9f6d1b3ca095ed7de015859c4ba9b4f29e3168",
+      "sequence_receipt": {
+        "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/restart-casa-20261101/source-header-fixed/receipt.json",
+        "sha256": "1703c6e47ec51159ce66fe5c7656a4eb0c60c9fc7df6bb100e3305298945b1bd"
+      },
+      "cross_receipt": {
+        "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/restart-casa-20261101/resolved-grid/receipt.json",
+        "sha256": "3847d1b0deb52e3c4886741001c3a8ee19c1313e11e60e3277f0b48528ab0041"
+      },
+      "sequence": {
+        "cpu64": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        },
+        "cpu32": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        },
+        "gpu32": {
+          "passed": [
+            true,
+            true,
+            true
+          ],
+          "zero_iteration_retained_model": true
+        }
+      },
+      "mask": {
+        "cpu64": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        },
+        "cpu32": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        },
+        "gpu32": {
+          "passed": true,
+          "no_components_outside_mask": true,
+          "exact_mask": true
+        }
+      },
+      "casa_to_native": {
+        "cpu64": {
+          "passed": true,
+          "backend": "cpu",
+          "precision": "f64",
+          "workers": 1,
+          "capacity_bytes": 15197175808
+        },
+        "cpu32": {
+          "passed": true,
+          "backend": "cpu",
+          "precision": "f32",
+          "workers": 1,
+          "capacity_bytes": 15205564416
+        },
+        "gpu32": {
+          "passed": true,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "capacity_bytes": 15204745216
+        }
+      },
+      "native_to_casa": true
+    }
+  ],
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/approved-comparisons-restart-20261101.tar",
+    "bytes": 112691200,
+    "sha256": "59f0ef88a3809bb845e411fbb45d6f825f108570aa32ad0f10b133f90dc3272d",
+    "manifest_entries": 3886,
+    "manifest_sha256": "05b599d12b5af8f2b2c8775bf3b1061cbf896a21e4c15814f9afcaea5b2b0f2d",
+    "verification": "Every local TAR member verified against file-byte manifest; copied NAS TAR reread SHA256 matches verified local archive",
+    "excluded": "table.lock and running ed9 quick.log; final gate log retained separately"
+  },
+  "weight_evidence": {
+    "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/taylor-weight-native-20261101/approved-rule-evaluation.json",
+    "sha256": "20f76f91733a2d27d7d192cd7ea59cb403d3ba8b1f5e86064d212cba51d67b26"
+  },
+  "weight_limitations": "Bounded numeric/alignment rule plus original retained recorded checks; full metadata unassessed. No image-directory fingerprint, full representative matrix or task-wide acceptance claimed.",
+  "restart_scope": "Small standard unfaceted single-term Stokes-I MFS, existing raw model and binary CLEAN-mask continuation, niter10->0->10; CASA-written products continued by three native backends; native-written products actually continued/rewritten by CASA. Exact product inventory/masks/finite support, product NRMS<=1e-3, sumwt5e-5, beam and recorded WCS/restfreq comparisons. Not general restart, full metadata, return values or T2.",
+  "restart_limitations": [
+    "restart=False numbering and false calcres/calcpsf controls",
+    "Other modes/outliers and new explicit/auto masks on existing output",
+    "Embedded model/mask pixel masks and tabulated spectral mappings",
+    "Concurrent same-prefix jobs unassessed"
+  ],
+  "metadata_fix": {
+    "revision": "4eed0a990e",
+    "behavior": "MFS default rest-frequency metadata from first selected SPW and CASA-VI ordered field SOURCE group; band midpoint fallback only without a usable SOURCE rest frequency",
+    "execution": "Same bounded bulk MAIN row walk; no second scan; ARRAY_ID adds4bytes/row, charge69bytes/row with counting laws",
+    "unfinished": [
+      "DOPPLER_ID>=0 with DOPPLER table",
+      "Multiple SOURCE key groups containing a stored wildcard"
+    ],
+    "casa_to_native_rotation_fix": {
+      "revision": "ed9f6d1b3ca095ed7de015859c4ba9b4f29e3168",
+      "behavior": "Compare resolved celestial rotation, recognize SIN []/[0,0]; reject real pole/PC/slant/scale/projection changes; serialization unchanged"
+    }
+  },
+  "gates": {
+    "metadata_revision": "4eed0a990e",
+    "metadata_full_gate": "4692 workspace tests passed,45skipped; doctests, clippy, architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307subtests",
+    "coordinate_focused": "9restart unit+17direction unit+5T1restart pass; touched clippy and diffcheck pass; independent review no actionable findings",
+    "coordinate_full_gate": "running at ed9f6d1b3c; final gate log retained separately"
+  },
+  "visual_review": "Shared-scale default-PB cross comparison and nontrivial persisted-mask plots inspected; difference scales disclosed. No broad visual or task-wide acceptance inferred.",
+  "next": "Finish scalar returns maxpsfsidelobe/final cyclethreshold; newly exposed explicit zero-mask refusal, then numbering/stage reuse, remaining modes/selection/returns and representative acceptance."
+}

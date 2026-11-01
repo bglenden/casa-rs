@@ -72,82 +72,60 @@ changes admission accounting only, not the scientific computation.
 
 ## Current state and next action
 
-The owner approved compensated-f32 adoption and its measured resource cost,
-and separately the CASA-inclusive Hogbom default, on 2026-10-31. Both are
-normal production paths at `8ee3922736`; the prototype feature and naive f32
-alternatives are removed. CPU/f64 accumulation arithmetic is unchanged.
-The original compact/moving f32 PSF failures (NRMS about 0.019/0.024) are
-repaired. The two earlier candidates remain retired.
+The owner approved the scoped weak Taylor-weight comparison rule and the
+specific reviewed CPU/f32 MT-MFS model output on 2026-11-01. The decisions
+are separate and recorded in
+[`tclean-owner-decisions-20261101.json`](../../resources/casa-compat/evidence/tclean-owner-decisions-20261101.json).
+The original model.tt1 NRMS failure remains in its raw receipt. Only the
+unchanged b6a87 `clean8/cpu32` output is accepted by identity-bound owner
+review; future outputs have no automatic waiver.
 
-Normal adoption checks at `583cff5cc5` passed 4,672 workspace tests (44
-skipped), doctests, workspace clippy, architecture/SPDX/format, 21 CLI hosts,
-and 755 performance-tool tests with 307 subtests. Editable and wheel each
-passed 632 tests (15 skipped); fresh-target sdist passed 99 after repairing
-stale Cargo artifacts caused by reproducible archive timestamps. These are
-executed checks, distinct from subsequent source changes.
+The approved matrix-scale gate is wired at `93b2ef256f`, with 120 focused
+tests and 875 performance-tool tests/307 subtests passing. Fresh native
+mosaic/AW runs at `4eed0a990e` pass all five scoped numeric comparisons and
+retained recorded checks; three use the approved weight.tt1 override.
+Worst matrix-scaled error is 6.5195e-8, below the 1e-6 limits. Full metadata
+is a separate gate. The original f32 accumulation fix and its approved
+resource costs remain the normal path; f64 accumulation arithmetic is
+unchanged. Earlier failed candidates remain retired.
 
-Three follow-up corrections now have fresh pinned CASA 6.7.6.14 /
-6.7.6-14 production-route evidence:
+The fresh comparisons exposed a separate MFS header defect: CASA uses a
+SOURCE rest frequency where native used the band midpoint. `4eed0a990e`
+repairs the ordinary default, using the first selected SPW and CASA-VI
+ordered field without a second MAIN scan. All five fresh weight families
+now have matching rest-frequency metadata. DOPPLER-backed lookup and
+multiple SOURCE key groups containing stored wildcards remain explicitly
+unfinished, rather than silently guessed. Its normal full gate passes
+4,692 workspace tests/45 skips, doctests, clippy, architecture/SPDX/fmt,
+21 CLI hosts and 875 performance-tool tests/307 subtests.
 
-- Shared Taylor factors now follow CASA's Float channel-frequency narrowing
-  (`7cd1ae440e`), in both gridding and prediction. The focused regression
-  went red to green. Of five MT-MFS T1.5 runs, two pass all recorded checks;
-  three still fail the unchanged `.weight.tt1` relative-error rule. Other
-  products and checks pass. A guarded matrix-scale comparison is proposed,
-  with 72 measurement tests; it remains unwired pending owner agreement.
-- The legacy VLA PB selector now includes every named band and CASA's NVSS
-  aperture in the intervening gaps (`2d91e001c3`). The ordinary-default
-  2048-square W/Hogbom20 CPU/f64 and CPU/f32 comparisons pass all seven
-  products and recorded metadata checks. PB NRMS is zero. Unsupported EVLA
-  frequencies retain their real preflight refusal.
-- MFS spectral-envelope conversion now uses the geocentric FIELD-origin
-  moving direction, matching CASA MSUtil (`b6a87fa912`). Six fresh fixed
-  ALMA512/moving Uranus256 runs, across CPU/f64, CPU/f32 and Metal/f32, pass
-  products, exact inventory/masks/finite support, beam/sumwt and recorded
-  unit/Stokes/WCS-value checks. Moving spectral increment now matches CASA
-  exactly at 125020996.11132812 Hz; the prior 3.5 Hz failure is repaired at
-  its unchanged tolerance. ALMA f32 PSF NRMS stays below 1e-6. Moving-field
-  PB is still explicitly disabled and remains unfinished.
+Default restart now has pinned CASA 6.7.6.14 / 6.7.6-14 evidence on two small
+standard Stokes-I MFS fixtures, with pblimit=0.2 and -0.1. All 18 native
+10->0->10 sequence rows and six persisted-mask runs pass recorded products,
+masks, finite support, beam/sumwt and WCS/restfreq checks. Zero-iteration
+reruns retain the model exactly; the nontrivial mask prevents components
+outside its support. CASA continues and republishes native products.
+`ed9f6d1b3c` additionally recognizes equivalent SIN parameters and resolved
+celestial rotations, so all six CASA-to-native continuation rows pass on
+CPU/f64, CPU/f32 and Metal/f32. Coordinate serialization/math is unchanged;
+real grid differences still refuse. Focused tests and independent review
+pass; its full normal gate is running. This is a bounded restart result,
+not general persistence or whole-task equivalence.
 
-Independent review found no open actionable findings in the VLA PB and MFS
-repairs or the guarded unwired Taylor measurement. Oracle Pro is still
-usage-limited and has not supplied a review. The affected consolidated gate
-at `ac41519a63` passes 4,676 workspace tests (45 skipped), doctests, workspace
-clippy, architecture/SPDX/format, 21 CLI hosts and 827 performance-tool tests
-with 307 subtests. Skips do not establish scientific acceptance.
+The [current receipt](../../resources/casa-compat/evidence/tclean-approved-restart-20261101.json)
+binds raw receipts, revisions and the verified NAS archive (112,691,200
+bytes, SHA256 59f0ef88a3809bb845e411fbb45d6f825f108570aa32ad0f10b133f90dc3272d).
+The earlier representative-model receipt and its raw failure remain intact.
+Oracle Pro was usage-limited, not a review pass; separate-agent reviews
+found no remaining actionable findings within these bounded changes.
 
-The next representative standard-MT-MFS check uses the original #607 MS
-content (90 files match its historical hash; 125 AppleDouble sidecars explain
-the archive-tree difference), 512 square, four SPWs and 1,336,320 nominal
-correlation-channel samples. All three dirty paths and CPU/f64/Metal/f32
-CLEAN pass. CPU/f32 CLEAN fails `.model.tt1` NRMS at 0.0012759712. All
-other recorded product checks pass. One instrumented retry confirms the same
-components and a correct native linear solve for its supplied inputs; it
-does not establish the entire upstream cause. The raw failure remains.
-
-Independent review supports proposing an identity-bound exception: the ideal
-published model intensity differs by at most 5.7469e-7 across its common-frame
-MFS interval, despite the weak coefficient's larger relative error. Both this
-model proposal and the separate weight-moment proposal await owner agreement.
-No criterion or verdict has changed. The single diagnosis retry is spent;
-another unchanged native run is not the next action.
-
-Same-grid default restart is checkpointed at `0319f6d016`: native T1 verifies
-model/binary-mask reuse and refusals, with admitted mask ownership and its
-counting law. The review's spectral-mapping scope finding is fixed. The full
-normal gate passes 4,683 tests (45 skipped), doctests, clippy, architecture,
-SPDX/format, 21 CLI hosts and 827 performance-tool tests/307 subtests. Paired
-CASA restart and broader persistence remain pending; priority returned to the
-representative f32 decision before further restart work.
-
-The [current receipt](../../resources/casa-compat/evidence/tclean-standard-mtmfs-t2-20261031.json)
-and [previous wave receipt](../../resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json)
-bind revisions, remaining failures, measured proposals and verified NAS archives.
-The actual-product plots and raw verdicts are retained. Single wall times are
-not matched performance evidence. After the owner decisions, finish affected
-f32 acceptance and continue CASA-paired restart, numbering, stage reuse,
-remaining representative modes, numeric returns and persistence. The task is
-still unfinished.
+The next implementation slice reports the already measured final
+maxpsfsidelobe and cyclethreshold values instead of NaN. Four small CASA
+oracles are recorded; the native baseline fails those scalar checks. They
+also expose an explicit all-zero mask refusal, where CASA stops with code7;
+that is a separate unfinished repair. Restart numbering, false calc controls,
+broader modes/masks/selection, remaining returns and representative/runtime
+prediction acceptance still need work. `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction
 
