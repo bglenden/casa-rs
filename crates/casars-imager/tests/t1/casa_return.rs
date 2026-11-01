@@ -338,3 +338,83 @@ fn restart_false_is_resolved_and_coordinated_outliers_remain_refused() {
     );
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn zero_major_limit_stops_before_minor_work_with_casa_stop_precedence() {
+    use casa_images::PagedImage;
+    use casars_imager::ImagerRunTaskResult;
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    observation.image("nmajor-seed", json!({"niter": 0}));
+    let seed_path = observation.scratch("nmajor-seed.model");
+    let geometry = observation.geometry();
+    let seed = {
+        let mut image = PagedImage::<f32>::open(&seed_path).unwrap();
+        let mut pixels = image.get().unwrap();
+        pixels[[geometry.image_size[0] / 2, geometry.image_size[1] / 2, 0, 0]] = 0.25;
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+        pixels
+    };
+    let directory = observation.scratch("nmajor-zero");
+    std::fs::create_dir_all(&directory).unwrap();
+    let empty = directory.join("empty.crtf");
+    std::fs::write(&empty, "#CRTF\n").unwrap();
+    let base = json!({
+        "vis": observation.measurement_set(), "imsize": geometry.image_size,
+        "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+        "backend": "cpu", "niter": 10, "nmajor": 0, "threshold": "0Jy", "gain": 0.1,
+    });
+    for (name, extra, iterations, majors, stop) in [
+        ("initial", json!({}), 0, 1, 9),
+        ("threshold", json!({"threshold": "100Jy"}), 0, 1, 2),
+        ("empty", json!({"mask": empty}), 0, 1, 7),
+        ("seeded", json!({"startmodel": seed_path}), 0, 1, 9),
+        ("dirty", json!({"niter": 0}), 0, 1, 3),
+        // Fix the minor budget so this synthetic sky is a deterministic control.
+        ("one-major", json!({"nmajor": 1, "cycleniter": 3}), 3, 2, 9),
+    ] {
+        let mut values = base.clone();
+        values["imagename"] = json!(directory.join(name));
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let (value, result) = match json_run(&directory, values) {
+            TaskReply::Succeeded { value, result, .. } => (value, result),
+            other => panic!("{name}: expected initial products, got {other:?}"),
+        };
+        for (key, expected) in [
+            ("iterdone", iterations),
+            ("nmajordone", majors),
+            ("stopcode", stop),
+        ] {
+            assert_eq!(
+                entry(&value, key),
+                &CasaValue::Int { value: expected },
+                "{name}:{key}"
+            );
+        }
+        let result: ImagerRunTaskResult = serde_json::from_value(result).unwrap();
+        let model = PagedImage::<f32>::open(directory.join(format!("{name}.model")))
+            .unwrap()
+            .get()
+            .unwrap();
+        assert_eq!(i64::try_from(result.run.major_cycles).unwrap(), majors);
+        if iterations == 0 {
+            assert!(result.run.minor_cycles.is_empty(), "{name}: no minor work");
+            assert_eq!(result.run.actual_minor_iterations, 0);
+            if name == "seeded" {
+                assert_eq!(model, seed);
+            } else {
+                assert!(model.iter().all(|&pixel| pixel == 0.0));
+            }
+        } else {
+            assert!(model.sum() > 0.0);
+        }
+    }
+    assert_eq!(
+        PagedImage::<f32>::open(seed_path).unwrap().get().unwrap(),
+        seed
+    );
+}

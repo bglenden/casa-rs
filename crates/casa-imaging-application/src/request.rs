@@ -127,7 +127,8 @@ pub struct ImagingRequest {
     /// Absolute stopping threshold in Jy/beam.
     #[serde(deserialize_with = "threshold_jy")]
     pub threshold: f64,
-    /// Major-cycle limit; `None` is CASA's `nmajor = -1`.
+    /// Major-cycle limit after the initial pass; zero is initial-only,
+    /// and `None` is CASA's `nmajor = -1`.
     #[serde(deserialize_with = "major_cycle_limit")]
     pub nmajor: Option<usize>,
     /// Minor-cycle loop gain.
@@ -538,10 +539,10 @@ impl ImagingRequest {
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
             return invalid("deconvolver, specmode", "mtmfs images a continuum (mfs)");
         }
-        if self.solves() && (self.minor_cycle_length == 0 || self.nmajor == Some(0)) {
+        if self.solves() && self.minor_cycle_length == 0 {
             return invalid(
-                "minor_cycle_length, nmajor",
-                "a solving run needs minor-cycle iterations and a major cycle",
+                "minor_cycle_length",
+                "a solving run needs minor-cycle iterations",
             );
         }
         if self.savemodel && !self.solves() && self.startmodel.is_none() {

@@ -111,6 +111,21 @@ fn conversion_anchor(mjd_days: f64) -> SpectralFrameAnchor {
 }
 
 fn request(geometry: GeometryInput) -> ProblemInput {
+    request_with_reconstruction(
+        geometry,
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+    )
+}
+
+fn request_with_reconstruction(
+    geometry: GeometryInput,
+    reconstruction: ReconstructionContract,
+) -> ProblemInput {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -132,12 +147,7 @@ fn request(geometry: GeometryInput) -> ProblemInput {
                     ),
                 ),
             ),
-            ReconstructionContract::new(
-                ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Dirty,
-                ReconstructionControls::new(0, 1.0, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            ),
+            reconstruction,
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
             ProductRequirements::new(
                 vec![ProductKind::Psf],
@@ -650,5 +660,27 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidSpectralWcs
         ))
+    ));
+}
+
+#[test]
+fn zero_major_limit_compiles_while_zero_minor_cycle_limit_is_rejected() {
+    let reconstruction = |minor| {
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(10, 0.1, 0.0).with_cycle_limits(minor, Some(0)),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        )
+    };
+    let compiled = compile(request_with_reconstruction(geometry(), reconstruction(3)))
+        .expect("the controller can stop after the initial major pass");
+    assert_eq!(
+        compiled.reconstruction().controls().maximum_major_cycles(),
+        Some(0)
+    );
+    assert!(matches!(
+        compile(request_with_reconstruction(geometry(), reconstruction(0))),
+        Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }

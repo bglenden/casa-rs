@@ -803,4 +803,25 @@ mod tests {
         assert!((statistics.nsigma_threshold(3.0).unwrap() - 0.35).abs() < 1e-15);
         assert_eq!(statistics.nsigma_threshold(0.0), None);
     }
+    #[test]
+    fn zero_major_limit_preserves_threshold_and_empty_mask_precedence() {
+        let limits = controls(10).with_cycle_limits(3, Some(0));
+        for (mut stats, expected) in [
+            (statistics(1.0), CleanStop::MajorCycles),
+            (statistics(0.001), CleanStop::Threshold),
+            (statistics(1.0), CleanStop::ZeroMask),
+        ] {
+            if expected == CleanStop::ZeroMask {
+                stats.mask_sum = 0;
+            }
+            let mut controller = Controller::new(&limits);
+            assert_eq!(controller.clean_complete(&stats), Some(expected));
+            assert_eq!(controller.iterations(), 0);
+            assert_eq!(
+                controller.major_cycles(),
+                0,
+                "counts passes after the initial one"
+            );
+        }
+    }
 }

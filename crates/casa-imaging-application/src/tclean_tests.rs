@@ -316,7 +316,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "nterms",
             "#980",
         ),
-        (json!({ "niter": 10, "nmajor": 0 }), "nmajor", "#980"),
         (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
@@ -408,4 +407,27 @@ fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints()
     let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
     assert_eq!(error.parameter, "mask");
     assert!(error.message.contains("#980"));
+}
+
+#[test]
+fn tclean_accepts_zero_major_limit_without_changing_iteration_intent() {
+    for niter in [0, 10] {
+        let value = request(json!({"niter": niter, "nmajor": 0}));
+        assert_eq!(value.niter, niter);
+        assert_eq!(value.nmajor, Some(0));
+    }
+}
+
+#[test]
+fn zero_major_limit_is_valid_but_zero_minor_cycle_length_is_not() {
+    let mut value = request(json!({"niter": 10, "nmajor": 1}));
+    value.nmajor = Some(0);
+    value
+        .validate()
+        .expect("the initial major pass alone may be requested");
+    value.minor_cycle_length = 0;
+    assert!(
+        value.validate().is_err(),
+        "a zero minor-cycle limit remains invalid"
+    );
 }

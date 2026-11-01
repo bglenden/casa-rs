@@ -712,10 +712,6 @@ impl<'a> Tclean<'a> {
             n => n,
         };
         self.set("minor_cycle_length", length);
-        if niter > 0 && self.values.get("nmajor").and_then(Value::as_i64) == Some(0) {
-            // CASA makes the residual and stops, at stopcode 9.
-            return Err(TcleanRefusal::not_yet("nmajor", "0", 980));
-        }
         Ok(())
     }
 
