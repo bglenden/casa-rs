@@ -116,6 +116,38 @@ fn msv4_payload_types_and_dimensions_are_checked_at_opening() {
     ));
 }
 
+/// Invalid stored boolean bytes fail a read without advancing the cursor.
+#[test]
+fn malformed_msv4_flag_fails_without_advancing() {
+    let root = tempfile::tempdir().expect("root");
+    let store = fixture(root.path(), "ms_trial.ps.zarr");
+    let flag = dataset(&store).join("FLAG");
+    edit_json(&flag.join("zarr.json"), |metadata| {
+        metadata["codecs"] = serde_json::json!([{ "name": "bytes" }]);
+    });
+    std::fs::remove_dir_all(flag.join("c")).expect("remove compressed chunks");
+    let chunk = flag.join("c/0/0/0/0");
+    std::fs::create_dir_all(chunk.parent().expect("parent")).expect("chunk directory");
+    let mut bytes = vec![0; 5 * 10 * 4 * 4];
+    bytes[1] = 2;
+    std::fs::write(&chunk, &bytes).expect("invalid flag");
+
+    let v4 = Msv4Observation::open(&store).expect("open");
+    let mut traversal = v4.bind_read(&request(0..8, usize::MAX)).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    assert!(matches!(
+        traversal.next(&mut buffers),
+        Err(ObservationError::InvalidStore { reason }) if reason.contains("FLAG byte 2")
+    ));
+
+    bytes[1] = 0;
+    std::fs::write(&chunk, &bytes).expect("repair flag");
+    let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("retry") else {
+        panic!("the first batch after repair");
+    };
+    assert_eq!(batch.times(), 12, "the failed fill did not advance");
+}
+
 /// A role the request reads but the store lacks fails the estimate and the
 /// binding, never a later read or a made-up value; a request that does not
 /// read it binds.
