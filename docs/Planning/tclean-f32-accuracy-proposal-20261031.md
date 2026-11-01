@@ -77,9 +77,13 @@ third correction and its measured resource cost on 2026-10-31, together with
 the separate CASA-inclusive Hogbom default. The tested prototype source is
 `75155cd47f77cbfc4c1e1d6822774b7d1516d1ee`. Its experimental Cargo gate and
 naive f32 alternatives have now been removed: corrected accumulation is the
-normal CPU/GPU f32 path. CPU/f64 remains unchanged. Normal-build, packaging
-and affected CASA checks are the current acceptance boundary; the original
-prototype passes below are not relabelled as those pending checks.
+normal CPU/GPU f32 path. CPU/f64 accumulation remains unchanged. Normal
+acceptance at583cff5cc5 now passes4672 workspace tests (44 skipped),
+doctests, clippy, architecture/SPDX/format,21 CLI hosts and755 performance
+tool tests/307 subtests. Editable and wheel each pass632 tests (15 skipped);
+a fresh-target sdist passes99. The packaging gate now isolates sdists from
+Cargo artifacts made stale by reproducible archive timestamps and honors
+caller-directed temporary storage. Independent review has no open findings.
 
 The GPU records each atomic add's rounding loss using TwoSum, into two
 additional f32 grids. A GPU renormalization keeps its own remainder across
@@ -156,8 +160,9 @@ The owner accepted this cost to meet the scientific accuracy target. The
 corrected implementation is now the normal f32 path; the experimental gate
 and naive alternative are removed. CPU/f64 and all CASA parameters/defaults
 remain unchanged. Independent review found no adoption code defects. Normal
-verification and the remaining representative/packaging gates are required
-before publication; tclean is still incomplete.
+verification is recorded separately from the prototype below. Full
+representative acceptance and publication remain required; tclean is still
+incomplete.
 
 The complete scoped receipt is
 `resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json`.
@@ -185,9 +190,18 @@ reread-verified NAS supplement
 `compensated-f32-fixed512-20261031.tar`, SHA-256
 `c641b97ba5145db890f1561a562e58c9bac61c7ff97b6cff8ce1b5d7c0e9bc8c`.
 The previously verified archive retains the exact tested prototype source.
-Both owner decisions are approved and their code changes are applied. The
-next action is to complete the normal-build/package checks and paired
-ordinary-default comparisons, then address these remaining tclean gaps.
+Both owner decisions are approved and their code changes are applied.
+Normal paired comparisons pass all products, exact inventories/masks,
+finite values, beams and sumwt on fixed ALMA512, moving Uranus256 (PB
+opt-out) and ordinary-default Hogbom10 on CPU64/CPU32/GPU32. Fixed and point
+WCS-value checks pass; moving MFS spectral increment is125020999.61227417Hz
+versus CASA125020996.11132812Hz on every precision. That remains a failed
+metadata check, separately tracked from corrected accumulation. The normal
+receipt is `resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json`;
+its NAS archive `adopted-tclean-defaults-20261031.tar` was reread-verified
+with SHA-2569e55d997b060f172f20b1c59c3ef1a1e6c59492b79707868adf5cd6ccf031450.
+The next code slice matches CASA's Taylor-frequency narrowing, then rechecks
+the spatial MT-MFS weights without relaxing their comparison.
 
 Oracle Pro was rechecked and remained unavailable due the signed-in
 account's usage limit. No prompt or substitute review was submitted.

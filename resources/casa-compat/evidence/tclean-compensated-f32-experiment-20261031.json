@@ -2,7 +2,7 @@
   "casa_tasks": "6.7.6.14",
   "casa_tools": "6.7.6-14",
   "casars_revision": "75155cd47f77cbfc4c1e1d6822774b7d1516d1ee",
-  "state": "Historical scoped prototype evidence; owner-approved normal adoption is applied and its normal-build gates are in progress.",
+  "state": "Historical scoped prototype evidence; owner-approved correction is adopted and normal acceptance is recorded separately.",
   "implementation": {
     "gpu": "Native Metal f32 atomic TwoSum into two low grids; GPU renormalizes and preserves all remainders between applies.24 bytes per complex accumulation cell versus8 before, plus existing charges. Original route/CF/FFT retained.",
     "cpu": "Native statically dispatched normalized TwoSum with one lazy Complex32 correction per host f32 cell.16 bytes per complex accumulation cell versus8 before. Reset and merges preserve/clear both parts; models and f64 arithmetic unchanged.",
@@ -7130,7 +7130,7 @@
   "adoption": {
     "owner_decision": "Owner approved both measured f32 resource tradeoff and CASA-inclusive Hogbom default on 2026-10-31 in this chat.",
     "implementation": "Experimental feature and naive f32 alternatives removed; CPU/GPU correction always enabled for f32, f64 unchanged. Provider31 defaults the existing Hogbom policy to casa-inclusive, retaining explicit strict.",
-    "normal_acceptance": "in progress; prototype scientific/gate evidence above remains pinned to75155 and is not a normal-build test result.",
+    "normal_acceptance": "Passed4672 workspace tests,44 skips; doctests/clippy/architecture/CLI21/perf-tools755+307; editable/wheel632+15skip each, sdist99 after isolated-target repair. See tclean-adopted-defaults-20261031.json. Moving-source spectral increment is a separate f64-shared open metadata gap; no full T2 or entire-task acceptance.",
     "independent_review": {
       "result": "No actionable adoption code findings; final record/proposal wording repaired.",
       "requested_configuration": "Astra Medium",
