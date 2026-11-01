@@ -139,7 +139,16 @@
     }
   },
   "archive": {
-    "state": "Pending verified NAS archive"
+    "state": "Verified durable NAS archive",
+    "path": "/Volumes/home/casa-rs/tclean/20261031/nmajor-zero-20261101.tar",
+    "bytes": 32481280,
+    "sha256": "aee35a937f77b595bcbc1b7079c979529a9328de89576a243f861ebca2a61d81",
+    "manifest_entries": 2035,
+    "manifest_sha256": "41098a4f86bc9f232ffbebe2864a0e586269cf976f4ba42987017d471440d2fa",
+    "verification": "Every local TAR member checked; NAS archive reread hash matches",
+    "source_bundle_head": "7da0314586cc669fe6888d0db732aa85766d5e71",
+    "native_revision": "c64f13cb09054b080fe8b228a5f2c02c99bfd486",
+    "scope": "Complete nmajor evidence/gates/binary/recipes/input/frozen seed; ongoing scan preview is separate"
   },
   "unfinished": [
     "Other mode combinations and full return-record parity, including seeded model flux",

@@ -174,12 +174,22 @@ subtests. See the
 [receipt](../../resources/casa-compat/evidence/tclean-nmajor-zero-20261101.json).
 No controller math, defaults, signatures, provider or allocation changes.
 
-The next slice prepares scan/observation ID selection through the existing
+The current slice prepares scan/observation ID selection through the existing
 canonical parser and every native row/batch consumer, with ownership charges.
-Production non-default catalog refusal remains intact. Independent preview
-review is clear; tests and fresh genuine observation-subset/conjunction/CASA
-science remain required before any provider32->33 activation request. Existing
-field-name/pattern/False evidence is reused. Antenna/time/multi-MS remain open.
+Native source `15d2cb64f6` transports predicates; `291e107317` stores compact
+inclusive intervals instead of expanding wide ranges. Its allocator law and
+independent review pass. Fresh CASA6.7.6.14 references include genuine
+observation subsets, conjunctions and both `selectdata` values: all13 science
+reference calls execute successfully; native product comparisons remain pending.
+Actual CASA task probes also establish strict ascending range and lexical
+refusals. The first boundary repair preserves raw override inputs, but review
+found base profiles still lose their original text. The executing agent
+reassessed that failure and is repairing the documented `given()` provenance
+invariant while retaining normalized resolved values. That repair is uncommitted
+and not accepted yet. Production non-default catalog refusal remains intact;
+complete paired science, profile regressions and consolidated review precede
+any provider32->33 activation request. Existing field-name/pattern/False evidence
+is reused. Legacy field-range expansion, antenna/time/multi-MS remain open.
 The native extra `.summary.json` output has a separate concrete owner decision
 pending; current image-product checks do not claim identical whole-file output.
 `tclean` is not complete.
