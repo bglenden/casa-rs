@@ -72,62 +72,57 @@ changes admission accounting only, not the scientific computation.
 
 ## Current state and next action
 
-The first two candidates remain retired. The owner approved adoption of the
-third correction and its measured resource cost on 2026-10-31, together with
-the separate CASA-inclusive Hogbom default. The tested prototype source is
-`75155cd47f77cbfc4c1e1d6822774b7d1516d1ee`. Its experimental Cargo gate and
-naive f32 alternatives have now been removed: corrected accumulation is the
-normal CPU/GPU f32 path. CPU/f64 accumulation remains unchanged. Normal
-acceptance at583cff5cc5 now passes4672 workspace tests (44 skipped),
-doctests, clippy, architecture/SPDX/format,21 CLI hosts and755 performance
-tool tests/307 subtests. Editable and wheel each pass632 tests (15 skipped);
-a fresh-target sdist passes99. The packaging gate now isolates sdists from
-Cargo artifacts made stale by reproducible archive timestamps and honors
-caller-directed temporary storage. Independent review has no open findings.
+The owner approved compensated-f32 adoption and its measured resource cost,
+and separately the CASA-inclusive Hogbom default, on 2026-10-31. Both are
+normal production paths at `8ee3922736`; the prototype feature and naive f32
+alternatives are removed. CPU/f64 accumulation arithmetic is unchanged.
+The original compact/moving f32 PSF failures (NRMS about 0.019/0.024) are
+repaired. The two earlier candidates remain retired.
 
-The GPU records each atomic add's rounding loss using TwoSum, into two
-additional f32 grids. A GPU renormalization keeps its own remainder across
-applies. A regression exposed the previous fold's 1.48e-6 dependence on
-batch boundaries; retaining the remainder fixes it. CPU/f32 uses one lazy
-Complex32 correction per cell and statically dispatched normalized TwoSum
-in the existing tap loops. Reset and region merging preserve their state.
-CPU/f64 arithmetic and model storage stay unchanged. No CASA computation
-is used at runtime.
+Normal adoption checks at `583cff5cc5` passed 4,672 workspace tests (44
+skipped), doctests, workspace clippy, architecture/SPDX/format, 21 CLI hosts,
+and 755 performance-tool tests with 307 subtests. Editable and wheel each
+passed 632 tests (15 skipped); fresh-target sdist passed 99 after repairing
+stale Cargo artifacts caused by reproducible archive timestamps. These are
+executed checks, distinct from subsequent source changes.
 
-Against casatasks 6.7.6.14 / casatools 6.7.6-14, PSF NRMS is:
+Three follow-up corrections now have fresh pinned CASA 6.7.6.14 /
+6.7.6-14 production-route evidence:
 
-| Case | Naive GPU/f32 | Corrected GPU/f32 | Naive CPU/f32 | Corrected CPU/f32 |
-|---|---:|---:|---:|---:|
-| Compact fixed ALMA, 64 square | 0.01884 | 7.42e-7 | 0.01919 | 5.30e-7 |
-| Moving Uranus, 256 square | 0.02366 | 8.39e-7 | 0.02306 | 9.05e-7 |
-| Ordinary VLA, 100 square | 9.76e-4 | 2.52e-6 | 9.49e-4 | 2.52e-6 |
+- Shared Taylor factors now follow CASA's Float channel-frequency narrowing
+  (`7cd1ae440e`), in both gridding and prediction. The focused regression
+  went red to green. Of five MT-MFS T1.5 runs, two pass all recorded checks;
+  three still fail the unchanged `.weight.tt1` relative-error rule. Other
+  products and checks pass. A guarded matrix-scale comparison is proposed,
+  with 72 measurement tests; it remains unwired pending owner agreement.
+- The legacy VLA PB selector now includes every named band and CASA's NVSS
+  aperture in the intervening gaps (`2d91e001c3`). The ordinary-default
+  2048-square W/Hogbom20 CPU/f64 and CPU/f32 comparisons pass all seven
+  products and recorded metadata checks. PB NRMS is zero. Unsupported EVLA
+  frequencies retain their real preflight refusal.
+- MFS spectral-envelope conversion now uses the geocentric FIELD-origin
+  moving direction, matching CASA MSUtil (`b6a87fa912`). Six fresh fixed
+  ALMA512/moving Uranus256 runs, across CPU/f64, CPU/f32 and Metal/f32, pass
+  products, exact inventory/masks/finite support, beam/sumwt and recorded
+  unit/Stokes/WCS-value checks. Moving spectral increment now matches CASA
+  exactly at 125020996.11132812 Hz; the prior 3.5 Hz failure is repaired at
+  its unchanged tolerance. ALMA f32 PSF NRMS stays below 1e-6. Moving-field
+  PB is still explicitly disabled and remains unfinished.
 
-All recorded products, masks, finite support, beam and sumwt checks pass in
-these corrected cases. Moving-Uranus uses an explicit native PB opt-out,
-isolating the existing moving-PB gap. Ordinary VLA's previous beam miss is
-fixed. W-projection CPU/f32 and mosaic CPU/GPU/f32 also pass the fresh CASA
-product checks with the existing explicit CASA-inclusive Hogbom option;
-the W case additionally opts out of its separately refused PB frequency.
-Those are component checks, not ordinary-default task completion.
+Independent review found no open actionable findings in the VLA PB and MFS
+repairs or the guarded unwired Taylor measurement. Oracle Pro is still
+usage-limited and has not supplied a review. The affected consolidated gate
+at `ac41519a63` passes 4,676 workspace tests (45 skipped), doctests, workspace
+clippy, architecture/SPDX/format, 21 CLI hosts and 827 performance-tool tests
+with 307 subtests. Skips do not establish scientific acceptance.
 
-A further fixed-field ALMA check at 512 square also passes all six products,
-exact inventory/masks/finite support, the recorded WCS-value and unit checks,
-beam and sumwt limits with normal PB production enabled. The selection is
-2,970 rows, 6,082,560 nominal correlation-channel samples and 4,423,680
-unflagged samples before weight/data validity. Corrected CPU/f32 PSF NRMS is
-8.9450e-7 and GPU/f32 8.7665e-7; the CPU/f64 control is 9.4305e-8. This
-larger dirty-image check still does not complete the representative matrix,
-nonlinear solver, persistence or entire-task acceptance. Single wall-time
-observations are not performance comparisons.
-
-All 4,671 workspace tests pass with the experimental feature (44 skipped),
-as do doctests, workspace clippy, architecture/SPDX/format checks and CLI
-conformance for 21 binaries. The former six Metal route failures pass at
-their unchanged 1e-6 bound. Independent review findings about failure
-propagation, destruction, interrupted reset and feature-matrix accounting
-were repaired. Actual heap/device allocation laws pass; a deliberately
-broken reset fails the fresh-signal law. Python packaging after default
-adoption and representative T2 acceptance are not claimed.
+The [scoped receipt](../../resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json)
+records exact revisions, remaining failures and NAS archive identity. The
+actual-product plots and raw verdicts are retained; no failed check has been
+silently reclassified. Single wall times are not matched performance evidence.
+The next bounded implementation is same-grid default restart continuation.
+Numbering, stage reuse, representative T2, numeric returns, persistence and
+the remaining task gaps still prevent claiming complete tclean equivalence.
 
 ## Approved decision: measured cost of the retained correction
 
