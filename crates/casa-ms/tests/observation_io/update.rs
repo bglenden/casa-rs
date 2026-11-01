@@ -1327,3 +1327,49 @@ fn whole_msv4_patches_overwrite_partly_assigned_chunks() {
         assert_eq!(after[key].values, expected, "{key:?}");
     }
 }
+
+/// Whole chunks at array edges round-trip every visible value.
+#[test]
+fn whole_msv4_chunks_with_partial_edges_round_trip() {
+    let root = tempfile::tempdir().expect("root");
+    let source = fixture(root.path(), "ms_trial.ms");
+    let observation =
+        casa_ms::observation_io::open(&source, &OpenOptions::default()).expect("open source");
+    let (catalogue, grid) = super::writer::declaration(observation.as_ref(), true);
+    let path = root.path().join("edge.ps.zarr");
+    let set = casa_ms::observation_io::Msv4ProcessingSetWriter::create(&path).expect("set");
+    let mut options = super::writer::storage();
+    options.chunks = [5, 6, 3, 4];
+    let mut writer = set
+        .dataset(
+            &catalogue,
+            casa_observation::PartitionId(0),
+            &["base"],
+            &grid,
+            &options,
+        )
+        .expect("writer");
+    super::writer::write_all(&mut writer, observation.as_ref(), 4);
+    super::writer::publish(set, writer).expect("publish");
+    let before = read(&path, "base", 0..8);
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Visibilities)],
+    )
+    .expect("session");
+    let traversal = per_times(session.observation(), request(0..8, 0), 4);
+    let report = pass(&session, &traversal, &[0], |batch| {
+        vec![Owned::Visibilities(
+            batch.group.values.expect("values").mapv(model),
+        )]
+    })
+    .expect("update");
+    drop(session);
+    assert_eq!((report.units_written, report.units_read), (18, 0));
+    let after = read(&path, "base", 0..8);
+    for (key, sample) in &before {
+        let expected: Vec<_> = sample.values.iter().map(|value| model(*value)).collect();
+        assert_eq!(after[key].values, expected, "{key:?}");
+    }
+}

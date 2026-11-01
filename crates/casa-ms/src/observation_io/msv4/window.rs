@@ -329,7 +329,8 @@ where
         let shape = self.array.chunk_shape_usize(&indices).map_err(storage)?;
         let [_, baselines, _, products] = self.shape;
         let held_channels = self.channels.len();
-        let mut chunk: Vec<T> = if assigned == extent.iter().product::<usize>() {
+        let whole = assigned == extent.iter().product::<usize>();
+        let mut chunk: Vec<T> = if whole {
             vec![self.fill; shape.iter().product()]
         } else {
             self.array
@@ -342,6 +343,15 @@ where
                     * held_channels
                     + start[2]
                     - self.channels.start;
+                // When the chunk is fully assigned, every in-array element
+                // is present and the assignment marks need no further checks.
+                if whole && start[3] == 0 && extent[3] == products && shape[3] == products {
+                    let element = row * products;
+                    let at = (t * shape[1] + b) * shape[2] * products;
+                    let len = extent[2] * products;
+                    chunk[at..at + len].copy_from_slice(&held.values[element..element + len]);
+                    continue;
+                }
                 for f in 0..extent[2] {
                     let element = (row + f) * products + start[3];
                     let at = ((t * shape[1] + b) * shape[2] + f) * shape[3];
