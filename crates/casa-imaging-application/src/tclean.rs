@@ -84,7 +84,7 @@ impl ImagingRequest {
 fn tclean_parameter(field: &str) -> &str {
     match field {
         "phasecenter_field" => "phasecenter",
-        "mask_box" | "mask_image" => "mask",
+        "mask_box" | "mask_image" | "explicit_empty_mask" => "mask",
         "minor_cycle_length" => "cycleniter",
         other => other,
     }
@@ -745,6 +745,10 @@ impl<'a> Tclean<'a> {
             (Vec::new(), None)
         };
         self.set(
+            "explicit_empty_mask",
+            modes.user_mask && !entries.is_empty() && boxes.is_empty() && image.is_none(),
+        );
+        self.set(
             "mask_box",
             if boxes.is_empty() {
                 "none".to_string()
@@ -830,7 +834,7 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
         .map(|corners| {
             let corners = corners
                 .split(',')
-                .map(|corner| corner.trim().parse::<u64>().ok())
+                .map(|corner| corner.trim().parse::<i64>().ok())
                 .collect::<Option<Vec<_>>>()?;
             let [x0, y0, x1, y1] = corners.as_slice() else {
                 return None;
@@ -856,7 +860,7 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
             .trim()
             .strip_suffix("pix")
             .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.fract() == 0.0 && *number >= 0.0)
+            .filter(|number| number.fract() == 0.0)
             .ok_or_else(refused)
     };
     let mut boxes = Vec::new();

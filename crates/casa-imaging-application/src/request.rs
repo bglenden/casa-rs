@@ -32,6 +32,10 @@ pub struct ImagingRequest {
     /// Task-only continuation, established by output preflight, never a catalog value.
     #[serde(skip)]
     pub(crate) tclean_restart: bool,
+    /// A supplied region file with no regions means zero support, not no mask.
+    /// Internal reader provenance only; this is never a catalog parameter.
+    #[serde(default)]
+    pub(crate) explicit_empty_mask: bool,
     /// The MeasurementSet.
     #[serde(deserialize_with = "single")]
     pub vis: PathBuf,
@@ -166,9 +170,9 @@ pub struct ImagingRequest {
     pub minbeamfrac: f64,
     /// Auto-multithresh growth iterations.
     pub growiterations: usize,
-    /// Inclusive pixel boxes `[x0, y0, x1, y1]` that may be cleaned.
+    /// Inclusive signed pixel boxes `[x0, y0, x1, y1]`, clipped to the image.
     #[serde(deserialize_with = "mask_boxes")]
-    pub mask_box: Vec<[usize; 4]>,
+    pub mask_box: Vec<[i64; 4]>,
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
@@ -546,9 +550,10 @@ impl ImagingRequest {
                 "MODEL_DATA needs a solved model or a start model",
             );
         }
-        if (self.mask_image.is_some() && !self.mask_box.is_empty())
+        let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
+        if (self.mask_image.is_some() && has_boxes)
             || (self.usemask == UseMask::AutoMultithresh
-                && (self.mask_image.is_some() || !self.mask_box.is_empty()))
+                && (self.mask_image.is_some() || has_boxes))
         {
             return invalid(
                 "usemask, mask_image, mask_box",
@@ -898,7 +903,7 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
 }
 
 /// Boxes `x0,y0,x1,y1` separated by `;`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 4]>, D::Error> {
+fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[i64; 4]>, D::Error> {
     let value = Value::deserialize(deserializer)?;
     let text = value
         .as_str()
@@ -908,7 +913,7 @@ fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 
     }
     text.split(';')
         .map(|corners| {
-            comma_list::<usize>(corners)?
+            comma_list::<i64>(corners)?
                 .try_into()
                 .map_err(|_| format!("a mask box has four corners, not {corners:?}"))
         })

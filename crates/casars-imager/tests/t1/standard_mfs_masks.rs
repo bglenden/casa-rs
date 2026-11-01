@@ -205,3 +205,99 @@ fn an_explicit_empty_mask_returns_zero_mask_and_survives_restart() {
         .unwrap();
     assert_eq!(before, after);
 }
+
+#[test]
+fn clipped_pixel_boxes_and_empty_regions_preserve_casa_mask_semantics() {
+    use casars_imager::ImagerCleanStopReason;
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let [px, py] = component_pixel(POINT);
+    let edge = IMAGE_SIZE + 10;
+    let empty = observation.scratch("empty-region.crtf");
+    std::fs::write(&empty, "#CRTF\n").unwrap();
+    let boxes = [
+        (
+            "inside",
+            format!(
+                "box[[{}pix,{}pix],[{}pix,{}pix]]",
+                px - 4,
+                py - 4,
+                px + 4,
+                py + 4
+            ),
+            Some([px - 4, py - 4, px + 4, py + 4]),
+        ),
+        (
+            "upper",
+            format!("box[[{}pix,{}pix],[{edge}pix,{edge}pix]]", px - 4, py - 4),
+            Some([px - 4, py - 4, IMAGE_SIZE - 1, IMAGE_SIZE - 1]),
+        ),
+        (
+            "lower",
+            format!("box[[-10pix,-20pix],[{}pix,{}pix]]", px + 4, py + 4),
+            Some([0, 0, px + 4, py + 4]),
+        ),
+        (
+            "reverse",
+            format!(
+                "box[[{}pix,{}pix],[{}pix,{}pix]]",
+                px + 4,
+                py + 4,
+                px - 4,
+                py - 4
+            ),
+            Some([px - 4, py - 4, px + 4, py + 4]),
+        ),
+        (
+            "outside",
+            format!(
+                "box[[{edge}pix,{edge}pix],[{}pix,{}pix]]",
+                edge + 10,
+                edge + 10
+            ),
+            None,
+        ),
+        ("empty-file", empty.to_string_lossy().into_owned(), None),
+    ];
+    for pblimit in [0.2, -0.1] {
+        for (label, mask, bounds) in &boxes {
+            let (summary, products) = observation.image(
+                &format!("integer-mask-{pblimit}-{label}"),
+                json!({"mask": mask, "pblimit": pblimit, "niter": 10, "threshold": "0Jy"}),
+            );
+            let clean_mask = &products.get(".mask").pixels;
+            for ((x, y), &value) in clean_mask.indexed_iter() {
+                let included =
+                    bounds.is_some_and(|[x0, y0, x1, y1]| x >= x0 && x <= x1 && y >= y0 && y <= y1);
+                assert_eq!(value, f32::from(included), "{label} at [{x},{y}]");
+            }
+            let model = &products.get(".model").pixels;
+            assert_model_inside(model, clean_mask);
+            if bounds.is_none() {
+                assert_eq!(
+                    summary.clean_stop_reason,
+                    Some(ImagerCleanStopReason::NoCleanablePixels)
+                );
+                assert_eq!(summary.actual_minor_iterations, 0);
+                assert!(model.iter().all(|&value| value == 0.0));
+                assert!(
+                    products
+                        .get(".residual")
+                        .pixels
+                        .iter()
+                        .any(|value| value.abs() > 0.1)
+                );
+            } else {
+                assert!(model.sum() > 0.0, "{label} must admit the point source");
+            }
+        }
+        let (_, default) = observation.image(
+            &format!("default-mask-{pblimit}"),
+            json!({"pblimit": pblimit, "niter": 10}),
+        );
+        assert!(
+            default.get(".model").pixels.sum() > 0.0,
+            "absent mask still admits cleaning"
+        );
+    }
+}

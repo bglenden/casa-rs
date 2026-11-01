@@ -28,6 +28,7 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
             && request.usemask == crate::UseMask::User
             && request.mask_image.is_none()
             && request.mask_box.is_empty()
+            && !request.explicit_empty_mask
             && matches!(request.gridder, crate::Gridder::Standard { facets } if facets.get() == 1);
         for path in existing {
             let suffix = path.as_os_str().to_string_lossy();

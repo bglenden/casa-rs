@@ -53,11 +53,11 @@ fn every_tclean_parameter_is_read() {
     }
 }
 
-/// Every field the reader makes is one the request requires: a field the
-/// request does not read would be dropped silently (the flattened gridder
-/// rules out `deny_unknown_fields`).
+/// Every reader field is required or explicitly consumed internal provenance:
+/// the flattened gridder rules out `deny_unknown_fields`, so silently dropped
+/// fields need this law, including the optional empty-mask provenance flag.
 #[test]
-fn every_request_field_is_required() {
+fn every_request_field_is_required_or_consumed_internal_provenance() {
     for overrides in modes() {
         let values = resolved(overrides.clone()).expect("catalog values");
         let (fields, _) = read(&values).expect("tclean values");
@@ -66,6 +66,18 @@ fn every_request_field_is_required() {
         for name in fields.keys() {
             let mut without = fields.clone();
             without.remove(name);
+            if name == "explicit_empty_mask" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("internal mask provenance defaults to false");
+                assert!(!default.explicit_empty_mask);
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), Value::Bool(true));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("internal mask provenance is read");
+                assert!(explicit.explicit_empty_mask);
+                assert_ne!(explicit, default);
+                continue;
+            }
             assert!(
                 serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
                 "{overrides}: the request does not read {name}"
@@ -374,4 +386,26 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "{overrides}"
         );
     }
+}
+
+#[test]
+fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints() {
+    let crtf = request(json!({"mask": "box[[3pix,4pix],[-2pix,-1pix]]"}));
+    assert_eq!(format!("{:?}", crtf.mask_box), "[[-2, -1, 3, 4]]");
+    let legacy = request(json!({"mask": "-2,-1,3,4"}));
+    assert_eq!(format!("{:?}", legacy.mask_box), "[[-2, -1, 3, 4]]");
+    // Integer-valued decimal CRTF syntax already worked and stays supported.
+    let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
+    assert_eq!(format!("{:?}", decimal.mask_box), "[[-2, -1, 3, 4]]");
+    for mask in [
+        "box[[-2.5pix,0pix],[3pix,4pix]]",
+        "box[[1deg,2deg],[3deg,4deg]]",
+    ] {
+        let error = refusal(json!({"mask": mask}));
+        assert_eq!(error.parameter, "mask");
+        assert!(error.message.contains("#980"));
+    }
+    let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
+    assert_eq!(error.parameter, "mask");
+    assert!(error.message.contains("#980"));
 }

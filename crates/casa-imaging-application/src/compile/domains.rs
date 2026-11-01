@@ -36,7 +36,7 @@ pub(super) enum DomainMask {
     /// Every valid model pixel.
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
-    Boxes(Vec<[usize; 4]>),
+    Boxes(Vec<[i64; 4]>),
     /// The non-zero pixels of a CASA image, reprojected onto the domain.
     Image(PathBuf),
     /// Row-major support over the domain's own grid.
@@ -198,7 +198,9 @@ fn request_mask(request: &ImagingRequest) -> DomainMask {
             minimum_percent_change: -1.0,
         }),
         (UseMask::User, Some(path)) => DomainMask::Image(path.clone()),
-        (UseMask::User, None) if request.mask_box.is_empty() => DomainMask::FullPlane,
+        (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
+            DomainMask::FullPlane
+        }
         (UseMask::User, None) => DomainMask::Boxes(request.mask_box.clone()),
     }
 }
@@ -476,5 +478,29 @@ mod tests {
                 "f64, direction first {direction_first}"
             );
         }
+    }
+    #[test]
+    fn an_empty_region_file_is_zero_support_but_an_absent_mask_is_full_plane() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("empty.crtf");
+        std::fs::write(&path, "#CRTF\n# no regions\n").unwrap();
+        let explicit = crate::request::tests::request(serde_json::json!({"mask": path}));
+        assert!(matches!(request_mask(&explicit), DomainMask::Boxes(boxes) if boxes.is_empty()));
+        let default = crate::request::tests::request(serde_json::json!({}));
+        assert_eq!(request_mask(&default), DomainMask::FullPlane);
+        let empty_argument = crate::request::tests::request(serde_json::json!({"mask": []}));
+        assert_eq!(request_mask(&empty_argument), DomainMask::FullPlane);
+        let automatic = crate::request::tests::request(
+            serde_json::json!({"usemask": "auto-multithresh", "mask": path}),
+        );
+        assert!(matches!(
+            request_mask(&automatic),
+            DomainMask::AutoMultithresh(_)
+        ));
+        // A new explicit empty region must not silently reuse an old mask.
+        let mut continuation = explicit;
+        continuation.imagename = directory.path().join("image");
+        std::fs::write(directory.path().join("image.model"), "old model").unwrap();
+        assert!(continuation.check_tclean_output_prefixes().is_err());
     }
 }
