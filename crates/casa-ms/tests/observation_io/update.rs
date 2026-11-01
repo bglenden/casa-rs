@@ -191,6 +191,52 @@ fn a_model_pass_reads_one_group_and_writes_another() {
     }
 }
 
+/// A whole-cell visibility patch need not be contiguous in memory. Writing
+/// a reversed-channel view preserves that view's values at every row.
+#[test]
+fn msv2_whole_visibility_update_accepts_strided_values() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let before = read(&path, "base", 0..8);
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Visibilities)],
+    )
+    .expect("session");
+    let correlations = session.observation().catalogue().partitions[0]
+        .correlations
+        .len();
+    let request = per_times(session.observation(), request(0..8, 0), 4);
+    let mut traversal = session.observation().bind_read(&request).expect("bind");
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    let mut buffers = BatchBuffers::default();
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        let values = batch.group.values.expect("values");
+        let reversed = values.slice(ndarray::s![.., ..;-1, ..]);
+        updater
+            .write(&batch, &[PatchValues::visibilities(reversed)])
+            .expect("write strided values");
+    }
+    updater.finish().expect("finish");
+    drop(traversal);
+    drop(session);
+    let after = read(&path, "base", 0..8);
+    for (key, sample) in &before {
+        let expected: Vec<_> = sample
+            .values
+            .chunks_exact(correlations)
+            .rev()
+            .flatten()
+            .copied()
+            .collect();
+        assert_eq!(after[key].values, expected, "{key:?}");
+    }
+}
+
 /// A unit a patch supplies whole is never read; one it supplies partly is
 /// read once. A two-channel window rewrites part of every MSv2 cell (read
 /// each) and part of three of the six MSv4 chunks (read each once, however
