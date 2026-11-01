@@ -119,6 +119,11 @@ struct SharedTileKey {
     cube_idx: usize,
     target_col_idx: usize,
     tile_index: usize,
+    /// A surviving handle can retain older metadata after a table at the
+    /// same path is rewritten. A cached tile is safe to copy into bools
+    /// only when it was decoded as a multi-pixel bool tile.
+    is_bool: bool,
+    single_pixel: bool,
 }
 
 #[derive(Clone)]
@@ -3768,24 +3773,36 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
             SelectedArray2DCellsMut::Bool(values) | SelectedArray2DCellsMut::RowChannelBool(values),
         ) => {
             values.resize(sample_count, false);
-            fill_typed_selected_2d_rows(
-                table_path,
-                dm_seq_nr,
-                header,
-                target_col_idx,
-                dt,
-                elem_size,
-                &col_desc.col_name,
-                &patches_by_cube,
-                selected_rows.len(),
-                corr_count,
-                channel_start,
-                channel_count,
-                fill_plan.row_major,
-                &mut session,
-                values,
-                |bytes, _| bytes[0] != 0,
-            )?;
+            let unpacked = patches_by_cube
+                .keys()
+                .all(|&cube| header.cubes[cube].tile_shape.iter().product::<usize>() > 1);
+            if unpacked {
+                // Both tile loaders expand packed booleans into bytes 0 or 1
+                // when a tile has more than one pixel. Those bytes are valid
+                // bool representations, so the typed copy can place them
+                // directly in the destination. A one-pixel tile can instead
+                // contain its packed byte and must be decoded below.
+                fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+            } else {
+                fill_typed_selected_2d_rows(
+                    table_path,
+                    dm_seq_nr,
+                    header,
+                    target_col_idx,
+                    dt,
+                    elem_size,
+                    &col_desc.col_name,
+                    &patches_by_cube,
+                    selected_rows.len(),
+                    corr_count,
+                    channel_start,
+                    channel_count,
+                    fill_plan.row_major,
+                    &mut session,
+                    values,
+                    |bytes, _| bytes[0] != 0,
+                )?;
+            }
         }
         (
             CasacoreDataType::TpFloat,
@@ -9624,12 +9641,15 @@ fn load_shared_column_tile(
     session: &mut TileReadSession,
 ) -> Result<Arc<[u8]>, StorageError> {
     let table_id = session.table_id(table_path);
+    let tile_nelem: usize = cube.tile_shape.iter().product();
     let key = SharedTileKey {
         table_id,
         dm_seq_nr,
         cube_idx,
         target_col_idx,
         tile_index,
+        is_bool: dt == CasacoreDataType::TpBool,
+        single_pixel: tile_nelem <= 1,
     };
     if let Some(hit) = session.recent_tile(&key) {
         return Ok(hit);
@@ -9643,7 +9663,6 @@ fn load_shared_column_tile(
         return Ok(hit);
     }
 
-    let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
     let swap_size = match dt {
@@ -13470,6 +13489,87 @@ mod tests {
             "repeated tiled selected-row reads should reuse the shared tile cache"
         );
 
+        reset_table_cache_budget_for_tests();
+    }
+
+    /// A table handle can outlive a rewrite at its path. A stale handle's
+    /// cached bytes must not be mistaken for unpacked bools by the new one.
+    #[test]
+    fn selected_bool_reads_do_not_reuse_tiles_from_stale_metadata() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+
+        let write_table = |root: &Path, primitive, rows, tile_rows| {
+            let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                "data",
+                primitive,
+                vec![1, 1],
+            )])
+            .expect("schema");
+            let mut table = Table::with_schema(schema);
+            for _ in 0..rows {
+                let array = match primitive {
+                    PrimitiveType::Bool => {
+                        ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[1, 1]), true))
+                    }
+                    PrimitiveType::Float32 => {
+                        ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[1, 1]), 1.0))
+                    }
+                    _ => unreachable!(),
+                };
+                table
+                    .add_row(RecordValue::new(vec![RecordField::new(
+                        "data",
+                        Value::Array(array),
+                    )]))
+                    .expect("row");
+            }
+            table
+                .save(
+                    TableOptions::new(root)
+                        .with_data_manager(DataManagerKind::TiledShapeStMan)
+                        .with_tile_shape(vec![1, 1, tile_rows]),
+                )
+                .expect("save");
+        };
+
+        let dir = tempdir().expect("tempdir");
+        for (index, old_type, old_tile, new_tile, rows) in [
+            (0, PrimitiveType::Float32, 8, 8, 256),
+            (1, PrimitiveType::Bool, 1, 2, 2),
+        ] {
+            let root = dir.path().join(format!("stale-{index}.table"));
+            std::fs::create_dir_all(&root).expect("table directory");
+            write_table(&root, old_type, rows, old_tile);
+            let old = Table::open(TableOptions::new(&root)).expect("old handle");
+            write_table(&root, PrimitiveType::Bool, rows, new_tile);
+            let current = Table::open(TableOptions::new(&root)).expect("new handle");
+
+            // Read through the old handle after the new open invalidates the
+            // cache, then read the same tile through the new handle.
+            let mut old_floats = Vec::new();
+            let mut old_bools = Vec::new();
+            let destination = match old_type {
+                PrimitiveType::Float32 => SelectedArray2DCellsMut::Float32(&mut old_floats),
+                PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut old_bools),
+                _ => unreachable!(),
+            };
+            old.fill_array_cells_2d_channel_range_typed_uncached("data", &[0], 0, 1, destination)
+                .expect("stale read")
+                .expect("defined stale cell");
+            let mut flags = Vec::new();
+            current
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    "data",
+                    &[0],
+                    0,
+                    1,
+                    SelectedArray2DCellsMut::Bool(&mut flags),
+                )
+                .expect("current read")
+                .expect("defined current cell");
+            assert_eq!(flags, [true], "stale case {index}");
+        }
         reset_table_cache_budget_for_tests();
     }
 
