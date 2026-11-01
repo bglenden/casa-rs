@@ -2,10 +2,12 @@
 
 Status: owner approved activation on 2026-11-01 (this chat: “Approve activation”).
 Provider32 is applied; focused provider/public-resolution/migration/conformance
-checks pass. Public CASA and Python package acceptance are in progress.
+checks pass. Public CLI/Python products and package gates pass in the bounded
+scope; one strict Metal scalar comparison and old-history policy await owner
+decisions. See the activation receipt.
 Work issues: #944 and #980. CASA oracle: casatasks 6.7.6.14 / casatools 6.7.6-14.
 
-## Decision requested
+## Approved decision
 
 Enable casa-rs's existing `restart=False` parameter for a single main image by
 updating its provider bundle from 31 to 32. All 92 CASA names, signatures and
@@ -23,7 +25,7 @@ reuse, stays open; this decision does not close the equivalence programme.
 
 ## Exact activation
 
-The unapplied activation patch changes the tclean surface version 31->32,
+The approved activation patch changes the tclean surface version 31->32,
 removes only restart's `unimplemented` marker, replaces its stale surface
 note, and adds a 31->32 migration with no changed defaults or value rewrites.
 It replaces the universal False-refusal test with public-resolution and
@@ -33,9 +35,11 @@ regenerated through the existing scripts after approval.
 Patch SHA256: `7d9e7c3a3dbd0a2395e8fd15baf9f0ff370a783328aec7c1083610bdc7508fe3`.
 The exact patch and commands are in the verified archive below; the working
 copy is `/private/tmp/tclean-numbering-proposal-20261101/activation-proposal.patch`.
-No provider files, migration history or binding snapshots have been changed.
+Applied at `99b1cfad559bf92de9ac070a387b4d2c9165ec97`. All114 binding names,
+order and defaults and every other task surface are unchanged. Snapshot inspection
+found no contract snapshot change; scalar shapes/types are shared across surfaces.
 
-## Executed evidence
+## Historical preview evidence
 
 - Six helper tests match pinned CASA filename cases, including gaps, Taylor
   suffixes, arbitrary-length numeric IDs, Unicode digits and byte parsing.
@@ -58,12 +62,14 @@ workspace clippy, architecture/SPDX/fmt, 21 CLI hosts and 875 performance-tool
 tests/307 subtests. These gates retain their own revision identity; the
 numbering preview has the focused checks above.
 
-## After approval
+## Activation evidence
 
-Apply the activation patch, regenerate and inspect contract history and binding
-snapshots, then execute public CLI/Python False calls against pinned CASA,
-product-preservation checks and the required normal gates. Record the resulting
-scope in the existing generated reference. No acceptance checks are reduced.
+The [activation receipt](../../resources/casa-compat/evidence/tclean-numbering-activation-20261101.json)
+records all20 native product/preservation rows passing,19/20 selected scalar
+rows passing the original limits, and Python package gates of632 editable,632
+wheel and99 fresh-sdist tests passing. Raw failures and fixture repairs remain
+recorded. The full native gate is running. No pending exception is accepted.
+This is bounded activation evidence, not whole-task equivalence.
 
 ## Authority and durable evidence
 

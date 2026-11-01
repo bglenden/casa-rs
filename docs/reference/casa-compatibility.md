@@ -37,7 +37,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
-| tclean | tclean | yes | 92 | 92 | 0 | 24 | 22 | 0 |
+| tclean | tclean | yes | 92 | 92 | 0 | 23 | 22 | 0 |
 
 ## Tasks
 
@@ -355,7 +355,6 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #944: `restart`
 - Accepted only at CASA's default until #980: `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `restoration`, `noise`, `npixels`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `calcres`, `calcpsf`
 - casa-rs parameters CASA lacks: `ddid`, `channel_start`, `channel_count`, `hogbom_iteration_mode`, `write_pb`, `fitspw`, `fitorder`, `save_continuum_residual`, `backend`, `gridprecision`, `aw_cf_source`, `cf_resident_mb`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `stage_timing`, `metal_stage_timing`, `science_trace`
 - Shared parameters: 92, in CASA's order: yes
@@ -365,7 +364,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `9006dca1ec5e6d96fe2f764cfdd878b1f7677ced`. Status counts: Default only: 24, Implemented: 29, Not implemented: 0, Partial: 39, Unassessed: 0.
+Audit baseline: `9006dca1ec5e6d96fe2f764cfdd878b1f7677ced`. Status counts: Default only: 23, Implemented: 29, Not implemented: 0, Partial: 39, Unassessed: 1.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -457,7 +456,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `minpercentchange` | `-1.0` | `-1.0`; `minpercentchange` → `minpercentchange` | Default only | Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float`; Non-default refused when usemask='auto-multithresh' (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `verbose` | `False` | `False`; `verbose` → `verbose` | Default only | Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `bool`; Non-default refused when usemask='auto-multithresh' (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `fastnoise` | `True` | `True`; `fastnoise` → `fastnoise` | Default only | Read and ignored; non-default catalog-refused (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `restart` | `True` | `True`; `restart` → `restart` | Default only | Only True is accepted by the runtime contract. Same-grid standard unfaceted single-term Stokes-I MFS continuation reuses raw model and binary CLEAN mask. Small paired CASA default and negative-PB sequences and bidirectional product continuation pass on the recorded backends. Broader modes, embedded masks, new masks, numbering and false calc controls remain unfinished (#944). Native False numbering preview is tested behind the unchanged refusal; provider activation is pending. [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#944) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecycle), [restart-native-current](#tclean-evidence-restart-native-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [numbering-preview](#tclean-evidence-numbering-preview) |
+| `restart` | `True` | `True`; `restart` → `restart` | Unassessed | Only True is accepted by the runtime contract. Same-grid standard unfaceted single-term Stokes-I MFS continuation reuses raw model and binary CLEAN mask. Small paired CASA default and negative-PB sequences and bidirectional product continuation pass on the recorded backends. Broader modes, embedded masks, new masks, numbering and false calc controls remain unfinished (#944). Native False numbering preview is tested behind the unchanged refusal; provider activation is pending. [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecycle), [restart-native-current](#tclean-evidence-restart-native-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [numbering-preview](#tclean-evidence-numbering-preview) |
 | `savemodel` | `'none'` | `'none'`; `savemodel` → `savemodel` | Partial | Copied; virtual refused (issue 823); modelcolumn writes MODEL_DATA and request checks a solved or start model exists. [returns](#tclean-behavior-returns)<br>Catalog domain: `modelcolumn`, `none`, `virtual` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `calcres` | `True` | `True`; `calcres` → `calcres` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |

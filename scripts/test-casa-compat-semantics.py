@@ -29,7 +29,7 @@ class SemanticReferenceTests(unittest.TestCase):
             semantics.validate(self.data, self.record, self.surface)
 
     def test_runtime_default_only_cannot_be_promoted_by_an_annotation(self):
-        binding = next(b for b in self.surface["bindings"] if b["name"] == "restart")
+        binding = next(b for b in self.surface["bindings"] if b["name"] == "calcres")
         self.assertEqual(semantics.implementation(binding, {"status": "Implemented"}), "Default only")
         del binding["unimplemented"]
         self.assertEqual(semantics.implementation(binding, {"status": "Partial"}), "Partial")
