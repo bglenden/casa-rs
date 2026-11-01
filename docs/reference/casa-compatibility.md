@@ -462,7 +462,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `calcres` | `True` | `True`; `calcres` → `calcres` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `psfcutoff` | `0.35` | `0.35`; `psfcutoff` → `psfcutoff` | Implemented | Copied; request requires positive value. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `parallel` | `False` | `False`; `parallel` → `parallel` | Partial | Native local worker resource policy, not CASA MPI launch/partition semantics. Ordinary output equivalence and resource bounds require separate evidence; distributed behavior is unfinished. [accuracy](#tclean-behavior-accuracy)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `parallel` | `False` | `False`; `parallel` → `parallel` | Partial | Native local worker resource policy, not CASA MPI launch/partition semantics. Ordinary output equivalence and resource bounds require separate evidence; distributed behavior is unfinished. [accuracy](#tclean-behavior-accuracy)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [adopted-defaults](#tclean-evidence-adopted-defaults) |
 
 #### tclean interacting modes and task behavior
 
@@ -507,27 +507,27 @@ Evidence: [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additi
 
 **Partial** — Hogbom, Clark, multiscale, MT-MFS, iteration controls, user masks and auto-multithresh.
 
-The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Prototype comparisons showed seven point-source products and the ALMA mosaic CLEAN row pass with that existing mode; ordinary-default verification is in progress. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding.
+The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Normal-build ordinary Hogbom10 point-source comparisons pass seven products on CPU64/CPU32/GPU32 with no explicit accounting option; prototype ALMA mosaic CLEAN also passes in that mode. Independent default-continuation and migration tests pass. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding.
 
-Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [compensated-current](#tclean-evidence-compensated-current).
+Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults).
 
 <a id="tclean-behavior-returns"></a>
 ##### Return values, exceptions and metadata
 
 **Partial** — Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.
 
-The recorded 22-key structure exists. maxpsfsidelobe, dirty peak, outside-mask peaks, next cyclethreshold, seeded fluxes and multi-plane summary values are not fully measured and are NaN. Errors/refusal types and valid-but-unsupported combinations need paired checks. Existing return-structure recordings contain no numeric acceptance. Persistence requires independent CASA reopen and native reopen. A small CPU/f64/W1 seeded MFS run now matches all six CASA product members, masks, shape, brightness units, Stokes, reference pixels/values/increments and beams within the receipt limits; this is not a full metadata or representative-science pass.
+The recorded 22-key structure exists. maxpsfsidelobe, dirty peak, outside-mask peaks, next cyclethreshold, seeded fluxes and multi-plane summary values are not fully measured and are NaN. Errors/refusal types and valid-but-unsupported combinations need paired checks. Existing return-structure recordings contain no numeric acceptance. Persistence requires independent CASA reopen and native reopen. A small CPU/f64/W1 seeded MFS run now matches all six CASA product members, masks, shape, brightness units, Stokes, reference pixels/values/increments and beams within the receipt limits; this is not a full metadata or representative-science pass. Normal adopted-build moving-Uranus MFS metadata exposes a spectral-increment difference of125020999.61227417Hz versus CASA125020996.11132812Hz on f64 and f32. It remains failed and unaccepted, independent of the repaired f32 accumulation.
 
-Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [default-products](#tclean-evidence-default-products).
+Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [default-products](#tclean-evidence-default-products), [adopted-defaults](#tclean-evidence-adopted-defaults).
 
 <a id="tclean-behavior-accuracy"></a>
 ##### Precision, backend and resource acceptance
 
 **Partial** — backend=auto/cpu/gpu, gridprecision and all scientific products (#991).
 
-The owner approved the measured f32 correction cost and its adoption. The experimental gate and naive f32 paths are removed; CPU/f64 stays unchanged. Normal-build acceptance is in progress. The prototype at 75155cd47f77cbfc4c1e1d6822774b7d1516d1ee passes pinned CASA 6.7.6.14 fixed ALMA64, moving Uranus256 (PB opt-out) and VLA100 product/mask/finite/beam/sumwt checks: corrected PSF NRMS CPU/f32 and GPU/f32 below 1e-6 on the ALMA cases and about 2.52e-6 on VLA. It also passes all 4671 workspace tests (44 skipped), doctests, workspace clippy and 21 CLI hosts with the feature, including the former six Metal route failures at their unchanged 1e-6 bound. CPU/f32 keeps one extra correction per cell, GPU/f32 two; actual allocation and interrupted/reset/drop laws pass. Quiet W1 cost is about +32%/+3% GPU wall on compact/VLA and about 2.1x CPU/f32, with f64 effectively unchanged. The owner accepted the measured resource cost. The prior whole-grid host merge and hash-grouping candidates remain retired. No tolerance, CASA parameter/default or backend-selection policy was changed; no full T2 or entire-task acceptance is claimed.
+Owner-approved compensated f32 is now the normal CPU/GPU path, with f64 accumulation unchanged. Native583cff5cc5 passes all4672 normal workspace tests (44 skipped), doctests, clippy, architecture/SPDX/format,21 CLI hosts and755 performance-tool tests/307 subtests. Editable/wheel632passed15skipped each and fresh-target sdist99passed. Normal release comparisons pass product/inventory/mask/finite/beam/sumwt checks on fixed ALMA512, moving Uranus256 with native PB opt-out, and default Hogbom10 point source, across CPU64/CPU32/GPU32. Corrected ALMA PSF NRMS is below1e-6. The moving-source spectral increment differs by about3.5Hz on f64 and f32 and remains a separate failed metadata check. Prior candidates remain retired; the measured correction cost is owner-approved. Full representative T2 and entire-task acceptance remain unfinished.
 
-Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current).
+Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults).
 
 #### tclean deviations and unfinished work
 
@@ -609,7 +609,7 @@ Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-a
 - Rationale: Match CASA's reported count and scientific products using the existing implementation.
 - User impact: Positive Hogbom cycles may apply one extra component while reporting the CASA count. Other solvers retain their canonical strict inactive policy. No CASA parameter/default changes.
 - Owner decision: Owner, 2026-10-31, this chat: Approved both proposed adoptions, including CASA-compatible Hogbom counting by default.
-- Evidence: [compensated-current](#tclean-evidence-compensated-current).
+- Evidence: [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults).
 
 #### tclean evidence
 
@@ -746,7 +746,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="tclean-evidence-compensated-current"></a>
 ##### compensated-current
 
-**Native experimental precision correction and fresh task diagnostics — scoped prototype passes; normal adoption approved and applied; normal gates in progress; wider gaps open.** Corrected CPU/GPU f32 match pinned fixed/moving/ordinary MFS products; explicit inclusive Hogbom and W PB opt-out are labelled component checks. Owner-approved correction is now unconditional; normal-build verification is in progress. All4671 workspace tests passed with the feature;44 skips are not science passes. Fresh wider probes retain PB, GPU-W/AW and MT-MFS weight-product gaps. No signature test, full T2 or entire-task equivalence claim.
+**Native experimental precision correction and fresh task diagnostics — historical scoped prototype passes; adoption approved and normal evidence recorded separately.** Corrected CPU/GPU f32 match pinned fixed/moving/ordinary MFS products; explicit inclusive Hogbom and W PB opt-out are labelled component checks. Owner-approved correction is now unconditional; separate adopted-defaults evidence records normal-build verification. All4671 workspace tests passed with the feature;44 skips are not science passes. Fresh wider probes retain PB, GPU-W/AW and MT-MFS weight-product gaps. No signature test, full T2 or entire-task equivalence claim.
 
 - [resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json](https://github.com/bglenden/casa-rs/blob/7ef81dde8b978cb85b7ae180ffd558f5e478609b/resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json)
 - [docs/Planning/tclean-f32-accuracy-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/7ef81dde8b978cb85b7ae180ffd558f5e478609b/docs/Planning/tclean-f32-accuracy-proposal-20261031.md)
@@ -754,3 +754,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `75155cd47f77cbfc4c1e1d6822774b7d1516d1ee`; CASA: `casatasks6.7.6.14; casatools6.7.6-14`.
 - Command: `cargo nextest run --workspace --features casa-imaging-metal/compensated-f32-prototype; pinned oracle recipes in the durable bundle`.
 - Receipt: `resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json; /Volumes/home/casa-rs/tclean/20261031/compensated-f32-experiment-20261031.tar`.
+
+<a id="tclean-evidence-adopted-defaults"></a>
+##### adopted-defaults
+
+**Normal native implementation and CASA-paired scientific products — normal gates and scoped product checks pass; moving-source WCS increment remains failed; wider tclean gaps open.** Unconditional corrected CPU/GPU f32 and owner-approved CASA-inclusive Hogbom default, provider31. All normal gates and scoped nine-run product checks pass. Fixed512 and point-Hogbom WCS values pass; moving increment fails equally on f64/f32. No full T2, numeric return or whole-task pass.
+
+- [resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json](https://github.com/bglenden/casa-rs/blob/4bb016fe0ed31d035399ff0f0ad807e08697d440/resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json)
+- [docs/Planning/tclean-f32-accuracy-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/4bb016fe0ed31d035399ff0f0ad807e08697d440/docs/Planning/tclean-f32-accuracy-proposal-20261031.md)
+- [docs/Planning/tclean-hogbom-default-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/4bb016fe0ed31d035399ff0f0ad807e08697d440/docs/Planning/tclean-hogbom-default-proposal-20261031.md)
+- Revision: `583cff5cc5e82ed0dc2c98499e8fc68fa6d66da4`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
+- Command: `normal quick checks with nextest--no-fail-fast; package editable/wheel+fresh sdist; CASA Python -I probe-tclean-adopted-defaults.py`.
+- Receipt: `resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json; /Volumes/home/casa-rs/tclean/20261031/adopted-tclean-defaults-20261031.tar; SHA9e55d997b060f172f20b1c59c3ef1a1e6c59492b79707868adf5cd6ccf031450 reread verified`.
