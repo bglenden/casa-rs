@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 31,
+      "contract_version": 32,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9388,14 +9388,13 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs overwrites existing products: it never restarts from them (#944).",
+          "surface_note": "restart=true supports bounded same-grid single-term Stokes-I MFS continuation; restart=false selects the next single-main-image namespace using CASA filename numbering. Coordinated outliers and occupied chosen orphan namespaces remain refused (#944).",
           "projections": {
             "cli": {"flags": ["--restart"], "false_flags": ["--no-restart"]},
             "provider": {"field": "restart"},
             "python": {"name": "restart"},
             "presentation": {"label": "Restart", "group": "Products", "advanced": true}
-          },
-          "unimplemented": {"issue": 944}
+          }
         },
         {
           "name": "savemodel",
@@ -9838,6 +9837,12 @@
           "to_contract": 31,
           "steps": [],
           "changed_defaults": ["hogbom_iteration_mode"]
+        },
+        {
+          "from_contract": 31,
+          "to_contract": 32,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

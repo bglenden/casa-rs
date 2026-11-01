@@ -9,7 +9,7 @@ use casa_task_runtime::{DiagnosticCode, parse_profile, resolve_profile};
 #[test]
 fn old_hogbom_defaults_warn_and_explicit_policies_survive() {
     let bundle = builtin_surface_bundle("tclean").unwrap();
-    for version in [29, 30, 31] {
+    for version in [29, 30, 31, 32] {
         for explicit in [None, Some("strict"), Some("casa-inclusive")] {
             let line = explicit.map_or_else(String::new, |mode| {
                 format!("hogbom_iteration_mode = {mode:?}")

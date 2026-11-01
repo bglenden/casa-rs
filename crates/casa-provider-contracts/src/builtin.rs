@@ -346,7 +346,7 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 31);
+        assert_eq!(surface.contract_version(), 32);
         assert_eq!(surface.bindings().len(), 114);
         for binding in surface.bindings() {
             let concept = catalog
@@ -453,13 +453,14 @@ mod tests {
         );
         // Contract 28 migrates to tclean's names, then contract 29 adopts
         // the reviewed PB and Hogbom defaults while preserving explicit overrides.
+        // Contract 32 enables False restart without changing those defaults.
         assert_eq!(
             surface
                 .migrations()
                 .iter()
                 .map(|migration| (migration.from_contract, migration.to_contract))
                 .collect::<Vec<_>>(),
-            [(28, 29), (29, 30), (30, 31)]
+            [(28, 29), (29, 30), (30, 31), (31, 32)]
         );
     }
 

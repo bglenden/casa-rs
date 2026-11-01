@@ -291,7 +291,6 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
-        (json!({ "restart": false }), "restart", "#944"),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (
@@ -317,4 +316,25 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
             other => panic!("{parameter}: {other:?}"),
         }
     }
+}
+
+#[test]
+fn restart_false_is_resolved_and_coordinated_outliers_remain_refused() {
+    use casars_imager::{ImagingParameters, resolve_request, run};
+    let directory = tempfile::tempdir().unwrap();
+    let values = json!({
+        "vis": "absent.ms", "imagename": directory.path().join("image"),
+        "cell": "1arcsec", "restart": false,
+    });
+    let (parameters, request) =
+        resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
+    assert_eq!(parameters.0["restart"], json!(false));
+    let mut outlier = request;
+    outlier.outlierfile = Some(directory.path().join("outliers.txt"));
+    let error = run(parameters, &outlier).unwrap_err();
+    assert!(
+        error.contains("coordinated outlier") && error.contains("#944"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

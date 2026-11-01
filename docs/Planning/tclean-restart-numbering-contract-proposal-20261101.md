@@ -1,6 +1,8 @@
 # Enable the prepared tclean restart=False behavior
 
-Status: native preview verified at `9006dca1ec`; provider activation awaits approval.
+Status: owner approved activation on 2026-11-01 (this chat: “Approve activation”).
+Provider32 is applied; focused provider/public-resolution/migration/conformance
+checks pass. Public CASA and Python package acceptance are in progress.
 Work issues: #944 and #980. CASA oracle: casatasks 6.7.6.14 / casatools 6.7.6-14.
 
 ## Decision requested

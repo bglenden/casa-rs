@@ -316,7 +316,7 @@ fn restart_false_public_run_selects_fresh_numbered_namespaces() {
     });
     let (parameters, request) =
         resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
-    run(parameters.clone(), &request).unwrap();
+    run(parameters, &request).unwrap();
     let model = |name: &str| {
         PagedImage::<f32>::open(directory.join(format!("{name}.model")))
             .unwrap()
@@ -325,10 +325,11 @@ fn restart_false_public_run_selects_fresh_numbered_namespaces() {
     };
     let first = model("image");
     assert!(first.sum() > 0.0);
-    // Preparation-only bypass of the catalog's unfinished-value refusal. The
-    // public execution path and its output-policy method are not bypassed.
-    let mut numbered = parameters;
-    numbered.0.insert("restart".into(), json!(false));
+    // Resolve False through the activated public contract before execution.
+    let mut numbered = values;
+    numbered["restart"] = json!(false);
+    let (numbered, request) =
+        resolve_request(&ImagingParameters(numbered.as_object().unwrap().clone())).unwrap();
     for name in ["image_2", "image_3"] {
         let before = snapshot(&directory);
         let result = run(numbered.clone(), &request).unwrap();
