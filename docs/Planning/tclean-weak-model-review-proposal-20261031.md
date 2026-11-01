@@ -17,6 +17,8 @@ The bound inputs and products are in the current T2 receipt and its diagnostic
 512 square, four SPWs, 1,336,320 nominal correlation-channel samples,
 eight iterations in cycles of two. The retained input tree SHA-256 is
 `e1f1e030a1d1968b627863b3b5386e03fc7ed5770760698a1f6b603f4e885548`.
+Excluding 125 AppleDouble filesystem sidecars, all 90 MeasurementSet files
+also match the original #607 source hash exactly; the data have not changed.
 CASA is casatasks **6.7.6.14** / casatools **6.7.6-14**. The measurement binds
 the uninstrumented binary, parameters and numeric product fingerprints.
 
