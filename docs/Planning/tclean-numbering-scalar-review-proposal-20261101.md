@@ -1,15 +1,15 @@
 # Proposal: review one Metal32 final cycle threshold
 
-Status: proposed; owner decision pending. Work issues: #980 and #991.
+Status: accepted for this exact output, owner2026-11-01: “Accept this specific output”. Work issues: #980 and #991.
 
-Accept only the unchanged `cli-gpu32/explicit_startmodel` output in the
+The owner accepted only the unchanged `cli-gpu32/explicit_startmodel` output in the
 [activation receipt](../../resources/casa-compat/evidence/tclean-numbering-activation-20261101.json).
 Its final `cyclethreshold` is 0.07878153771162033 Jy/beam versus CASA's
 0.07878141850233078: 0.119209 microJy/beam, or 1.5132 parts per million.
 The difference is 16 Float ULPs. It exceeds the original bound
 8.87814185e-8 Jy/beam; the original failed verdict remains unchanged.
 
-For this exact output only, recommend the reviewed bound
+For this exact output only, the approved reviewed bound is
 `abs(native - CASA) <= 2e-6 * abs(CASA) + 1e-8 Jy/beam`, or
 1.67562837e-7 Jy/beam. All original product, mask, recorded metadata/beam,
 sumwt, exact count, other scalar and preservation checks still apply.
@@ -39,7 +39,7 @@ root recorded by the activation receipt. It pins revision
 raw receipt SHA256
 `255917f110351bcf9dbd62ba61daebac68f556d0ad8905ea4917a685a1d1ed57`,
 and the shared model payload/mask/coordinates. Oracle: casatasks6.7.6.14 /
-casatools6.7.6-14. This approval would bind those identities only.
+casatools6.7.6-14. This approval binds those identities only.
 
 [AGENTS.md](../../AGENTS.md#ask-first) requires asking before reducing
 acceptance checks. This is the specific proposed replacement for one failed

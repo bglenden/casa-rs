@@ -8,7 +8,7 @@
     "casatasks": "6.7.6.14",
     "casatools": "6.7.6-14"
   },
-  "state": "Activated by owner; bounded products pass; one scalar comparison and old-history policy await owner decisions; whole task unfinished",
+  "state": "Activated by owner; bounded products pass; one scalar output accepted by identity-bound owner review; old-history policy pending; whole task unfinished",
   "contract": {
     "from": 31,
     "to": 32,
@@ -69,7 +69,7 @@
   "diagnostic": {
     "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/metal32-cyclethreshold-review.json",
     "sha256": "b4393fb709f37017f3177ced196d51ab9aeab73ff79e9b70d44051e9a1369df5",
-    "owner_status": "Proposed only; raw failed verdict retained"
+    "owner_status": "Accepted this specific output, owner2026-11-01; raw failed verdict unchanged; no future-output waiver"
   },
   "python_package": {
     "source_head": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
@@ -141,11 +141,28 @@
     "calcres/calcpsf reuse and broader restart modes",
     "Singleton-list startmodel input",
     "New image history completeness and owner disposition for prior image history",
-    "One specific Metal32 cyclethreshold raw failure pending owner disposition",
     "Remaining return keys, metadata, selection/modes and representative/runtime prediction acceptance"
   ],
   "archive": {
     "state": "Pending verified NAS archive; raw data currently on external working disk"
   },
-  "authority": "Explicit owner activation approval; no scientific comparison reduction or history exception inferred"
+  "authority": "Explicit owner activation approval; no scientific comparison reduction or history exception inferred",
+  "scalar_case_disposition": {
+    "approved": true,
+    "owner_decision": "Accept this specific output",
+    "disposition": "accepted_by_identity_bound_owner_review",
+    "raw_passed": false,
+    "raw_receipt_sha256": "255917f110351bcf9dbd62ba61daebac68f556d0ad8905ea4917a685a1d1ed57",
+    "measurement_sha256": "b4393fb709f37017f3177ced196d51ab9aeab73ff79e9b70d44051e9a1369df5",
+    "native_revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
+    "binary_sha256": "dd3d846c36713de75347e204e4cd6d9163d72e9add93cd712da11d4bd227aad4",
+    "case": "cli-gpu32/explicit_startmodel",
+    "native": 0.07878153771162033,
+    "casa": 0.07878141850233078,
+    "absolute_difference": 1.1920928955078125e-07,
+    "relative_limit": 2e-06,
+    "absolute_limit_jy_per_beam": 1e-08,
+    "other_checks": "All original guards pass and remain required",
+    "scope": "Only unchanged bound output; no future output inherits this acceptance"
+  }
 }
