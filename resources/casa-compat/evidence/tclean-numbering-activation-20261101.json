@@ -8,7 +8,7 @@
     "casatasks": "6.7.6.14",
     "casatools": "6.7.6-14"
   },
-  "state": "Activated by owner; bounded products pass; one scalar output accepted by identity-bound owner review; old-history policy pending; whole task unfinished",
+  "state": "Owner-approved activation and prior-history policy; bounded products pass; one scalar output accepted by identity-bound owner review; whole task unfinished",
   "contract": {
     "from": 31,
     "to": 32,
@@ -150,13 +150,13 @@
   "fixture_repairs": [
     "Singleton startmodel array refused by existing Path catalog: original failed input/log retained; string form used and list-form gap remains unfinished.",
     "Each implementation initially used its own slightly different model; original own-seed failure retained. Final paired case uses a common frozen CASA seed; CPU64 first four unaffected rows reused.",
-    "CASA changes only old logtable files on later numbered calls. Oracle records those mutations; native byte-preservation is independently strict. No history deviation accepted yet."
+    "CASA changes only old logtable files on later numbered calls. Oracle records those mutations; native byte-preservation is independently strict. Owner separately agreed preserving prior histories."
   ],
   "unfinished": [
     "Coordinated outlier and occupied chosen orphan numbering",
     "calcres/calcpsf reuse and broader restart modes",
     "Singleton-list startmodel input",
-    "New image history completeness and owner disposition for prior image history",
+    "New image history completeness",
     "Remaining return keys, metadata, selection/modes and representative/runtime prediction acceptance"
   ],
   "archive": {
@@ -192,5 +192,14 @@
     "path": "/Volumes/home/casa-rs/tclean/20261031/tclean_numbering_acceptance_20261101.py",
     "sha256": "f1e5fa08c9f458c470afd03fed441c8d9ca509c910395928144caf0b0c2b061f",
     "note": "After archival, fixed oracle-mode seed reference inadvertently changed during native shared-seed fixture repair. Restores recorded oracle one-element list using its original first model. No outputs or raw receipts changed; corrected recipe compiled and NAS reread verified."
+  },
+  "history_disposition": {
+    "approved": true,
+    "owner_decision": "Preserve prior histories",
+    "date": "2026-11-01",
+    "scope": "Prior matching numbered outputs during restart=False fresh runs only",
+    "behavior": "Leave old files and histories unchanged, excluding locks",
+    "casa_difference": "CASA appends later task calls to old prefix-matching image logtables",
+    "new_image_history": "Correct new-image history remains required, completeness unfinished"
   }
 }

@@ -3,8 +3,8 @@
 Status: owner approved activation on 2026-11-01 (this chat: “Approve activation”).
 Provider32 is applied; focused provider/public-resolution/migration/conformance
 checks pass. Public CLI/Python products and package gates pass in the bounded
-scope; one strict Metal scalar comparison and old-history policy await owner
-decisions. See the activation receipt.
+scope; one exact Metal scalar result is separately owner-accepted and preserving prior
+image histories is an agreed deviation. See the activation receipt.
 Work issues: #944 and #980. CASA oracle: casatasks 6.7.6.14 / casatools 6.7.6-14.
 
 ## Approved decision
@@ -68,7 +68,7 @@ The [activation receipt](../../resources/casa-compat/evidence/tclean-numbering-a
 records all20 native product/preservation rows passing,19/20 selected scalar
 rows passing the original limits, and Python package gates of632 editable,632
 wheel and99 fresh-sdist tests passing. Raw failures and fixture repairs remain
-recorded. The full native gate is running. No pending exception is accepted.
+recorded. The full native gate is running. Both separate decisions are recorded in that receipt.
 This is bounded activation evidence, not whole-task equivalence.
 
 ## Authority and durable evidence
