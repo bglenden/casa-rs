@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "record": "tclean-signed-clipped-and-explicit-empty-user-masks",
+  "date": "2026-11-01",
+  "native_revision": "086a67f1d425035e206f77bf58329f59dddf9d5a",
+  "binary_sha256": "0df69ff55fb452e9e5b6f012b309cfbbdd593e368f2c2ffdbb7334e634f9214c",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "state": "All38 scoped paired rows pass; focused/integration/memory/clippy gates pass; final normal gate  in progress",
+  "scope": "Standard single-term Stokes-I MFS: inside, upper clip, wholly outside, negative lower clip, reversed corners and explicit empty CRTF file at pblimit0.2/-0.1 on CPU64/CPU32/Metal32. Public Python also clips then starts a fresh numbered empty mask, preserving older files.",
+  "changes": "MaskBox/request/domain signedi64 bounds; intersection in existing materialization; empty unions allowed; internal serde-default flag preserves explicit-empty intent. New explicit mask cannot silently reuse persisted mask during bounded restart. Existing controller/publication route unchanged.",
+  "external_contract": "No CASA parameter/default/signature/provider-bundle change",
+  "memory": "Same four64bit coordinates per box and one fixed provenance bool. Existing charged support allocation unchanged; removes final support scan. Existing retained-mask counting law passes.",
+  "raw_receipts": {
+    "oracle": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/oracle/receipt.json",
+      "sha256": "c6ec2c26cba21ccf080a392f95aa662c41372d4c8ce016278704a52016aae458",
+      "rows": 12
+    },
+    "baseline32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/baseline32/receipt.json",
+      "sha256": "c2e5a83a0417059b3b60d27a665e659a1c21e7629145382b66c51a57086de98c",
+      "rows": 12
+    },
+    "candidate-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/candidate-cpu64/receipt.json",
+      "sha256": "d02f6102df2f2b3157452311883e013c4ae4296451e6ba2d0b1f351f05498e52",
+      "rows": 12,
+      "passed": 12
+    },
+    "candidate-cpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/candidate-cpu32/receipt.json",
+      "sha256": "8d6395c1fbe37075fd77cdc2d84653054858938a51d71ec69da1290cf60384fa",
+      "rows": 12,
+      "passed": 12
+    },
+    "candidate-gpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/candidate-gpu32/receipt.json",
+      "sha256": "081766d1ca62285a38b4c45816a61147c78976aca2395d77a009bec33a403ed4",
+      "rows": 12,
+      "passed": 12
+    },
+    "python-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/python-cpu64/receipt.json",
+      "sha256": "d94be4b955ec12f0b3dd1902dedfe976204f2e5816816bf971df1a760ce419c8",
+      "rows": 2,
+      "passed": 2
+    }
+  },
+  "checks": "All seven product inventories, validity masks, finite support, NRMS1e-3/sumwt5e-5, recorded units/Stokes/frames/WCS/restfreq and beam checks; exact iterdone/nmajordone/stopcode; zero model for empty support. Public Python also checks two selected numeric scalars at original limits and exact old-file preservation. No threshold overrides.",
+  "focused": "Four intended red failures then same four green. Deconv mask6+zero/support1+1; app reader7/domains2/restart15/boundaries2/mask memory1; entire imagerT1 61 passed; touched3crate clippy/dependencies/fmt pass. Routine optional-field invariant-test repair retained original failure and proves defaultFalse/explicitTrue without weakening other fields.",
+  "upstream": {
+    "casa_source": "61020062cee290f5466cffed5ec5032e0c7a3434:SDMaskHandler.cc121-220 initializeszero/skipsinvalidregions",
+    "casacore_source": "3dd6f3f23417b9cf42314f8967fc84d0dd29dc49:LCBox.cc213-241 clipsbounds",
+    "version_scope": "These are local upstream source pins; executed oracle build is recorded separately."
+  },
+  "visual": "All required products in36 CLI cases inspected on shared CASA/native scales with separately labelled differences; public Python contact sheet also inspected. Masks/support agree exactly; no new structured discrepancy beyond retained bounded product differences.",
+  "review": "Independent prepared-patch review and final committed-source/paired-evidence review: no actionable findings. CLI36 rows gate products/counts, not numeric scalar returns; Python2 rows explicitly gate two selected scalars. Actual model identity unexposed.",
+  "full_native_gate": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/mask-boxes-20261101/checks/combined-quick.log",
+  "archive": {
+    "state": "Pending verified NAS archive"
+  },
+  "unfinished": [
+    "Fractional/world/general CRTF regions and multiple mask images",
+    "New masks on occupied default-restart outputs",
+    "Other masking modes/control gaps and combinations",
+    "Broader returns/metadata/selection/representative task acceptance"
+  ],
+  "authority": "Existing native equivalence implementation scope; no new deviation or acceptance reduction"
+}
