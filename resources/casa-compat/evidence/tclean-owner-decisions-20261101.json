@@ -157,5 +157,5 @@
   },
   "task_status": "Unfinished: these decisions do not close tclean or waive other gates",
   "authority": "Explicit owner replies in this chat on2026-11-01",
-  "independent_review": "Separate-agent reviews support both scoped decisions; Oracle Pro was usage-limited, not a review pass"
+  "independent_review": "Separate-agent reviews support both scoped decisions; no additional external review was submitted or counted as a pass"
 }

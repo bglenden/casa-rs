@@ -119,7 +119,7 @@
     "Plot recipe handles dirty-run CLEAN-mask absence only when absent in both; asymmetric absence asserts. Original CPU64 science receipt was reused unchanged.",
     "Only plotting processes disable CASA data auto-update in memory to avoid startup downloads; no user config or science outputs changed."
   ],
-  "review": "Independent prepared-patch and final committed-source/paired-evidence reviews found no actionable findings. Shared nmajor domain\u22121,0,positive is implemented; standard-MFS evidence does not establish universal mode or complete return-record parity. Actual model identity unexposed.",
+  "review": "Independent prepared-patch and final committed-source/paired-evidence reviews found no actionable findings. Shared nmajor domain\u22121,0,positive is implemented; standard-MFS evidence does not establish universal mode or complete return-record parity.",
   "visual": "All present products in18 CLI and2 Python pairs inspected on shared CASA/native scales with labelled differences; dirty CLEAN-mask absence explicit.",
   "full_native_gate": {
     "native_revision": "c64f13cb09054b080fe8b228a5f2c02c99bfd486",

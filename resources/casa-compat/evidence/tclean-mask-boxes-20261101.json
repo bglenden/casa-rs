@@ -57,7 +57,7 @@
     "version_scope": "These are local upstream source pins; executed oracle build is recorded separately."
   },
   "visual": "All required products in36 CLI cases inspected on shared CASA/native scales with separately labelled differences; public Python contact sheet also inspected. Masks/support agree exactly; no new structured discrepancy beyond retained bounded product differences.",
-  "review": "Independent prepared-patch review and final committed-source/paired-evidence review: no actionable findings. CLI36 rows gate products/counts, not numeric scalar returns; Python2 rows explicitly gate two selected scalars. Actual model identity unexposed.",
+  "review": "Independent prepared-patch review and final committed-source/paired-evidence review: no actionable findings. CLI36 rows gate products/counts, not numeric scalar returns; Python2 rows explicitly gate two selected scalars.",
   "full_native_gate": {
     "native_revision": "086a67f1d425035e206f77bf58329f59dddf9d5a",
     "passed": 4710,

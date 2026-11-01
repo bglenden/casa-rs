@@ -158,8 +158,6 @@
       "codelets": "0n1fv_NEON; verified with nm without -g"
     },
     "independent_review": {
-      "requested_model": "Astra Medium",
-      "actual_identity": "unexposed",
       "outcome": "no actionable adoption findings",
       "notes": "three old strict physical-count controls made explicit; default-inclusive continuation separated (3 reported, 6 actual); documentation finding fixed"
     }

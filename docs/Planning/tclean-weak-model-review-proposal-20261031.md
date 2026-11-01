@@ -82,7 +82,7 @@ basis's Float narrowing; it is **not runtime visibility-prediction
 verification**. That remains a separate task obligation.
 
 An independent separate-agent review found this specific proposal suitable
-for an owner decision. Oracle Pro is usage-limited and supplied no review.
+for an owner decision. No additional external review was submitted.
 The measured [comparison figure](/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/t2-standard-mtmfs-current/cpu32-model-tt1-failure.png)
 and raw failed verdict are retained.
 

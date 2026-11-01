@@ -67,11 +67,11 @@ A verified durable source/patch/gate copy is preserved on NAS under
   A subsequent residual-unit correction at `2851c6dcdc` passes the original
   checks in three scoped backend probes. The original failures remain recorded,
   and final-source/public-provider verification is still required.
-- [Oracle review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
+- [Independent review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
   recommends the scoped semantic fix after inspecting pinned public baseline code
-  and supplied local changes. Displayed model was GPT-6 Pro; Astra identity was
-  not exposed. Separate-agent review of the prepared patch and repaired warning/
-  fixture findings has no outstanding finding. Review advice is not owner approval.
+  and supplied local changes. Separate review of the prepared patch and repaired
+  warning/fixture findings has no outstanding finding. Review advice is not owner
+  approval.
 
 After approval, apply this exact candidate, rebuild the extension and selected
 task binary coherently, verify real kwargs/profile/draft/Mapping/save-reload paths

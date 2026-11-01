@@ -1759,7 +1759,7 @@
     "memory": "Actual host-plus-device scratch law passed in candidate and control; identified and repaired a separately uncharged Vec<Slot> host ring allocation.",
     "broader_gate": "109 tests: 103 passed, six Metal selected-observation versus observation-batch route-law failures at the existing 1e-6 bound. Not a green gate or a GPU-versus-CPU science acceptance.",
     "science": "Compact candidate products pass recorded finite, mask, NRMS, beam and sumwt checks. Ordinary refim_point candidate passes NRMS/masks/finite/sumwt but fails beam axis/position-angle limits, as does its control. Not full scientific acceptance.",
-    "independent_review": "Separate agent reviewed retained ring charge/counting law with no actionable findings. Exact reviewer model identifier unavailable; no Oracle Pro review was submitted because higher power was unavailable.",
+    "independent_review": "Separate agent reviewed retained ring charge/counting law with no actionable findings. No additional external review was submitted.",
     "limits": "Small standard-MFS niter0 W1 only; no representative T2, deconvolution or whole-task acceptance. Raw grouping bounds were not established for arbitrary CF gains/Taylor powers. Candidate removed, no tolerance changed."
   },
   "durable_archive": "/Volumes/home/casa-rs/tclean/20261031/grouped-spread-experiment-20261031.tar"

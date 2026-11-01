@@ -342,7 +342,7 @@
     "proposed_case_specific_limit": 1e-06,
     "delete_tt1_counterexample_relative_difference": 4.026152245397515e-05,
     "limit_scope": "Exact identity-bound published-model review; no general weak-coefficient waiver and no runtime prediction pass",
-    "review": "Separate-agent review supports owner consideration; Oracle Pro usage-limited, not a review pass",
+    "review": "Separate-agent review supports owner consideration; no additional external review was submitted or counted as a pass",
     "model_review_measurement_sha256": "2e3e0f013e545ef8c35f00fae54e688e59fa1b8aac2de9aaa28b3b3f68e5f8f8"
   },
   "separate_pending_weight_rule": "docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md; no activation or new verdict",
@@ -390,8 +390,6 @@
     "post_archive_note_sha256": "3fc4fffd1b070fd61321b4c3e06828def58f5330f1e42f0ea944846c93910dfb"
   },
   "review_provenance": {
-    "requested_model_effort": "Astra Medium",
-    "actual_model_effort": "Runtime identity not exposed",
-    "Oracle_Pro": "Usage limited; no external Pro review was submitted or counted as a pass"
+    "external_review": "No additional external review was submitted or counted as a pass"
   }
 }

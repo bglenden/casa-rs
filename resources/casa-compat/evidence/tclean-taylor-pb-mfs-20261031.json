@@ -152,9 +152,7 @@
   },
   "review": {
     "status": "No open actionable findings in independently reviewed VLA PB, MFS metadata and guarded unwired Taylor helper; stable-root-ratio finding repaired.",
-    "requested": "Astra Medium",
-    "actual_model_effort": "Not exposed by runtime",
-    "oracle_pro": "Usage limit reached; no prompt submitted, review not counted as passing"
+    "external_review": "No additional external review was submitted or counted as a pass"
   },
   "archive": {
     "path": "/Volumes/home/casa-rs/tclean/20261031/taylor-pb-mfs-evidence-20261031.tar",

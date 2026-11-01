@@ -118,13 +118,12 @@ separately agreed. New-image history remains required.
   `/Volumes/GLENDENNING/casa-rs-evidence/if/IF-8/` for fast reuse. Do not
   count a test name, skipped run or raw failed comparison as passing evidence.
 
-The [Oracle review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
-used the local `~/.agents/skills/oracle/SKILL.md` skill and displayed GPT-6 Pro; Astra identity was not exposed. The handoff agent was
-GPT-6.1 Terra; effort was not exposed. Separate-agent review model identities
-were not exposed. Treat review as evidence, not as owner approval.
+An [independent review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
+examined the selector proposal. Treat its findings as evidence, not as owner
+approval.
 
-The attached `f027` worktree is this chat's active workspace; it cannot safely
-be removed while the chat is attached. The main checkout also had pre-existing
+The `f027` worktree was attached to the previous chat at handoff; verify that
+no chat or process still uses it before removing it. The main checkout also had pre-existing
 untracked `apps/casars-mac/.gui-test` data and `casa`, `data`, `ms` symlinks;
 these are unrelated to this work and were preserved. Recheck attachments and
 processes before later worktree cleanup.

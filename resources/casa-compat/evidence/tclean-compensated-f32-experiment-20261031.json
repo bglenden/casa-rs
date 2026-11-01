@@ -22,8 +22,7 @@
   },
   "review": {
     "independent": "Separate agent reviewed GPU lifetime/error/reset paths and CPU arithmetic/merge/accounting; all actionable findings repaired, including CPU-only unsigned test arithmetic.",
-    "requested_configuration": "Astra Medium requested for fresh CPU implementation/review agents; actual model identity not exposed to them.",
-    "oracle_pro": "Signed-in Brian Glendenning Pro rechecked; strongest power locked with Usage limit reached. No prompt submitted and no substitute review claimed."
+    "external_review": "No additional external review was submitted or counted as a pass."
   },
   "cases": {
     "compact": {
@@ -7132,9 +7131,7 @@
     "implementation": "Experimental feature and naive f32 alternatives removed; CPU/GPU correction always enabled for f32, f64 unchanged. Provider31 defaults the existing Hogbom policy to casa-inclusive, retaining explicit strict.",
     "normal_acceptance": "Passed4672 workspace tests,44 skips; doctests/clippy/architecture/CLI21/perf-tools755+307; editable/wheel632+15skip each, sdist99 after isolated-target repair. See tclean-adopted-defaults-20261031.json. Moving-source spectral increment is a separate f64-shared open metadata gap; no full T2 or entire-task acceptance.",
     "independent_review": {
-      "result": "No actionable adoption code findings; final record/proposal wording repaired.",
-      "requested_configuration": "Astra Medium",
-      "actual_model_identity": "not exposed"
+      "result": "No actionable adoption code findings; final record/proposal wording repaired."
     }
   }
 }

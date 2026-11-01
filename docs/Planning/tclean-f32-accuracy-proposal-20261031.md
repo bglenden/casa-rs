@@ -120,8 +120,8 @@ The [current receipt](../../resources/casa-compat/evidence/tclean-approved-resta
 binds raw receipts, revisions and the verified NAS archive (112,691,200
 bytes, SHA256 59f0ef88a3809bb845e411fbb45d6f825f108570aa32ad0f10b133f90dc3272d).
 The earlier representative-model receipt and its raw failure remain intact.
-Oracle Pro was usage-limited, not a review pass; separate-agent reviews
-found no remaining actionable findings within these bounded changes.
+Separate-agent reviews found no remaining actionable findings within these
+bounded changes. No additional external review was obtained at that stage.
 
 The next scalar slice is implemented at `fd7b8e7b2d`: final maxpsfsidelobe
 and cyclethreshold now report statistics already measured by the native
@@ -197,16 +197,16 @@ native `given()` invariant for direct profiles while retaining normalized values
 that direct finding is resolved. Further review found provider projection still
 sends normalized non-quantity values. Root's full Python call-chain audit also
 found normalized-only snapshot/Mapping paths. The direct-profile invariant fix is checkpointed at021eb134bc; the private
-imager-restoration attempt remains unaccepted and uncommitted despite its green
-scoped tests. Exact source/patch/tests/failure logs
+imager-restoration attempt remains unaccepted despite its green scoped tests.
+It was checkpointed at `50d565e372` and removed from the active tree. Exact
+source/patch/tests/failure logs
 are verified on NAS in `attempted-provenance-repair-20261101.tar` (SHA256
 `79011af1efe1625c7615f7e827a4c904930e50a44846bba6139b85b1f776b82a`)
 and `attempted-provenance-context-20261101.tar` (SHA256
 `c8ead239a1eea8618f5b770aecafcf1a356a81b9ac9a26e4d25cab4f22fbb942`).
-The completed [Oracle review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
+The completed [independent review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
 recommends a tclean-scoped revision2 Identity concept for each selector. It
-inspected pinned public baseline code and supplied local changes; displayed
-configuration was GPT-6 Pro, not a verified Astra identity. The concrete
+inspected pinned public baseline code and supplied local changes. The concrete
 [provider33 proposal](tclean-numeric-selection-contract-proposal-20261101.md)
 is unapplied and awaits owner approval. Its native cloned-catalog transport
 corpus passes; separate review cleared the prepared patch and warning/fixture
@@ -297,8 +297,7 @@ with SHA-2569e55d997b060f172f20b1c59c3ef1a1e6c59492b79707868adf5cd6ccf031450.
 The next code slice matches CASA's Taylor-frequency narrowing, then rechecks
 the spatial MT-MFS weights without relaxing their comparison.
 
-Oracle Pro was rechecked and remained unavailable due the signed-in
-account's usage limit. No prompt or substitute review was submitted.
+No additional external review was submitted at that stage.
 
 ## Evidence and change boundary
 
@@ -379,8 +378,5 @@ remaining tclean acceptance work remain required.
 
 The owner approved this experiment and removed the prior permission gate for
 future local performance experiments on 2026-10-31. Production adoption still
-follows `AGENTS.md`. On 2026-10-31,
-the signed-in Brian Glendenning Pro account's model picker reported a usage
-limit and locked higher power. The Oracle Pro design review was therefore
-not submitted; no other model was silently substituted. This is an access
-gap, not approval or a review pass.
+follows `AGENTS.md`. No additional external design review was submitted at
+that stage, so it is not counted as a review pass or owner approval.

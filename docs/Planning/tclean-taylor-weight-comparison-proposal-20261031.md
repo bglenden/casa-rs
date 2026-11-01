@@ -108,8 +108,8 @@ measurement implementation, not scientific equivalence by themselves.
 
 Independent separate-agent review found the scale defensible with these
 guards and the weak-domain restriction. The review's stable-ratio arithmetic
-finding was repaired. Oracle Pro remains usage-limited; no external Pro review
-was submitted or counted as passing.
+finding was repaired. No additional external review was submitted or counted
+as passing.
 
 Integration tests cover eligibility at and immediately above `1e-3`, and
 ensure invalid guards cannot authorize a numeric override. Saved-product
