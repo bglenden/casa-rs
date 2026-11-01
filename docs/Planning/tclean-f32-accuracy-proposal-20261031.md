@@ -109,7 +109,7 @@ outside its support. CASA continues and republishes native products.
 celestial rotations, so all six CASA-to-native continuation rows pass on
 CPU/f64, CPU/f32 and Metal/f32. Coordinate serialization/math is unchanged;
 real grid differences still refuse. Focused tests and independent review
-pass; its full normal gate is running. This is a bounded restart result,
+pass; its full normal gate passes 4,695 tests/45 skips plus the normal checks. This is a bounded restart result,
 not general persistence or whole-task equivalence.
 
 The [current receipt](../../resources/casa-compat/evidence/tclean-approved-restart-20261101.json)
@@ -119,12 +119,29 @@ The earlier representative-model receipt and its raw failure remain intact.
 Oracle Pro was usage-limited, not a review pass; separate-agent reviews
 found no remaining actionable findings within these bounded changes.
 
-The next implementation slice reports the already measured final
-maxpsfsidelobe and cyclethreshold values instead of NaN. Four small CASA
-oracles are recorded; the native baseline fails those scalar checks. They
-also expose an explicit all-zero mask refusal, where CASA stops with code7;
-that is a separate unfinished repair. Restart numbering, false calc controls,
-broader modes/masks/selection, remaining returns and representative/runtime
+The next scalar slice is implemented at `fd7b8e7b2d`: final maxpsfsidelobe
+and cyclethreshold now report statistics already measured by the native
+controller. No solver arithmetic, array rereads, persisted report formats,
+CASA signatures or provider defaults change. Correctly shaped all-zero image
+masks now use the existing zero-mask stop path instead of failing.
+
+[Fresh pinned evidence](../../resources/casa-compat/evidence/tclean-scalars-empty-mask-20261101.json)
+passes 18 small lifecycle cases across CPU/f64, CPU/f32 and Metal/f32: ordinary
+iterations, global-threshold stop, immediate threshold stop, empty mask,
+seeded restart and nonzero-model restart under a persisted empty mask. The
+two scalar keys pass their recorded limits; iteration/major/stop integers
+match exactly and all recorded scientific products pass. Shared-scale plots
+are inspected. Focused laws/T1 tests, clippy and independent review pass;
+the full normal gate is running. Verified NAS archive is 31,488,000 bytes,
+SHA256 73ed966f5947bad37e78ea842f6125a68dcd35768d91c9b51c9114433427aa6b.
+
+The next bounded slice prepares restart=False numbering while the public
+provider still refuses False. Its native preview and exact contract 31->32
+activation proposal are being verified before asking for the required
+provider-contract approval. No defaults or signatures would change.
+Coordinated outliers and occupied chosen orphan namespaces remain unfinished.
+Dirty/outside-mask peaks, seeded model flux and multi-plane returns,
+false calc controls, broader masks/modes/selection and representative/runtime
 prediction acceptance still need work. `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction

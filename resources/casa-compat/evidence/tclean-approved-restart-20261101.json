@@ -275,8 +275,14 @@
     "metadata_revision": "4eed0a990e",
     "metadata_full_gate": "4692 workspace tests passed,45skipped; doctests, clippy, architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307subtests",
     "coordinate_focused": "9restart unit+17direction unit+5T1restart pass; touched clippy and diffcheck pass; independent review no actionable findings",
-    "coordinate_full_gate": "running at ed9f6d1b3c; final gate log retained separately"
+    "coordinate_full_gate": "4695 workspace tests passed,45 skipped; doctests,workspace clippy,architecture/SPDX/fmt,21 CLIhosts,875 performance-tool tests/307 subtests",
+    "coordinate_full_gate_nas": {
+      "path": "/Volumes/home/casa-rs/tclean/20261031/restart-grid-quick-20261101.log",
+      "sha256": "1f0e3f8017899d84104953f989d7735eff0e369d83d36eed0b5cf05618e75ab9",
+      "source_revision": "ed9f6d1b3ca095ed7de015859c4ba9b4f29e3168",
+      "passed": "4695workspace tests/45skips; doctests,clippy,architecture/SPDX/fmt,21CLIhosts,875performance-tooltests/307subtests"
+    }
   },
   "visual_review": "Shared-scale default-PB cross comparison and nontrivial persisted-mask plots inspected; difference scales disclosed. No broad visual or task-wide acceptance inferred.",
-  "next": "Finish scalar returns maxpsfsidelobe/final cyclethreshold; newly exposed explicit zero-mask refusal, then numbering/stage reuse, remaining modes/selection/returns and representative acceptance."
+  "next": "Final scalar returns and explicit zero-mask repair now have18 passing paired cases at fd7b8e7b2d; see tclean-scalars-empty-mask-20261101.json. Continue numbering/stage reuse and remaining gaps."
 }
