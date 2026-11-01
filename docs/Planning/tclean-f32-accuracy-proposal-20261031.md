@@ -103,6 +103,16 @@ product checks with the existing explicit CASA-inclusive Hogbom option;
 the W case additionally opts out of its separately refused PB frequency.
 Those are component checks, not ordinary-default task completion.
 
+A further fixed-field ALMA check at 512 square also passes all six products,
+exact inventory/masks/finite support, the recorded WCS-value and unit checks,
+beam and sumwt limits with normal PB production enabled. The selection is
+2,970 rows, 6,082,560 nominal correlation-channel samples and 4,423,680
+unflagged samples before weight/data validity. Corrected CPU/f32 PSF NRMS is
+8.9450e-7 and GPU/f32 8.7665e-7; the CPU/f64 control is 9.4305e-8. This
+larger dirty-image check still does not complete the representative matrix,
+nonlinear solver, persistence or entire-task acceptance. Single wall-time
+observations are not performance comparisons.
+
 All 4,671 workspace tests pass with the experimental feature (44 skipped),
 as do doctests, workspace clippy, architecture/SPDX/format checks and CLI
 conformance for 21 binaries. The former six Metal route failures pass at
@@ -152,6 +162,30 @@ Fresh broader probes also record pre-existing default Hogbom counting, PB
 coverage and MT-MFS weight-product gaps shared by the f64 control. They
 remain tclean work; none is silently accepted as a deviation. The Hogbom
 decision is separate in `tclean-hogbom-default-proposal-20261031.md`.
+
+The next MT-MFS diagnostic identifies an actual first divergence, without
+changing native code: CASA `MultiTermFTNew::modifyVisWeights` narrows channel
+frequencies to Float before forming the Taylor variable; native narrows
+only after forming it. On the selected LSRK ALMA channels, both output WCS
+reference frequencies are exactly 341400000000 Hz. The native expression
+predicts sumwt.tt1=0, while CASA's narrowing predicts 0.008119745566 before
+publication, which rounds exactly to the observed 0.008119745180 Float.
+This supports a bounded follow-up to match the upstream factor and then
+remeasure the spatial weight products. It is not yet a weight.tt1 repair or
+passing scientific evidence; no new tolerance or exception is accepted.
+The W PB refusal is likewise traceable to missing native coverage of CASA's
+VLA_NVSS branch below its open 1 GHz L-band interval, rather than a reason
+to treat the default request as unsupported by CASA.
+
+These new products, raw receipts and exact recipes are in the separately
+reread-verified NAS supplement
+`compensated-f32-fixed512-20261031.tar`, SHA-256
+`c641b97ba5145db890f1561a562e58c9bac61c7ff97b6cff8ce1b5d7c0e9bc8c`.
+The previously verified archive retains the exact tested source. The two
+owner decisions above remain pending; neither production/default change
+has been applied. After adoption, the next action is to remove the f32
+experimental gate and naive path, run the affected normal-build/package
+checks, then address these remaining tclean gaps.
 
 Oracle Pro was rechecked and remained unavailable due the signed-in
 account's usage limit. No prompt or substitute review was submitted.
