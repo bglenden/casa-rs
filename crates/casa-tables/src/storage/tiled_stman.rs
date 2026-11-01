@@ -4186,6 +4186,30 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                 }
 
                 let copy_started = profile.then(Instant::now);
+                if !plan.row_major {
+                    let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
+                    for channel in overlap_start..overlap_end {
+                        let src_channel = channel - tile_channel_start;
+                        let dst_channel = channel - plan.channel_start;
+                        let source_offset = src_channel
+                            .saturating_mul(shape.tile_corr_count)
+                            .saturating_mul(plan.elem_size);
+                        for selected in &row_patches {
+                            let row_in_tile = selected.pos_in_cube % row_tile_size;
+                            let src_byte =
+                                row_in_tile * row_tile_nelem * plan.elem_size + source_offset;
+                            let dst_byte = (dst_channel * plan.row_count + selected.out_idx)
+                                * plan.corr_count
+                                * plan.elem_size;
+                            values_bytes[dst_byte..dst_byte + copy_bytes]
+                                .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                        }
+                    }
+                    if let Some(started) = copy_started {
+                        profile_copy += started.elapsed();
+                    }
+                    continue;
+                }
                 for selected in &row_patches {
                     let row_in_tile = selected.pos_in_cube % row_tile_size;
                     let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
@@ -13655,6 +13679,98 @@ mod tests {
             "full 8-channel row should touch all four channel tiles for this shape"
         );
 
+        reset_table_cache_budget_for_tests();
+    }
+
+    /// A tile can pad its correlation axis beyond the cell's correlations.
+    #[test]
+    fn selected_channel_copy_handles_padded_correlation_tiles() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        for primitive in [PrimitiveType::Complex32, PrimitiveType::Bool] {
+            let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                "DATA",
+                primitive,
+                vec![2, 6],
+            )])
+            .expect("schema");
+            let mut table = Table::with_schema(schema);
+            for row in 0..5 {
+                let values = (0..6)
+                    .flat_map(|channel| (0..2).map(move |corr| row * 100 + channel * 10 + corr));
+                let array = match primitive {
+                    PrimitiveType::Complex32 => ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(
+                            IxDyn(&[2, 6]).f(),
+                            values
+                                .map(|value| Complex32::new(value as f32, -(value as f32)))
+                                .collect(),
+                        )
+                        .expect("values"),
+                    ),
+                    PrimitiveType::Bool => ArrayValue::Bool(
+                        ArrayD::from_shape_vec(
+                            IxDyn(&[2, 6]).f(),
+                            values.map(|value| value % 3 == 0).collect(),
+                        )
+                        .expect("flags"),
+                    ),
+                    _ => unreachable!(),
+                };
+                table
+                    .add_row(RecordValue::new(vec![RecordField::new(
+                        "DATA",
+                        Value::Array(array),
+                    )]))
+                    .expect("row");
+            }
+            let dir = tempdir().expect("tempdir");
+            let root = dir.path().join("padded.table");
+            std::fs::create_dir_all(&root).expect("directory");
+            table
+                .save(
+                    TableOptions::new(&root)
+                        .with_data_manager(DataManagerKind::TiledShapeStMan)
+                        .with_tile_shape(vec![4, 2, 2]),
+                )
+                .expect("save");
+            let (_, header) = read_tiled_header(&root.join("table.f0")).expect("header");
+            assert!(
+                header.cubes.iter().any(|cube| {
+                    cube.cube_shape.first() == Some(&2) && cube.tile_shape == [4, 2, 2]
+                }),
+                "the correlation tile is padded"
+            );
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            let rows = [4, 0, 2, 0];
+            let mut data = Vec::new();
+            let mut flags = Vec::new();
+            let destination = match primitive {
+                PrimitiveType::Complex32 => SelectedArray2DCellsMut::Complex32(&mut data),
+                PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut flags),
+                _ => unreachable!(),
+            };
+            reopened
+                .fill_array_cells_2d_channel_range_typed_uncached("DATA", &rows, 1, 4, destination)
+                .expect("read")
+                .expect("defined cells");
+            for channel in 1..5 {
+                for (index, row) in rows.iter().enumerate() {
+                    for corr in 0..2 {
+                        let value = row * 100 + channel * 10 + corr;
+                        let output = ((channel - 1) * rows.len() + index) * 2 + corr;
+                        match primitive {
+                            PrimitiveType::Complex32 => assert_eq!(
+                                data[output],
+                                Complex32::new(value as f32, -(value as f32))
+                            ),
+                            PrimitiveType::Bool => assert_eq!(flags[output], value % 3 == 0),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
         reset_table_cache_budget_for_tests();
     }
 
