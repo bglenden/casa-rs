@@ -2,7 +2,7 @@
 (<code>casa-observation</code>): MeasurementSet v2 here, MSv4 with the <code>msv4</code>
 feature.</p>
 <p><a href="fn.open.html" title="fn casa_ms::observation_io::open"><code>open</code></a> is the one place a store’s format is chosen: it returns the
-shared [<code>Observation</code>] interface, behind which each adapter dispatches
+shared <a href="../../casa_observation/cursor/trait.Observation.html" title="trait casa_observation::cursor::Observation"><code>Observation</code></a> interface, behind which each adapter dispatches
 once per bind and once per batch. Algorithm code takes that interface
 and imports neither concrete adapter.</p>
 <p><strong>Trial status.</strong> These adapters implement the cases the MSv2/MSv4

@@ -2,7 +2,7 @@
     source: &amp;<a class="struct" href="https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html" title="struct std::path::Path">Path</a>,
     destination: &amp;<a class="struct" href="https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html" title="struct std::path::Path">Path</a>,
     options: &amp;<a class="struct" href="struct.ConversionOptions.html" title="struct casa_ms::observation_io::convert::ConversionOptions">ConversionOptions</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.ConversionReport.html" title="struct casa_ms::observation_io::convert::ConversionReport">ConversionReport</a>, ObservationError&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Convert the store at <code>source</code> (MSv2 or MSv4) into a new MSv4
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.ConversionReport.html" title="struct casa_ms::observation_io::convert::ConversionReport">ConversionReport</a>, <a class="enum" href="../../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Convert the store at <code>source</code> (MSv2 or MSv4) into a new MSv4
 processing set at <code>destination</code>.</p>
 <p>Every partition becomes one dataset with the selected data groups
 (<a href="struct.ConversionOptions.html#structfield.data_groups" title="field casa_ms::observation_io::convert::ConversionOptions::data_groups"><code>ConversionOptions::data_groups</code></a>) and the antennas its baselines name
@@ -29,9 +29,9 @@ states it. Partitions are
 converted <a href="struct.ConversionOptions.html#structfield.workers" title="field casa_ms::observation_io::convert::ConversionOptions::workers"><code>ConversionOptions::workers</code></a> at a time; nothing appears at
 <code>destination</code> until every dataset is complete.</p>
 <h2 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h2>
-<p>All before anything is written: [<code>ObservationError::InvalidRequest</code>]
+<p>All before anything is written: <a href="../../../casa_observation/enum.ObservationError.html#variant.InvalidRequest" title="variant casa_observation::ObservationError::InvalidRequest"><code>ObservationError::InvalidRequest</code></a>
 naming the first loss not accepted, or an ephemeris that does not cover
-a dataset’s times; [<code>ObservationError::Unsupported</code>] for fields whose
+a dataset’s times; <a href="../../../casa_observation/enum.ObservationError.html#variant.Unsupported" title="variant casa_observation::ObservationError::Unsupported"><code>ObservationError::Unsupported</code></a> for fields whose
 direction is a polynomial in time, a dataset whose fields follow
 different ephemerides (or only some one), or radial velocities that are
 not geocentric. Otherwise, any error opening or reading the source or

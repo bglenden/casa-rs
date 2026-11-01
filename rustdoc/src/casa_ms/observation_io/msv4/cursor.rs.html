@@ -376,242 +376,281 @@
 <a href=#376 id=376 data-nosnippet>376</a>    }
 <a href=#377 id=377 data-nosnippet>377</a>}
 <a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="kw">impl </span>Msv4Cursor&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>, times: usize) -&gt; BatchHeader {
-<a href=#381 id=381 data-nosnippet>381</a>        BatchHeader {
-<a href=#382 id=382 data-nosnippet>382</a>            partition: <span class="self">self</span>.partition,
-<a href=#383 id=383 data-nosnippet>383</a>            data_group: <span class="self">self</span>.resolved.data_group,
-<a href=#384 id=384 data-nosnippet>384</a>            times,
-<a href=#385 id=385 data-nosnippet>385</a>            first_channel: <span class="self">self</span>.channels.start,
-<a href=#386 id=386 data-nosnippet>386</a>            channels: <span class="self">self</span>.channels.len(),
-<a href=#387 id=387 data-nosnippet>387</a>            correlations: <span class="self">self</span>.resolved.correlations.clone(),
-<a href=#388 id=388 data-nosnippet>388</a>            roles: <span class="self">self</span>.roles,
-<a href=#389 id=389 data-nosnippet>389</a>            weights_per_channel: <span class="bool-val">true</span>,
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="comment">// An MSv4 holds no sigmas: its weights are always the stored ones.
-<a href=#391 id=391 data-nosnippet>391</a>            </span>weight_rule: WeightRule::Stored,
-<a href=#392 id=392 data-nosnippet>392</a>            interval: Sharing::Constant(<span class="self">self</span>.dataset.interval_s.unwrap_or(f64::NAN)),
-<a href=#393 id=393 data-nosnippet>393</a>            exposure: Sharing::PerSample,
-<a href=#394 id=394 data-nosnippet>394</a>        }
-<a href=#395 id=395 data-nosnippet>395</a>    }
-<a href=#396 id=396 data-nosnippet>396</a>
-<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">fn </span>fill_batch(
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#399 id=399 data-nosnippet>399</a>        buffers: <span class="kw-2">&amp;mut </span>BatchBuffers,
-<a href=#400 id=400 data-nosnippet>400</a>        rows: Range&lt;usize&gt;,
-<a href=#401 id=401 data-nosnippet>401</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>dataset = <span class="self">self</span>.dataset;
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>arrays = <span class="self">self</span>.arrays;
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>catalogue = <span class="kw-2">&amp;</span><span class="self">self</span>.observation.catalogue;
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>capacity = buffers.capacity_bytes();
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>header = <span class="self">self</span>.header(rows.len());
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span><span class="kw-2">mut </span>fill = buffers.begin(header, catalogue)<span class="question-mark">?</span>;
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>batch = fill.arrays();
-<a href=#409 id=409 data-nosnippet>409</a>        batch
-<a href=#410 id=410 data-nosnippet>410</a>            .time_offsets_s
-<a href=#411 id=411 data-nosnippet>411</a>            .extend_from_slice(<span class="kw-2">&amp;</span>dataset.times[rows.clone()]);
-<a href=#412 id=412 data-nosnippet>412</a>        batch.field.extend_from_slice(<span class="kw-2">&amp;</span>arrays.fields[rows.clone()]);
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">if </span><span class="self">self</span>.roles.scan {
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">let </span>scans = dataset.scans.as_ref().expect(<span class="string">"checked at binding"</span>);
-<a href=#415 id=415 data-nosnippet>415</a>            batch.scan.extend_from_slice(<span class="kw-2">&amp;</span>scans[rows.clone()]);
+<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// Fold stored flags and non-finite weights into the delivered flags.
+<a href=#380 id=380 data-nosnippet>380</a>/// Validate the external boolean bytes before the straight-line fill.
+<a href=#381 id=381 data-nosnippet>381</a></span><span class="kw">fn </span>fold_full_flags(
+<a href=#382 id=382 data-nosnippet>382</a>    bytes: <span class="kw-2">&amp;</span>[u8],
+<a href=#383 id=383 data-nosnippet>383</a>    weights: <span class="kw-2">&amp;</span>[f32],
+<a href=#384 id=384 data-nosnippet>384</a>    target: <span class="kw-2">&amp;mut </span>Vec&lt;bool&gt;,
+<a href=#385 id=385 data-nosnippet>385</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">if </span>bytes.len() != weights.len() {
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"FLAG and WEIGHT lengths differ"</span>));
+<a href=#388 id=388 data-nosnippet>388</a>    }
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>byte) = bytes.iter().find(|&amp;&amp;byte| byte &gt; <span class="number">1</span>) {
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="macro">format!</span>(<span class="string">"FLAG byte {byte} is not a boolean"</span>)));
+<a href=#391 id=391 data-nosnippet>391</a>    }
+<a href=#392 id=392 data-nosnippet>392</a>    target.extend(
+<a href=#393 id=393 data-nosnippet>393</a>        bytes
+<a href=#394 id=394 data-nosnippet>394</a>            .iter()
+<a href=#395 id=395 data-nosnippet>395</a>            .zip(weights)
+<a href=#396 id=396 data-nosnippet>396</a>            .map(|(<span class="kw-2">&amp;</span>byte, <span class="kw-2">&amp;</span>weight)| byte != <span class="number">0 </span>|| !weight.is_finite()),
+<a href=#397 id=397 data-nosnippet>397</a>    );
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="prelude-val">Ok</span>(())
+<a href=#399 id=399 data-nosnippet>399</a>}
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a><span class="kw">impl </span>Msv4Cursor&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>, times: usize) -&gt; BatchHeader {
+<a href=#403 id=403 data-nosnippet>403</a>        BatchHeader {
+<a href=#404 id=404 data-nosnippet>404</a>            partition: <span class="self">self</span>.partition,
+<a href=#405 id=405 data-nosnippet>405</a>            data_group: <span class="self">self</span>.resolved.data_group,
+<a href=#406 id=406 data-nosnippet>406</a>            times,
+<a href=#407 id=407 data-nosnippet>407</a>            first_channel: <span class="self">self</span>.channels.start,
+<a href=#408 id=408 data-nosnippet>408</a>            channels: <span class="self">self</span>.channels.len(),
+<a href=#409 id=409 data-nosnippet>409</a>            correlations: <span class="self">self</span>.resolved.correlations.clone(),
+<a href=#410 id=410 data-nosnippet>410</a>            roles: <span class="self">self</span>.roles,
+<a href=#411 id=411 data-nosnippet>411</a>            weights_per_channel: <span class="bool-val">true</span>,
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="comment">// An MSv4 holds no sigmas: its weights are always the stored ones.
+<a href=#413 id=413 data-nosnippet>413</a>            </span>weight_rule: WeightRule::Stored,
+<a href=#414 id=414 data-nosnippet>414</a>            interval: Sharing::Constant(<span class="self">self</span>.dataset.interval_s.unwrap_or(f64::NAN)),
+<a href=#415 id=415 data-nosnippet>415</a>            exposure: Sharing::PerSample,
 <a href=#416 id=416 data-nosnippet>416</a>        }
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="self">self</span>.decode_batch(batch, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(groups) = <span class="self">self</span>.groups.as_mut() {
-<a href=#419 id=419 data-nosnippet>419</a>            groups.fragments(
-<a href=#420 id=420 data-nosnippet>420</a>                rows,
-<a href=#421 id=421 data-nosnippet>421</a>                catalogue.partition(<span class="self">self</span>.partition).baselines.len(),
-<a href=#422 id=422 data-nosnippet>422</a>                <span class="kw-2">&amp;mut </span>batch.fragments,
-<a href=#423 id=423 data-nosnippet>423</a>            );
-<a href=#424 id=424 data-nosnippet>424</a>        }
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="self">self</span>.counters.delivered_bytes += batch.values.len() * size_of::&lt;Complex32&gt;()
-<a href=#426 id=426 data-nosnippet>426</a>            + batch.flags.len()
-<a href=#427 id=427 data-nosnippet>427</a>            + batch.weights.len() * size_of::&lt;f32&gt;()
-<a href=#428 id=428 data-nosnippet>428</a>            + (batch.uvw.len() + batch.centroid_offsets_s.len() + batch.exposure_s.len())
-<a href=#429 id=429 data-nosnippet>429</a>                * size_of::&lt;f64&gt;();
-<a href=#430 id=430 data-nosnippet>430</a>        fill.finish()<span class="question-mark">?</span>;
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">if </span>buffers.capacity_bytes() &gt; capacity {
-<a href=#432 id=432 data-nosnippet>432</a>            <span class="self">self</span>.counters.buffer_growths += <span class="number">1</span>;
-<a href=#433 id=433 data-nosnippet>433</a>        }
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="prelude-val">Ok</span>(())
-<a href=#435 id=435 data-nosnippet>435</a>    }
-<a href=#436 id=436 data-nosnippet>436</a>
-<a href=#437 id=437 data-nosnippet>437</a>    <span class="doccomment">/// Decode each requested variable's subset of times `rows` into
-<a href=#438 id=438 data-nosnippet>438</a>    /// `batch`: in place when every product is delivered, else the whole
-<a href=#439 id=439 data-nosnippet>439</a>    /// correlation axis into scratch and the delivered products gathered.
-<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">fn </span>decode_batch(
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#442 id=442 data-nosnippet>442</a>        batch: <span class="kw-2">&amp;mut </span>BatchArrays,
-<a href=#443 id=443 data-nosnippet>443</a>        rows: <span class="kw-2">&amp;</span>Range&lt;usize&gt;,
-<a href=#444 id=444 data-nosnippet>444</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>(dataset, arrays) = (<span class="self">self</span>.dataset, <span class="self">self</span>.arrays);
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="kw">let </span>options = <span class="kw-2">&amp;</span><span class="self">self</span>.observation.options;
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="kw">let </span>roles = <span class="self">self</span>.roles;
-<a href=#448 id=448 data-nosnippet>448</a>        <span class="kw">let </span>channels = <span class="kw-2">&amp;</span><span class="self">self</span>.channels;
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">let </span>stored = arrays.values.shape()[<span class="number">3</span>] <span class="kw">as </span>usize;
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span>keep = <span class="self">self</span>.resolved.correlations.indices();
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span>counters = <span class="kw-2">&amp;mut </span><span class="self">self</span>.counters;
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="kw">let </span>scratch = <span class="kw-2">&amp;mut </span><span class="self">self</span>.scratch;
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">let </span><span class="kw-2">mut </span>prepare = |wanted: bool,
-<a href=#454 id=454 data-nosnippet>454</a>                           array: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Array&lt;FilesystemStore&gt;&gt;,
-<a href=#455 id=455 data-nosnippet>455</a>                           extent: Extent|
-<a href=#456 id=456 data-nosnippet>456</a>         -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;ArraySubset&gt;, ObservationError&gt; {
-<a href=#457 id=457 data-nosnippet>457</a>            <span class="kw">let </span>(<span class="bool-val">true</span>, <span class="prelude-val">Some</span>(array)) = (wanted, array) <span class="kw">else </span>{
-<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#459 id=459 data-nosnippet>459</a>            };
-<a href=#460 id=460 data-nosnippet>460</a>            <span class="kw">let </span>subset = subset(array, rows.clone(), channels, extent);
-<a href=#461 id=461 data-nosnippet>461</a>            counters.read_calls += <span class="number">1</span>;
-<a href=#462 id=462 data-nosnippet>462</a>            counters.decode_units += chunk_cost(array, <span class="kw-2">&amp;</span>subset)<span class="question-mark">?</span>.<span class="number">0</span>;
-<a href=#463 id=463 data-nosnippet>463</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(subset))
-<a href=#464 id=464 data-nosnippet>464</a>        };
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(roles.values, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.values), Extent::Cube)<span class="question-mark">? </span>{
-<a href=#466 id=466 data-nosnippet>466</a>            <span class="kw">let </span>target = <span class="kw">match </span>keep {
-<a href=#467 id=467 data-nosnippet>467</a>                <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;mut </span>batch.values,
-<a href=#468 id=468 data-nosnippet>468</a>                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw-2">&amp;mut </span>scratch.values,
-<a href=#469 id=469 data-nosnippet>469</a>            };
-<a href=#470 id=470 data-nosnippet>470</a>            target.resize(subset.num_elements_usize(), Complex32::default());
-<a href=#471 id=471 data-nosnippet>471</a>            decode_into(<span class="kw-2">&amp;</span>arrays.values, <span class="string">"complex64"</span>, <span class="kw-2">&amp;</span>subset, target, options)<span class="question-mark">?</span>;
-<a href=#472 id=472 data-nosnippet>472</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep {
-<a href=#473 id=473 data-nosnippet>473</a>                gather(<span class="kw-2">&amp;</span>scratch.values, stored, keep, <span class="kw-2">&amp;mut </span>batch.values);
-<a href=#474 id=474 data-nosnippet>474</a>                counters.copied_elements += batch.values.len();
-<a href=#475 id=475 data-nosnippet>475</a>            }
-<a href=#476 id=476 data-nosnippet>476</a>        }
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="comment">// The stored weights come first whenever flags are read: XRADIO pads
-<a href=#478 id=478 data-nosnippet>478</a>        // a cell no row filled with NaN and leaves its FLAG false, so a
-<a href=#479 id=479 data-nosnippet>479</a>        // non-finite stored weight marks an absent acquisition, and every
-<a href=#480 id=480 data-nosnippet>480</a>        // delivered flag carries it.
-<a href=#481 id=481 data-nosnippet>481</a>        </span><span class="kw">let </span>weights_in_place = roles.weights &amp;&amp; keep.is_none();
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(
-<a href=#483 id=483 data-nosnippet>483</a>            roles.weights || roles.flags,
-<a href=#484 id=484 data-nosnippet>484</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.weights),
-<a href=#485 id=485 data-nosnippet>485</a>            Extent::Cube,
-<a href=#486 id=486 data-nosnippet>486</a>        )<span class="question-mark">? </span>{
-<a href=#487 id=487 data-nosnippet>487</a>            <span class="kw">let </span>target = <span class="kw">if </span>weights_in_place {
-<a href=#488 id=488 data-nosnippet>488</a>                <span class="kw-2">&amp;mut </span>batch.weights
-<a href=#489 id=489 data-nosnippet>489</a>            } <span class="kw">else </span>{
-<a href=#490 id=490 data-nosnippet>490</a>                <span class="kw-2">&amp;mut </span>scratch.weights
+<a href=#417 id=417 data-nosnippet>417</a>    }
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">fn </span>fill_batch(
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#421 id=421 data-nosnippet>421</a>        buffers: <span class="kw-2">&amp;mut </span>BatchBuffers,
+<a href=#422 id=422 data-nosnippet>422</a>        rows: Range&lt;usize&gt;,
+<a href=#423 id=423 data-nosnippet>423</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span>dataset = <span class="self">self</span>.dataset;
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span>arrays = <span class="self">self</span>.arrays;
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>catalogue = <span class="kw-2">&amp;</span><span class="self">self</span>.observation.catalogue;
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>capacity = buffers.capacity_bytes();
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>header = <span class="self">self</span>.header(rows.len());
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span><span class="kw-2">mut </span>fill = buffers.begin(header, catalogue)<span class="question-mark">?</span>;
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">let </span>batch = fill.arrays();
+<a href=#431 id=431 data-nosnippet>431</a>        batch
+<a href=#432 id=432 data-nosnippet>432</a>            .time_offsets_s
+<a href=#433 id=433 data-nosnippet>433</a>            .extend_from_slice(<span class="kw-2">&amp;</span>dataset.times[rows.clone()]);
+<a href=#434 id=434 data-nosnippet>434</a>        batch.field.extend_from_slice(<span class="kw-2">&amp;</span>arrays.fields[rows.clone()]);
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">if </span><span class="self">self</span>.roles.scan {
+<a href=#436 id=436 data-nosnippet>436</a>            <span class="kw">let </span>scans = dataset.scans.as_ref().expect(<span class="string">"checked at binding"</span>);
+<a href=#437 id=437 data-nosnippet>437</a>            batch.scan.extend_from_slice(<span class="kw-2">&amp;</span>scans[rows.clone()]);
+<a href=#438 id=438 data-nosnippet>438</a>        }
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="self">self</span>.decode_batch(batch, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(groups) = <span class="self">self</span>.groups.as_mut() {
+<a href=#441 id=441 data-nosnippet>441</a>            groups.fragments(
+<a href=#442 id=442 data-nosnippet>442</a>                rows,
+<a href=#443 id=443 data-nosnippet>443</a>                catalogue.partition(<span class="self">self</span>.partition).baselines.len(),
+<a href=#444 id=444 data-nosnippet>444</a>                <span class="kw-2">&amp;mut </span>batch.fragments,
+<a href=#445 id=445 data-nosnippet>445</a>            );
+<a href=#446 id=446 data-nosnippet>446</a>        }
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="self">self</span>.counters.delivered_bytes += batch.values.len() * size_of::&lt;Complex32&gt;()
+<a href=#448 id=448 data-nosnippet>448</a>            + batch.flags.len()
+<a href=#449 id=449 data-nosnippet>449</a>            + batch.weights.len() * size_of::&lt;f32&gt;()
+<a href=#450 id=450 data-nosnippet>450</a>            + (batch.uvw.len() + batch.centroid_offsets_s.len() + batch.exposure_s.len())
+<a href=#451 id=451 data-nosnippet>451</a>                * size_of::&lt;f64&gt;();
+<a href=#452 id=452 data-nosnippet>452</a>        fill.finish()<span class="question-mark">?</span>;
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">if </span>buffers.capacity_bytes() &gt; capacity {
+<a href=#454 id=454 data-nosnippet>454</a>            <span class="self">self</span>.counters.buffer_growths += <span class="number">1</span>;
+<a href=#455 id=455 data-nosnippet>455</a>        }
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="prelude-val">Ok</span>(())
+<a href=#457 id=457 data-nosnippet>457</a>    }
+<a href=#458 id=458 data-nosnippet>458</a>
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="doccomment">/// Decode each requested variable's subset of times `rows` into
+<a href=#460 id=460 data-nosnippet>460</a>    /// `batch`: in place when every product is delivered, else the whole
+<a href=#461 id=461 data-nosnippet>461</a>    /// correlation axis into scratch and the delivered products gathered.
+<a href=#462 id=462 data-nosnippet>462</a>    </span><span class="kw">fn </span>decode_batch(
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#464 id=464 data-nosnippet>464</a>        batch: <span class="kw-2">&amp;mut </span>BatchArrays,
+<a href=#465 id=465 data-nosnippet>465</a>        rows: <span class="kw-2">&amp;</span>Range&lt;usize&gt;,
+<a href=#466 id=466 data-nosnippet>466</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span>(dataset, arrays) = (<span class="self">self</span>.dataset, <span class="self">self</span>.arrays);
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="kw">let </span>options = <span class="kw-2">&amp;</span><span class="self">self</span>.observation.options;
+<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw">let </span>roles = <span class="self">self</span>.roles;
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="kw">let </span>channels = <span class="kw-2">&amp;</span><span class="self">self</span>.channels;
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>stored = arrays.values.shape()[<span class="number">3</span>] <span class="kw">as </span>usize;
+<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>keep = <span class="self">self</span>.resolved.correlations.indices();
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span>counters = <span class="kw-2">&amp;mut </span><span class="self">self</span>.counters;
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">let </span>scratch = <span class="kw-2">&amp;mut </span><span class="self">self</span>.scratch;
+<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">let </span><span class="kw-2">mut </span>prepare = |wanted: bool,
+<a href=#476 id=476 data-nosnippet>476</a>                           array: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Array&lt;FilesystemStore&gt;&gt;,
+<a href=#477 id=477 data-nosnippet>477</a>                           extent: Extent|
+<a href=#478 id=478 data-nosnippet>478</a>         -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;ArraySubset&gt;, ObservationError&gt; {
+<a href=#479 id=479 data-nosnippet>479</a>            <span class="kw">let </span>(<span class="bool-val">true</span>, <span class="prelude-val">Some</span>(array)) = (wanted, array) <span class="kw">else </span>{
+<a href=#480 id=480 data-nosnippet>480</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#481 id=481 data-nosnippet>481</a>            };
+<a href=#482 id=482 data-nosnippet>482</a>            <span class="kw">let </span>subset = subset(array, rows.clone(), channels, extent);
+<a href=#483 id=483 data-nosnippet>483</a>            counters.read_calls += <span class="number">1</span>;
+<a href=#484 id=484 data-nosnippet>484</a>            counters.decode_units += chunk_cost(array, <span class="kw-2">&amp;</span>subset)<span class="question-mark">?</span>.<span class="number">0</span>;
+<a href=#485 id=485 data-nosnippet>485</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(subset))
+<a href=#486 id=486 data-nosnippet>486</a>        };
+<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(roles.values, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.values), Extent::Cube)<span class="question-mark">? </span>{
+<a href=#488 id=488 data-nosnippet>488</a>            <span class="kw">let </span>target = <span class="kw">match </span>keep {
+<a href=#489 id=489 data-nosnippet>489</a>                <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;mut </span>batch.values,
+<a href=#490 id=490 data-nosnippet>490</a>                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw-2">&amp;mut </span>scratch.values,
 <a href=#491 id=491 data-nosnippet>491</a>            };
-<a href=#492 id=492 data-nosnippet>492</a>            target.resize(subset.num_elements_usize(), <span class="number">0.0</span>);
-<a href=#493 id=493 data-nosnippet>493</a>            decode_into(<span class="kw-2">&amp;</span>arrays.weights, <span class="string">"float32"</span>, <span class="kw-2">&amp;</span>subset, target, options)<span class="question-mark">?</span>;
-<a href=#494 id=494 data-nosnippet>494</a>        }
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(roles.flags, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.flags), Extent::Cube)<span class="question-mark">? </span>{
-<a href=#496 id=496 data-nosnippet>496</a>            scratch.flag_bytes.resize(subset.num_elements_usize(), <span class="number">0</span>);
-<a href=#497 id=497 data-nosnippet>497</a>            decode_into(
-<a href=#498 id=498 data-nosnippet>498</a>                <span class="kw-2">&amp;</span>arrays.flags,
-<a href=#499 id=499 data-nosnippet>499</a>                <span class="string">"bool"</span>,
-<a href=#500 id=500 data-nosnippet>500</a>                <span class="kw-2">&amp;</span>subset,
-<a href=#501 id=501 data-nosnippet>501</a>                <span class="kw-2">&amp;mut </span>scratch.flag_bytes,
-<a href=#502 id=502 data-nosnippet>502</a>                options,
-<a href=#503 id=503 data-nosnippet>503</a>            )<span class="question-mark">?</span>;
-<a href=#504 id=504 data-nosnippet>504</a>            <span class="kw">let </span>weights: <span class="kw-2">&amp;</span>[f32] = <span class="kw">if </span>weights_in_place {
-<a href=#505 id=505 data-nosnippet>505</a>                <span class="kw-2">&amp;</span>batch.weights
-<a href=#506 id=506 data-nosnippet>506</a>            } <span class="kw">else </span>{
-<a href=#507 id=507 data-nosnippet>507</a>                <span class="kw-2">&amp;</span>scratch.weights
-<a href=#508 id=508 data-nosnippet>508</a>            };
-<a href=#509 id=509 data-nosnippet>509</a>            <span class="kw">let </span>flag = |byte: u8, weight: f32| <span class="kw">match </span>byte {
-<a href=#510 id=510 data-nosnippet>510</a>                <span class="number">0 </span>=&gt; <span class="prelude-val">Ok</span>(!weight.is_finite()),
-<a href=#511 id=511 data-nosnippet>511</a>                <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>),
-<a href=#512 id=512 data-nosnippet>512</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(invalid(<span class="macro">format!</span>(<span class="string">"FLAG byte {byte} is not a boolean"</span>))),
+<a href=#492 id=492 data-nosnippet>492</a>            target.resize(subset.num_elements_usize(), Complex32::default());
+<a href=#493 id=493 data-nosnippet>493</a>            decode_into(<span class="kw-2">&amp;</span>arrays.values, <span class="string">"complex64"</span>, <span class="kw-2">&amp;</span>subset, target, options)<span class="question-mark">?</span>;
+<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep {
+<a href=#495 id=495 data-nosnippet>495</a>                gather(<span class="kw-2">&amp;</span>scratch.values, stored, keep, <span class="kw-2">&amp;mut </span>batch.values);
+<a href=#496 id=496 data-nosnippet>496</a>                counters.copied_elements += batch.values.len();
+<a href=#497 id=497 data-nosnippet>497</a>            }
+<a href=#498 id=498 data-nosnippet>498</a>        }
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="comment">// The stored weights come first whenever flags are read: XRADIO pads
+<a href=#500 id=500 data-nosnippet>500</a>        // a cell no row filled with NaN and leaves its FLAG false, so a
+<a href=#501 id=501 data-nosnippet>501</a>        // non-finite stored weight marks an absent acquisition, and every
+<a href=#502 id=502 data-nosnippet>502</a>        // delivered flag carries it.
+<a href=#503 id=503 data-nosnippet>503</a>        </span><span class="kw">let </span>weights_in_place = roles.weights &amp;&amp; keep.is_none();
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(
+<a href=#505 id=505 data-nosnippet>505</a>            roles.weights || roles.flags,
+<a href=#506 id=506 data-nosnippet>506</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.weights),
+<a href=#507 id=507 data-nosnippet>507</a>            Extent::Cube,
+<a href=#508 id=508 data-nosnippet>508</a>        )<span class="question-mark">? </span>{
+<a href=#509 id=509 data-nosnippet>509</a>            <span class="kw">let </span>target = <span class="kw">if </span>weights_in_place {
+<a href=#510 id=510 data-nosnippet>510</a>                <span class="kw-2">&amp;mut </span>batch.weights
+<a href=#511 id=511 data-nosnippet>511</a>            } <span class="kw">else </span>{
+<a href=#512 id=512 data-nosnippet>512</a>                <span class="kw-2">&amp;mut </span>scratch.weights
 <a href=#513 id=513 data-nosnippet>513</a>            };
-<a href=#514 id=514 data-nosnippet>514</a>            <span class="kw">let </span>cells = scratch
-<a href=#515 id=515 data-nosnippet>515</a>                .flag_bytes
-<a href=#516 id=516 data-nosnippet>516</a>                .chunks_exact(stored)
-<a href=#517 id=517 data-nosnippet>517</a>                .zip(weights.chunks_exact(stored));
-<a href=#518 id=518 data-nosnippet>518</a>            <span class="kw">match </span>keep {
-<a href=#519 id=519 data-nosnippet>519</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#520 id=520 data-nosnippet>520</a>                    <span class="kw">for </span>(<span class="kw-2">&amp;</span>byte, <span class="kw-2">&amp;</span>weight) <span class="kw">in </span>scratch.flag_bytes.iter().zip(weights) {
-<a href=#521 id=521 data-nosnippet>521</a>                        batch.flags.push(flag(byte, weight)<span class="question-mark">?</span>);
-<a href=#522 id=522 data-nosnippet>522</a>                    }
-<a href=#523 id=523 data-nosnippet>523</a>                }
-<a href=#524 id=524 data-nosnippet>524</a>                <span class="prelude-val">Some</span>(keep) <span class="kw">if </span><span class="self">self</span>.resolved.flags_from_all =&gt; {
-<a href=#525 id=525 data-nosnippet>525</a>                    <span class="kw">for </span>(bytes, weights) <span class="kw">in </span>cells {
-<a href=#526 id=526 data-nosnippet>526</a>                        <span class="kw">let </span><span class="kw-2">mut </span>any = <span class="bool-val">false</span>;
-<a href=#527 id=527 data-nosnippet>527</a>                        <span class="kw">for </span>(<span class="kw-2">&amp;</span>byte, <span class="kw-2">&amp;</span>weight) <span class="kw">in </span>bytes.iter().zip(weights) {
-<a href=#528 id=528 data-nosnippet>528</a>                            any |= flag(byte, weight)<span class="question-mark">?</span>;
-<a href=#529 id=529 data-nosnippet>529</a>                        }
-<a href=#530 id=530 data-nosnippet>530</a>                        batch.flags.extend(std::iter::repeat_n(any, keep.len()));
-<a href=#531 id=531 data-nosnippet>531</a>                    }
-<a href=#532 id=532 data-nosnippet>532</a>                }
-<a href=#533 id=533 data-nosnippet>533</a>                <span class="prelude-val">Some</span>(keep) =&gt; {
-<a href=#534 id=534 data-nosnippet>534</a>                    <span class="kw">for </span>(bytes, weights) <span class="kw">in </span>cells {
-<a href=#535 id=535 data-nosnippet>535</a>                        <span class="kw">for </span><span class="kw-2">&amp;</span>product <span class="kw">in </span>keep {
-<a href=#536 id=536 data-nosnippet>536</a>                            batch.flags.push(flag(bytes[product], weights[product])<span class="question-mark">?</span>);
-<a href=#537 id=537 data-nosnippet>537</a>                        }
-<a href=#538 id=538 data-nosnippet>538</a>                    }
-<a href=#539 id=539 data-nosnippet>539</a>                }
-<a href=#540 id=540 data-nosnippet>540</a>            }
-<a href=#541 id=541 data-nosnippet>541</a>            counters.copied_elements += scratch.flag_bytes.len();
-<a href=#542 id=542 data-nosnippet>542</a>        }
-<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">if let </span>(<span class="bool-val">true</span>, <span class="prelude-val">Some</span>(keep)) = (roles.weights, keep) {
-<a href=#544 id=544 data-nosnippet>544</a>            gather(<span class="kw-2">&amp;</span>scratch.weights, stored, keep, <span class="kw-2">&amp;mut </span>batch.weights);
-<a href=#545 id=545 data-nosnippet>545</a>            counters.copied_elements += batch.weights.len();
-<a href=#546 id=546 data-nosnippet>546</a>        }
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">for </span>(wanted, array, extent, target) <span class="kw">in </span>[
-<a href=#548 id=548 data-nosnippet>548</a>            (roles.uvw, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.uvw), Extent::Uvw, <span class="kw-2">&amp;mut </span>batch.uvw),
-<a href=#549 id=549 data-nosnippet>549</a>            (
-<a href=#550 id=550 data-nosnippet>550</a>                roles.time_centroid,
-<a href=#551 id=551 data-nosnippet>551</a>                dataset.centroid.as_ref(),
-<a href=#552 id=552 data-nosnippet>552</a>                Extent::TimeBaseline,
-<a href=#553 id=553 data-nosnippet>553</a>                <span class="kw-2">&amp;mut </span>batch.centroid_offsets_s,
-<a href=#554 id=554 data-nosnippet>554</a>            ),
-<a href=#555 id=555 data-nosnippet>555</a>            (
-<a href=#556 id=556 data-nosnippet>556</a>                roles.exposure,
-<a href=#557 id=557 data-nosnippet>557</a>                dataset.exposure.as_ref(),
-<a href=#558 id=558 data-nosnippet>558</a>                Extent::TimeBaseline,
-<a href=#559 id=559 data-nosnippet>559</a>                <span class="kw-2">&amp;mut </span>batch.exposure_s,
-<a href=#560 id=560 data-nosnippet>560</a>            ),
-<a href=#561 id=561 data-nosnippet>561</a>        ] {
-<a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(wanted, array, extent)<span class="question-mark">? </span>{
-<a href=#563 id=563 data-nosnippet>563</a>                target.resize(subset.num_elements_usize(), <span class="number">0.0</span>);
-<a href=#564 id=564 data-nosnippet>564</a>                decode_into(
-<a href=#565 id=565 data-nosnippet>565</a>                    array.expect(<span class="string">"prepared"</span>),
-<a href=#566 id=566 data-nosnippet>566</a>                    <span class="string">"float64"</span>,
-<a href=#567 id=567 data-nosnippet>567</a>                    <span class="kw-2">&amp;</span>subset,
-<a href=#568 id=568 data-nosnippet>568</a>                    target,
-<a href=#569 id=569 data-nosnippet>569</a>                    options,
-<a href=#570 id=570 data-nosnippet>570</a>                )<span class="question-mark">?</span>;
-<a href=#571 id=571 data-nosnippet>571</a>            }
-<a href=#572 id=572 data-nosnippet>572</a>        }
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="prelude-val">Ok</span>(())
-<a href=#574 id=574 data-nosnippet>574</a>    }
-<a href=#575 id=575 data-nosnippet>575</a>}
-<a href=#576 id=576 data-nosnippet>576</a>
-<a href=#577 id=577 data-nosnippet>577</a><span class="kw">impl </span>VisibilityCursor <span class="kw">for </span>Msv4Cursor&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.observation.catalogue
-<a href=#580 id=580 data-nosnippet>580</a>    }
-<a href=#581 id=581 data-nosnippet>581</a>
-<a href=#582 id=582 data-nosnippet>582</a>    <span class="kw">fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>PartitionEstimate {
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.estimate
-<a href=#584 id=584 data-nosnippet>584</a>    }
-<a href=#585 id=585 data-nosnippet>585</a>
-<a href=#586 id=586 data-nosnippet>586</a>    <span class="kw">fn </span>step(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Step {
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = <span class="self">self</span>.groups.as_mut().and_then(GroupIndex::pop_end) {
-<a href=#588 id=588 data-nosnippet>588</a>            <span class="kw">return </span>Step::GroupEnd(key);
-<a href=#589 id=589 data-nosnippet>589</a>        }
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">if </span><span class="self">self</span>.resolved.times.next_from(<span class="self">self</span>.next_time).is_none() {
-<a href=#591 id=591 data-nosnippet>591</a>            Step::End
-<a href=#592 id=592 data-nosnippet>592</a>        } <span class="kw">else </span>{
-<a href=#593 id=593 data-nosnippet>593</a>            Step::Batch
-<a href=#594 id=594 data-nosnippet>594</a>        }
-<a href=#595 id=595 data-nosnippet>595</a>    }
-<a href=#596 id=596 data-nosnippet>596</a>
-<a href=#597 id=597 data-nosnippet>597</a>    <span class="kw">fn </span>fill(<span class="kw-2">&amp;mut </span><span class="self">self</span>, buffers: <span class="kw-2">&amp;mut </span>BatchBuffers) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(rows) = <span class="self">self
-<a href=#599 id=599 data-nosnippet>599</a>            </span>.resolved
-<a href=#600 id=600 data-nosnippet>600</a>            .times
-<a href=#601 id=601 data-nosnippet>601</a>            .block_at(<span class="self">self</span>.next_time, <span class="self">self</span>.estimate.times_per_batch)
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">else </span>{
-<a href=#603 id=603 data-nosnippet>603</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
-<a href=#604 id=604 data-nosnippet>604</a>                reason: <span class="string">"fill after the end of the traversal"</span>.to_string(),
-<a href=#605 id=605 data-nosnippet>605</a>            });
-<a href=#606 id=606 data-nosnippet>606</a>        };
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="self">self</span>.fill_batch(buffers, rows.clone())<span class="question-mark">?</span>;
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="self">self</span>.next_time = rows.end;
-<a href=#609 id=609 data-nosnippet>609</a>        <span class="self">self</span>.counters.batches += <span class="number">1</span>;
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="prelude-val">Ok</span>(())
-<a href=#611 id=611 data-nosnippet>611</a>    }
-<a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">fn </span>counters(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IoCounters {
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="self">self</span>.counters
-<a href=#615 id=615 data-nosnippet>615</a>    }
-<a href=#616 id=616 data-nosnippet>616</a>}
+<a href=#514 id=514 data-nosnippet>514</a>            target.resize(subset.num_elements_usize(), <span class="number">0.0</span>);
+<a href=#515 id=515 data-nosnippet>515</a>            decode_into(<span class="kw-2">&amp;</span>arrays.weights, <span class="string">"float32"</span>, <span class="kw-2">&amp;</span>subset, target, options)<span class="question-mark">?</span>;
+<a href=#516 id=516 data-nosnippet>516</a>        }
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(roles.flags, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.flags), Extent::Cube)<span class="question-mark">? </span>{
+<a href=#518 id=518 data-nosnippet>518</a>            scratch.flag_bytes.resize(subset.num_elements_usize(), <span class="number">0</span>);
+<a href=#519 id=519 data-nosnippet>519</a>            decode_into(
+<a href=#520 id=520 data-nosnippet>520</a>                <span class="kw-2">&amp;</span>arrays.flags,
+<a href=#521 id=521 data-nosnippet>521</a>                <span class="string">"bool"</span>,
+<a href=#522 id=522 data-nosnippet>522</a>                <span class="kw-2">&amp;</span>subset,
+<a href=#523 id=523 data-nosnippet>523</a>                <span class="kw-2">&amp;mut </span>scratch.flag_bytes,
+<a href=#524 id=524 data-nosnippet>524</a>                options,
+<a href=#525 id=525 data-nosnippet>525</a>            )<span class="question-mark">?</span>;
+<a href=#526 id=526 data-nosnippet>526</a>            <span class="kw">let </span>weights: <span class="kw-2">&amp;</span>[f32] = <span class="kw">if </span>weights_in_place {
+<a href=#527 id=527 data-nosnippet>527</a>                <span class="kw-2">&amp;</span>batch.weights
+<a href=#528 id=528 data-nosnippet>528</a>            } <span class="kw">else </span>{
+<a href=#529 id=529 data-nosnippet>529</a>                <span class="kw-2">&amp;</span>scratch.weights
+<a href=#530 id=530 data-nosnippet>530</a>            };
+<a href=#531 id=531 data-nosnippet>531</a>            <span class="kw">let </span>flag = |byte: u8, weight: f32| <span class="kw">match </span>byte {
+<a href=#532 id=532 data-nosnippet>532</a>                <span class="number">0 </span>=&gt; <span class="prelude-val">Ok</span>(!weight.is_finite()),
+<a href=#533 id=533 data-nosnippet>533</a>                <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>),
+<a href=#534 id=534 data-nosnippet>534</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(invalid(<span class="macro">format!</span>(<span class="string">"FLAG byte {byte} is not a boolean"</span>))),
+<a href=#535 id=535 data-nosnippet>535</a>            };
+<a href=#536 id=536 data-nosnippet>536</a>            <span class="kw">let </span>cells = scratch
+<a href=#537 id=537 data-nosnippet>537</a>                .flag_bytes
+<a href=#538 id=538 data-nosnippet>538</a>                .chunks_exact(stored)
+<a href=#539 id=539 data-nosnippet>539</a>                .zip(weights.chunks_exact(stored));
+<a href=#540 id=540 data-nosnippet>540</a>            <span class="kw">match </span>keep {
+<a href=#541 id=541 data-nosnippet>541</a>                <span class="prelude-val">None </span>=&gt; fold_full_flags(<span class="kw-2">&amp;</span>scratch.flag_bytes, weights, <span class="kw-2">&amp;mut </span>batch.flags)<span class="question-mark">?</span>,
+<a href=#542 id=542 data-nosnippet>542</a>                <span class="prelude-val">Some</span>(keep) <span class="kw">if </span><span class="self">self</span>.resolved.flags_from_all =&gt; {
+<a href=#543 id=543 data-nosnippet>543</a>                    <span class="kw">for </span>(bytes, weights) <span class="kw">in </span>cells {
+<a href=#544 id=544 data-nosnippet>544</a>                        <span class="kw">let </span><span class="kw-2">mut </span>any = <span class="bool-val">false</span>;
+<a href=#545 id=545 data-nosnippet>545</a>                        <span class="kw">for </span>(<span class="kw-2">&amp;</span>byte, <span class="kw-2">&amp;</span>weight) <span class="kw">in </span>bytes.iter().zip(weights) {
+<a href=#546 id=546 data-nosnippet>546</a>                            any |= flag(byte, weight)<span class="question-mark">?</span>;
+<a href=#547 id=547 data-nosnippet>547</a>                        }
+<a href=#548 id=548 data-nosnippet>548</a>                        batch.flags.extend(std::iter::repeat_n(any, keep.len()));
+<a href=#549 id=549 data-nosnippet>549</a>                    }
+<a href=#550 id=550 data-nosnippet>550</a>                }
+<a href=#551 id=551 data-nosnippet>551</a>                <span class="prelude-val">Some</span>(keep) =&gt; {
+<a href=#552 id=552 data-nosnippet>552</a>                    <span class="kw">for </span>(bytes, weights) <span class="kw">in </span>cells {
+<a href=#553 id=553 data-nosnippet>553</a>                        <span class="kw">for </span><span class="kw-2">&amp;</span>product <span class="kw">in </span>keep {
+<a href=#554 id=554 data-nosnippet>554</a>                            batch.flags.push(flag(bytes[product], weights[product])<span class="question-mark">?</span>);
+<a href=#555 id=555 data-nosnippet>555</a>                        }
+<a href=#556 id=556 data-nosnippet>556</a>                    }
+<a href=#557 id=557 data-nosnippet>557</a>                }
+<a href=#558 id=558 data-nosnippet>558</a>            }
+<a href=#559 id=559 data-nosnippet>559</a>            counters.copied_elements += scratch.flag_bytes.len();
+<a href=#560 id=560 data-nosnippet>560</a>        }
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">if let </span>(<span class="bool-val">true</span>, <span class="prelude-val">Some</span>(keep)) = (roles.weights, keep) {
+<a href=#562 id=562 data-nosnippet>562</a>            gather(<span class="kw-2">&amp;</span>scratch.weights, stored, keep, <span class="kw-2">&amp;mut </span>batch.weights);
+<a href=#563 id=563 data-nosnippet>563</a>            counters.copied_elements += batch.weights.len();
+<a href=#564 id=564 data-nosnippet>564</a>        }
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">for </span>(wanted, array, extent, target) <span class="kw">in </span>[
+<a href=#566 id=566 data-nosnippet>566</a>            (roles.uvw, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>arrays.uvw), Extent::Uvw, <span class="kw-2">&amp;mut </span>batch.uvw),
+<a href=#567 id=567 data-nosnippet>567</a>            (
+<a href=#568 id=568 data-nosnippet>568</a>                roles.time_centroid,
+<a href=#569 id=569 data-nosnippet>569</a>                dataset.centroid.as_ref(),
+<a href=#570 id=570 data-nosnippet>570</a>                Extent::TimeBaseline,
+<a href=#571 id=571 data-nosnippet>571</a>                <span class="kw-2">&amp;mut </span>batch.centroid_offsets_s,
+<a href=#572 id=572 data-nosnippet>572</a>            ),
+<a href=#573 id=573 data-nosnippet>573</a>            (
+<a href=#574 id=574 data-nosnippet>574</a>                roles.exposure,
+<a href=#575 id=575 data-nosnippet>575</a>                dataset.exposure.as_ref(),
+<a href=#576 id=576 data-nosnippet>576</a>                Extent::TimeBaseline,
+<a href=#577 id=577 data-nosnippet>577</a>                <span class="kw-2">&amp;mut </span>batch.exposure_s,
+<a href=#578 id=578 data-nosnippet>578</a>            ),
+<a href=#579 id=579 data-nosnippet>579</a>        ] {
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(subset) = prepare(wanted, array, extent)<span class="question-mark">? </span>{
+<a href=#581 id=581 data-nosnippet>581</a>                target.resize(subset.num_elements_usize(), <span class="number">0.0</span>);
+<a href=#582 id=582 data-nosnippet>582</a>                decode_into(
+<a href=#583 id=583 data-nosnippet>583</a>                    array.expect(<span class="string">"prepared"</span>),
+<a href=#584 id=584 data-nosnippet>584</a>                    <span class="string">"float64"</span>,
+<a href=#585 id=585 data-nosnippet>585</a>                    <span class="kw-2">&amp;</span>subset,
+<a href=#586 id=586 data-nosnippet>586</a>                    target,
+<a href=#587 id=587 data-nosnippet>587</a>                    options,
+<a href=#588 id=588 data-nosnippet>588</a>                )<span class="question-mark">?</span>;
+<a href=#589 id=589 data-nosnippet>589</a>            }
+<a href=#590 id=590 data-nosnippet>590</a>        }
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="prelude-val">Ok</span>(())
+<a href=#592 id=592 data-nosnippet>592</a>    }
+<a href=#593 id=593 data-nosnippet>593</a>}
+<a href=#594 id=594 data-nosnippet>594</a>
+<a href=#595 id=595 data-nosnippet>595</a><span class="kw">impl </span>VisibilityCursor <span class="kw">for </span>Msv4Cursor&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">fn </span>catalogue(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;Catalogue&gt; {
+<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.observation.catalogue
+<a href=#598 id=598 data-nosnippet>598</a>    }
+<a href=#599 id=599 data-nosnippet>599</a>
+<a href=#600 id=600 data-nosnippet>600</a>    <span class="kw">fn </span>estimate(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>PartitionEstimate {
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.estimate
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">fn </span>step(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Step {
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = <span class="self">self</span>.groups.as_mut().and_then(GroupIndex::pop_end) {
+<a href=#606 id=606 data-nosnippet>606</a>            <span class="kw">return </span>Step::GroupEnd(key);
+<a href=#607 id=607 data-nosnippet>607</a>        }
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">if </span><span class="self">self</span>.resolved.times.next_from(<span class="self">self</span>.next_time).is_none() {
+<a href=#609 id=609 data-nosnippet>609</a>            Step::End
+<a href=#610 id=610 data-nosnippet>610</a>        } <span class="kw">else </span>{
+<a href=#611 id=611 data-nosnippet>611</a>            Step::Batch
+<a href=#612 id=612 data-nosnippet>612</a>        }
+<a href=#613 id=613 data-nosnippet>613</a>    }
+<a href=#614 id=614 data-nosnippet>614</a>
+<a href=#615 id=615 data-nosnippet>615</a>    <span class="kw">fn </span>fill(<span class="kw-2">&amp;mut </span><span class="self">self</span>, buffers: <span class="kw-2">&amp;mut </span>BatchBuffers) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(rows) = <span class="self">self
+<a href=#617 id=617 data-nosnippet>617</a>            </span>.resolved
+<a href=#618 id=618 data-nosnippet>618</a>            .times
+<a href=#619 id=619 data-nosnippet>619</a>            .block_at(<span class="self">self</span>.next_time, <span class="self">self</span>.estimate.times_per_batch)
+<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">else </span>{
+<a href=#621 id=621 data-nosnippet>621</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::InvalidRequest {
+<a href=#622 id=622 data-nosnippet>622</a>                reason: <span class="string">"fill after the end of the traversal"</span>.to_string(),
+<a href=#623 id=623 data-nosnippet>623</a>            });
+<a href=#624 id=624 data-nosnippet>624</a>        };
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="self">self</span>.fill_batch(buffers, rows.clone())<span class="question-mark">?</span>;
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="self">self</span>.next_time = rows.end;
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="self">self</span>.counters.batches += <span class="number">1</span>;
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="prelude-val">Ok</span>(())
+<a href=#629 id=629 data-nosnippet>629</a>    }
+<a href=#630 id=630 data-nosnippet>630</a>
+<a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">fn </span>counters(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IoCounters {
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="self">self</span>.counters
+<a href=#633 id=633 data-nosnippet>633</a>    }
+<a href=#634 id=634 data-nosnippet>634</a>}
+<a href=#635 id=635 data-nosnippet>635</a>
+<a href=#636 id=636 data-nosnippet>636</a><span class="attr">#[cfg(test)]
+<a href=#637 id=637 data-nosnippet>637</a></span><span class="kw">mod </span>tests {
+<a href=#638 id=638 data-nosnippet>638</a>    <span class="kw">use </span><span class="kw">super</span>::fold_full_flags;
+<a href=#639 id=639 data-nosnippet>639</a>
+<a href=#640 id=640 data-nosnippet>640</a>    <span class="attr">#[test]
+<a href=#641 id=641 data-nosnippet>641</a>    </span><span class="kw">fn </span>full_flags_validate_bytes_and_include_nonfinite_weights() {
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">let </span><span class="kw-2">mut </span>flags = Vec::new();
+<a href=#643 id=643 data-nosnippet>643</a>        fold_full_flags(
+<a href=#644 id=644 data-nosnippet>644</a>            <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>, <span class="number">0</span>],
+<a href=#645 id=645 data-nosnippet>645</a>            <span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">1.0</span>, f32::NAN, f32::INFINITY, f32::NAN, -<span class="number">1.0</span>],
+<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw-2">&amp;mut </span>flags,
+<a href=#647 id=647 data-nosnippet>647</a>        )
+<a href=#648 id=648 data-nosnippet>648</a>        .expect(<span class="string">"valid flags"</span>);
+<a href=#649 id=649 data-nosnippet>649</a>        <span class="macro">assert_eq!</span>(flags, [<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>]);
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>error = fold_full_flags(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">2</span>], <span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">1.0</span>], <span class="kw-2">&amp;mut </span>Vec::new())
+<a href=#652 id=652 data-nosnippet>652</a>            .expect_err(<span class="string">"invalid boolean byte"</span>);
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"FLAG byte 2 is not a boolean"</span>));
+<a href=#654 id=654 data-nosnippet>654</a>    }
+<a href=#655 id=655 data-nosnippet>655</a>}
 </code></pre></div></section></main></body></html>

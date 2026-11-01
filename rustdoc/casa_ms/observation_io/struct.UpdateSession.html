@@ -2,8 +2,8 @@
 declared targets.</p>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-UpdateSession" class="impl"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#232-465">Source</a><a href="#impl-UpdateSession" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.UpdateSession.html" title="struct casa_ms::observation_io::UpdateSession">UpdateSession</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.over_msv2" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#244-251">Source</a><h4 class="code-header">pub fn <a href="#method.over_msv2" class="fn">over_msv2</a>(
     observation: <a class="struct" href="struct.Msv2Observation.html" title="struct casa_ms::observation_io::Msv2Observation">Msv2Observation</a>,
-    targets: &amp;[UpdateTarget],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, ObservationError&gt;</h4></section></summary><div class="docblock"><p>An update session over <code>observation</code>, a MeasurementSet v2 opened
+    targets: &amp;[<a class="struct" href="../../casa_observation/update/struct.UpdateTarget.html" title="struct casa_observation::update::UpdateTarget">UpdateTarget</a>],
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>An update session over <code>observation</code>, a MeasurementSet v2 opened
 already (with a grant for its index,
 <a href="struct.Msv2Observation.html#method.open_granted" title="associated function casa_ms::observation_io::Msv2Observation::open_granted"><code>Msv2Observation::open_granted</code></a>),
 writing <code>targets</code>: <a href="fn.open_update.html" title="fn casa_ms::observation_io::open_update"><code>open_update</code></a>’s session, without opening and
@@ -13,31 +13,31 @@ indexing the MeasurementSet a second time.</p>
 opened.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.over_msv4" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#261-268">Source</a><h4 class="code-header">pub fn <a href="#method.over_msv4" class="fn">over_msv4</a>(
     observation: <a class="struct" href="struct.Msv4Observation.html" title="struct casa_ms::observation_io::Msv4Observation">Msv4Observation</a>,
-    targets: &amp;[UpdateTarget],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, ObservationError&gt;</h4></section></summary><div class="docblock"><p>An update session over <code>observation</code>, an MSv4 processing set opened
+    targets: &amp;[<a class="struct" href="../../casa_observation/update/struct.UpdateTarget.html" title="struct casa_observation::update::UpdateTarget">UpdateTarget</a>],
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>An update session over <code>observation</code>, an MSv4 processing set opened
 already, writing <code>targets</code>: <a href="fn.open_update.html" title="fn casa_ms::observation_io::open_update"><code>open_update</code></a>’s session, without
 opening the processing set a second time.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>As <a href="fn.open_update.html" title="fn casa_ms::observation_io::open_update"><code>open_update</code></a>.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.observation" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#316-322">Source</a><h4 class="code-header">pub fn <a href="#method.observation" class="fn">observation</a>(&amp;self) -&gt; &amp;dyn Observation</h4></section></summary><div class="docblock"><p>The observation, for reading: the same store the updaters write.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.targets" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#326-328">Source</a><h4 class="code-header">pub fn <a href="#method.targets" class="fn">targets</a>(&amp;self) -&gt; &amp;[ResolvedTarget]</h4></section></summary><div class="docblock"><p>The declared targets as the store resolved them.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.guarantees" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#332-344">Source</a><h4 class="code-header">pub fn <a href="#method.guarantees" class="fn">guarantees</a>(&amp;self) -&gt; UpdateGuarantees</h4></section></summary><div class="docblock"><p>What this store’s updates guarantee on failure.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.observation" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#316-322">Source</a><h4 class="code-header">pub fn <a href="#method.observation" class="fn">observation</a>(&amp;self) -&gt; &amp;dyn <a class="trait" href="../../casa_observation/cursor/trait.Observation.html" title="trait casa_observation::cursor::Observation">Observation</a></h4></section></summary><div class="docblock"><p>The observation, for reading: the same store the updaters write.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.targets" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#326-328">Source</a><h4 class="code-header">pub fn <a href="#method.targets" class="fn">targets</a>(&amp;self) -&gt; &amp;[<a class="struct" href="../../casa_observation/update/struct.ResolvedTarget.html" title="struct casa_observation::update::ResolvedTarget">ResolvedTarget</a>]</h4></section></summary><div class="docblock"><p>The declared targets as the store resolved them.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.guarantees" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#332-344">Source</a><h4 class="code-header">pub fn <a href="#method.guarantees" class="fn">guarantees</a>(&amp;self) -&gt; <a class="struct" href="../../casa_observation/update/struct.UpdateGuarantees.html" title="struct casa_observation::update::UpdateGuarantees">UpdateGuarantees</a></h4></section></summary><div class="docblock"><p>What this store’s updates guarantee on failure.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.updater" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#366-418">Source</a><h4 class="code-header">pub fn <a href="#method.updater" class="fn">updater</a>(
     &amp;self,
-    request: &amp;AccessRequest,
+    request: &amp;<a class="struct" href="../../casa_observation/request/struct.AccessRequest.html" title="struct casa_observation::request::AccessRequest">AccessRequest</a>,
     targets: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn Updater + '_&gt;, ObservationError&gt;</h4></section></summary><div class="docblock"><p>An updater for the traversal <code>request</code> binds, writing the targets
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="../../casa_observation/update/trait.Updater.html" title="trait casa_observation::update::Updater">Updater</a> + '_&gt;, <a class="enum" href="../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>An updater for the traversal <code>request</code> binds, writing the targets
 numbered <code>targets</code> (positions in <a href="struct.UpdateSession.html#method.targets" title="method casa_ms::observation_io::UpdateSession::targets"><code>Self::targets</code></a>) batch for batch.</p>
 <p>Several may be live at once, each for its own times: a time split’s
-slices ([<code>casa_observation::TimeSplit</code>]), each on its own worker. An
+slices (<a href="../../casa_observation/split/struct.TimeSplit.html" title="struct casa_observation::split::TimeSplit"><code>casa_observation::TimeSplit</code></a>), each on its own worker. An
 updater claims the grid times of each variable and partition it
 writes, widened on MSv4 to whole chunk rows, so slices cut at the
 store’s natural time blocks write at once there; MSv2 updaters write
 one batch at a time.</p>
 <h5 id="errors-2"><a class="doc-anchor" href="#errors-2">§</a>Errors</h5>
-<p>[<code>ObservationError::Conflict</code>] while a live updater of this session
+<p><a href="../../casa_observation/enum.ObservationError.html#variant.Conflict" title="variant casa_observation::ObservationError::Conflict"><code>ObservationError::Conflict</code></a> while a live updater of this session
 claims some of the same times of a variable and partition (on MSv4,
-the same chunk rows); [<code>ObservationError::InvalidRequest</code>] for an
+the same chunk rows); <a href="../../casa_observation/enum.ObservationError.html#variant.InvalidRequest" title="variant casa_observation::ObservationError::InvalidRequest"><code>ObservationError::InvalidRequest</code></a> for an
 unknown target,
 two targets writing one variable (whichever wrote last would win), or
 a request the observation cannot bind; a storage error when the
@@ -45,9 +45,9 @@ store cannot be prepared for writing (MSv2: casacore’s write lock,
 a column to create).</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.write_bytes" class="method"><a class="src rightside" href="../../src/casa_ms/observation_io/update.rs.html#433-451">Source</a><h4 class="code-header">pub fn <a href="#method.write_bytes" class="fn">write_bytes</a>(
     &amp;self,
-    request: &amp;AccessRequest,
+    request: &amp;<a class="struct" href="../../casa_observation/request/struct.AccessRequest.html" title="struct casa_observation::request::AccessRequest">AccessRequest</a>,
     targets: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>, ObservationError&gt;</h4></section></summary><div class="docblock"><p>The most bytes an updater bound to <code>request</code> and the targets
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>, <a class="enum" href="../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>The most bytes an updater bound to <code>request</code> and the targets
 numbered <code>targets</code> holds while it writes a batch, besides the values
 it is given: what a pass that writes admits for it. On MSv2, the
 cells of the largest batch’s rows, built or read and merged, and the

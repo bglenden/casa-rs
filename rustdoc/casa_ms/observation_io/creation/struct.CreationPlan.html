@@ -31,7 +31,7 @@ so the plan reads them to count; otherwise it is the grids’ cells.</p>
     inputs: &amp;[<a class="struct" href="struct.CreationInput.html" title="struct casa_ms::observation_io::creation::CreationInput">CreationInput</a>],
     options: &amp;<a class="struct" href="struct.CreationOptions.html" title="struct casa_ms::observation_io::creation::CreationOptions">CreationOptions</a>,
     destination: <a class="enum" href="enum.Destination.html" title="enum casa_ms::observation_io::creation::Destination">Destination</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, ObservationError&gt;</h4></section></summary><div class="docblock"><p>Open <code>inputs</code> and plan the MeasurementSet created from them at
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="../../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>Open <code>inputs</code> and plan the MeasurementSet created from them at
 <code>destination</code>, in input order, reading what the plan must know before
 writing: each input’s losses, its pointing, its grids and, with
 padding omitted, its acquisitions. A <a href="enum.Destination.html#variant.Replace" title="variant casa_ms::observation_io::creation::Destination::Replace"><code>Destination::Replace</code></a>
@@ -43,15 +43,15 @@ writing it will hold, are admitted against
 <p>Nothing is written by a plan. Memory beyond
 <a href="struct.CreationOptions.html#structfield.memory_bytes" title="field casa_ms::observation_io::creation::CreationOptions::memory_bytes"><code>CreationOptions::memory_bytes</code></a>, or a batch of
 <a href="struct.CreationOptions.html#structfield.batch_bytes" title="field casa_ms::observation_io::creation::CreationOptions::batch_bytes"><code>CreationOptions::batch_bytes</code></a> that cannot hold one integration of
-every selected group ([<code>ObservationError::OverBudget</code>]). An existing
+every selected group (<a href="../../../casa_observation/enum.ObservationError.html#variant.OverBudget" title="variant casa_observation::ObservationError::OverBudget"><code>ObservationError::OverBudget</code></a>). An existing
 path for a
 <a href="enum.Destination.html#variant.New" title="variant casa_ms::observation_io::creation::Destination::New"><code>Destination::New</code></a>, or for a <a href="enum.Destination.html#variant.Replace" title="variant casa_ms::observation_io::creation::Destination::Replace"><code>Destination::Replace</code></a> no
 MeasurementSet, one another process holds for writing, or a
 filesystem that cannot exchange directories. A weight scale that is
 not finite and positive, no input, or padding flagged where
-partitions combine ([<code>ObservationError::InvalidRequest</code>]); a loss not
+partitions combine (<a href="../../../casa_observation/enum.ObservationError.html#variant.InvalidRequest" title="variant casa_observation::ObservationError::InvalidRequest"><code>ObservationError::InvalidRequest</code></a>); a loss not
 accepted
-([<code>ObservationError::InvalidRequest</code>]); fields whose direction is a
+(<a href="../../../casa_observation/enum.ObservationError.html#variant.InvalidRequest" title="variant casa_observation::ObservationError::InvalidRequest"><code>ObservationError::InvalidRequest</code></a>); fields whose direction is a
 polynomial in time, fields that follow an ephemeris in a combination
 of several inputs, or an ephemeris whose samples are not evenly
 spaced or whose radial velocities are not geocentric; a data group
@@ -71,7 +71,7 @@ when writing reaches them. Any error opening or reading an input.</p>
 held, and what writing it will hold.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.losses" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#319-321">Source</a><h4 class="code-header">pub fn <a href="#method.losses" class="fn">losses</a>(&amp;self) -&gt; &amp;[<a class="enum" href="enum.Loss.html" title="enum casa_ms::observation_io::creation::Loss">Loss</a>]</h4></section></summary><div class="docblock"><p>Every loss the MeasurementSet takes, all accepted, found before
 anything is written.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.output" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#333-335">Source</a><h4 class="code-header">pub fn <a href="#method.output" class="fn">output</a>(&amp;self) -&gt; &amp;Catalogue</h4></section></summary><div class="docblock"><p>What reopening the MeasurementSet written gives, entity by entity:
+</div></details><details class="toggle method-toggle" open><summary><section id="method.output" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#333-335">Source</a><h4 class="code-header">pub fn <a href="#method.output" class="fn">output</a>(&amp;self) -&gt; &amp;<a class="struct" href="../../../casa_observation/catalogue/struct.Catalogue.html" title="struct casa_observation::catalogue::Catalogue">Catalogue</a></h4></section></summary><div class="docblock"><p>What reopening the MeasurementSet written gives, entity by entity:
 the merged antennas, fields, sources, states, processors and
 observing sessions, the windows a partition uses, the output’s scans,
 and its partitions in the MSv2 reader’s order with the states and
@@ -82,7 +82,7 @@ reads as that default, and an MSv4 input’s intents as the <code>STATE</code>
 rows written for them.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.notices" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#340-342">Source</a><h4 class="code-header">pub fn <a href="#method.notices" class="fn">notices</a>(&amp;self) -&gt; &amp;[<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>]</h4></section></summary><div class="docblock"><p>Entities the merge appended because a predicate lacked what it
 needs, each said once.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.write" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#357-391">Source</a><h4 class="code-header">pub fn <a href="#method.write" class="fn">write</a>(self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.CreationReport.html" title="struct casa_ms::observation_io::creation::CreationReport">CreationReport</a>, ObservationError&gt;</h4></section></summary><div class="docblock"><p>Write the planned MeasurementSet, by one thread, in a staging
+</div></details><details class="toggle method-toggle" open><summary><section id="method.write" class="method"><a class="src rightside" href="../../../src/casa_ms/observation_io/creation/plan.rs.html#357-391">Source</a><h4 class="code-header">pub fn <a href="#method.write" class="fn">write</a>(self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.CreationReport.html" title="struct casa_ms::observation_io::creation::CreationReport">CreationReport</a>, <a class="enum" href="../../../casa_observation/enum.ObservationError.html" title="enum casa_observation::ObservationError">ObservationError</a>&gt;</h4></section></summary><div class="docblock"><p>Write the planned MeasurementSet, by one thread, in a staging
 directory beside its destination, then publish it: renamed into a
 new path, or exchanged with the MeasurementSet it replaces, which is
 then deleted. No input is written, except a replaced one, whose
