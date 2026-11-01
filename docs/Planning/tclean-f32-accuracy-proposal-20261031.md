@@ -144,20 +144,22 @@ records20 small public CLI/Python product/naming/preservation rows passing;
 19/20 selected scalar rows pass the original limits. The owner accepted the
 one exact Metal cyclethreshold output (1.5132ppm difference); its raw failure
 is retained and no future output inherits the waiver. Python package gates
-pass632 editable,632 wheel and99 fresh-sdist tests. The native normal gate
-is running; coordinated outliers, occupied chosen orphan namespaces, calc
+pass632 editable,632 wheel and99 fresh-sdist tests. The broad native run passed4704 tests and found two stale profile fixtures;
+both focused repairs pass. Remaining normal checks are consolidated with
+the mask acceptance; coordinated outliers, occupied chosen orphan namespaces, calc
 controls, broader returns/modes and representative acceptance remain unfinished.
 CASA appends later calls to old numbered images' histories; native leaves old
-files unchanged. That precise metadata policy is a separate pending decision.
+files unchanged. The owner separately agreed to preserving prior histories; correct history
+for new images remains required.
 Singleton-list startmodel is a measured existing input-domain gap.
 
 The next bounded implementation slice fixes pixel-box clipping and explicit
 empty CRTF masks. Pinned12-case CASA probes establish that out-of-image boxes
 and empty files produce zero masks/code7; native currently refuses clipping
 and interprets an empty file as a full-image mask. Signed bounds, intersection
-at existing materialization and explicit-empty provenance are prepared; no
-provider/default/signature change is needed. Full activation verification
-precedes applying that code. General regions and other mask modes remain open.
+at existing materialization and explicit-empty provenance are in regression
+and integration verification after independent review; no
+provider/default/signature change is needed. The combined final gate will cover both slices. General regions and other mask modes remain open.
 `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction
