@@ -133,7 +133,10 @@ impl SelectedObservationSpectralEnvelope {
 /// converter's aberration and dUT1 are anchored at the first key and
 /// extrapolated across 0.04 days (`MFrequencyConverter`), which moves the
 /// far end of a long track by about 1e-12. A fresh exact conversion per row
-/// would not.
+/// would not. The direction is `phaseDirMeas(field)` without a row time:
+/// for an ephemeris field it is the geocentric direction at FIELD.TIME,
+/// in the ephemeris frame, including PHASE_DIR's offset. It is cached per
+/// field while the conversion epoch continues to follow each selected row.
 ///
 /// The reducer holds one entry per distinct key, about an integration per
 /// data description, never one per row, and charges
@@ -388,15 +391,19 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
                         "selected spectral envelope observed a negative FIELD_ID".to_string(),
                     )
                 })?;
-                // A field that follows an ephemeris moves: its direction at
-                // the epoch, not its `PHASE_DIR`, which is then an offset.
-                let direction = if self.geometry_engine.field_moves(field_id) {
-                    self.geometry_engine
-                        .observation_direction_j2000(epoch.time_mjd_seconds, field_id)?
-                } else if let Some(direction) = directions.get(&epoch.field_id) {
+                // MSUtil asks phaseDirMeas(field) with no interpolation time:
+                // an ephemeris field uses its geocentric FIELD-origin direction,
+                // in the ephemeris frame. Only the conversion epoch follows rows.
+                let direction = if let Some(direction) = directions.get(&epoch.field_id) {
                     direction.clone()
                 } else {
-                    let direction = raw_field_phase_direction(self.measurement_set, field_id)?;
+                    let direction = match self
+                        .geometry_engine
+                        .moving_field_reference_direction(self.measurement_set, field_id)?
+                    {
+                        Some(direction) => direction,
+                        None => raw_field_phase_direction(self.measurement_set, field_id)?,
+                    };
                     directions.insert(epoch.field_id, direction.clone());
                     direction
                 };

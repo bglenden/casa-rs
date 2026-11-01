@@ -179,6 +179,71 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     Ok(())
 }
 
+/// CASA 6.7.6.14 tclean, field="1", spw="0", specmode="mfs",
+/// default phase centre and output frame: spectral coordinate increment.
+/// MSUtil::getFreqRangeInSpw uses phaseDirMeas(field) at FIELD.TIME while
+/// updating the conversion frame epoch for each selected integration.
+#[test]
+#[ignore = "requires the slow-parity ALMA ephemeris MeasurementSet"]
+fn moving_field_mfs_envelope_matches_casa_field_origin_direction() -> Result<(), Box<dyn Error>> {
+    let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
+        .ok_or("the slow-parity ALMA ephemeris MeasurementSet is unavailable")?;
+    let ms = MeasurementSet::open(&source)?;
+    let engine = MsCalEngine::new(&ms)?.with_field_ephemerides(&ms)?;
+    assert!(engine.field_moves(1));
+    let selection = ms.selected_observation_row_selection(&[0], Some(&[1]), None, None)?;
+    let window = ms.spectral_window()?;
+    let frequencies = window.chan_freq(0)?;
+    let widths = window.chan_width(0)?;
+    let channels = (0..frequencies.len()).collect::<Vec<_>>();
+    let mut reducer = ms.selected_observation_spectral_envelope_reducer(
+        &selection,
+        [crate::SelectedObservationSpectralWindow::borrow_selected(
+            0,
+            FrequencyRef::TOPO,
+            &frequencies,
+            &widths,
+            &channels,
+        )],
+        FrequencyRef::LSRK,
+        &engine,
+        1 << 20,
+    )?;
+    let mut rows = 0;
+    let mut failure = None;
+    ms.visit_selected_observation_rows(
+        &selection,
+        MsSelectionIoBudget {
+            available_bytes: 64 * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            maximum_live_blocks: 2,
+            requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: None,
+        },
+        |row| {
+            rows += 1;
+            if failure.is_none() {
+                failure = reducer.observe(row).err();
+            }
+        },
+    )?;
+    if let Some(error) = failure {
+        return Err(error.into());
+    }
+    assert_eq!(rows, 1620);
+    let [lower, upper] = reducer.finish()?.edges_hz();
+    let increment = upper - lower;
+    let casa_increment = 125_020_996.111_328_12;
+    let relative_error = (increment - casa_increment).abs() / casa_increment;
+    eprintln!(
+        "moving MFS increment: native={increment:.8} CASA={casa_increment:.8} relative_error={relative_error:.3e}"
+    );
+    assert!(
+        relative_error <= 2.0e-10,
+        "MFS increment differs from CASA: {relative_error:.3e}"
+    );
+    Ok(())
+}
+
 fn copy_attached_ephemerides(source: &Path, destination: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(source.join("FIELD"))? {
         let entry = entry?;
