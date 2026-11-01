@@ -22,7 +22,7 @@ pub(crate) fn selection_from_options(
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
-        selection = selection.field(&ms.resolve_field_selector(field)?);
+        selection = selection.field(resolve_field_predicate(ms, field)?);
     }
 
     if let Some(spw) = options.spw.as_deref() {
@@ -80,18 +80,28 @@ impl MeasurementSet {
     /// Name matching trims stored names and
     /// excludes flagged FIELD rows, following `MSFieldIndex`.
     pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
-        let (mut ids, names) = parse_field_selector(self, value)?;
-        if !names.is_empty() {
-            let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-            ids.extend(resolve_field_names(self, &names)?);
-        }
-        if !value.trim().is_empty() && ids.is_empty() {
-            return Err(MsError::InvalidInput(format!(
+        match resolve_field_predicate(self, value)? {
+            None => Ok(Vec::new()),
+            Some(ids) if ids.is_empty() => Err(MsError::InvalidInput(format!(
                 "field selector {value:?} did not match any existing fields"
-            )));
+            ))),
+            Some(ids) => Ok(ids),
         }
-        Ok(dedup_i32(ids))
     }
+}
+
+/// Preserve the difference between no predicate and an explicit empty match.
+/// Generic MS consumers allow empty results; imaging's public wrapper refuses them.
+fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<Vec<i32>>> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let (mut ids, names) = parse_field_selector(ms, value)?;
+    if !names.is_empty() {
+        let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+        ids.extend(resolve_field_names(ms, &names)?);
+    }
+    Ok(Some(dedup_i32(ids)))
 }
 
 fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {

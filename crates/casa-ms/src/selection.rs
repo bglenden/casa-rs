@@ -102,7 +102,7 @@ impl Default for MsSelection {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompiledMsSelection {
-    field_ids: Vec<i32>,
+    field_ids: Option<Vec<i32>>,
     spw_ids: Vec<i32>,
     spw_channel_selections: BTreeMap<i32, ChannelSelection>,
     data_desc_ids: Vec<i32>,
@@ -602,9 +602,9 @@ impl CompiledMsSelection {
         Self::default()
     }
 
-    /// Select rows matching the given FIELD_IDs.
-    pub(crate) fn field(mut self, ids: &[i32]) -> Self {
-        self.field_ids.extend_from_slice(ids);
+    /// Set the FIELD predicate: `None` selects all; `Some([])` selects no rows.
+    pub(crate) fn field(mut self, ids: Option<Vec<i32>>) -> Self {
+        self.field_ids = ids;
         self
     }
 
@@ -809,8 +809,12 @@ impl CompiledMsSelection {
     fn where_clauses(&self) -> Vec<String> {
         let mut clauses = Vec::new();
 
-        if !self.field_ids.is_empty() {
-            clauses.push(format!("FIELD_ID IN [{}]", int_list(&self.field_ids)));
+        if let Some(ids) = &self.field_ids {
+            clauses.push(if ids.is_empty() {
+                "FALSE".to_string()
+            } else {
+                format!("FIELD_ID IN [{}]", int_list(ids))
+            });
         }
 
         if !self.spw_ids.is_empty() {
@@ -1073,7 +1077,10 @@ fn apply_structured_selection(
     rows_per_block: Option<usize>,
 ) -> MsResult<Vec<usize>> {
     let setup_started_at = Instant::now();
-    let field_ids: HashSet<i32> = sel.field_ids.iter().copied().collect();
+    if sel.field_ids.as_ref().is_some_and(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    let field_ids: HashSet<i32> = sel.field_ids.iter().flatten().copied().collect();
     let spw_ddids: HashSet<i32> = effective_ddids.iter().copied().collect();
     let data_desc_ids: HashSet<i32> = sel.data_desc_ids.iter().copied().collect();
     let antenna_ids: HashSet<i32> = sel.antenna_ids.iter().copied().collect();
@@ -1597,6 +1604,30 @@ mod tests {
     use crate::schema::SubtableId;
     use crate::test_helpers::{default_value, default_value_for_def};
 
+    fn add_selection_test_fields(ms: &mut MeasurementSet, count: usize) {
+        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        for id in 0..count {
+            let fields = crate::schema::field::REQUIRED_COLUMNS
+                .iter()
+                .map(|column| {
+                    let value = match column.name {
+                        "NAME" => Value::Scalar(ScalarValue::String(format!("field-{id}"))),
+                        "SOURCE_ID" => Value::Scalar(ScalarValue::Int32(-1)),
+                        "DELAY_DIR" | "PHASE_DIR" | "REFERENCE_DIR" => {
+                            Value::Array(ArrayValue::Float64(ndarray::ArrayD::zeros(vec![2, 1])))
+                        }
+                        _ => default_value_for_def(column),
+                    };
+                    RecordField::new(column.name, value)
+                })
+                .collect();
+            ms.subtable_mut(SubtableId::Field)
+                .unwrap()
+                .add_row(RecordValue::new(fields))
+                .unwrap();
+        }
+    }
+
     fn apply_for_test(selection: &MsSelection, ms: &MeasurementSet) -> Vec<usize> {
         selection.compile(ms).unwrap().apply(ms).unwrap()
     }
@@ -1806,12 +1837,51 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_numeric_fields_select_no_rows_in_structured_and_taql_paths() {
+        let mut ms =
+            MeasurementSet::create_memory(crate::builder::MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 1);
+        let fields = ms
+            .main_table()
+            .schema()
+            .unwrap()
+            .columns()
+            .iter()
+            .map(|column| casa_types::RecordField::new(column.name(), default_value(column.name())))
+            .collect();
+        ms.main_table_mut()
+            .add_row(casa_types::RecordValue::new(fields))
+            .unwrap();
+        for selector in ["999", "9~2147483647"] {
+            let request = MsSelection {
+                field: Some(selector.to_string()),
+                ..MsSelection::new()
+            };
+            let compiled = request.compile(&ms).unwrap();
+            assert_eq!(compiled.to_taql(), "SELECT * WHERE FALSE");
+            assert!(compiled.apply(&ms).unwrap().is_empty());
+            let with_taql = request.taql("FIELD_ID == 0").compile(&ms).unwrap();
+            assert!(with_taql.apply(&ms).unwrap().is_empty());
+            assert!(ms.resolve_field_selector(selector).is_err());
+        }
+        for selector in [None, Some("".to_string()), Some(" ".to_string())] {
+            let request = MsSelection {
+                field: selector,
+                ..MsSelection::new()
+            };
+            assert_eq!(apply_for_test(&request, &ms), vec![0]);
+            assert_eq!(apply_for_test(&request.taql("FIELD_ID == 0"), &ms), vec![0]);
+        }
+    }
+
+    #[test]
     fn apply_field_selection() {
         use crate::builder::MeasurementSetBuilder;
         use crate::test_helpers::default_value;
         use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 3);
 
         // Add rows with different FIELD_IDs
         let schema = ms.main_table().schema().unwrap().clone();
@@ -2001,6 +2071,7 @@ mod tests {
         use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 2);
 
         ms.subtable_mut(SubtableId::DataDescription)
             .unwrap()

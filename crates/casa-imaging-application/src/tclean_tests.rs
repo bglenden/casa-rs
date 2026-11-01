@@ -466,3 +466,26 @@ fn native_scan_observation_preview_consumes_text_without_activating_catalog() {
         assert!(error.contains("#980"), "{error}");
     }
 }
+
+#[test]
+fn numeric_row_selector_reader_only_unsets_exact_empty_text() {
+    for name in ["scan", "observation"] {
+        for text in ["", " ", "none", "None", " 1 ", ",1", "+1"] {
+            // The imager boundary supplies original text after resolution.
+            // Its TaskInvocation regression covers the lossy resolver seam.
+            let mut values = resolved(json!({})).unwrap();
+            values.insert(name.to_string(), json!(text));
+            let request = ImagingRequest::from_tclean(&values).unwrap();
+            let actual = if name == "scan" {
+                request.scan
+            } else {
+                request.observation
+            };
+            assert_eq!(
+                actual.as_deref(),
+                (!text.is_empty()).then_some(text),
+                "{name}={text:?}"
+            );
+        }
+    }
+}

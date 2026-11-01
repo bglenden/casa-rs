@@ -762,7 +762,16 @@ pub(crate) fn analytic_vla_primary_beam(
         increment_rad,
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = vla_band_voltage_table(frequency_hz)?;
+    // CASA's SynthesisImager::makePBImage chooses the legacy VLA aperture
+    // once, from output channel zero. PBMath1D then scales that same aperture
+    // by each plane's frequency, even when the cube crosses a band boundary.
+    let first_frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(0)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = vla_band_voltage_table(first_frequency_hz)?;
     Ok(summed_beams(shape, &centres, |plane, centre| {
         add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
     }))

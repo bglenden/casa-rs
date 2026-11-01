@@ -1336,3 +1336,86 @@ fn generated_members_carry_the_complete_product_contract() {
     let expected_mask = vec![1.0; SHAPE[0] * SHAPE[1]];
     assert_eq!(mask.payload(), expected_mask);
 }
+
+/// Generate and reopen channel one of a two-channel VLA PB cube. The wide
+/// pixels make the aperture shape measurable without a large image fixture.
+fn vla_cube_target_beam(first_hz: f64, target_hz: f64) -> Vec<f32> {
+    use casa_imaging_model::{DirectionCoordinateSpec, DirectionFrame, Projection, SkyDirection};
+
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [CENTRE[0] as f64, CENTRE[1] as f64],
+        [-1.0e-3, 1.0e-3],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let problem = continuum_problem_with_domains_and_reconstruction(
+        111,
+        &[ProductKind::Psf, ProductKind::PrimaryBeam],
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+        [first_hz, target_hz - first_hz],
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(SHAPE[0], SHAPE[1]),
+            direction,
+            FacetLayout::Single,
+            axes(),
+        )],
+    );
+    let round = run_continuum_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
+    let generated = generate_for(&planned_for(&inputs, &controls), &inputs);
+    generated
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("published primary beam")
+        .payload()
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .copied()
+        .collect()
+}
+
+#[test]
+fn vla_cube_primary_beam_keeps_the_first_channel_aperture() {
+    // Hold the measured plane's frequency fixed while changing only the
+    // first channel. CASA selects its VLA model once at channel zero:
+    // 0.8/0.9 GHz select NVSS, and 1.1/1.2 GHz select the named L band.
+    // The two target frequencies cover NVSS-to-L ascending cubes and
+    // L-to-NVSS descending cubes without reproducing an aperture formula.
+    for target_hz in [1.5e9, 0.7e9] {
+        let nvss = vla_cube_target_beam(0.8e9, target_hz);
+        let same_nvss = vla_cube_target_beam(0.9e9, target_hz);
+        let named = vla_cube_target_beam(1.1e9, target_hz);
+        let same_named = vla_cube_target_beam(1.2e9, target_hz);
+        assert_eq!(nvss, same_nvss, "same NVSS aperture at {target_hz} Hz");
+        assert_eq!(named, same_named, "same named aperture at {target_hz} Hz");
+        assert!(nvss.iter().chain(&named).all(|value| value.is_finite()));
+        assert_eq!(nvss.iter().copied().reduce(f32::max), Some(1.0));
+        assert_eq!(named.iter().copied().reduce(f32::max), Some(1.0));
+        let difference = nvss
+            .iter()
+            .zip(&named)
+            .map(|(left, right)| (left - right).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            difference > 1.0e-4,
+            "channel-zero aperture choice must affect the fixed {target_hz} Hz plane: {difference}"
+        );
+    }
+    // Keeping the aperture fixed must still let the actual plane frequency
+    // change its width; channel zero must not replace the scaling frequency.
+    assert_ne!(
+        vla_cube_target_beam(0.8e9, 0.7e9),
+        vla_cube_target_beam(0.8e9, 1.5e9)
+    );
+}

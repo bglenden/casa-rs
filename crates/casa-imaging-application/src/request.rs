@@ -3,13 +3,14 @@
 //! The imaging request: the provider-contracts catalog's `tclean` surface,
 //! resolved, as one typed record (plan section 5.8, decision D8).
 //!
-//! A request is made only from resolved catalog values (every route, the
-//! command line and `--json-run` alike, resolves through the catalog), by
-//! [`ImagingRequest::from_tclean`], which reads CASA's tclean parameters as
+//! A request uses catalog-resolved values with original scan/observation
+//! text restored at the imager boundary. [`ImagingRequest::from_tclean`]
+//! reads CASA's tclean parameters as
 //! CASA's modes read them (`crate::tclean`); so nothing here restates a
 //! default and a missing field is an error. Most fields are tclean's
 //! parameters by name; the reader fills the few casa-rs holds in its own
-//! form. An unset optional value is spelled `"none"` or left blank.
+//! form. Most optional values are unset with `"none"` or blank text;
+//! scan and observation selectors are unset only by an exactly empty string.
 //! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
@@ -91,10 +92,10 @@ pub struct ImagingRequest {
     #[serde(deserialize_with = "optional")]
     pub uvrange: Option<String>,
     /// CASA numeric scan-number selection, resolved by the MeasurementSet owner.
-    #[serde(default, deserialize_with = "optional")]
+    #[serde(default, deserialize_with = "empty_only_optional_text")]
     pub scan: Option<String>,
     /// CASA numeric observation-ID selection, resolved by the MeasurementSet owner.
-    #[serde(default, deserialize_with = "optional")]
+    #[serde(default, deserialize_with = "empty_only_optional_text")]
     pub observation: Option<String>,
     /// CASA observing-intent selection.
     #[serde(deserialize_with = "optional")]
@@ -688,6 +689,15 @@ fn unexpected<E: serde::de::Error>(value: &Value, expected: &str) -> E {
     E::custom(format!("expected {expected}, found {value}"))
 }
 
+/// Exact empty text is unset; all other text reaches the selector parser unchanged.
+fn empty_only_optional_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    Ok((!text.is_empty()).then_some(text))
+}
+
 /// `"none"` or a value parsed from its text.
 fn optional<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
@@ -1099,11 +1109,19 @@ pub(crate) mod tests {
         let mut values = json!({ "vis": "unused.ms", "imagename": "unused", "cell": "1arcsec" });
         let fields = values.as_object_mut().expect("object");
         fields.extend(overrides.as_object().expect("overrides object").clone());
-        casa_task_runtime::resolve_plain_values(
+        let mut resolved = casa_task_runtime::resolve_plain_values(
             casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
             PathBuf::from("."),
             fields,
-        )
+        )?;
+        // Component fixtures mirror the imager's original-text restoration.
+        for name in ["scan", "observation"] {
+            resolved.insert(
+                name.to_string(),
+                fields.get(name).cloned().unwrap_or_else(|| json!("")),
+            );
+        }
+        Ok(resolved)
     }
 
     /// The request tclean's `overrides` make, or its refusal.
