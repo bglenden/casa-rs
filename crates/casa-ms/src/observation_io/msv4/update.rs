@@ -416,12 +416,25 @@ fn assign(
     options: &CodecOptions,
 ) -> Result<(), ObservationError> {
     match (target, value) {
-        (Target::Visibilities(window), PatchValues::Visibilities { values, written }) => window
-            .assign(times, channels, products, options, |s, c, p| {
+        (Target::Visibilities(window), PatchValues::Visibilities { values, written }) => {
+            if written.is_none()
+                && let Some(values) = values.as_slice()
+                && window.assign_contiguous(
+                    times.clone(),
+                    channels.clone(),
+                    products,
+                    options,
+                    values,
+                )?
+            {
+                return Ok(());
+            }
+            window.assign(times, channels, products, options, |s, c, p| {
                 written
                     .is_none_or(|written| written[[s, c, p]])
                     .then(|| values[[s, c, p]])
-            }),
+            })
+        }
         (Target::Flags(window), PatchValues::Flags { set, clear }) => {
             window.assign(times, channels, products, options, |s, c, p| {
                 if set.as_ref().is_some_and(|set| set[[s, c, p]]) {

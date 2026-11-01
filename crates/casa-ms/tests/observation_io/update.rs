@@ -1226,3 +1226,104 @@ fn writing_an_existing_model_clears_the_virtual_model() {
         assert!(keywords.get(key).is_none(), "{key}");
     }
 }
+
+/// A whole-cell visibility patch need not be contiguous in memory. Writing
+/// a reversed-channel view preserves that view's values at every row.
+#[test]
+fn msv4_whole_visibility_update_accepts_strided_values() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let before = read(&path, "base", 0..8);
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Visibilities)],
+    )
+    .expect("session");
+    let correlations = session.observation().catalogue().partitions[0]
+        .correlations
+        .len();
+    let request = per_times(session.observation(), request(0..8, 0), 4);
+    let mut traversal = session.observation().bind_read(&request).expect("bind");
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    let mut buffers = BatchBuffers::default();
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        let values = batch.group.values.expect("values");
+        let reversed = values.slice(ndarray::s![.., ..;-1, ..]);
+        updater
+            .write(&batch, &[PatchValues::visibilities(reversed)])
+            .expect("write strided values");
+    }
+    updater.finish().expect("finish");
+    drop(traversal);
+    drop(session);
+    let after = read(&path, "base", 0..8);
+    for (key, sample) in &before {
+        let expected: Vec<_> = sample
+            .values
+            .chunks_exact(correlations)
+            .rev()
+            .flatten()
+            .copied()
+            .collect();
+        assert_eq!(after[key].values, expected, "{key:?}");
+    }
+}
+
+/// Whole patches can follow masks and repeats, in reverse chunk-row order.
+#[test]
+fn whole_msv4_patches_overwrite_partly_assigned_chunks() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let before = read(&path, "base", 0..8);
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Visibilities)],
+    )
+    .expect("session");
+    let request = per_times(session.observation(), request(0..8, 0), 5);
+    let mut traversal = session.observation().bind_read(&request).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let mut delivered = Vec::new();
+    while let Some(event) = traversal.next(&mut buffers).expect("read") {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        delivered.push((
+            batch.address(),
+            batch.group.values.expect("values").mapv(model),
+        ));
+    }
+    drop(traversal);
+    let mut updater = session.updater(&request, &[0]).expect("updater");
+    for (address, values) in delivered.iter().rev() {
+        let mask =
+            Array3::from_shape_fn(values.raw_dim(), |(s, c, p)| (s + c + p).is_multiple_of(2));
+        updater
+            .write_at(
+                address,
+                &[PatchValues::Visibilities {
+                    values: values.view(),
+                    written: Some(mask.view()),
+                }],
+            )
+            .expect("masked patch");
+        for _ in 0..2 {
+            updater
+                .write_at(address, &[PatchValues::visibilities(values.view())])
+                .expect("complete patch");
+        }
+    }
+    let report = updater.finish().expect("finish");
+    drop(session);
+    assert_eq!((report.units_written, report.units_read), (6, 0));
+    let after = read(&path, "base", 0..8);
+    for (key, sample) in &before {
+        let expected: Vec<_> = sample.values.iter().map(|value| model(*value)).collect();
+        assert_eq!(after[key].values, expected, "{key:?}");
+    }
+}
