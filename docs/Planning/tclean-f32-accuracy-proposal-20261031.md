@@ -180,13 +180,38 @@ Native source `15d2cb64f6` transports predicates; `291e107317` stores compact
 inclusive intervals instead of expanding wide ranges. Its allocator law and
 independent review pass. Fresh CASA6.7.6.14 references include genuine
 observation subsets, conjunctions and both `selectdata` values: all13 science
-reference calls execute successfully; native product comparisons remain pending.
+reference calls execute successfully. The291e engine now passes39 scoped product/
+count/sample comparisons acrossCPU64/CPU32/Metal32. Of3 nonzero CLEANthreshold
+rows, CPU64 passes and both f32 rows fail the original scalar limit (19FloatULPs,
+1.2236ppm); no existing waiver applies. The raw engine evidence and plots are
+verified in NAS `scan-observation-engine-20261101.tar`, SHA256
+`7b35ca58b0ebee3cc6d8fa2f503a45a617084cec9d76a95103484d175d14accf`.
 Actual CASA task probes also establish strict ascending range and lexical
 refusals. The first boundary repair preserves raw override inputs, but review
-found base profiles still lose their original text. The executing agent
-reassessed that failure and is repairing the documented `given()` provenance
-invariant while retaining normalized resolved values. That repair is uncommitted
-and not accepted yet. Production non-default catalog refusal remains intact;
+found base profiles still lose their original text. A tested repair fulfils the
+native `given()` invariant for direct profiles while retaining normalized values;
+that direct finding is resolved. Further review found provider projection still
+sends normalized non-quantity values. Root's full Python call-chain audit also
+found normalized-only snapshot/Mapping paths. The direct-profile invariant fix is checkpointed at021eb134bc; the private
+imager-restoration attempt remains unaccepted and uncommitted despite its green
+scoped tests. Exact source/patch/tests/failure logs
+are verified on NAS in `attempted-provenance-repair-20261101.tar` (SHA256
+`79011af1efe1625c7615f7e827a4c904930e50a44846bba6139b85b1f776b82a`)
+and `attempted-provenance-context-20261101.tar` (SHA256
+`c8ead239a1eea8618f5b770aecafcf1a356a81b9ac9a26e4d25cab4f22fbb942`).
+The completed [Oracle review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
+recommends a tclean-scoped revision2 Identity concept for each selector. It
+inspected pinned public baseline code and supplied local changes; displayed
+configuration was GPT-6 Pro, not a verified Astra identity. The concrete
+[provider33 proposal](tclean-numeric-selection-contract-proposal-20261101.md)
+is unapplied and awaits owner approval. Its native cloned-catalog transport
+corpus passes; separate review cleared the prepared patch and warning/fixture
+repairs. Native CLI/migration components are committed at228a15b837:100 runtime
+and47 Python tests plus clippy/structure pass. Real file/Last/LastSuccessful load
+and reload show all6 conversion warnings; ordinary refresh/current-profile load
+show none. The proposed semantic boundary correction replaces the earlier private
+restoration attempt; the candidate retains no fallback. Production provider32
+is unchanged; final-source science and public33 Python routes remain unaccepted. Production non-default catalog refusal remains intact;
 complete paired science, profile regressions and consolidated review precede
 any provider32->33 activation request. Existing field-name/pattern/False evidence
 is reused. Legacy field-range expansion, antenna/time/multi-MS remain open.
