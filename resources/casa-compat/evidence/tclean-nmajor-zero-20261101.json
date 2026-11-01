@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "record": "tclean-nmajor-zero-initial-only-and-stop-precedence",
+  "date": "2026-11-01",
+  "native_revision": "c64f13cb09054b080fe8b228a5f2c02c99bfd486",
+  "binary_sha256": "6eb61452744431cab163d09d383dcfafbc9387d7c35776b06b4e06ce25f7c959",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "state": "20 scoped paired rows pass; focused, surrounding, full T1 and independent review clear; full normal gate running",
+  "scope": "Standard single-term Stokes-I MFS: nmajor0 initial-only, dirty niter0, high threshold, explicit empty mask, frozen CASA seed, nmajor1 control; CPU64/CPU32/Metal32 plus two public Python False-numbering cases.",
+  "implementation": "Remove three early zero-major refusals in tclean reader, request validation and compiled-model validation. Existing controller and initial-cycle path unchanged: zero means no post-initial major passes. Positive minor-cycle limit still required.",
+  "external_contract": "No provider bundle, CASA signature/default, persisted format or return-schema changes",
+  "resources": "No phase, allocation, admission, concurrency or computation change. Existing owners remain charged; no correctness-only speed threshold introduced.",
+  "raw_receipts": {
+    "oracle": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/oracle/receipt.json",
+      "sha256": "81737acdd7e6dad9f19f45cddbea3eea24565d022a15f1f42f10e496feefb499",
+      "cases": 6
+    },
+    "baseline-maskfix-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/baseline-maskfix-cpu64/receipt.json",
+      "sha256": "624228389c57f9b545b55a90e6a72e903918ec2cc32a3cd7b4f9ad04a69cdcb3",
+      "cases": 6
+    },
+    "candidate-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/candidate-cpu64/receipt.json",
+      "sha256": "a117f863295a257ec9b31aaf3fed6b5a20cb893e59d7fcf9218060f8b5c35d79",
+      "cases": 6,
+      "passed": 6
+    },
+    "candidate-cpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/candidate-cpu32/receipt.json",
+      "sha256": "98a4b16337b54c88572519f46fc6dd0c266f4c3fe7d31e781953c91ebe90d7c8",
+      "cases": 6,
+      "passed": 6
+    },
+    "candidate-gpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/candidate-gpu32/receipt.json",
+      "sha256": "ed90f3ca1ed9a3fdf53e9e8c198de4154f9665df42411b8059d26690723d33de",
+      "cases": 6,
+      "passed": 6
+    },
+    "python-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/python-cpu64/receipt.json",
+      "sha256": "8ce222baadf7a041a6911cf2efdeeec97597c3b103fa7fced68e0763ef727478",
+      "cases": 2,
+      "passed": 2
+    }
+  },
+  "comparison": "CLI18 rows gate product inventory, masks, finite support, selected WCS/restfreq/units/Stokes/frames/beam, NRMS1e-3/sumwt5e-5 and exact iterdone/nmajordone/stopcode. Python2 rows additionally gate maxpsfsidelobe/cyclethreshold at original1e-6 relative+1e-8 absolute and old-file preservation. No numeric override.",
+  "product_inventory": {
+    "initial_only": [
+      "image.image",
+      "image.mask",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "dirty_zero": [
+      "image.image",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "threshold_precedence": [
+      "image.image",
+      "image.mask",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "empty_mask_precedence": [
+      "image.image",
+      "image.mask",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "seeded_initial_only": [
+      "image.image",
+      "image.mask",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "one_major_control": [
+      "image.image",
+      "image.mask",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ]
+  },
+  "results": {
+    "initial_only": "0 iterations,1 initial major,stop9",
+    "seeded_initial_only": "0 iterations,1 major,stop9; supplied seed unchanged",
+    "threshold_precedence": "0,1,stop2",
+    "empty_mask_precedence": "0,1,stop7",
+    "dirty_zero": "0,1,stop3; no CLEAN mask in either implementation",
+    "one_major_control": "3 iterations,2 total major passes,stop9 on paired fixture"
+  },
+  "focused": "Four intended red failures and existing controller-green test; all five focused green. Reader9/request7/model14+27+5/controller9 surrounding71; fullT1 62; four-crate all-target clippy, dependency/fmt/filelength pass.",
+  "fixture_repairs": [
+    "T1 reads TaskReply.result as ImagerRunTaskResult directly; original missing-kind error retained.",
+    "Plot recipe handles dirty-run CLEAN-mask absence only when absent in both; asymmetric absence asserts. Original CPU64 science receipt was reused unchanged.",
+    "Only plotting processes disable CASA data auto-update in memory to avoid startup downloads; no user config or science outputs changed."
+  ],
+  "review": "Independent prepared-patch and final committed-source/paired-evidence reviews found no actionable findings. Shared nmajor domain\u22121,0,positive is implemented; standard-MFS evidence does not establish universal mode or complete return-record parity. Actual model identity unexposed.",
+  "visual": "All present products in18 CLI and2 Python pairs inspected on shared CASA/native scales with labelled differences; dirty CLEAN-mask absence explicit.",
+  "full_native_gate": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/checks/full-quick.log",
+  "archive": {
+    "state": "Pending verified NAS archive"
+  },
+  "unfinished": [
+    "Other mode combinations and full return-record parity, including seeded model flux",
+    "Broader task selection, restart, masks/modes/metadata and representative/runtime-prediction acceptance"
+  ],
+  "authority": "Authorized native equivalence implementation within the existing declared parameter domain; no new deviation or weakened gate"
+}
