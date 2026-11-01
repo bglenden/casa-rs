@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, Projection, ProjectionType};
 use casa_images::{AnyPagedImage, ImagePixel, RegridTemplate};
 
 use crate::PrepareError;
@@ -100,13 +100,12 @@ fn same_grid(a: &CoordinateSystem, b: &CoordinateSystem) -> bool {
                     (CoordinateModel::Direction(a), CoordinateModel::Direction(b)) => {
                         a.direction_ref() == b.direction_ref()
                             && a.projection().projection_type() == b.projection().projection_type()
-                            && near_values(
-                                a.projection().parameters(),
-                                b.projection().parameters(),
-                                1e-6,
-                            )
-                            && near(a.longpole(), b.longpole(), 1e-13)
-                            && near(a.latpole(), b.latpole(), 1e-13)
+                            && same_projection_parameters(a.projection(), b.projection())
+                            && same_angle(a.longpole(), b.longpole())
+                            && a.native_pole()
+                                .into_iter()
+                                .zip(b.native_pole())
+                                .all(|(a, b)| same_angle(a, b))
                             && a.pc_matrix()
                                 .iter()
                                 .zip(b.pc_matrix())
@@ -123,6 +122,27 @@ fn same_grid(a: &CoordinateSystem, b: &CoordinateSystem) -> bool {
                     _ => false,
                 }
         })
+}
+
+/// CASA stores the default SIN slant parameters explicitly; native headers
+/// omit them. Preserve all other parameter comparisons, including nonzero slant.
+fn same_projection_parameters(a: &Projection, b: &Projection) -> bool {
+    let (a_parameters, b_parameters) = (a.parameters(), b.parameters());
+    if a.projection_type() == ProjectionType::SIN
+        && b.projection_type() == ProjectionType::SIN
+        && ((a_parameters.is_empty() && b_parameters == [0.0, 0.0])
+            || (b_parameters.is_empty() && a_parameters == [0.0, 0.0]))
+    {
+        return true;
+    }
+    near_values(a_parameters, b_parameters, 1e-6)
+}
+
+/// A roundoff allowance for the resolved celestial rotation, in radians.
+/// LATPOLE is a solution selector, so compare its resolved pole instead.
+fn same_angle(a: f64, b: f64) -> bool {
+    let delta = a - b;
+    delta.sin().atan2(delta.cos()).abs() <= 1e-13
 }
 
 fn near_values(a: &[f64], b: &[f64], tolerance: f64) -> bool {
@@ -211,5 +231,101 @@ mod tests {
         assert!(check_coordinates(&requested, &requested).is_ok());
         let refusal = check_coordinates(&existing, &requested).unwrap_err();
         assert!(refusal.contains("not implemented yet"), "{refusal}");
+    }
+    fn grid_direction(projection: Projection) -> DirectionCoordinate {
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            projection,
+            [1.3, (-30.0_f64).to_radians()],
+            [-2.3e-5, 1.7e-5],
+            [31.25, 27.75],
+        )
+    }
+
+    fn direction_system(direction: DirectionCoordinate) -> CoordinateSystem {
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(direction);
+        system
+    }
+
+    #[test]
+    fn restart_grid_accepts_equivalent_casa_sin_pole_and_zero_parameters() {
+        let native = grid_direction(Projection::new(ProjectionType::SIN));
+        let casa = grid_direction(Projection::with_parameters(
+            ProjectionType::SIN,
+            vec![0.0, 0.0],
+        ))
+        .with_latpole((-29.999999999999996_f64).to_radians());
+        assert_ne!(native.latpole(), casa.latpole());
+        assert_ne!(
+            native.projection().parameters(),
+            casa.projection().parameters()
+        );
+        for pixel in [[0.0, 0.0], [4.5, 57.25], [62.0, 13.0], [31.25, 27.75]] {
+            let native_world = native.to_world(&pixel).unwrap();
+            let casa_world = casa.to_world(&pixel).unwrap();
+            for axis in 0..2 {
+                assert!(
+                    (native_world[axis] - casa_world[axis]).abs() <= 1e-13,
+                    "{pixel:?}: native {native_world:?}, CASA {casa_world:?}"
+                );
+            }
+            let back = native.to_pixel(&casa_world).unwrap();
+            for axis in 0..2 {
+                assert!(
+                    (back[axis] - pixel[axis]).abs() <= 1e-8,
+                    "{pixel:?} returned as {back:?}"
+                );
+            }
+        }
+        let native = direction_system(native);
+        let casa = direction_system(casa);
+        assert!(same_grid(&casa, &native));
+        assert!(same_grid(&native, &casa));
+    }
+
+    #[test]
+    fn restart_grid_rejects_real_rotation_pc_and_slant_changes() {
+        let original = grid_direction(Projection::new(ProjectionType::SIN));
+        let changed = [
+            original.clone().with_longpole(std::f64::consts::PI + 0.01),
+            original
+                .clone()
+                .with_pc_matrix(ndarray::arr2(&[[1.0, 0.04], [-0.03, 1.0]])),
+            grid_direction(Projection::with_parameters(
+                ProjectionType::SIN,
+                vec![0.1, 0.0],
+            )),
+        ];
+        let pixel = [3.0, 55.0];
+        let world = original.to_world(&pixel).unwrap();
+        let original = direction_system(original);
+        for changed in changed {
+            let changed_world = changed.to_world(&pixel).unwrap();
+            assert!((0..2).any(|axis| (world[axis] - changed_world[axis]).abs() > 1e-10));
+            assert!(!same_grid(&original, &direction_system(changed)));
+        }
+    }
+
+    #[test]
+    fn restart_grid_rejects_a_different_resolved_nonzenithal_pole_branch() {
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::CAR),
+            [1.3, 0.0],
+            [-2.3e-5, 1.7e-5],
+            [31.25, 27.75],
+        )
+        .with_longpole(0.7);
+        let north = direction.clone().with_latpole(std::f64::consts::FRAC_PI_2);
+        let south = direction.with_latpole(-std::f64::consts::FRAC_PI_2);
+        let pixel = [3.0, 55.0];
+        let north_world = north.to_world(&pixel).unwrap();
+        let south_world = south.to_world(&pixel).unwrap();
+        assert!((0..2).any(|axis| (north_world[axis] - south_world[axis]).abs() > 1e-8));
+        assert!(!same_grid(
+            &direction_system(north),
+            &direction_system(south)
+        ));
     }
 }

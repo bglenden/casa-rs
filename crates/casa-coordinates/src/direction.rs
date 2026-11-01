@@ -291,6 +291,19 @@ impl DirectionCoordinate {
         self.latpole
     }
 
+    /// Returns the resolved celestial coordinates `[alpha_p, delta_p]` of
+    /// the native pole, in radians.
+    ///
+    /// Together with [`Self::longpole`], these coordinates define the spherical
+    /// rotation used by pixel/world conversion. They are computed from the
+    /// reference direction, projection, LONGPOLE and requested LATPOLE. Unlike
+    /// [`Self::latpole`], which selects a solution when there are two, this is
+    /// the resolved pole: different LATPOLE selectors may give the same rotation.
+    /// Reading it does not change the stored coordinate or its serialized record.
+    pub fn native_pole(&self) -> [f64; 2] {
+        self.native_pole
+    }
+
     /// Returns a reference to the PC rotation/coupling matrix.
     pub fn pc_matrix(&self) -> &Array2<f64> {
         &self.pc
