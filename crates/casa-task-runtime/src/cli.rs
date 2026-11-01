@@ -8,7 +8,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use casa_provider_contracts::{
-    ParameterType, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
+    DefaultSpec, ParameterType, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
 };
 
 use crate::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
@@ -222,7 +222,14 @@ fn validated_cli_value(
         .catalog
         .concept(&binding.concept)
         .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
-    if text.trim().is_empty() {
+    // An explicitly present exact empty string is a value when a string binding
+    // declares it as its literal default. A missing argument is handled by the
+    // flag parser; whitespace is never silently turned into that default.
+    let exact_empty_default = text.is_empty()
+        && matches!(concept.value_domain, ParameterType::String)
+        && matches!(&binding.default,
+            DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
+    if text.trim().is_empty() && !exact_empty_default {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
     let parsed = parse_parameter_text(text, &concept.value_domain)
@@ -334,6 +341,43 @@ mod tests {
         let unknown =
             parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
         assert!(unknown.contains("unknown tclean parameter flag --thresh"));
+    }
+
+    #[test]
+    fn exact_empty_cli_defaults_are_values_but_missing_or_blank_arguments_are_not() {
+        let mut bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        // Evidence-only exact-text concept: production declarations stay intact.
+        for concept in &mut bundle.catalog.concepts {
+            if matches!(
+                concept.id.as_str(),
+                "ms.selection.scan" | "ms.selection.observation"
+            ) {
+                concept.normalization = casa_provider_contracts::NormalizationRule::Identity;
+            }
+        }
+        for name in ["scan", "observation"] {
+            let flag = format!("--{name}");
+            for arguments in [
+                vec![flag.clone().into(), "".into()],
+                vec![format!("{flag}=").into()],
+            ] {
+                let patch = parse_parameter_cli_overrides(&bundle, &arguments).unwrap();
+                assert_eq!(patch.values[name], ParameterValue::String(String::new()));
+            }
+            assert!(parse_parameter_cli_overrides(&bundle, &[flag.clone().into()]).is_err());
+            for text in [" ", "  ", "\t"] {
+                assert!(
+                    parse_parameter_cli_overrides(&bundle, &[flag.clone().into(), text.into()])
+                        .is_err()
+                );
+            }
+        }
+        for name in ["vis", "imsize", "threshold"] {
+            assert!(
+                parse_parameter_cli_overrides(&bundle, &[format!("--{name}").into(), "".into()])
+                    .is_err()
+            );
+        }
     }
 
     #[test]

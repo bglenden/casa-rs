@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import warnings
 
 import pytest
 
@@ -213,3 +214,54 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
     assert values["vis"] == [f"{name}.ms"]
     for parameter, value in overrides.items():
         assert values[parameter] == value, parameter
+
+
+@pytest.mark.parametrize("slot", ["file", "last", "last_successful"])
+def test_explicit_migration_warnings_survive_load_reload_and_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    monkeypatch.delenv("CASA_RS_STATE_DIR", raising=False)
+    source = '''[casars]
+format = 1
+surface = "imager"
+kind = "task"
+contract = 28
+[parameters]
+vis = ["unused.ms"]
+imagename = "unused"
+cell = "1arcsec"
+datacolumn = "none"
+'''
+    if slot == "file":
+        path = tmp_path / "legacy.toml"
+        load = lambda: parameters.load("tclean", path, workspace=tmp_path)
+    else:
+        filename = "last.toml" if slot == "last" else "last-successful.toml"
+        path = tmp_path / ".casa-rs" / "parameters" / "tclean" / filename
+        load = lambda: getattr(parameters, slot)("tclean", workspace=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    with warnings.catch_warnings(record=True) as notices:
+        warnings.simplefilter("always")
+        values = load()
+        assert len(notices) == 1
+        message = str(notices[0].message)
+        assert '"datacolumn"' in message and '"none"' in message
+        assert '"corrected"' in message and "stored legacy representation" in message
+        # Managed sparse profiles may omit a converted value equal to the default.
+        assert dict(values).get("datacolumn", "corrected") == "corrected"
+        assert values["datacolumn"] == "corrected"
+        values["niter"] = 1
+        values.reset("niter")
+        values.revert()
+        assert len(notices) == 1
+        values.reload()
+        assert len(notices) == 2
+        assert str(notices[1].message) == message
+        assert values["datacolumn"] == "corrected"
+        current = values.save(tmp_path / "current.toml")
+    assert path.read_text(encoding="utf-8") == source
+    with warnings.catch_warnings(record=True) as notices:
+        warnings.simplefilter("always")
+        parameters.load("tclean", current, workspace=tmp_path)
+        assert not notices

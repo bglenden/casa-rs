@@ -51,7 +51,6 @@
     "crates/casa-tables/src/taql/functions.rs",
     "crates/casa-tables/src/taql/meas_udf.rs",
     "crates/casa-tables/src/taql/parser.rs",
-    "crates/casa-task-runtime/src/profile.rs",
     "crates/casa-test-support/src/measures_interop.rs",
     "crates/casa-test-support/tests/images_perf_vs_cpp.rs",
     "crates/casa-test-support/tests/measures_interop.rs",
