@@ -223,6 +223,71 @@ where
         Ok(())
     }
 
+    /// Assign contiguous, complete product rows without per-element indexing.
+    /// Return false when the patch needs the general masked/reordered path.
+    pub(super) fn assign_contiguous(
+        &mut self,
+        times: Range<usize>,
+        channels: Range<usize>,
+        products: &[usize],
+        options: &CodecOptions,
+        values: &[T],
+    ) -> Result<bool, ObservationError> {
+        let [total, baselines, _, all_products] = self.shape;
+        if channels != self.channels
+            || self.grid[3] != 1
+            || !products.iter().copied().eq(0..all_products)
+        {
+            return Ok(false);
+        }
+        let Some(time_width) = baselines
+            .checked_mul(self.channels.len())
+            .and_then(|n| n.checked_mul(all_products))
+        else {
+            return Ok(false);
+        };
+        if times.len().checked_mul(time_width) != Some(values.len()) {
+            return Ok(false);
+        }
+        let held_channels = self.channels.len();
+        let channel_chunks = held_channels.div_ceil(self.chunk[2]);
+        for time in times.clone() {
+            let row = (time / self.chunk[0]) as u64;
+            if self.held.as_ref().is_none_or(|held| held.row != row) {
+                self.flush(options)?;
+                let start = row as usize * self.chunk[0];
+                let held_times = start..(start + self.chunk[0]).min(total);
+                let len = held_times.len() * time_width;
+                self.held = Some(Held {
+                    row,
+                    times: held_times,
+                    values: vec![self.fill; len],
+                    assigned: vec![false; len],
+                    counts: vec![0; self.chunk_count()],
+                });
+            }
+            let held = self.held.as_mut().expect("opened");
+            let destination = (time - held.times.start) * time_width;
+            let source = (time - times.start) * time_width;
+            held.values[destination..destination + time_width]
+                .copy_from_slice(&values[source..source + time_width]);
+            for baseline in 0..baselines {
+                for channel_chunk in 0..channel_chunks {
+                    let first = channel_chunk * self.chunk[2];
+                    let end = (first + self.chunk[2]).min(held_channels);
+                    let start = destination + (baseline * held_channels + first) * all_products;
+                    let stop = destination + (baseline * held_channels + end) * all_products;
+                    let marks = &mut held.assigned[start..stop];
+                    let added = marks.iter().filter(|&&assigned| !assigned).count();
+                    marks.fill(true);
+                    let chunk = baseline / self.chunk[1] * channel_chunks + channel_chunk;
+                    held.counts[chunk] += added;
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// Write what is held, chunk by chunk, and hold nothing.
     pub(super) fn flush(&mut self, options: &CodecOptions) -> Result<(), ObservationError> {
         let Some(held) = self.held.take() else {
@@ -264,7 +329,8 @@ where
         let shape = self.array.chunk_shape_usize(&indices).map_err(storage)?;
         let [_, baselines, _, products] = self.shape;
         let held_channels = self.channels.len();
-        let mut chunk: Vec<T> = if assigned == extent.iter().product::<usize>() {
+        let whole = assigned == extent.iter().product::<usize>();
+        let mut chunk: Vec<T> = if whole {
             vec![self.fill; shape.iter().product()]
         } else {
             self.array
@@ -277,6 +343,15 @@ where
                     * held_channels
                     + start[2]
                     - self.channels.start;
+                // When the chunk is fully assigned, every in-array element
+                // is present and the assignment marks need no further checks.
+                if whole && start[3] == 0 && extent[3] == products && shape[3] == products {
+                    let element = row * products;
+                    let at = (t * shape[1] + b) * shape[2] * products;
+                    let len = extent[2] * products;
+                    chunk[at..at + len].copy_from_slice(&held.values[element..element + len]);
+                    continue;
+                }
                 for f in 0..extent[2] {
                     let element = (row + f) * products + start[3];
                     let at = ((t * shape[1] + b) * shape[2] + f) * shape[3];

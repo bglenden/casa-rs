@@ -376,6 +376,28 @@ fn gather<T: Copy>(source: &[T], stored: usize, keep: &[usize], target: &mut Vec
     }
 }
 
+/// Fold stored flags and non-finite weights into the delivered flags.
+/// Validate the external boolean bytes before the straight-line fill.
+fn fold_full_flags(
+    bytes: &[u8],
+    weights: &[f32],
+    target: &mut Vec<bool>,
+) -> Result<(), ObservationError> {
+    if bytes.len() != weights.len() {
+        return Err(invalid("FLAG and WEIGHT lengths differ"));
+    }
+    if let Some(&byte) = bytes.iter().find(|&&byte| byte > 1) {
+        return Err(invalid(format!("FLAG byte {byte} is not a boolean")));
+    }
+    target.extend(
+        bytes
+            .iter()
+            .zip(weights)
+            .map(|(&byte, &weight)| byte != 0 || !weight.is_finite()),
+    );
+    Ok(())
+}
+
 impl Msv4Cursor<'_> {
     fn header(&self, times: usize) -> BatchHeader {
         BatchHeader {
@@ -516,11 +538,7 @@ impl Msv4Cursor<'_> {
                 .chunks_exact(stored)
                 .zip(weights.chunks_exact(stored));
             match keep {
-                None => {
-                    for (&byte, &weight) in scratch.flag_bytes.iter().zip(weights) {
-                        batch.flags.push(flag(byte, weight)?);
-                    }
-                }
+                None => fold_full_flags(&scratch.flag_bytes, weights, &mut batch.flags)?,
                 Some(keep) if self.resolved.flags_from_all => {
                     for (bytes, weights) in cells {
                         let mut any = false;
@@ -612,5 +630,26 @@ impl VisibilityCursor for Msv4Cursor<'_> {
 
     fn counters(&self) -> IoCounters {
         self.counters
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fold_full_flags;
+
+    #[test]
+    fn full_flags_validate_bytes_and_include_nonfinite_weights() {
+        let mut flags = Vec::new();
+        fold_full_flags(
+            &[0, 1, 0, 0, 1, 0],
+            &[1.0, 1.0, f32::NAN, f32::INFINITY, f32::NAN, -1.0],
+            &mut flags,
+        )
+        .expect("valid flags");
+        assert_eq!(flags, [false, true, true, true, true, false]);
+
+        let error = fold_full_flags(&[0, 2], &[1.0, 1.0], &mut Vec::new())
+            .expect_err("invalid boolean byte");
+        assert!(error.to_string().contains("FLAG byte 2 is not a boolean"));
     }
 }

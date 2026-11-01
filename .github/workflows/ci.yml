@@ -23,6 +23,9 @@ jobs:
       # Line tables keep file:line in panic backtraces while avoiding full
       # debug info in ~130 linked test binaries.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Make PyO3's cached configuration follow the interpreter installed
+      # below, even when ubuntu-latest changes its system Python.
+      PYO3_PYTHON: python3
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -31,6 +34,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Set up Python for Rust tests
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
