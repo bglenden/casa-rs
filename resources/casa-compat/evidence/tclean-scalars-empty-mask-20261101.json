@@ -2,7 +2,7 @@
   "schema_version": 1,
   "record": "tclean-final-cycle-scalars-and-empty-mask",
   "date": "2026-11-01",
-  "status": "18 scoped paired cases pass; full normal gate running; whole-task equivalence unfinished",
+  "status": "18 scoped paired cases and full normal gate pass; whole-task equivalence unfinished",
   "native_revision": "fd7b8e7b2d409c87fdb857f42c9126b99b5849ac",
   "native_binary_sha256": "670a7153d5eaab910d91a0d2e4cc2ce4bfd00238437b8759d3ef78e618bfd29b",
   "oracle": {
@@ -490,7 +490,7 @@
   },
   "focused_checks": "6 scalar unit tests,13 mask/controller laws and10 production return/mask/restart tests pass; touched clippy and dependency checks pass",
   "independent_review": "Separate-agent staged and actual-diff reviews have no outstanding findings; nonzero-model preservation suggestion added and passed",
-  "full_gate": "running at fd7b8e7b2d; final log retained separately",
+  "full_gate": "4698 workspace tests passed,45 skipped; doctests,workspace clippy,architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307 subtests",
   "archive": {
     "path": "/Volumes/home/casa-rs/tclean/20261031/scalar-returns-empty-mask-20261101.tar",
     "bytes": 31488000,
@@ -506,5 +506,11 @@
     "Seeded/restarted model flux and multi-plane summary values",
     "Restart False numbering and false calc controls",
     "Broader modes/selection, full metadata, representative/runtime-prediction and whole-task acceptance"
-  ]
+  ],
+  "full_gate_nas": {
+    "source_revision": "fd7b8e7b2d409c87fdb857f42c9126b99b5849ac",
+    "path": "/Volumes/home/casa-rs/tclean/20261031/scalar-return-quick-20261101.log",
+    "sha256": "7c36c370f1e36681594b891f5c0093436b78e618582c1d3d87a9dab3f9a053b1",
+    "passed": "4698 workspace tests/45 skips; doctests,workspace clippy,architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307 subtests"
+  }
 }

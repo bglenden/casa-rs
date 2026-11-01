@@ -132,12 +132,15 @@ seeded restart and nonzero-model restart under a persisted empty mask. The
 two scalar keys pass their recorded limits; iteration/major/stop integers
 match exactly and all recorded scientific products pass. Shared-scale plots
 are inspected. Focused laws/T1 tests, clippy and independent review pass;
-the full normal gate is running. Verified NAS archive is 31,488,000 bytes,
+the full normal gate passes 4,698 tests/45 skips, doctests, workspace clippy,
+architecture/SPDX/fmt, 21 CLI hosts and 875 performance-tool tests/307 subtests.
+Verified NAS archive is 31,488,000 bytes,
 SHA256 73ed966f5947bad37e78ea842f6125a68dcd35768d91c9b51c9114433427aa6b.
 
 The next bounded slice prepares restart=False numbering while the public
-provider still refuses False. Its native preview and exact contract 31->32
-activation proposal are being verified before asking for the required
+provider still refuses False. Its native preview at 9006dca1ec passes 6 helper tests, 6 restart T1 tests,
+the unchanged production False-refusal test and touched all-target clippy.
+The exact contract 31->32 activation proposal is prepared for the required
 provider-contract approval. No defaults or signatures would change.
 Coordinated outliers and occupied chosen orphan namespaces remain unfinished.
 Dirty/outside-mask peaks, seeded model flux and multi-plane returns,

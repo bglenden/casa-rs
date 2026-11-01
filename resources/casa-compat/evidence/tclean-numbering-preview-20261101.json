@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "record": "tclean-restart-false-native-preview",
+  "date": "2026-11-01",
+  "native_revision": "9006dca1ec5e6d96fe2f764cfdd878b1f7677ced",
+  "state": "Native preview passes; provider activation awaits owner approval",
+  "provider_contract": 31,
+  "proposed_contract": 32,
+  "production_false": "Still refused by unchanged catalog; existing refusal test passes",
+  "default": "restart=True unchanged; all92CASA signatures/defaults unchanged",
+  "scope": "One main output namespace; preserve existing products, choose highest recognized CASA ID plus1 and run fresh",
+  "tests": {
+    "helper": {
+      "passed": 6,
+      "command": "CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application restart::numbering::tests -- --nocapture",
+      "log": "helper.log"
+    },
+    "restart_t1": {
+      "passed": 6,
+      "command": "CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1 restart:: -- --nocapture",
+      "log": "t1-restart.log"
+    },
+    "false_refusal_t1": {
+      "passed": 1,
+      "command": "CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1 casa_return::values_casa_rs_cannot_honour_are_refused_at_their_parameter -- --exact",
+      "log": "t1-false-refusal.log"
+    }
+  },
+  "clippy": {
+    "command": "CARGO_INCREMENTAL=0 cargo clippy -p casa-imaging-application -p casars-imager --all-targets -- -D warnings",
+    "exit_code": 0,
+    "log": "clippy.log"
+  },
+  "dependency_check": {
+    "command": "python3 scripts/check-imaging-dependencies.py",
+    "exit_code": 0,
+    "log": "dependencies.log"
+  },
+  "review": "Independent staged review plus Unicode/byte repair confirmation: no outstanding findings",
+  "unfinished": [
+    "Coordinated outlier numbering",
+    "A chosen namespace occupied only by orphan products refuses rather than overwrites",
+    "Full public CLI/Python False-value acceptance pending activation and gates"
+  ],
+  "filesystem_limitations": [
+    "Rust raw-byte parser checks pass; APFS EILSEQ92 skips physical invalid-byte filename creation",
+    "CASA byte-name helper oracle uses os.listdir surrogateescape mock because APFS cannot create invalid-byte names"
+  ],
+  "activation_patch_sha256": "7d9e7c3a3dbd0a2395e8fd15baf9f0ff370a783328aec7c1083610bdc7508fe3",
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/restart-numbering-preview-20261101.tar",
+    "bytes": 696320,
+    "sha256": "bc98a438ff90629866659ce278126039bd4ee5c776e9acf9567776670ddc4cf2",
+    "manifest_entries": 56,
+    "manifest_sha256": "68be02dab3326307a1fe60ae37c975e6757735c481128649302a60b4698e39fc",
+    "verification": "Every local TAR member checked; NAS TAR reread hash matches",
+    "source_revision": "9006dca1ec5e6d96fe2f764cfdd878b1f7677ced",
+    "activation": "Not applied; provider31 unchanged, production False refusal retained"
+  },
+  "proposal": "docs/Planning/tclean-restart-numbering-contract-proposal-20261101.md"
+}

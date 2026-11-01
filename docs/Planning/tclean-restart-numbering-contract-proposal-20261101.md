@@ -1,0 +1,76 @@
+# Enable the prepared tclean restart=False behavior
+
+Status: native preview verified at `9006dca1ec`; provider activation awaits approval.
+Work issues: #944 and #980. CASA oracle: casatasks 6.7.6.14 / casatools 6.7.6-14.
+
+## Decision requested
+
+Enable casa-rs's existing `restart=False` parameter for a single main image by
+updating its provider bundle from 31 to 32. All 92 CASA names, signatures and
+defaults stay unchanged, including `restart=True`. CASA itself is unchanged.
+
+The native implementation preserves previous products and chooses fresh
+`image_2`, `image_3`, … outputs using CASA's highest recognized suffix plus 1.
+It keeps the full absolute directory, as already approved. The normal native
+compile/run path creates the selected products and summary; it does not seed
+from the previous model. Only the output namespace policy changes.
+
+Coordinated outlier numbering and occupied chosen orphan namespaces remain
+explicit unfinished refusals. Other restart work, including calcres/calcpsf
+reuse, stays open; this decision does not close the equivalence programme.
+
+## Exact activation
+
+The unapplied activation patch changes the tclean surface version 31->32,
+removes only restart's `unimplemented` marker, replaces its stale surface
+note, and adds a 31->32 migration with no changed defaults or value rewrites.
+It replaces the universal False-refusal test with public-resolution and
+outlier-refusal checks. Contract history and Python binding snapshots are
+regenerated through the existing scripts after approval.
+
+Patch SHA256: `7d9e7c3a3dbd0a2395e8fd15baf9f0ff370a783328aec7c1083610bdc7508fe3`.
+The exact patch and commands are in the verified archive below; the working
+copy is `/private/tmp/tclean-numbering-proposal-20261101/activation-proposal.patch`.
+No provider files, migration history or binding snapshots have been changed.
+
+## Executed evidence
+
+- Six helper tests match pinned CASA filename cases, including gaps, Taylor
+  suffixes, arbitrary-length numeric IDs, Unicode digits and byte parsing.
+- Six restart T1 tests pass, including the public-run native preview:
+  originals stay unchanged, `_2` then `_3` start fresh, and products/summaries
+  use the selected prefix. That preview bypasses only the catalog refusal.
+- The unchanged production False-refusal test passes. Production activation
+  has not been counted as a pass.
+- Touched all-target clippy, dependency, formatting and diff checks pass.
+  Independent review has no outstanding findings.
+
+APFS cannot create invalid-byte filenames. Those cases have explicit helper
+surrogateescape and native byte-parser checks; physical Linux filesystem
+acceptance is separate. This limit is recorded without counting a skipped
+physical fixture as a pass.
+
+Current completed science source `fd7b8e7b2d` passes 18 CASA-paired scalar/mask
+cases and the full normal gate: 4,698 workspace tests/45 skips, doctests,
+workspace clippy, architecture/SPDX/fmt, 21 CLI hosts and 875 performance-tool
+tests/307 subtests. These gates retain their own revision identity; the
+numbering preview has the focused checks above.
+
+## After approval
+
+Apply the activation patch, regenerate and inspect contract history and binding
+snapshots, then execute public CLI/Python False calls against pinned CASA,
+product-preservation checks and the required normal gates. Record the resulting
+scope in the existing generated reference. No acceptance checks are reduced.
+
+## Authority and durable evidence
+
+[AGENTS.md](../../AGENTS.md#ask-first) explicitly requires asking before
+“Changing persisted formats, provider-contract bundles, or other external
+contracts.” This request covers the provider bundle activation.
+
+Preview receipt:
+[`tclean-numbering-preview-20261101.json`](../../resources/casa-compat/evidence/tclean-numbering-preview-20261101.json).
+Verified NAS archive: `/Volumes/home/casa-rs/tclean/20261031/restart-numbering-preview-20261101.tar`;
+696,320 bytes, SHA256 `bc98a438ff90629866659ce278126039bd4ee5c776e9acf9567776670ddc4cf2`.
+All 56 archived members and the reread NAS archive were verified.
