@@ -22,11 +22,19 @@ use casa_types::measures::{
 pub enum PrepareError {
     /// Existing products require CASA restart, which is not implemented yet.
     #[error(
-        "existing image product {path:?}: CASA restart is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
+        "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
     )]
     ExistingImageProduct {
         /// The occupied scientific product path.
         path: PathBuf,
+    },
+    /// The existing image cannot be reused under the requested continuation.
+    #[error("cannot restart from {path:?}: {reason}; previous products were preserved (#944)")]
+    Restart {
+        /// Existing product.
+        path: PathBuf,
+        /// Incompatible request or image header.
+        reason: String,
     },
     /// The output namespace could not be inspected before a run.
     #[error("cannot inspect output directory {path:?}: {source}")]

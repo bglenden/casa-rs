@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Interim protection for CASA restart (#944), not restart equivalence.
-//! CASA reuses prior products; until that lifecycle is implemented, refuse
-//! the occupied scientific namespace before execution or summary publication.
+//! Bounded default restart (#944): same-grid, single-term Stokes-I MFS.
+//! Unsupported products remain protected before execution or summary publication.
+
+mod grid;
+pub(crate) use grid::check_grid;
+mod mask;
+pub(crate) use mask::MaskInput;
 
 use std::{
     fs, io,
@@ -12,7 +16,37 @@ use std::{
 use crate::{ImagingRequest, PrepareError};
 
 pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
-    check_prefix(&request.imagename)?;
+    let existing = products(&request.imagename)?;
+    if !existing.is_empty() {
+        let supported = request.specmode == crate::SpecMode::Mfs
+            && request.deconvolver != crate::Deconvolver::Mtmfs
+            && request.stokes == [casa_imaging_model::PolarizationCoordinate::StokesI]
+            && request.outlierfile.is_none()
+            && request.usemask == crate::UseMask::User
+            && request.mask_image.is_none()
+            && request.mask_box.is_empty()
+            && matches!(request.gridder, crate::Gridder::Standard { facets } if facets.get() == 1);
+        for path in existing {
+            let suffix = path.as_os_str().to_string_lossy();
+            let prefix = request.imagename.as_os_str().to_string_lossy();
+            let suffix = suffix.strip_prefix(prefix.as_ref()).unwrap_or("");
+            if !supported
+                || !matches!(
+                    suffix,
+                    ".model" | ".image" | ".residual" | ".psf" | ".sumwt" | ".pb" | ".mask"
+                )
+            {
+                return Err(PrepareError::ExistingImageProduct { path });
+            }
+            if suffix == ".model" && request.startmodel.is_some() {
+                return Err(PrepareError::Restart {
+                    path,
+                    reason: "startmodel cannot be supplied when the output model already exists"
+                        .into(),
+                });
+            }
+        }
+    }
     if let Some(path) = &request.outlierfile {
         super::compile::check_outlier_outputs(path)?;
     }
@@ -20,6 +54,14 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
 }
 
 pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
+    if let Some(path) = products(prefix)?.into_iter().next() {
+        return Err(PrepareError::ExistingImageProduct { path });
+    }
+    Ok(())
+}
+
+pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut products = Vec::new();
     // Publication appends to the original path bytes, including a trailing
     // slash: `out/` writes `out/.model`, not the sibling `out.model`.
     let mut model = prefix.as_os_str().to_os_string();
@@ -37,7 +79,7 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
                 io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
             ) =>
         {
-            return Ok(());
+            return Ok(products);
         }
         Err(source) => {
             return Err(PrepareError::InspectOutputDirectory {
@@ -47,7 +89,7 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
         }
     };
     let Some(stem) = model.file_name() else {
-        return Ok(());
+        return Ok(products);
     };
     let stem = stem.to_string_lossy();
     let stem = stem.strip_suffix(".model").expect("appended suffix");
@@ -80,10 +122,10 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
                     | "gridwt"
             )
         ) {
-            return Err(PrepareError::ExistingImageProduct { path: entry.path() });
+            products.push(entry.path());
         }
     }
-    Ok(())
+    Ok(products)
 }
 
 #[cfg(test)]

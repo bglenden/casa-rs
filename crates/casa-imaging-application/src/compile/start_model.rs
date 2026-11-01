@@ -35,12 +35,13 @@ use ndarray::{ArrayD, Zip};
 use super::PrepareError;
 use super::domains::PreparedImageDomain;
 
-/// A start model checked against the main image domain.
+/// An explicit start model or same-grid restart model checked against the main domain.
 #[derive(Clone, Debug)]
 pub(crate) struct StartModel {
     path: PathBuf,
     input_shape: Vec<usize>,
     template: RegridTemplate,
+    direct: bool,
 }
 
 impl StartModel {
@@ -109,6 +110,22 @@ impl StartModel {
             path: path.to_path_buf(),
             input_shape: shape,
             template,
+            direct: false,
+        })
+    }
+
+    /// Reuse an existing model on precisely the requested grid, without regridding.
+    pub(super) fn restart(path: &Path, main: &PreparedImageDomain) -> Result<Self, PrepareError> {
+        let template = RegridTemplate {
+            coordinates: main.coordinates.clone(),
+            shape: vec![main.image_size[0], main.image_size[1], 1, 1],
+        };
+        crate::restart::check_grid(path, &template)?;
+        Ok(Self {
+            path: path.into(),
+            input_shape: template.shape.clone(),
+            template,
+            direct: true,
         })
     }
 
@@ -118,7 +135,8 @@ impl StartModel {
     /// image with its mask and the samples copied out of it, and `regrid`'s
     /// planes: an input plane of `f64` with its mask, and an output plane of
     /// `f64`, a flag and an input position each. The direction axes are the
-    /// first two of both images, as `check_regrid` requires.
+    /// first two of both images, as `check_regrid` requires. Direct restart
+    /// holds only the input image and the emitted samples, within this charge.
     pub(crate) fn seeding_bytes(&self) -> u64 {
         let input: usize = self.input_shape.iter().product();
         let output: usize = self.template.shape.iter().product();
@@ -151,9 +169,17 @@ impl StartModel {
     }
 
     /// The main domain's model samples in the model's canonical order
-    /// (spectral plane, polarization, y, x, x fastest): the regridded
-    /// image's Fortran order.
+    /// (spectral plane, polarization, y, x, x fastest), either read directly
+    /// for restart or regridded for an explicit start model.
     pub(crate) fn main_samples(&self) -> Result<Vec<f32>, ImageError> {
+        if self.direct {
+            let image = casa_images::PagedImage::<f32>::open(&self.path)?;
+            // CASA's restart prediction uses StokesImageUtil::From's raw lattice
+            // iterator; unlike explicit startmodel, it does not zero a pixel mask.
+            let values = image.get()?;
+            // Iterate logical axes in model order, independent of image storage order.
+            return Ok(values.reversed_axes().iter().copied().collect());
+        }
         let zeroed = match AnyPagedImage::open(&self.path)? {
             AnyPagedImage::Float32(image) => zeroed_copy(&image)?,
             AnyPagedImage::Float64(image) => zeroed_copy(&image)?,
@@ -214,4 +240,73 @@ where
     copy.set_units(image.units())?;
     copy.put_slice(&values, &vec![0; values.ndim()])?;
     Ok(copy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_coordinates::{
+        DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    };
+    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use ndarray::IxDyn;
+
+    #[test]
+    fn direct_restart_reads_raw_x_fastest_pixels_while_startmodel_zeros_the_mask() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("existing.model");
+        let shape = vec![4, 3, 1, 1];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [2.0, 1.0],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1e9,
+            1e6,
+            0.0,
+            1e9,
+        ));
+        let mut image =
+            casa_images::PagedImage::<f32>::create(shape.clone(), coordinates.clone(), &path)
+                .unwrap();
+        image.set_units("Jy/pixel").unwrap();
+        let pixels =
+            ArrayD::from_shape_fn(IxDyn(&shape), |index| (index[0] + 10 * index[1]) as f32);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.make_mask("external", true, false).unwrap();
+        image.save().unwrap();
+        drop(image);
+        let template = RegridTemplate {
+            coordinates,
+            shape: shape.clone(),
+        };
+        let explicit = StartModel::onto(&path, template.clone()).unwrap();
+        assert!(
+            explicit
+                .main_samples()
+                .unwrap()
+                .iter()
+                .all(|&value| value == 0.0)
+        );
+        // The task gate still refuses masked-model continuation until publication
+        // can preserve the mask; the seed reader must nevertheless match CASA.
+        let direct = StartModel {
+            path,
+            input_shape: shape,
+            template,
+            direct: true,
+        };
+        assert_eq!(
+            direct.main_samples().unwrap(),
+            vec![
+                0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 13.0, 20.0, 21.0, 22.0, 23.0
+            ]
+        );
+    }
 }

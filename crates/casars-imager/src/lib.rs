@@ -74,12 +74,11 @@ pub fn run(
     parameters: ImagingParameters,
     request: &ImagingRequest,
 ) -> Result<ImagerRunTaskResult, String> {
-    // This is tclean's lifecycle policy. Internal application attempts
-    // still replace individual outputs atomically; a user task must never
-    // silently discard its previous model or summary while restart is missing.
-    request
-        .check_tclean_output_prefixes()
+    // Task continuation is distinct from internal atomic output replacement.
+    let request = request
+        .with_tclean_restart()
         .map_err(|error| error.to_string())?;
+    let request = &request;
     let started = Instant::now();
     let mut summary = request.imagename.clone().into_os_string();
     summary.push(".summary.json");

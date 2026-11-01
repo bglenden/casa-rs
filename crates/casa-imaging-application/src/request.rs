@@ -29,6 +29,9 @@ use serde_json::Value;
 /// One imaging run's parameters, as the catalog resolved them.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ImagingRequest {
+    /// Task-only continuation, established by output preflight, never a catalog value.
+    #[serde(skip)]
+    pub(crate) tclean_restart: bool,
     /// The MeasurementSet.
     #[serde(deserialize_with = "single")]
     pub vis: PathBuf,
@@ -440,10 +443,8 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
-    /// Refuse an occupied `tclean` output namespace until CASA restart is
-    /// implemented (#944). Task entry points call this before creating a
-    /// run summary; the lower-level execution API retains its per-attempt
-    /// atomic replacement contract.
+    /// Check the bounded default `tclean` restart lifecycle (#944).
+    /// Task entry points call this before creating a run summary.
     ///
     /// # Errors
     ///
@@ -451,6 +452,18 @@ impl ImagingRequest {
     /// directory or invalid outlier-name file.
     pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
         crate::restart::check(self)
+    }
+
+    /// Clone this request with task continuation enabled after output preflight.
+    /// Lower-level execution of the original request retains atomic replacement.
+    ///
+    /// # Errors
+    /// An unsupported existing product or a conflicting explicit start model.
+    pub fn with_tclean_restart(&self) -> Result<Self, crate::PrepareError> {
+        self.check_tclean_output_prefixes()?;
+        let mut request = self.clone();
+        request.tclean_restart = !crate::restart::products(&self.imagename)?.is_empty();
+        Ok(request)
     }
 
     /// Check the relations between parameters that no single parameter's

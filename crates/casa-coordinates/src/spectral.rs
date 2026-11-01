@@ -160,6 +160,15 @@ impl SpectralCoordinate {
         self.frequency_ref
     }
 
+    /// Whether the native pixel-to-frequency mapping uses FITS linear parameters.
+    ///
+    /// Returns `false` for an explicit spectral lookup table, even when its
+    /// reference value, pixel and increment equal those of a linear coordinate.
+    /// This describes the native mapping before optional reference-frame conversion.
+    pub fn has_linear_mapping(&self) -> bool {
+        matches!(self.mapping, SpectralMapping::Linear { .. })
+    }
+
     /// Returns the CASA conversion-layer frequency frame, if configured.
     pub fn conversion_frequency_ref(&self) -> Option<FrequencyRef> {
         self.conversion

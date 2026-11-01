@@ -17,6 +17,8 @@ mod native;
 mod request;
 mod restart;
 #[doc(hidden)]
+pub mod restart_mask_law;
+#[doc(hidden)]
 pub mod route_law;
 #[doc(hidden)]
 pub mod source_law;
@@ -329,6 +331,15 @@ pub fn execute(
             Ok(outcome)
         }
         Err(error) => {
+            // A rejected continuation never replaces the previous successful record.
+            if request.tclean_restart
+                && matches!(
+                    &error,
+                    ApplicationDispatchError::Preparation(PrepareError::Restart { .. })
+                )
+            {
+                return Err(error);
+            }
             let status = match &error {
                 ApplicationDispatchError::Cancelled => RunStatus::Cancelled,
                 error => RunStatus::Failed {
@@ -398,7 +409,7 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Request)?;
     casa_imaging_runtime::charge_process_caches(&context.host, &context.policy)
         .map_err(ApplicationDispatchError::Admission)?;
-    let resident = casa_imaging_runtime::admit(
+    let mut resident = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
         &casa_imaging_runtime::Demand {
@@ -411,6 +422,9 @@ fn compile_run(
         PrepareError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         error => ApplicationDispatchError::Preparation(error),
     })?;
+    // The static restart-mask plan and its clone stay charged through all passes
+    // and publication; ordinary minor-cycle mask charges cover their derived masks.
+    resident.join(prepared.mask_resident);
     let resolved = resolve_selected_observation(prepared.observation.clone())
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     let (snapshot, access) = resolved.into_parts();
