@@ -86,8 +86,13 @@ fn run_with_statistics(
     request: &ImagingRequest,
 ) -> Result<(ImagerRunTaskResult, Option<ResidualStatistics>), String> {
     // Task continuation is distinct from internal atomic output replacement.
+    let restart = parameters
+        .0
+        .get("restart")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "resolved tclean restart must be boolean".to_owned())?;
     let request = request
-        .with_tclean_restart()
+        .with_tclean_output_policy(restart)
         .map_err(|error| error.to_string())?;
     let request = &request;
     let started = Instant::now();

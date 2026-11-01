@@ -291,3 +291,79 @@ fn outlier_preflight_preserves_a_trailing_slash_and_does_not_allocate_its_mask()
     }
     assert_unchanged(&before, &snapshot(directory.path()));
 }
+
+#[test]
+fn restart_false_public_run_selects_fresh_numbered_namespaces() {
+    use casars_imager::{ImagingParameters, resolve_request, run};
+
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [6, -4],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("restart-false-numbering");
+    fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    let values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": geometry.image_size,
+        "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+        "backend": "cpu", "niter": 10, "restart": true,
+    });
+    let (parameters, request) =
+        resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
+    run(parameters.clone(), &request).unwrap();
+    let model = |name: &str| {
+        PagedImage::<f32>::open(directory.join(format!("{name}.model")))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    let first = model("image");
+    assert!(first.sum() > 0.0);
+    // Preparation-only bypass of the catalog's unfinished-value refusal. The
+    // public execution path and its output-policy method are not bypassed.
+    let mut numbered = parameters;
+    numbered.0.insert("restart".into(), json!(false));
+    for name in ["image_2", "image_3"] {
+        let before = snapshot(&directory);
+        let result = run(numbered.clone(), &request).unwrap();
+        let selected = directory.join(name);
+        assert!(!result.artifacts.is_empty());
+        for artifact in &result.artifacts {
+            assert!(
+                artifact
+                    .path
+                    .starts_with(&format!("{}.", selected.display())),
+                "{}",
+                artifact.path
+            );
+            assert!(artifact.exists && Path::new(&artifact.path).exists());
+        }
+        assert!(directory.join(format!("{name}.summary.json")).is_file());
+        let after = snapshot(&directory);
+        for (path, bytes) in before {
+            assert_eq!(
+                after.get(&path),
+                Some(&bytes),
+                "previous output changed: {}",
+                path.display()
+            );
+        }
+        let fresh = model(name);
+        let error: f64 = fresh
+            .iter()
+            .zip(first.iter())
+            .map(|(&a, &b)| f64::from(a - b).powi(2))
+            .sum();
+        let power: f64 = first.iter().map(|&v| f64::from(v).powi(2)).sum();
+        assert!(
+            (error / power).sqrt() < 0.001,
+            "numbered run must start fresh, not accumulate the old model"
+        );
+    }
+}

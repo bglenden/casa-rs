@@ -466,6 +466,30 @@ impl ImagingRequest {
         Ok(request)
     }
 
+    /// Apply CASA's task output policy before summary creation or execution.
+    /// `restart=true` keeps bounded continuation; `false` selects the next
+    /// single-main-image namespace and protects every existing chosen product.
+    ///
+    /// # Errors
+    /// Unsupported coordinated outlier numbering, invalid numbered names,
+    /// unreadable directories, or an occupied chosen scientific namespace.
+    pub fn with_tclean_output_policy(&self, restart: bool) -> Result<Self, crate::PrepareError> {
+        if restart {
+            return self.with_tclean_restart();
+        }
+        if let Some(path) = &self.outlierfile {
+            return Err(crate::PrepareError::Restart {
+                path: path.clone(),
+                reason: "restart=False coordinated outlier numbering is unfinished (#944)".into(),
+            });
+        }
+        let mut request = self.clone();
+        request.imagename = crate::restart::next_prefix(&self.imagename)?;
+        crate::restart::check_prefix(&request.imagename)?;
+        request.tclean_restart = false;
+        Ok(request)
+    }
+
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {

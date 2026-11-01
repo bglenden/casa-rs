@@ -3,6 +3,9 @@
 //! Bounded default restart (#944): same-grid, single-term Stokes-I MFS.
 //! Unsupported products remain protected before execution or summary publication.
 
+mod numbering;
+pub(crate) use numbering::next_prefix;
+
 mod grid;
 pub(crate) use grid::check_grid;
 mod mask;
