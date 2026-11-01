@@ -291,8 +291,6 @@ def tclean(
     """Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
     CASA's ``tclean``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #944:
-    ``restart``.
     Accepted only at CASA's default, where CASA reads them, until #980:
     ``timerange``, ``antenna``, ``scan``, ``observation``, ``projection``,
     ``reffreq``, ``psfphasecenter``, ``vptable``, ``computepastep``,

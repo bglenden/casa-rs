@@ -137,15 +137,28 @@ architecture/SPDX/fmt, 21 CLI hosts and 875 performance-tool tests/307 subtests.
 Verified NAS archive is 31,488,000 bytes,
 SHA256 73ed966f5947bad37e78ea842f6125a68dcd35768d91c9b51c9114433427aa6b.
 
-The next bounded slice prepares restart=False numbering while the public
-provider still refuses False. Its native preview at 9006dca1ec passes 6 helper tests, 6 restart T1 tests,
-the unchanged production False-refusal test and touched all-target clippy.
-The exact contract 31->32 activation proposal is prepared for the required
-provider-contract approval. No defaults or signatures would change.
-Coordinated outliers and occupied chosen orphan namespaces remain unfinished.
-Dirty/outside-mask peaks, seeded model flux and multi-plane returns,
-false calc controls, broader masks/modes/selection and representative/runtime
-prediction acceptance still need work. `tclean` is not complete.
+Owner-approved contract32 activates `restart=False` at `99b1cfad55`, with
+all114 binding names/order/defaults and other task surfaces unchanged. The
+[activation receipt](../../resources/casa-compat/evidence/tclean-numbering-activation-20261101.json)
+records20 small public CLI/Python product/naming/preservation rows passing;
+19/20 selected scalar rows pass the original limits. The owner accepted the
+one exact Metal cyclethreshold output (1.5132ppm difference); its raw failure
+is retained and no future output inherits the waiver. Python package gates
+pass632 editable,632 wheel and99 fresh-sdist tests. The native normal gate
+is running; coordinated outliers, occupied chosen orphan namespaces, calc
+controls, broader returns/modes and representative acceptance remain unfinished.
+CASA appends later calls to old numbered images' histories; native leaves old
+files unchanged. That precise metadata policy is a separate pending decision.
+Singleton-list startmodel is a measured existing input-domain gap.
+
+The next bounded implementation slice fixes pixel-box clipping and explicit
+empty CRTF masks. Pinned12-case CASA probes establish that out-of-image boxes
+and empty files produce zero masks/code7; native currently refuses clipping
+and interprets an empty file as a full-image mask. Signed bounds, intersection
+at existing materialization and explicit-empty provenance are prepared; no
+provider/default/signature change is needed. Full activation verification
+precedes applying that code. General regions and other mask modes remain open.
+`tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction
 

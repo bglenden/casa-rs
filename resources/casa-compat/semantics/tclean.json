@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "tclean",
   "casa_version": "6.7.6.14",
-  "audit_revision": "9006dca1ec5e6d96fe2f764cfdd878b1f7677ced",
+  "audit_revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
   "parameters": {
     "vis": {
       "status": "Partial",
@@ -126,13 +126,14 @@
     },
     "imagename": {
       "status": "Partial",
-      "scope": "Fresh namespaces for supported imaging; default continuation reuses same-grid raw model and binary CLEAN mask for standard unfaceted single-term Stokes-I MFS, with user masks and no new explicit mask. Small paired CASA continuation and cross-consumption pass; remaining namespace modes/numbering are unfinished (#944).",
+      "scope": "Fresh namespaces for supported imaging; default continuation reuses same-grid raw model and binary CLEAN mask for standard unfaceted single-term Stokes-I MFS with no new explicit mask. Owner-approved contract32 enables fresh single-main restart=False numbering, including relative/absolute paths. All20 small public CLI/Python product/preservation rows pass; one scalar output has identity-bound owner acceptance. Outlier/orphan namespaces and broader persistence remain unfinished (#944).",
       "evidence": [
         "signature",
         "reader",
         "lifecycle",
         "restart-native-current",
-        "approved-comparisons-restart"
+        "approved-comparisons-restart",
+        "numbering-activation"
       ],
       "behaviors": [
         "restart"
@@ -195,12 +196,13 @@
     },
     "startmodel": {
       "status": "Partial",
-      "scope": "One real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31). A single Q-to-I seed is CASA-paired verified; permuted multi-plane copying has focused native tests only and unequal plane counts remain unassessed. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused.",
+      "scope": "One string path to a real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31). A single Q-to-I seed is CASA-paired verified; permuted multi-plane copying has focused native tests only and unequal plane counts remain unassessed. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused. Singleton-list input [path] is refused by the existing Path catalog, despite CASA accepting that form; this remains an unfinished input-domain gap. Shared frozen string seeds are paired in the numbering activation wave.",
       "evidence": [
         "signature",
         "reader",
         "additions",
-        "default-products"
+        "default-products",
+        "numbering-activation"
       ],
       "behaviors": [
         "restart"
@@ -947,18 +949,20 @@
       ]
     },
     "restart": {
-      "scope": "Only True is accepted by the runtime contract. Same-grid standard unfaceted single-term Stokes-I MFS continuation reuses raw model and binary CLEAN mask. Small paired CASA default and negative-PB sequences and bidirectional product continuation pass on the recorded backends. Broader modes, embedded masks, new masks, numbering and false calc controls remain unfinished (#944). Native False numbering preview is tested behind the unchanged refusal; provider activation is pending.",
+      "scope": "True continues bounded same-grid standard unfaceted single-term Stokes-I MFS using raw model and binary CLEAN mask. False is active in owner-approved contract32: a single main image starts fresh at the highest recognized numbered suffix plus1, preserving old files. All20 small public CLI/Python product/naming/preservation rows pass;19/20 selected scalar rows pass raw limits and one exact Metal output is owner-accepted by identity-bound review. Prior-history behavior awaits owner disposition. Outlier numbering, occupied chosen orphan namespaces, embedded/new masks, broader modes and false calc controls remain unfinished (#944).",
       "evidence": [
         "signature",
         "reader",
         "lifecycle",
         "restart-native-current",
         "approved-comparisons-restart",
-        "numbering-preview"
+        "numbering-preview",
+        "numbering-activation"
       ],
       "behaviors": [
         "restart"
-      ]
+      ],
+      "status": "Partial"
     },
     "savemodel": {
       "status": "Partial",
@@ -1033,14 +1037,15 @@
       "title": "Restart, product persistence and recalculation",
       "status": "Partial",
       "scope": "imagename, restart, startmodel, calcres, calcpsf, restoration; main and outlier fields (#944).",
-      "gap": "Paired CASA 6.7.6.14/6.7.6-14 small standard Stokes-I MFS defaults now pass: 18 native 10->0->10 rows, 6 persisted nontrivial-mask cases,6 CASA-to-native continuations and 2 native-to-CASA continuations with actual rewrite, across default positive and negative PB limits. Model is retained exactly at niter0; masks confine new components. Resolved-rotation/SIN representation fix preserves real-grid refusal. Embedded model/mask pixel masks, tabulated spectral grids, new explicit/auto masks on occupied outputs, broader modes/outliers, restart=False numbering and false calc controls remain unfinished; concurrency at one prefix unassessed. This is not general persistence or full metadata acceptance. A later 18-case scalar/mask wave also verifies fresh and nonzero-seeded empty masks without components; numbering remains unexposed until a provider-contract decision. Native False numbering preview 9006dca1ec passes helper/public-run tests behind the unchanged catalog refusal; contract 31->32 activation is a concrete pending owner decision, not production acceptance.",
+      "gap": "Paired CASA 6.7.6.14/6.7.6-14 small standard Stokes-I MFS defaults now pass: 18 native 10->0->10 rows, 6 persisted nontrivial-mask cases,6 CASA-to-native continuations and 2 native-to-CASA continuations with actual rewrite, across default positive and negative PB limits. Model is retained exactly at niter0; masks confine new components. Resolved-rotation/SIN representation fix preserves real-grid refusal. Embedded model/mask pixel masks, tabulated spectral grids, new explicit/auto masks on occupied outputs, broader modes/outliers and false calc controls remain unfinished; concurrency at one prefix unassessed. Contract32 now activates single-main False numbering. All20 small CLI/Python product/preservation rows pass;19/20 selected scalar rows pass raw limits, with one exact Metal result owner-accepted. CASA mutates prior logtables whereas native preserves them: owner history disposition is pending. Singleton-list startmodel is a measured catalog gap. This is not general persistence or full metadata acceptance.",
       "evidence": [
         "reader",
         "lifecycle",
         "restart-native-current",
         "approved-comparisons-restart",
         "scalars-empty-mask",
-        "numbering-preview"
+        "numbering-preview",
+        "numbering-activation"
       ]
     },
     {
@@ -1094,7 +1099,7 @@
       "title": "Return values, exceptions and metadata",
       "status": "Partial",
       "scope": "Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.",
-      "gap": "The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions.",
+      "gap": "The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. CASA prior-history updates versus native preservation await owner disposition.",
       "evidence": [
         "returns",
         "reader",
@@ -1102,7 +1107,8 @@
         "default-products",
         "adopted-defaults",
         "approved-comparisons-restart",
-        "scalars-empty-mask"
+        "scalars-empty-mask",
+        "numbering-activation"
       ]
     },
     {
@@ -1110,7 +1116,7 @@
       "title": "Precision, backend and resource acceptance",
       "status": "Partial",
       "scope": "backend=auto/cpu/gpu, gridprecision and all scientific products (#991).",
-      "gap": "Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. The later guarded numbering preview has its own focused tests; production False remains refused until provider activation. Scientific accumulation is unchanged by those two slices.",
+      "gap": "Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. Contract32 False is now active and all20 small public numbering product checks pass. One Metal threshold output is owner-accepted by identity-bound review; its raw scalar failure stays visible, with no future waiver. Native full activation gate is running. Scientific accumulation is unchanged by those two slices.",
       "evidence": [
         "reader",
         "accuracy-issue",
@@ -1122,7 +1128,8 @@
         "taylor-pb-mfs",
         "standard-mtmfs-current",
         "approved-comparisons-restart",
-        "scalars-empty-mask"
+        "scalars-empty-mask",
+        "numbering-activation"
       ]
     }
   ],
@@ -1160,14 +1167,15 @@
       "state": "Unfinished",
       "inputs": "Any occupied main/outlier image namespace; restart=False or recalculation controls.",
       "casa": "Continues existing products by default, or chooses a numbered fresh prefix with restart=False.",
-      "ours": "Bounded same-grid standard Stokes-I MFS default continuation now has native gates, small paired CASA 10->0->10/mask evidence and both-direction continuation. Other occupied namespaces, numbering and calc flags remain unfinished.",
+      "ours": "Bounded same-grid standard Stokes-I MFS default continuation now has native gates, small paired CASA 10->0->10/mask evidence and both-direction continuation. Contract32 activates single-main fresh numbering; small public products/preservation pass. Other occupied namespaces, coordinated outlier/orphan numbering and calc flags remain unfinished.",
       "rationale": "Reuse the existing native model/mask lifecycle with admitted ownership, preserving unsupported-state refusals while completing parity.",
       "impact": "The bounded native default path can continue prior work; unsupported modes and flags still require completion and are not agreed exclusions.",
       "evidence": [
         "lifecycle",
         "reader",
         "restart-native-current",
-        "approved-comparisons-restart"
+        "approved-comparisons-restart",
+        "numbering-activation"
       ]
     },
     {
@@ -1204,13 +1212,14 @@
       "state": "Previously agreed",
       "inputs": "restart=False with an absolute imagename and existing products.",
       "casa": "6.7.6.14 incrementImageNameList slices dirname[2:], corrupting an absolute directory before creating the next numbered image; the probe fails to create its PSF.",
-      "ours": "Native preview 9006dca1ec preserves the correct absolute directory; public restart=False remains refused until contract activation.",
+      "ours": "Activated native contract32 keeps the correct absolute directory; alternating absolute/relative public calls choose and publish the expected fresh prefixes.",
       "rationale": "Avoid a reproducible CASA path-handling bug while preserving the intended numbering behavior.",
-      "impact": "The prepared numbered products stay in the requested directory. Provider activation and broader restart acceptance remain open.",
+      "impact": "Numbered products stay in the requested directory. Broader restart acceptance remains open.",
       "owner_decision": "Owner, 2026-10-31, this chat: Use the correct absolute directory. Recorded on #944.",
       "evidence": [
         "lifecycle",
-        "numbering-preview"
+        "numbering-preview",
+        "numbering-activation"
       ]
     },
     {
@@ -1266,6 +1275,31 @@
       "evidence": [
         "standard-mtmfs-current",
         "approved-comparisons-restart"
+      ]
+    },
+    {
+      "id": "numbering-metal-cyclethreshold",
+      "state": "Previously agreed",
+      "inputs": "Only unchanged99b cli-gpu32/explicit_startmodel output and bound raw receipt/input/binary identities.",
+      "casa": "Final cyclethreshold0.07878141850233078 Jy/beam.",
+      "ours": "0.07878153771162033 Jy/beam; raw original scalar comparison fails by1.5132ppm. Formula matches measured native state; upstream residual cause unproved.",
+      "rationale": "Owner accepted this exact output under2e-6 relative+1e-8 Jy/beam with all other recorded checks retained; engineering choice, not a universal Float error bound.",
+      "impact": "Accepts0.119209microJy/beam in this returned threshold only; changes no values/defaults/algorithm and grants no future-output waiver.",
+      "owner_decision": "Owner2026-11-01, this chat: Accept this specific output. Raw failed verdict retained.",
+      "evidence": [
+        "numbering-activation"
+      ]
+    },
+    {
+      "id": "numbered-prior-history",
+      "state": "Proposed",
+      "inputs": "restart=False fresh numbered outputs with older matching-prefix images.",
+      "casa": "Appends later task history to all old matching image logtables; paired runs change only old logtable/table.dat and table.f0.",
+      "ours": "Leaves old files unchanged byte for byte, excluding locks.",
+      "rationale": "Propose preserving independent older results; owner disposition pending.",
+      "impact": "Old histories would omit later calls creating other images. Correct history on each new image remains required and unassessed.",
+      "evidence": [
+        "numbering-activation"
       ]
     }
   ],
@@ -1524,7 +1558,7 @@
       ],
       "revision": "fd7b8e7b2d409c87fdb857f42c9126b99b5849ac",
       "casa_version": "casatasks 6.7.6.14;casatools 6.7.6-14",
-      "command": "CASA Python -I tclean_scalar_returns_20261101.py; six frozen cases × three backends; full normal gate at fd7b8e7b2d",
+      "command": "CASA Python -I tclean_scalar_returns_20261101.py; six frozen cases \u00d7 three backends; full normal gate at fd7b8e7b2d",
       "receipt": "resources/casa-compat/evidence/tclean-scalars-empty-mask-20261101.json; verified NAS scalar-returns-empty-mask-20261101.tar SHA 73ed966f5947bad37e78ea842f6125a68dcd35768d91c9b51c9114433427aa6b"
     },
     "numbering-preview": {
@@ -1541,6 +1575,22 @@
       "casa_version": "casatasks 6.7.6.14 helper; casatools 6.7.6-14 pinned",
       "command": "cargo test helper/restart/refusal; touched all-target clippy and dependency checks; exact commands in receipt",
       "receipt": "resources/casa-compat/evidence/tclean-numbering-preview-20261101.json; verified NAS restart-numbering-preview-20261101.tar SHA bc98a438ff90629866659ce278126039bd4ee5c776e9acf9567776670ddc4cf2"
+    },
+    "numbering-activation": {
+      "kind": "Executed public CLI/Python restart=False activation",
+      "state": "All20 scoped product/preservation rows pass;19 raw scalar rows pass; one exact scalar output owner-accepted; history policy pending",
+      "source_revision": "bbb364dcae5a7ac40977d1c614b7fda9d06a05de",
+      "revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
+      "casa_version": "casatasks6.7.6.14;casatools6.7.6-14",
+      "scope": "Single-main standard Stokes-I MFS fresh/second/third/gap/common-string-seed numbering on CPU64/CPU32/Metal32 CLI and CPU64 public Python. Seven product inventory/mask/finite/NRMS/recorded metadata/beam/sumwt gates and exact counts. All114 binding names/order/defaults and other surfaces unchanged. Editable632,wheel632,sdist99 tests pass. Native normal gate running. No full task, all returns or full history acceptance.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-numbering-activation-20261101.json",
+        "docs/Planning/tclean-numbering-scalar-review-proposal-20261101.md",
+        "docs/Planning/tclean-numbered-history-proposal-20261101.md",
+        "crates/casa-imaging-application/src/restart/numbering.rs"
+      ],
+      "command": "Pinned CASA Python -I tclean_numbering_acceptance_20261101.py plus current Python child and package gate; raw commands/identities in receipt",
+      "receipt": "resources/casa-compat/evidence/tclean-numbering-activation-20261101.json"
     }
   }
 }
