@@ -168,7 +168,9 @@ CASA pairs pass their scoped products/counts, including initial-only output,
 seed retention, threshold/zero-mask stop precedence and dirty/one-major controls.
 Python also gates two selected numeric scalars and prior-file preservation.
 Focused5,fullT1 62,surrounding71 tests,touched clippy/structure and independent
-review pass. The full normal gate is running. See the
+review pass. The full normal gate now passes4715 workspace tests/45 skips,
+doctests,clippy/architecture/SPDX/fmt,21 CLI hosts and875 tooling tests/307
+subtests. See the
 [receipt](../../resources/casa-compat/evidence/tclean-nmajor-zero-20261101.json).
 No controller math, defaults, signatures, provider or allocation changes.
 

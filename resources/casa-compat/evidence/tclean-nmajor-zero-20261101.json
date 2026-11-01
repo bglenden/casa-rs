@@ -8,7 +8,7 @@
     "casatasks": "6.7.6.14",
     "casatools": "6.7.6-14"
   },
-  "state": "20 scoped paired rows pass; focused, surrounding, full T1 and independent review clear; full normal gate running",
+  "state": "20 scoped paired rows and full normal gates pass; independent review clear; broader tclean unfinished",
   "scope": "Standard single-term Stokes-I MFS: nmajor0 initial-only, dirty niter0, high threshold, explicit empty mask, frozen CASA seed, nmajor1 control; CPU64/CPU32/Metal32 plus two public Python False-numbering cases.",
   "implementation": "Remove three early zero-major refusals in tclean reader, request validation and compiled-model validation. Existing controller and initial-cycle path unchanged: zero means no post-initial major passes. Positive minor-cycle limit still required.",
   "external_contract": "No provider bundle, CASA signature/default, persisted format or return-schema changes",
@@ -121,7 +121,23 @@
   ],
   "review": "Independent prepared-patch and final committed-source/paired-evidence reviews found no actionable findings. Shared nmajor domain\u22121,0,positive is implemented; standard-MFS evidence does not establish universal mode or complete return-record parity. Actual model identity unexposed.",
   "visual": "All present products in18 CLI and2 Python pairs inspected on shared CASA/native scales with labelled differences; dirty CLEAN-mask absence explicit.",
-  "full_native_gate": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/nmajor-zero-20261101/checks/full-quick.log",
+  "full_native_gate": {
+    "native_revision": "c64f13cb09054b080fe8b228a5f2c02c99bfd486",
+    "workspace_passed": 4715,
+    "skipped": 45,
+    "nextest_seconds": 464.489,
+    "perf_tools_passed": 875,
+    "subtests_passed": 307,
+    "perf_tools_seconds": 14.94,
+    "checks": "Workspace clippy,arch/SPDX/fmt,nextest,doctests,21CLIhosts and tooling all green",
+    "python": "/Volumes/GLENDENNING/casa-rs-build/perf-tools-venv/bin/python",
+    "log": {
+      "path": "/Volumes/home/casa-rs/tclean/20261031/nmajor-zero-quick-20261101.log",
+      "sha256": "0742d1465c0714326bccc9aad7fc38711a6796ce3d2bd7cb2d487547b03e407a",
+      "bytes": 563762,
+      "verification": "NAS completed log reread hash matches"
+    }
+  },
   "archive": {
     "state": "Pending verified NAS archive"
   },
