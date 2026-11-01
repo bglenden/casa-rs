@@ -36,19 +36,12 @@ pub fn request(values: serde_json::Value) -> ImagingRequest {
         }
         _ => {}
     }
-    let mut resolved = casa_task_runtime::resolve_plain_values(
+    let resolved = casa_task_runtime::resolve_plain_values(
         casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
         std::path::PathBuf::from("."),
         &values,
     )
     .unwrap_or_else(|error| panic!("catalog values: {error}"));
-    // Match the imager boundary: numeric row selectors retain original text.
-    for name in ["scan", "observation"] {
-        resolved.insert(
-            name.to_string(),
-            values.get(name).cloned().unwrap_or_else(|| "".into()),
-        );
-    }
     ImagingRequest::from_tclean(&resolved)
         .unwrap_or_else(|error| panic!("imaging request: {error}"))
 }

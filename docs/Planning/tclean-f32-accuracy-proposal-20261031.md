@@ -72,6 +72,10 @@ changes admission accounting only, not the scientific computation.
 
 ## Current state and next action
 
+**Handoff update, 2026-11-01:** The authoritative current status, pending
+decisions, tests and next actions are in [`tclean-handoff-20261101.md`](tclean-handoff-20261101.md).
+The chronology below predates the final FIELD and VLA PB repair candidates.
+
 The owner approved the scoped weak Taylor-weight comparison rule and the
 specific reviewed CPU/f32 MT-MFS model output on 2026-11-01. The decisions
 are separate and recorded in

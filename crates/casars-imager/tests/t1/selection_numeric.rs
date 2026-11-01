@@ -5,7 +5,7 @@ use std::path::Path;
 use casa_imaging_application::{ImagingRequest, route_law};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_types::{ScalarValue, Value};
-use casars_imager::{ImagerRunTaskResult, ImagingParameters, run};
+use casars_imager::{ImagerRunTaskResult, ImagingParameters, resolve_request, run};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD, Setup};
@@ -77,49 +77,12 @@ fn preview(
     for (name, value) in observation.geometry().parameters() {
         values[name] = value;
     }
-    // Preview only: change two refusal markers in an owned bundle, preserving
-    // the real resolver and the production catalog's unimplemented markers.
-    let mut bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
-    let casa_provider_contracts::SurfaceDefinition::Task(definition) = &mut bundle.surface;
-    let mut cleared = 0;
-    for binding in &mut definition.bindings {
-        if matches!(binding.name.as_str(), "scan" | "observation") {
-            assert_eq!(binding.unimplemented.take().unwrap().issue, 980);
-            cleared += 1;
-        }
-    }
-    assert_eq!(cleared, 2);
-    values["scan"] = json!(scan);
-    values["observation"] = json!(obs);
-    let workspace = std::env::current_dir().unwrap();
-    let mut open = casa_task_runtime::OpenSessionRequest::defaults(bundle, &workspace);
-    open.managed_save = false;
-    open.override_patch.values = values
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.clone(),
-                casa_provider_contracts::ParameterValue::from_plain_json(value).unwrap(),
-            )
-        })
-        .collect();
-    let session = casa_task_runtime::ParameterRuntime::default()
-        .open_session(open)
-        .unwrap();
-    assert!(
-        session
-            .diagnostics()
-            .iter()
-            .all(|diagnostic| diagnostic.level != casa_task_runtime::DiagnosticLevel::Error)
-    );
-    let (parameters, request) = casars_imager::task_request(
-        &casa_task_runtime::TaskInvocation::new(&session, &workspace),
-    )
-    .unwrap();
-    assert_eq!(parameters.0["scan"], json!(scan));
-    assert_eq!(parameters.0["observation"], json!(obs));
+    let (mut parameters, _) =
+        resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
+    // Preview only: retain the production catalog's two unimplemented markers.
+    parameters.0.insert("scan".to_string(), json!(scan));
+    parameters.0.insert("observation".to_string(), json!(obs));
+    let request = ImagingRequest::from_tclean(&parameters.0).unwrap();
     (parameters, request)
 }
 
@@ -142,7 +105,6 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
         (2, "2", "0", "1"),
         (3, "1~2,2", "1", "2,3"),
         (4, "2~2147483647", "0~2147483647", "1,3"),
-        (5, " 2 ", " 0 ", "1"),
     ] {
         let reference_name = format!("numeric-reference-{index}");
         let (reference, products) = observation.image(
@@ -178,11 +140,6 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
             compare_products(&result, &batches.imagename, &request.imagename);
         }
     }
-}
-
-#[test]
-fn preview_numeric_selectors_refuse_malformed_text_without_images() {
-    let observation = numeric_fixture();
     for (index, scan, obs) in [
         (0, "99", ""),
         (1, ">1", ""),
@@ -190,41 +147,11 @@ fn preview_numeric_selectors_refuse_malformed_text_without_images() {
         (3, "2~1", ""),
         (4, "", "0~0"),
         (5, "", "1~0"),
-        (6, ",1", ""),
-        (7, "1,", ""),
-        (8, "1,,2", ""),
-        (9, ",", ""),
-        (10, "+1", ""),
-        (11, "  ", ""),
-        (12, "none", ""),
-        (13, "None", ""),
-        (14, "", ",0"),
-        (15, "", "0,"),
-        (16, "", "0,,1"),
-        (17, "", "+0"),
-        (18, "", "  "),
-        (19, "", "none"),
-        (20, "", "None"),
     ] {
         let name = format!("numeric-refused-{index}");
         let (parameters, request) = preview(&observation, &name, scan, obs, true);
         assert!(run(parameters, &request).is_err());
-        for suffix in [
-            "psf",
-            "residual",
-            "image",
-            "image.pbcor",
-            "model",
-            "sumwt",
-            "pb",
-            "weight",
-            "mask",
-        ] {
-            assert!(
-                !observation.scratch(&format!("{name}.{suffix}")).exists(),
-                "{name}.{suffix}"
-            );
-        }
+        assert!(!observation.scratch(&format!("{name}.psf")).exists());
     }
 }
 

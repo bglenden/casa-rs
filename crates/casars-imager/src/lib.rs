@@ -6,10 +6,10 @@
 //!
 //! The binary hosts CASA's `tclean` (the imager re-surfaced, #931). The
 //! front end resolves tclean's parameters through the provider-contracts
-//! catalog. The [`ImagingRequest`] combines those resolved values with
-//! original scan/observation text, preserving the distinctions CASA's grammar
-//! requires. [`ImagingRequest::from_tclean`] reads them as CASA's modes do.
-//! A run's reply carries its
+//! catalog: command-line flags and a `--json-run` request become the same
+//! resolved values, and those values, and nothing else, make the
+//! [`ImagingRequest`] the application runs, read as CASA's modes read them
+//! ([`ImagingRequest::from_tclean`]). A run's reply carries its
 //! [`ImagerRunTaskResult`], and returns CASA's summary record
 //! ([`tclean_record`]).
 
@@ -46,19 +46,8 @@ fn workspace() -> Result<PathBuf, String> {
 /// the request's own read refuses (`stokes = "IX"`), is refused at its
 /// parameter.
 fn request_from(
-    mut resolved: Map<String, Value>,
-    given: impl Fn(&str) -> Option<Value>,
+    resolved: Map<String, Value>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    // Shared selector normalization maps empty and whitespace-only strings to
-    // "none". Numeric row selectors must distinguish those inputs from a literal
-    // "none", so restore their original values at the task boundary. Only an
-    // omitted parameter takes CASA's exact empty-string default.
-    for name in ["scan", "observation"] {
-        resolved.insert(
-            name.to_string(),
-            given(name).unwrap_or_else(|| Value::String(String::new())),
-        );
-    }
     let request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
         let failure = TaskFailure::validation(refusal.message);
         if refusal.parameter.is_empty() {
@@ -77,8 +66,7 @@ pub fn resolve_request(
 ) -> Result<(ImagingParameters, ImagingRequest), String> {
     let resolved = resolve_plain_values(imager_surface()?, workspace()?, &parameters.0)
         .map_err(|error| format!("resolve tclean parameters: {error}"))?;
-    request_from(resolved, |name| parameters.0.get(name).cloned())
-        .map_err(|failure| failure.message)
+    request_from(resolved).map_err(|failure| failure.message)
 }
 
 /// Run `request`, resolved as `parameters`: the run summary, with the
@@ -142,11 +130,7 @@ pub fn task_front_end()
 pub fn task_request(
     task: &TaskInvocation<'_>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    request_from(task.plain_values(), |name| {
-        task.session()
-            .given(name)
-            .map(ParameterValue::to_plain_json)
-    })
+    request_from(task.plain_values())
 }
 
 /// Run `task`, one resolved imager request, as the `casars-imager` binary

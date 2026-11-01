@@ -2,11 +2,9 @@
 
 //! Contract 31 adopts CASA's accounting only for omitted Hogbom defaults.
 
-use casa_imaging_application::HogbomIterationAccounting;
+use casa_imaging_application::{HogbomIterationAccounting, ImagingRequest};
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
-use casa_task_runtime::{
-    BaseSource, DiagnosticCode, ParameterSession, TaskInvocation, parse_profile, resolve_profile,
-};
+use casa_task_runtime::{DiagnosticCode, parse_profile, resolve_profile};
 
 #[test]
 fn old_hogbom_defaults_warn_and_explicit_policies_survive() {
@@ -34,15 +32,12 @@ fn old_hogbom_defaults_warn_and_explicit_policies_survive() {
                         && d.parameter.as_deref() == Some("hogbom_iteration_mode")),
                 version < 31 && explicit.is_none()
             );
-            let workspace = std::env::current_dir().unwrap();
-            let session = ParameterSession::from_profile(
-                bundle.clone(),
-                BaseSource::File(workspace.join("hogbom.toml")),
-                &profile,
-            )
-            .unwrap();
-            let (_, request) =
-                casars_imager::task_request(&TaskInvocation::new(&session, &workspace)).unwrap();
+            let values = resolved
+                .values
+                .iter()
+                .map(|(name, value)| (name.clone(), value.to_plain_json()))
+                .collect();
+            let request = ImagingRequest::from_tclean(&values).unwrap();
             assert_eq!(
                 request.hogbom_iteration_mode,
                 if expected == "strict" {

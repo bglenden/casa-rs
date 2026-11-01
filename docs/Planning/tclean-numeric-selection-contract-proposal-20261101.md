@@ -60,6 +60,9 @@ A verified durable source/patch/gate copy is preserved on NAS under
   pairs against CASA6.7.6.14/6.7.6-14. Two f32 CLEAN cyclethreshold checks fail the
   original limit by a small margin and remain raw failures. No waiver is requested
   by this contract decision. The final candidate still needs its own paired runs.
+  A subsequent residual-unit correction at `2851c6dcdc` passes the original
+  checks in three scoped backend probes. The original failures remain recorded,
+  and final-source/public-provider verification is still required.
 - [Oracle review](https://chatgpt.com/c/6ae7afa9-d6bc-83e8-829d-a65bfdeb9a01)
   recommends the scoped semantic fix after inspecting pinned public baseline code
   and supplied local changes. Displayed model was GPT-6 Pro; Astra identity was
