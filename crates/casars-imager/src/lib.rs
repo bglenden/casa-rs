@@ -20,7 +20,9 @@ mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
 
-use casa_imaging_application::{HostResources, ImagingRequest, RunContext, SummaryTarget, execute};
+use casa_imaging_application::{
+    HostResources, ImagingRequest, ResidualStatistics, RunContext, SummaryTarget, execute,
+};
 use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
 use casa_task_runtime::{
     TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values,
@@ -74,6 +76,15 @@ pub fn run(
     parameters: ImagingParameters,
     request: &ImagingRequest,
 ) -> Result<ImagerRunTaskResult, String> {
+    run_with_statistics(parameters, request).map(|(result, _)| result)
+}
+
+/// Keep final controller statistics in memory for the CASA return without
+/// adding fields to the serialized task report or persisted run summary.
+fn run_with_statistics(
+    parameters: ImagingParameters,
+    request: &ImagingRequest,
+) -> Result<(ImagerRunTaskResult, Option<ResidualStatistics>), String> {
     // Task continuation is distinct from internal atomic output replacement.
     let request = request
         .with_tclean_restart()
@@ -92,12 +103,9 @@ pub fn run(
         }),
     };
     let outcome = execute(request, context).map_err(|error| error.to_string())?;
-    Ok(ImagerRunTaskResult::from_outcome(
-        parameters,
-        request,
-        &outcome,
-        started.elapsed(),
-    ))
+    let result =
+        ImagerRunTaskResult::from_outcome(parameters, request, &outcome, started.elapsed());
+    Ok((result, outcome.final_residual_statistics))
 }
 
 /// The front end of the `casars-imager` binary, which hosts `tclean`.
@@ -139,7 +147,7 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
-    let result = run(parameters, &request).map_err(|error| {
+    let (result, statistics) = run_with_statistics(parameters, &request).map_err(|error| {
         if interrupt::token().is_cancelled() {
             TaskFailure::interrupted(format!("{error}; nothing was published"))
         } else {
@@ -156,6 +164,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.actual_minor_iterations,
         result.run.clean_stop_reason,
     );
-    let value = tclean_record(&request, &result.run, &values);
+    let value = tclean_record(&request, &result.run, &values, statistics.as_ref());
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }

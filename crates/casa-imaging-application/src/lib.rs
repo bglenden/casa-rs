@@ -26,7 +26,7 @@ pub mod source_law;
 pub mod start_model_law;
 mod tclean;
 
-pub use casa_imaging_deconvolution::CleanStop;
+pub use casa_imaging_deconvolution::{CleanStop, ResidualStatistics};
 pub use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
@@ -134,6 +134,10 @@ pub struct ImagingOutcome {
     pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Statistics from the final minor-cycle preparation/convergence check.
+    /// Captured even when no minor cycle runs; absent for dirty imaging.
+    /// These in-memory scalars are not part of the persisted run summary.
+    pub final_residual_statistics: Option<ResidualStatistics>,
     /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
     /// when a minor cycle cleaned nothing.
     pub stop: Option<CleanStop>,

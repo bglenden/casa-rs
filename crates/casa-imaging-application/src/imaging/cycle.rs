@@ -11,7 +11,9 @@ use std::cell::OnceCell;
 use std::path::Path;
 use std::time::Instant;
 
-use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls, NormalStoragePlan};
+use casa_imaging_deconvolution::{
+    CleanStop, Controller, CycleControls, NormalStoragePlan, ResidualStatistics,
+};
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,
@@ -91,6 +93,7 @@ pub(crate) struct ImagingOutcome {
     pub(crate) scientific: MajorCycleCompletion,
     pub(crate) masks: Option<ReconstructionMaskSet>,
     pub(crate) minor_cycles: Vec<NativeMinorCycleOutcome>,
+    pub(crate) final_residual_statistics: Option<ResidualStatistics>,
     pub(crate) stop: Option<CleanStop>,
     pub(crate) major_cycle_count: usize,
     pub(crate) total_minor_iterations: usize,
@@ -190,6 +193,7 @@ impl ImagingOutcome {
             scientific: major.completion,
             masks: None,
             minor_cycles: Vec::new(),
+            final_residual_statistics: None,
             stop: None,
             major_cycle_count: 1,
             total_minor_iterations: 0,
@@ -326,6 +330,9 @@ pub(crate) fn run(
             Ok::<_, ImagingError>((prepared, kept))
         })?;
         let statistics = prepared.statistics;
+        // CASA's summary uses the final initminorcycle statistics, including
+        // a convergence check that stops before another minor cycle executes.
+        outcome.final_residual_statistics = Some(statistics);
         if diagnostics.science_trace {
             trace::residual(outcome.major_cycle_count, &statistics);
         }

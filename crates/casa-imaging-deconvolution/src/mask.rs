@@ -647,6 +647,8 @@ impl ReconstructionMask {
     }
 
     /// Exact target-grid support already reprojected by the geometry owner.
+    /// Empty support is valid: CASA stops with zero-mask code7, preserving the
+    /// residual and publishing the empty mask without applying components.
     pub fn from_reprojected_support(
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
@@ -655,9 +657,6 @@ impl ReconstructionMask {
         validate_shape(target_shape)?;
         if support.len() != target_shape[0] * target_shape[1] {
             return Err(MaskError::ShapeMismatch);
-        }
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
         }
         Ok(Self::new(target_coordinate, target_shape, support.to_vec()))
     }
@@ -1153,5 +1152,17 @@ mod tests {
             sidelobe_fraction: 0.0,
         };
         assert_eq!(smooth_and_cut(&[true], [1, 1], 1.0, beam, 1.0), [false]);
+    }
+    #[test]
+    fn reprojected_zero_support_is_a_valid_empty_clean_mask() {
+        let grid = coordinate([0.0, 0.0]);
+        let mask = ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 6])
+            .expect("an explicit zero mask stops cleaning, rather than failing");
+        assert_eq!(mask.shape(), [2, 3]);
+        assert!(mask.support().iter().all(|cleanable| !cleanable));
+        assert!(matches!(
+            ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 5]),
+            Err(MaskError::ShapeMismatch)
+        ));
     }
 }

@@ -140,6 +140,30 @@ fn entry<'a>(value: &'a CasaValue, key: &str) -> &'a CasaValue {
         .value
 }
 
+fn scalar(value: &CasaValue, key: &str) -> f64 {
+    let CasaValue::Float { value } = entry(value, key) else {
+        panic!("{key} is a float");
+    };
+    value.0
+}
+
+fn last_minor_threshold(value: &CasaValue) -> f64 {
+    let mut plane = entry(value, "summaryminor");
+    for _ in 0..3 {
+        let CasaValue::Dict { entries } = plane else {
+            panic!("minor summary dictionary")
+        };
+        plane = &entries[0].value;
+    }
+    let CasaValue::List { items } = entry(plane, "cycleThresh") else {
+        panic!("threshold list")
+    };
+    let CasaValue::Float { value } = items.last().unwrap() else {
+        panic!("threshold float")
+    };
+    value.0
+}
+
 #[test]
 fn tclean_returns_casas_summary_record() {
     let observation = Observation::synthesise(&[("point", POINT)]);
@@ -194,13 +218,14 @@ fn tclean_returns_casas_summary_record() {
         panic!("nmajordone is an int");
     };
     assert_eq!(major.len(), usize::try_from(*majors).expect("count"));
-    // CASA's cyclethreshold is the one it computes after the last major
-    // cycle, which the report does not hold (Astra's #1015 F6); a dirty
-    // run's is CASA's integer zero.
+    // CASA's cyclethreshold comes from the final major-cycle residual,
+    // not the preceding minor cycle's controls; dirty remains integer zero.
     let CasaValue::Float { value: cycle } = entry(&clean, "cyclethreshold") else {
         panic!("cyclethreshold is a float");
     };
-    assert!(cycle.0.is_nan(), "{cycle:?}");
+    assert!(cycle.0.is_finite() && cycle.0 > 0.0, "{cycle:?}");
+    assert!(cycle.0 < last_minor_threshold(&clean));
+    assert!(scalar(&clean, "maxpsfsidelobe").is_finite());
     assert_eq!(
         entry(&dirty, "cyclethreshold"),
         &CasaValue::Int { value: 0 }
@@ -256,6 +281,9 @@ fn tclean_returns_casas_summary_record() {
         }
     );
     assert_eq!(entry(&above, "threshold"), &CasaValue::float(100.0));
+    assert!(scalar(&above, "cyclethreshold") > 0.0);
+    assert!(scalar(&above, "cyclethreshold") < 100.0);
+    assert!(scalar(&above, "maxpsfsidelobe").is_finite());
 }
 
 #[test]
