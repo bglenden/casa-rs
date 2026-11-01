@@ -49,10 +49,10 @@ impl PartitionSelection {
     /// Bytes owned by the scan predicate, including its fixed representation.
     pub(crate) fn scan_selection_bytes(&self) -> usize {
         size_of::<IdSelection>()
-            + match &self.scans {
-                IdSelection::All => 0,
-                IdSelection::Only(ids) => ids.capacity() * size_of::<u32>(),
-            }
+            + self
+                .scans
+                .allocated_bytes()
+                .expect("allocated selector fits usize")
     }
 
     /// Whether the scan at one batch time is selected. A requested role must
@@ -100,6 +100,11 @@ mod tests {
         ids.extend([1, 3]);
         let bytes = ids.capacity() * size_of::<u32>();
         selection.scans = IdSelection::Only(ids);
+        assert_eq!(selection.scan_selection_bytes(), baseline + bytes);
+        let mut ranges = Vec::with_capacity(17);
+        ranges.push((2, i32::MAX as u32));
+        let bytes = ranges.capacity() * size_of::<(u32, u32)>();
+        selection.scans = IdSelection::Ranges(ranges);
         assert_eq!(selection.scan_selection_bytes(), baseline + bytes);
     }
 }

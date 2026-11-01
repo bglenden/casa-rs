@@ -594,7 +594,10 @@ fn snapshot_exposes_exact_selection_semantics_without_bulk_samples() {
     assert_eq!(selection.rows().source_row_count(), 100);
     assert_eq!(selection.rows().selected_row_count(), 11);
     assert_eq!(selection.rows(), &selected_rows(31));
-    assert_eq!(selection.rows_filter().fields().ids(), Some(&[2, 7][..]));
+    assert_eq!(
+        selection.rows_filter().fields().explicit_ids(),
+        Some(&[2, 7][..])
+    );
     assert_eq!(
         selection.rows_filter().uv_distances(),
         &UvSelection::Ranges(vec![UvDistanceRange::new(
@@ -687,8 +690,8 @@ fn scan_and_observation_ids_are_canonical_and_charge_owned_capacity() {
     ]))
     .unwrap();
     let rows = snapshot.sources()[0].selection().rows_filter();
-    assert_eq!(rows.scans().ids(), Some(&[1, 3][..]));
-    assert_eq!(rows.observations().ids(), Some(&[0, 1][..]));
+    assert_eq!(rows.scans().explicit_ids(), Some(&[1, 3][..]));
+    assert_eq!(rows.observations().explicit_ids(), Some(&[0, 1][..]));
 }
 
 #[test]
@@ -696,6 +699,8 @@ fn empty_exact_scan_and_observation_sets_are_not_unconstrained() {
     for (scans, observations, expected) in [
         (IdSelection::Only(vec![]), IdSelection::All, "scan"),
         (IdSelection::All, IdSelection::Only(vec![]), "observation"),
+        (IdSelection::Ranges(vec![]), IdSelection::All, "scan"),
+        (IdSelection::All, IdSelection::Ranges(vec![]), "observation"),
     ] {
         let base = selection(31, false);
         let selected = ObservationSelection::new(
@@ -712,5 +717,44 @@ fn empty_exact_scan_and_observation_sets_are_not_unconstrained() {
             ObservationSourceInput::new(ObservationSourceProvenance::new("selected.ms".to_string()), selected, columns(), false),
         ])), Err(CompileObservationError::EmptyIdSelection { selector }) if selector == expected)
         );
+    }
+}
+
+#[test]
+fn numeric_intervals_canonicalize_and_charge_spare_capacity() {
+    let base = selection(31, false);
+    let mut ranges = Vec::with_capacity(19);
+    ranges.extend([(u32::MAX, 10), (4, 2), (5, 9), (2, 3)]);
+    let bytes = ranges.capacity() * size_of::<(u32, u32)>();
+    let selected = ObservationSelection::new(
+        base.rows().clone(),
+        base.rows_filter()
+            .clone()
+            .with_scan_observation(IdSelection::Ranges(ranges), IdSelection::All),
+        base.data_descriptions().to_vec(),
+        base.spectral_windows().to_vec(),
+        base.correlations().to_vec(),
+    );
+    assert_eq!(
+        selected.retained_manifest_bytes().unwrap(),
+        base.retained_manifest_bytes().unwrap() + bytes
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+        ObservationSourceInput::new(
+            ObservationSourceProvenance::new("selected.ms".to_string()),
+            selected,
+            columns(),
+            false,
+        ),
+    ]))
+    .unwrap();
+    let scans = snapshot.sources()[0].selection().rows_filter().scans();
+    assert_eq!(scans, &IdSelection::Ranges(vec![(2, u32::MAX)]));
+    assert_eq!(scans.allocated_bytes(), Some(bytes));
+    for value in [2, 10, i64::from(u32::MAX)] {
+        assert!(scans.holds(value));
+    }
+    for value in [-1, 0, 1, i64::from(u32::MAX) + 1] {
+        assert!(!scans.holds(value));
     }
 }

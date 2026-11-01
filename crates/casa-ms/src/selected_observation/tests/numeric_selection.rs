@@ -64,7 +64,8 @@ fn scan_observation_survey_and_repeated_streams_select_the_same_sparse_rows() {
     for (scan, observation, expected) in [
         (Some("1,3"), Some("0"), vec![0, 2]),
         (None, Some("1"), vec![1, 3, 5]),
-        (Some("3~1,2"), None, vec![0, 1, 2, 3, 4, 5]),
+        (Some("1~3,2"), None, vec![0, 1, 2, 3, 4, 5]),
+        (Some("2~2147483647"), Some("0~2147483647"), vec![1, 2, 4, 5]),
     ] {
         let (selection, rows) = rows_selected(&ms, &[0], scan, observation);
         assert_eq!(
@@ -116,7 +117,7 @@ fn scan_observation_survey_and_repeated_streams_select_the_same_sparse_rows() {
             assert_eq!(second, first, "repeat preserves physical rows and samples");
         }
     }
-    for unsupported in [">1", "*", "1^2"] {
+    for unsupported in [">1", "*", "1^2", "1~1", "3~1"] {
         assert!(
             ms.selected_observation_row_selection(&[0], None, None, None)
                 .unwrap()

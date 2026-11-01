@@ -103,7 +103,8 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
         (0, "2", "", "1,3"),
         (1, "", "1", "2,3"),
         (2, "2", "0", "1"),
-        (3, "2~1,2", "1", "2,3"),
+        (3, "1~2,2", "1", "2,3"),
+        (4, "2~2147483647", "0~2147483647", "1,3"),
     ] {
         let reference_name = format!("numeric-reference-{index}");
         let (reference, products) = observation.image(
@@ -139,12 +140,16 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
             compare_products(&result, &batches.imagename, &request.imagename);
         }
     }
-    for scan in ["99", ">1"] {
-        let name = format!(
-            "numeric-refused-{}",
-            if scan == "99" { "empty" } else { "syntax" }
-        );
-        let (parameters, request) = preview(&observation, &name, scan, "", true);
+    for (index, scan, obs) in [
+        (0, "99", ""),
+        (1, ">1", ""),
+        (2, "1~1", ""),
+        (3, "2~1", ""),
+        (4, "", "0~0"),
+        (5, "", "1~0"),
+    ] {
+        let name = format!("numeric-refused-{index}");
+        let (parameters, request) = preview(&observation, &name, scan, obs, true);
         assert!(run(parameters, &request).is_err());
         assert!(!observation.scratch(&format!("{name}.psf")).exists());
     }

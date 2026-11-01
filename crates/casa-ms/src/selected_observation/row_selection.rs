@@ -117,7 +117,7 @@ impl CompiledRowPredicate {
     }
 
     pub(crate) fn needs_scan_numbers(&self) -> bool {
-        self.catalog.selection().scans().ids().is_some()
+        !self.catalog.selection().scans().is_all()
     }
 
     pub(crate) fn matches(&self, row: SelectedObservationRow) -> bool {
@@ -285,8 +285,10 @@ mod tests {
             ..matching_row()
         };
         let descriptions = [DataDescriptionSelection::new(6, 8, 10)];
-        let selection = exact_selection(UvSelection::All)
-            .with_scan_observation(IdSelection::Only(vec![1, 3]), IdSelection::Only(vec![2]));
+        let selection = exact_selection(UvSelection::All).with_scan_observation(
+            IdSelection::Ranges(vec![(1, 1), (3, 3)]),
+            IdSelection::Ranges(vec![(2, 2)]),
+        );
         let predicate = CompiledRowPredicate::new(&selection, &descriptions, |_| None).unwrap();
         assert!(predicate.needs_scan_numbers());
         assert!(predicate.matches(row));

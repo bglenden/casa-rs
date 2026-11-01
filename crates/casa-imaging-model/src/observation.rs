@@ -19,20 +19,40 @@ pub enum IdSelection {
     All,
     /// Select exactly these identifiers.
     Only(Vec<u32>),
+    /// Inclusive identifier intervals, stored in space proportional to their count.
+    /// Compilation normalizes endpoints and merges overlapping or adjacent intervals.
+    Ranges(Vec<(u32, u32)>),
 }
 
 impl IdSelection {
-    /// Return selected identifiers, or `None` when every identifier is selected.
+    /// Return an explicit identifier list, or `None` for all IDs or interval storage.
     #[must_use]
-    pub fn ids(&self) -> Option<&[u32]> {
+    pub fn explicit_ids(&self) -> Option<&[u32]> {
         match self {
-            Self::All => None,
+            Self::All | Self::Ranges(_) => None,
             Self::Only(ids) => Some(ids),
         }
     }
 
+    /// Whether every identifier is selected without a predicate.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Bytes in owned vector allocations; the enclosing owner charges the enum itself.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        match self {
+            Self::All => Some(0),
+            Self::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
+            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(u32, u32)>()),
+        }
+    }
+
     /// Whether the selection holds identifier `value`; a negative one is
-    /// never selected by a list. A canonical list is sorted.
+    /// never selected by a list or interval. Lists must be sorted and intervals
+    /// canonical (sorted and disjoint), as guaranteed after compilation.
     #[must_use]
     pub fn holds(&self, value: i64) -> bool {
         match self {
@@ -40,6 +60,10 @@ impl IdSelection {
             Self::Only(ids) => {
                 u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
             }
+            Self::Ranges(ranges) => u32::try_from(value).is_ok_and(|value| {
+                let index = ranges.partition_point(|&(start, _)| start <= value);
+                index > 0 && value <= ranges[index - 1].1
+            }),
         }
     }
 
@@ -50,6 +74,28 @@ impl IdSelection {
             if ids.is_empty() {
                 return Err(CompileObservationError::EmptyIdSelection { selector });
             }
+        }
+        if let Self::Ranges(ranges) = self {
+            if ranges.is_empty() {
+                return Err(CompileObservationError::EmptyIdSelection { selector });
+            }
+            for (start, end) in ranges.iter_mut() {
+                if *start > *end {
+                    std::mem::swap(start, end);
+                }
+            }
+            ranges.sort_unstable();
+            let mut count = 0;
+            for index in 0..ranges.len() {
+                let (start, end) = ranges[index];
+                if count > 0 && start <= ranges[count - 1].1.saturating_add(1) {
+                    ranges[count - 1].1 = ranges[count - 1].1.max(end);
+                } else {
+                    ranges[count] = (start, end);
+                    count += 1;
+                }
+            }
+            ranges.truncate(count);
         }
         Ok(())
     }
@@ -666,13 +712,9 @@ impl ObservationSelection {
     pub fn retained_manifest_bytes(&self) -> Option<usize> {
         let mut bytes = size_of::<Self>().checked_add(2 * size_of::<usize>())?;
         bytes = bytes.checked_add(self.rows.retained_manifest_bytes()?)?;
-        let id_selection_bytes = |selection: &IdSelection| match selection {
-            IdSelection::All => Some(0),
-            IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
-        };
-        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.fields)?)?;
-        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.scans)?)?;
-        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.observations)?)?;
+        bytes = bytes.checked_add(self.rows_filter.fields.allocated_bytes()?)?;
+        bytes = bytes.checked_add(self.rows_filter.scans.allocated_bytes()?)?;
+        bytes = bytes.checked_add(self.rows_filter.observations.allocated_bytes()?)?;
         if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
             bytes = bytes.checked_add(
                 ranges

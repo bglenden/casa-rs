@@ -372,3 +372,80 @@ fn the_envelope_charge_follows_the_keys_not_the_rows() {
         "{refusal}"
     );
 }
+
+/// Parser peaks must depend on term count, not interval width. The immutable
+/// observation manifest then owns the resolved predicates, and its actual peak
+/// allocation must stay within the same charge used by imaging admission.
+#[test]
+fn numeric_selector_width_does_not_grow_the_heap_and_its_owner_covers_its_peak() {
+    use casa_imaging_model::{
+        CorrelationProduct, CorrelationSelection, DataDescriptionSelection, ObservationSelection,
+        SelectedMainRow, SelectedRows, SpectralWindowSelection,
+    };
+    use casa_types::Correlation;
+
+    if !alone("numeric_selector_width_does_not_grow_the_heap_and_its_owner_covers_its_peak") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let ms = MeasurementSet::open(track(root.path(), 2, 1)).expect("open");
+    for (narrow, wide) in [
+        ("0~1", "0~2147483647"),
+        ("1~2,5~6", "1~2,5~2147483647"),
+        (
+            "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38",
+            "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38~2147483647",
+        ),
+    ] {
+        let mut measurements = [(0, 0, 0, 0); 2];
+        for (index, text) in [narrow, wide].into_iter().enumerate() {
+            // DDID metadata and the MS are already held by the survey. Measure
+            // just numeric parsing here, independently of manifest ownership.
+            let base = ms
+                .selected_observation_row_selection(&[0], None, None, None)
+                .expect("base row selection");
+            let before = LIVE.load(Ordering::Relaxed);
+            PEAK.store(before, Ordering::Relaxed);
+            let parsed = base
+                .with_numeric_row_selectors(Some(text), Some(text))
+                .expect("numeric predicates");
+            let parse_peak = PEAK.load(Ordering::Relaxed) - before;
+            let parse_held = LIVE.load(Ordering::Relaxed) - before;
+            let predicate_charge = parsed.rows().scans().allocated_bytes().unwrap()
+                + parsed.rows().observations().allocated_bytes().unwrap();
+            assert_eq!(parse_held, predicate_charge as u64);
+
+            // This is the production survey-to-manifest transfer: clone the
+            // resolved predicates, then keep them beside exact selected rows
+            // and coordinate catalogs. No bulk visibility sample is needed.
+            let before = LIVE.load(Ordering::Relaxed);
+            PEAK.store(before, Ordering::Relaxed);
+            let owner = ObservationSelection::new(
+                SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
+                    .expect("selected row"),
+                parsed.rows().clone(),
+                vec![DataDescriptionSelection::new(0, 0, 0)],
+                vec![SpectralWindowSelection::new(0, vec![0])],
+                vec![CorrelationSelection::new(
+                    0,
+                    vec![CorrelationProduct::new(0, Correlation::XX)],
+                )],
+            );
+            let owner_peak = PEAK.load(Ordering::Relaxed) - before;
+            let charged = owner.retained_manifest_bytes().expect("manifest bytes") as u64;
+            assert!(
+                owner_peak > 0 && owner_peak <= charged,
+                "owner peak {owner_peak} B exceeds its {charged} B charge"
+            );
+            assert!(owner.rows_filter().scans().holds(1) || owner.rows_filter().scans().holds(0));
+            measurements[index] = (parse_peak, parse_held, owner_peak, charged);
+            eprintln!(
+                "{text}: parse peak {parse_peak} B, retained predicates {parse_held} B, owner peak {owner_peak} B, owner charge {charged} B"
+            );
+        }
+        assert_eq!(
+            measurements[0], measurements[1],
+            "interval width changes neither parsing nor owner allocation"
+        );
+    }
+}

@@ -36,20 +36,32 @@ impl SelectedObservationRowSelection {
     /// numeric-ID parser and add both predicates to this selection.
     ///
     /// # Errors
-    /// A selector is unsupported, empty after parsing, or names a negative ID.
+    /// A selector is unsupported, empty after parsing, names a negative ID,
+    /// or has equal or reversed range endpoints.
     pub fn with_numeric_row_selectors(
         mut self,
         scan: Option<&str>,
         observation: Option<&str>,
     ) -> MsResult<Self> {
-        let resolve =
-            |selector: Option<&str>, label| match selector.filter(|text| !text.trim().is_empty()) {
-                None => Ok(IdSelection::All),
-                Some(text) => {
-                    let ids = crate::parse_numeric_id_selector(text, label)?;
-                    canonical_nonnegative_ids(&ids, label).map(IdSelection::Only)
+        let resolve = |selector: Option<&str>, label| match selector
+            .filter(|text| !text.trim().is_empty())
+        {
+            None => Ok(IdSelection::All),
+            Some(text) => {
+                let ranges = crate::selection::syntax::parse_numeric_row_id_ranges(text, label)?;
+                if ranges.is_empty() {
+                    return Err(MsError::InvalidInput(format!(
+                        "{label} selector must contain nonnegative IDs"
+                    )));
                 }
-            };
+                Ok(IdSelection::Ranges(
+                    ranges
+                        .into_iter()
+                        .map(|(start, end)| (start as u32, end as u32))
+                        .collect(),
+                ))
+            }
+        };
         self.rows = self
             .rows
             .with_scan_observation(resolve(scan, "scan")?, resolve(observation, "observation")?);
@@ -215,20 +227,16 @@ impl MeasurementSet {
         })?;
         let plan = MsReadPlan::new(self.row_count(), io)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.visit_main_row_selection_blocks(
-            plan,
-            selection.rows.scans().ids().is_some(),
-            |block| {
-                for offset in 0..block.len() {
-                    let row = block
-                        .row(offset)
-                        .expect("offset is bounded by MAIN selection block length");
-                    if predicate.matches(row) {
-                        visit(row);
-                    }
+        self.visit_main_row_selection_blocks(plan, !selection.rows.scans().is_all(), |block| {
+            for offset in 0..block.len() {
+                let row = block
+                    .row(offset)
+                    .expect("offset is bounded by MAIN selection block length");
+                if predicate.matches(row) {
+                    visit(row);
                 }
-            },
-        )
+            }
+        })
     }
 }
 
@@ -316,4 +324,52 @@ fn selected_wavelengths(
             ))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod numeric_range_tests {
+    use super::*;
+
+    #[test]
+    fn row_selector_resolution_keeps_wide_intervals_bounded() {
+        let empty = || SelectedObservationRowSelection {
+            rows: RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+            data_descriptions: Vec::new(),
+        };
+        let selection = empty()
+            .with_numeric_row_selectors(Some("2~2147483647"), Some("0~2147483647"))
+            .unwrap();
+        assert!(selection.rows.scans().holds(i64::from(i32::MAX)));
+        assert!(!selection.rows.scans().holds(1));
+        assert!(selection.rows.observations().holds(0));
+        assert_eq!(
+            selection.rows.scans(),
+            &IdSelection::Ranges(vec![(2, i32::MAX as u32)])
+        );
+        let narrow = empty()
+            .with_numeric_row_selectors(Some("2~3"), Some("0~1"))
+            .unwrap();
+        assert_eq!(
+            selection.rows.scans().allocated_bytes(),
+            narrow.rows.scans().allocated_bytes()
+        );
+        assert_eq!(
+            selection.rows.observations().allocated_bytes(),
+            narrow.rows.observations().allocated_bytes()
+        );
+        let all = empty().with_numeric_row_selectors(Some(" "), None).unwrap();
+        assert!(all.rows.scans().is_all() && all.rows.observations().is_all());
+        for text in [",,", "-1~2147483647", ">1", "1~1", "3~1"] {
+            assert!(
+                empty()
+                    .with_numeric_row_selectors(Some(text), None)
+                    .is_err()
+            );
+            assert!(
+                empty()
+                    .with_numeric_row_selectors(None, Some(text))
+                    .is_err()
+            );
+        }
+    }
 }

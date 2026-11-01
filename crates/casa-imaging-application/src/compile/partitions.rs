@@ -74,6 +74,13 @@ pub(crate) fn resolve_partitions(
     let fields = match rows.fields() {
         IdSelection::All => FieldSelection::All,
         IdSelection::Only(ids) => FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
+        selection @ IdSelection::Ranges(_) => FieldSelection::Only(
+            (0..catalogue.fields.len())
+                .filter_map(|index| u32::try_from(index).ok())
+                .filter(|&id| selection.holds(i64::from(id)))
+                .map(FieldId)
+                .collect(),
+        ),
     };
     let measurement_set = observation.measurement_set();
     let modes = match rows.intents() {
@@ -88,7 +95,7 @@ pub(crate) fn resolve_partitions(
         if !rows.observations().holds(i64::from(entry.observation.0)) {
             continue;
         }
-        if rows.scans().ids().is_some()
+        if !rows.scans().is_all()
             && !entry.scans.iter().any(|scan| {
                 catalogue.scans[scan.0 as usize]
                     .number
