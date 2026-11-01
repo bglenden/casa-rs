@@ -52,6 +52,8 @@ pub(super) struct Survey {
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
     pub(super) source_frequency_reference: FrequencyRef,
     pub(super) fields: BTreeSet<i32>,
+    /// Field of CASA's first visibility buffer, sorted by ARRAY_ID, DDID, FIELD_ID.
+    pub(super) first_visibility_field_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
     pub(super) first_time_mjd_seconds: f64,
     pub(super) time_bounds_mjd_seconds: [f64; 2],
@@ -71,6 +73,7 @@ struct RowFacts {
     ddids: BTreeSet<i32>,
     fields: BTreeSet<i32>,
     observation_ids: BTreeSet<i32>,
+    first_visibility_key: Option<(i32, i32, i32)>,
     first_time_mjd_seconds: Option<f64>,
     time_bounds_mjd_seconds: [f64; 2],
     first_cross_row: Option<SelectedObservationRow>,
@@ -90,6 +93,7 @@ impl RowFacts {
             ddids: BTreeSet::new(),
             fields: BTreeSet::new(),
             observation_ids: BTreeSet::new(),
+            first_visibility_key: None,
             first_time_mjd_seconds: None,
             time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
             first_cross_row: None,
@@ -102,7 +106,16 @@ impl RowFacts {
         }
     }
 
+    fn observe_visibility_key(&mut self, array: i32, description: i32, field: i32) {
+        let key = (array, description, field);
+        self.first_visibility_key = Some(
+            self.first_visibility_key
+                .map_or(key, |prior| prior.min(key)),
+        );
+    }
+
     fn observe(&mut self, row: SelectedObservationRow) {
+        self.observe_visibility_key(row.array_id(), row.data_description_id(), row.field_id());
         self.ddids.insert(row.data_description_id());
         self.fields.insert(row.field_id());
         self.observation_ids.insert(row.observation_id());
@@ -244,6 +257,13 @@ pub(super) fn survey(
         spectral_windows,
         source_frequency_reference,
         fields: facts.fields,
+        first_visibility_field_id: usize::try_from(
+            facts
+                .first_visibility_key
+                .expect("nonempty selected row traversal")
+                .2,
+        )
+        .expect("selected FIELD_IDs are nonnegative"),
         observation_ids: facts.observation_ids,
         first_time_mjd_seconds: facts
             .first_time_mjd_seconds
@@ -568,6 +588,23 @@ mod tests {
                 channels: 2,
             })
         ));
+    }
+
+    #[test]
+    fn first_visibility_field_follows_array_description_field_sort_order() {
+        let keys = [(2, 0, 0), (1, 4, 1), (1, 2, 9), (1, 2, 7), (1, 3, 0)];
+        for reversed in [false, true] {
+            let mut facts = RowFacts::new(keys.len(), 5);
+            for index in 0..keys.len() {
+                let (array, description, field) = keys[if reversed {
+                    keys.len() - 1 - index
+                } else {
+                    index
+                }];
+                facts.observe_visibility_key(array, description, field);
+            }
+            assert_eq!(facts.first_visibility_key, Some((1, 2, 7)));
+        }
     }
 
     /// The messages of the warnings an event logs.

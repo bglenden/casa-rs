@@ -103,7 +103,7 @@ pub(super) fn prepare_axis(
 ) -> Result<PreparedSpectralAxis, PrepareError> {
     let source_reference = survey.source_frequency_reference;
     let law = match request.specmode {
-        SpecMode::Mfs => continuum_law(survey),
+        SpecMode::Mfs => continuum_law(ms, survey)?,
         SpecMode::Cube | SpecMode::Cubedata => cube_law(request, ms, survey, frame)?,
         SpecMode::Cubesource => {
             let frame_with_velocity = moving_rest_frame
@@ -137,25 +137,132 @@ pub(super) fn prepare_axis(
 }
 
 /// One LSRK plane over the selected band's envelope.
-fn continuum_law(survey: &Survey) -> AxisLaw {
+fn continuum_law(ms: &MeasurementSet, survey: &Survey) -> Result<AxisLaw, PrepareError> {
     let (channels, envelope) = survey
         .continuum
         .as_ref()
         .expect("the survey reduces the spectral envelope of every continuum run");
     let [lower_hz, upper_hz] = envelope.edges_hz();
     let reference_frequency_hz = envelope.midpoint_hz();
-    AxisLaw {
+    let field_id = survey.first_visibility_field_id;
+    let spw_id = survey.spectral_windows[0].spw_id;
+    let image_rest_frequency_hz =
+        continuum_rest_frequency_hz(ms, field_id, spw_id, reference_frequency_hz)?;
+    Ok(AxisLaw {
         selected_source_channels: channels.clone(),
         output_frequency_reference: FrequencyRef::LSRK,
         reference_frequency_hz,
         increment_hz: upper_hz - lower_hz,
         output_channels: 1,
         rest_frequency: RestFrequency::NotApplicable,
-        image_rest_frequency_hz: reference_frequency_hz,
+        image_rest_frequency_hz,
         doppler: DopplerConvention::NotApplicable,
         sampling: SpectralSamplingLaw::IDENTITY,
         basis: ReconstructionBasis::Constant,
+    })
+}
+
+/// CASA `SynthesisParamsImage::buildCoordinateSystemCore` asks
+/// `MSDopplerUtil::dopplerInfo` for the first selected SPW and field. Its
+/// first rest frequency wins; an absent or zero value uses the MFS band's
+/// midpoint. This header label does not change the continuum/Taylor basis.
+fn continuum_rest_frequency_hz(
+    ms: &MeasurementSet,
+    field_id: usize,
+    spw_id: usize,
+    band_midpoint_hz: f64,
+) -> Result<f64, PrepareError> {
+    let source_id = ms.field()?.source_id(field_id)?;
+    let window = ms
+        .subtable(SubtableId::SpectralWindow)
+        .expect("required SPW table");
+    let doppler_id = if window
+        .schema()
+        .is_some_and(|schema| schema.contains_column("DOPPLER_ID"))
+    {
+        let scalar = window
+            .cell_accessor(spw_id, "DOPPLER_ID")
+            .map_err(casa_ms::MsError::from)?
+            .scalar()
+            .map_err(casa_ms::MsError::from)?;
+        match scalar {
+            casa_types::ScalarValue::Int32(value) => *value,
+            _ => {
+                return Err(
+                    casa_ms::MsError::InvalidInput("DOPPLER_ID must be Int32".into()).into(),
+                );
+            }
+        }
+    } else {
+        -1
+    };
+    if doppler_id >= 0 && ms.subtable(SubtableId::Doppler).is_some() {
+        return Err(casa_ms::MsError::InvalidInput(
+            "MFS rest-frequency metadata with a DOPPLER table is not supported".into(),
+        )
+        .into());
     }
+    if ms.subtable(SubtableId::Source).is_none() {
+        return Ok(band_midpoint_hz);
+    }
+    let resolved = continuum_source_line(ms, source_id, spw_id)?;
+    Ok(resolved
+        .filter(|value| *value != 0.0)
+        .unwrap_or(band_midpoint_hz))
+}
+
+/// The first SOURCE line within a matching key group; -1 is a wildcard.
+/// CASA binary-searches sorted unique keys using its wildcard comparator.
+/// With multiple key groups, wildcards can select or hide a matching group;
+/// refuse that unresolved case instead of merging physical row order.
+fn continuum_source_line(
+    ms: &MeasurementSet,
+    source_id: i32,
+    spw_id: usize,
+) -> Result<Option<f64>, PrepareError> {
+    let source = ms.source()?;
+    let spw_id = i32::try_from(spw_id).expect("SPW ids are stored i32 values");
+    let mut first_key = None;
+    let mut multiple_keys = false;
+    let mut wildcard = false;
+    let mut matching_key = None;
+    let mut resolved = None;
+    for row in 0..source.row_count() {
+        let row_source = source.i32(row, "SOURCE_ID")?;
+        let row_spw = source.i32(row, "SPECTRAL_WINDOW_ID")?;
+        let key = (row_source, row_spw);
+        multiple_keys |= first_key.is_some_and(|prior| prior != key);
+        first_key.get_or_insert(key);
+        wildcard |= row_source == -1 || row_spw == -1;
+        if (row_source != source_id && row_source != -1) || (row_spw != spw_id && row_spw != -1) {
+            continue;
+        }
+        if matching_key.is_some_and(|prior| prior != key) {
+            return Err(casa_ms::MsError::InvalidInput(
+                "overlapping SOURCE key groups for MFS rest-frequency metadata are not supported"
+                    .into(),
+            )
+            .into());
+        }
+        matching_key = Some(key);
+        if resolved.is_some() {
+            continue;
+        }
+        let Some(ArrayValue::Float64(values)) = source.optional_array(row, "REST_FREQUENCY")?
+        else {
+            continue;
+        };
+        if values.is_empty() {
+            continue;
+        }
+        resolved = values.first().copied();
+    }
+    if wildcard && multiple_keys {
+        return Err(casa_ms::MsError::InvalidInput(
+            "multiple SOURCE key groups with wildcard ids for MFS rest-frequency metadata are not supported".into(),
+        ).into());
+    }
+    Ok(resolved)
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`).
@@ -480,3 +587,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "spectral_tests.rs"]
+mod spectral_tests;

@@ -189,6 +189,7 @@ mod tests {
     fn matching_row() -> SelectedObservationRow {
         SelectedObservationRow {
             physical_row: 0,
+            array_id: 0,
             data_description_id: 6,
             field_id: 3,
             antenna1: 0,

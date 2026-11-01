@@ -16,6 +16,7 @@ use crate::error::{MsError, MsResult};
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MainRowSelectionBlock {
     first_row: usize,
+    pub(super) array_ids: Vec<i32>,
     pub(super) data_description_ids: Vec<i32>,
     pub(super) field_ids: Vec<i32>,
     antenna1: Vec<i32>,
@@ -35,6 +36,7 @@ impl MainRowSelectionBlock {
         })?;
         Ok(Self {
             first_row: 0,
+            array_ids: Vec::with_capacity(rows),
             data_description_ids: Vec::with_capacity(rows),
             field_ids: Vec::with_capacity(rows),
             antenna1: Vec::with_capacity(rows),
@@ -60,6 +62,7 @@ impl MainRowSelectionBlock {
     pub(crate) fn row(&self, offset: usize) -> Option<SelectedObservationRow> {
         (offset < self.len()).then(|| SelectedObservationRow {
             physical_row: self.first_row + offset,
+            array_id: self.array_ids[offset],
             data_description_id: self.data_description_ids[offset],
             field_id: self.field_ids[offset],
             antenna1: self.antenna1[offset],
@@ -204,6 +207,10 @@ fn fill_main_row_selection_block(
     {
         let mut scalar_destinations = [
             RequiredScalarColumnDestination::new(
+                "ARRAY_ID",
+                RequiredScalarColumnValuesMut::Int32(&mut block.array_ids),
+            ),
+            RequiredScalarColumnDestination::new(
                 "DATA_DESC_ID",
                 RequiredScalarColumnValuesMut::Int32(&mut block.data_description_ids),
             ),
@@ -258,6 +265,7 @@ fn fill_main_row_selection_block(
     }
     let expected = row_indices.len();
     let lengths = [
+        block.array_ids.len(),
         block.data_description_ids.len(),
         block.field_ids.len(),
         block.antenna1.len(),

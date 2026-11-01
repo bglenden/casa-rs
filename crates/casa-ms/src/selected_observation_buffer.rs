@@ -994,6 +994,7 @@ mod tests {
         let rows = (0..ROWS)
             .map(|physical_row| SelectedObservationRow {
                 physical_row,
+                array_id: 0,
                 data_description_id: 0,
                 field_id: 0,
                 antenna1: 0,

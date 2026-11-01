@@ -1153,7 +1153,7 @@ fn retained_predicate_catalog_is_charged_before_construction() {
 
 #[test]
 fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
-    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 65);
+    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 69);
     let directory = tempfile::tempdir().expect("temporary row-projection fixture");
     let path = directory.path().join("row-projection.ms");
     generate_fixture(&path);

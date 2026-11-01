@@ -45,6 +45,7 @@ const CASACORE_MS_TABLE_TYPE: &str = "Measurement Set";
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedObservationRow {
     pub(crate) physical_row: usize,
+    pub(crate) array_id: i32,
     pub(crate) data_description_id: i32,
     pub(crate) field_id: i32,
     pub(crate) antenna1: i32,
@@ -59,16 +60,22 @@ pub struct SelectedObservationRow {
 
 impl SelectedObservationRow {
     /// Exact bytes read from stored MAIN columns for each row: one cell for
-    /// every field but the physical row index (`DATA_DESC_ID`, `FIELD_ID`,
+    /// every field but the physical row index (`ARRAY_ID`, `DATA_DESC_ID`, `FIELD_ID`,
     /// `ANTENNA1`, `ANTENNA2`, `STATE_ID` and `OBSERVATION_ID`; `TIME` and
     /// `TIME_CENTROID`; `FLAG_ROW`; `UVW`).
     pub const STORAGE_BYTES_PER_ROW: usize =
-        6 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>() + size_of::<[f64; 3]>();
+        7 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>() + size_of::<[f64; 3]>();
 
     /// Return the physical MAIN row index.
     #[must_use]
     pub const fn physical_row(self) -> usize {
         self.physical_row
+    }
+
+    /// Return the stored `ARRAY_ID`, the first CASA visibility-iterator sort key.
+    #[must_use]
+    pub const fn array_id(self) -> i32 {
+        self.array_id
     }
 
     /// Return the stored `DATA_DESC_ID`.
@@ -1453,10 +1460,10 @@ mod tests {
 
     #[test]
     fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
-        assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 65);
+        assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 69);
         assert_eq!(
             MainRowSelectionCursor::retained_bytes_per_row(),
-            65 + size_of::<usize>()
+            69 + size_of::<usize>()
         );
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         let schema = ms.main_table().schema().unwrap().clone();
@@ -1515,6 +1522,7 @@ mod tests {
             block_count += 1;
             assert!(block.len() <= 2);
             let current = (
+                block.array_ids.as_ptr(),
                 block.data_description_ids.as_ptr(),
                 block.field_ids.as_ptr(),
                 block.time_centroids_mjd_seconds.as_ptr(),
@@ -1534,6 +1542,7 @@ mod tests {
         assert_eq!(block_count, 3);
         assert_eq!(facts, vec![(0, 2), (1, 5), (2, 5), (3, 7), (4, 11)]);
         let last = last.unwrap();
+        assert_eq!(last.array_id(), 84);
         assert_eq!(last.field_id(), 14);
         assert_eq!(last.antenna1(), 24);
         assert_eq!(last.antenna2(), 34);
@@ -1549,6 +1558,7 @@ mod tests {
         // the plans.
         let SelectedObservationRow {
             physical_row: _,
+            array_id,
             data_description_id,
             field_id,
             antenna1,
@@ -1561,7 +1571,8 @@ mod tests {
             uvw_m,
         } = last;
         assert_eq!(
-            size_of_val(&data_description_id)
+            size_of_val(&array_id)
+                + size_of_val(&data_description_id)
                 + size_of_val(&field_id)
                 + size_of_val(&antenna1)
                 + size_of_val(&antenna2)
