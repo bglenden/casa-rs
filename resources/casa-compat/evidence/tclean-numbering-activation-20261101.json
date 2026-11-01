@@ -130,7 +130,23 @@
     "commits_by_this_agent": false
   },
   "focused_native": "Provider library70 plus remaining suite/doctests; restart/return T1 nine; current32 default migration and Python Rust provider conformance pass",
-  "full_native_gate": "Running activation-quick-final.log; initial arch check correctly required regenerated compatibility docs, repaired without source change",
+  "full_native_gate": {
+    "source": "99b native code; test fixture repairs after first run",
+    "first_run": {
+      "passed": 4704,
+      "failed": 2,
+      "skipped": 45,
+      "seconds": 468.068,
+      "failure_scope": "Only stale current-contract profile versions/migration-count assertions"
+    },
+    "repair": {
+      "frozen_profile_test_passed": 1,
+      "sparse_profile_suite_passed": 5,
+      "explicit_profile_parameters_changed": false
+    },
+    "passed": "workspace clippy, architecture, SPDX, formatting and all unique workspace tests after focused fixture repairs",
+    "remaining": "Doctests, CLI-host and performance-tool suites will run at combined mask acceptance boundary; no single green full run claimed yet"
+  },
   "fixture_repairs": [
     "Singleton startmodel array refused by existing Path catalog: original failed input/log retained; string form used and list-form gap remains unfinished.",
     "Each implementation initially used its own slightly different model; original own-seed failure retained. Final paired case uses a common frozen CASA seed; CPU64 first four unaffected rows reused.",
@@ -144,7 +160,14 @@
     "Remaining return keys, metadata, selection/modes and representative/runtime prediction acceptance"
   ],
   "archive": {
-    "state": "Pending verified NAS archive; raw data currently on external working disk"
+    "path": "/Volumes/home/casa-rs/tclean/20261031/restart-numbering-activation-20261101.tar",
+    "bytes": 78704640,
+    "sha256": "a5fb603f18b91a839c77f280038a8cbbffaded403d714efbe3ff754f781e3257",
+    "manifest_entries": 4848,
+    "manifest_sha256": "e3ca8f413bf1019e237d1d9c2c65e1bb41319bcc1a1b1c5e5632061628749673",
+    "verification": "Every TAR member checked; NAS archive reread hash matches",
+    "full_native_gate": "Active log deliberately excluded; copy and verify separately when complete",
+    "source_bundle_revision": "c57fe84ab46dd17827e67539f585bcae30ca2f35"
   },
   "authority": "Explicit owner activation approval; no scientific comparison reduction or history exception inferred",
   "scalar_case_disposition": {
@@ -164,5 +187,10 @@
     "absolute_limit_jy_per_beam": 1e-08,
     "other_checks": "All original guards pass and remain required",
     "scope": "Only unchanged bound output; no future output inherits this acceptance"
+  },
+  "recipe_correction": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/tclean_numbering_acceptance_20261101.py",
+    "sha256": "f1e5fa08c9f458c470afd03fed441c8d9ca509c910395928144caf0b0c2b061f",
+    "note": "After archival, fixed oracle-mode seed reference inadvertently changed during native shared-seed fixture repair. Restores recorded oracle one-element list using its original first model. No outputs or raw receipts changed; corrected recipe compiled and NAS reread verified."
   }
 }
