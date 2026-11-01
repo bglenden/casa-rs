@@ -1003,6 +1003,7 @@ mod tests {
                 time_centroid_mjd_seconds: 0.0,
                 state_id: 0,
                 observation_id: 0,
+                scan_number: None,
                 flag_row: false,
                 uvw_m: [0.0; 3],
             })

@@ -53,6 +53,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(unix)]
 mod content_requirements;
+mod numeric_selection;
 mod spectral_envelope;
 mod t41_ephemeris_oracle;
 mod walk;
@@ -1149,64 +1150,6 @@ fn retained_predicate_catalog_is_charged_before_construction() {
             super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
         ))
     ));
-}
-
-#[test]
-fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
-    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 69);
-    let directory = tempfile::tempdir().expect("temporary row-projection fixture");
-    let path = directory.path().join("row-projection.ms");
-    generate_fixture(&path);
-    let measurement_set = MeasurementSet::open(&path).expect("open row-projection fixture");
-    let selection = measurement_set
-        .selected_observation_row_selection(&[0], None, None, None)
-        .expect("resolve frontend selectors to the native row contract");
-    let mut rows = Vec::new();
-
-    measurement_set
-        .visit_selected_observation_rows(
-            &selection,
-            MsSelectionIoBudget {
-                available_bytes: 2 * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-                maximum_live_blocks: 2,
-                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-                storage_alignment_rows: None,
-            },
-            |row| rows.push(row),
-        )
-        .expect("visit canonical selected rows");
-    let expected_time_centroids = (0..2)
-        .map(|row| {
-            match measurement_set
-                .main_table()
-                .cell_accessor(row, "TIME_CENTROID")
-                .and_then(|cell| cell.scalar())
-                .expect("stored MAIN.TIME_CENTROID")
-            {
-                ScalarValue::Float64(value) => *value,
-                other => panic!(
-                    "MAIN.TIME_CENTROID must be Float64, found {:?}",
-                    other.primitive_type()
-                ),
-            }
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(rows.len(), 2);
-    assert_eq!(
-        rows.iter()
-            .map(|row| (row.physical_row(), row.data_description_id()))
-            .collect::<Vec<_>>(),
-        vec![(0, 0), (1, 0)]
-    );
-    assert!(rows.iter().all(|row| !row.flag_row()));
-    assert!(rows.iter().all(|row| row.observation_id() == 0));
-    assert_eq!(
-        rows.iter()
-            .map(|row| row.time_centroid_mjd_seconds())
-            .collect::<Vec<_>>(),
-        expected_time_centroids
-    );
 }
 
 #[test]

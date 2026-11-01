@@ -104,13 +104,17 @@ pub(super) fn select_samples(
     let weights = batch.group.weights.ok_or("the batch carries no weights")?;
     let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
     keep.clear();
-    keep.extend((0..batch.samples()).map(|sample| {
-        let flags = flags.index_axis(ndarray::Axis(0), sample);
-        let weights = weights.index_axis(ndarray::Axis(0), sample);
-        let padding =
-            flags.iter().all(|flag| *flag) && weights.iter().all(|weight| !weight.is_finite());
-        !padding && selection.uv_holds(partition, uvw.metres_at(sample))
-    }));
+    let baselines = batch.samples_per_time();
+    for time in 0..batch.times() {
+        let scan_selected = selection.scan_holds(batch, time)?;
+        keep.extend((time * baselines..(time + 1) * baselines).map(|sample| {
+            let flags = flags.index_axis(ndarray::Axis(0), sample);
+            let weights = weights.index_axis(ndarray::Axis(0), sample);
+            let padding =
+                flags.iter().all(|flag| *flag) && weights.iter().all(|weight| !weight.is_finite());
+            scan_selected && !padding && selection.uv_holds(partition, uvw.metres_at(sample))
+        }));
+    }
     Ok(())
 }
 

@@ -512,6 +512,7 @@ impl BoundObservationSource {
         } else {
             self.measurement_set.main_row_selection_cursor(plan)?
         };
+        let cursor = cursor.with_scan_numbers(self.row_predicate.needs_scan_numbers());
         Ok(SelectedRowReplay {
             cursor,
             pending: None,

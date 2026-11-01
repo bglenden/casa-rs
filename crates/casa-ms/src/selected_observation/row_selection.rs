@@ -116,6 +116,10 @@ impl CompiledRowPredicate {
         })
     }
 
+    pub(crate) fn needs_scan_numbers(&self) -> bool {
+        self.catalog.selection().scans().ids().is_some()
+    }
+
     pub(crate) fn matches(&self, row: SelectedObservationRow) -> bool {
         let selection = self.catalog.selection();
         let data_descriptions = self.catalog.data_descriptions();
@@ -126,6 +130,11 @@ impl CompiledRowPredicate {
             .iter()
             .any(|description| description.data_description_id() == data_description_id)
             && id_matches(selection.fields(), row.field_id)
+            && (matches!(selection.scans(), IdSelection::All)
+                || row
+                    .scan_number
+                    .is_some_and(|scan| id_matches(selection.scans(), scan)))
+            && id_matches(selection.observations(), row.observation_id)
             && uv_matches(
                 selection.uv_distances(),
                 row.uvw_m,
@@ -198,6 +207,7 @@ mod tests {
             time_centroid_mjd_seconds: 0.0,
             state_id: 5,
             observation_id: 0,
+            scan_number: None,
             flag_row: false,
             uvw_m: [3.0, 4.0, 12.0],
         }
@@ -265,6 +275,44 @@ mod tests {
         assert!(predicate.matches(SelectedObservationRow {
             uvw_m: [f64::NAN; 3],
             ..matching_row()
+        }));
+    }
+    #[test]
+    fn numeric_row_predicates_intersect_and_require_scan_cells_only_when_selected() {
+        let row = SelectedObservationRow {
+            scan_number: Some(3),
+            observation_id: 2,
+            ..matching_row()
+        };
+        let descriptions = [DataDescriptionSelection::new(6, 8, 10)];
+        let selection = exact_selection(UvSelection::All)
+            .with_scan_observation(IdSelection::Only(vec![1, 3]), IdSelection::Only(vec![2]));
+        let predicate = CompiledRowPredicate::new(&selection, &descriptions, |_| None).unwrap();
+        assert!(predicate.needs_scan_numbers());
+        assert!(predicate.matches(row));
+        for rejected in [
+            SelectedObservationRow {
+                scan_number: Some(4),
+                ..row
+            },
+            SelectedObservationRow {
+                scan_number: None,
+                ..row
+            },
+            SelectedObservationRow {
+                observation_id: 1,
+                ..row
+            },
+        ] {
+            assert!(!predicate.matches(rejected));
+        }
+        let all_scans = exact_selection(UvSelection::All)
+            .with_scan_observation(IdSelection::All, IdSelection::Only(vec![2]));
+        let predicate = CompiledRowPredicate::new(&all_scans, &descriptions, |_| None).unwrap();
+        assert!(!predicate.needs_scan_numbers());
+        assert!(predicate.matches(SelectedObservationRow {
+            scan_number: None,
+            ..row
         }));
     }
 }

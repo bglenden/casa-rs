@@ -60,16 +60,26 @@ pub(super) fn survey(
                 };
                 let centroids = batch.timing.centroid.map(|centroid| centroid.offsets_s());
                 let times = batch.time.offsets_s();
-                for time_s in times.iter().chain(centroids.iter().flatten()) {
-                    let [low, high] = span.get_or_insert([*time_s; 2]);
-                    *low = low.min(*time_s);
-                    *high = high.max(*time_s);
-                }
-                if !factors {
-                    continue;
-                }
                 let scale = batch.time.reference();
+                let baselines = batch.samples_per_time();
                 for time in 0..batch.times() {
+                    if !route.selection.scan_holds(&batch, time)? {
+                        continue;
+                    }
+                    let mut include = |time_s: f64| {
+                        let [low, high] = span.get_or_insert([time_s; 2]);
+                        *low = low.min(time_s);
+                        *high = high.max(time_s);
+                    };
+                    include(times[time]);
+                    if let Some(centroids) = &centroids {
+                        for sample in time * baselines..(time + 1) * baselines {
+                            include(centroids[sample]);
+                        }
+                    }
+                    if !factors {
+                        continue;
+                    }
                     let time_mjd_s = batch.time.seconds_since(time, origin);
                     let field = batch.field[time];
                     let key = (entry.frequency_frame, field, scale, time_mjd_s.to_bits());

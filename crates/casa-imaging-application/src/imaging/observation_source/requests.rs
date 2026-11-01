@@ -36,6 +36,7 @@ pub(super) fn payload(
         roles: Roles {
             values,
             time_centroid: plan.reads_time_centroids(),
+            scan: selection.scans.ids().is_some(),
             ..Roles::PAYLOAD
         },
         weights: WeightRequest::Stored,

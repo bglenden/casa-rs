@@ -32,6 +32,30 @@ impl SelectedObservationRowSelection {
         }
     }
 
+    /// Resolve scan and observation text through the shared MeasurementSet
+    /// numeric-ID parser and add both predicates to this selection.
+    ///
+    /// # Errors
+    /// A selector is unsupported, empty after parsing, or names a negative ID.
+    pub fn with_numeric_row_selectors(
+        mut self,
+        scan: Option<&str>,
+        observation: Option<&str>,
+    ) -> MsResult<Self> {
+        let resolve =
+            |selector: Option<&str>, label| match selector.filter(|text| !text.trim().is_empty()) {
+                None => Ok(IdSelection::All),
+                Some(text) => {
+                    let ids = crate::parse_numeric_id_selector(text, label)?;
+                    canonical_nonnegative_ids(&ids, label).map(IdSelection::Only)
+                }
+            };
+        self.rows = self
+            .rows
+            .with_scan_observation(resolve(scan, "scan")?, resolve(observation, "observation")?);
+        Ok(self)
+    }
+
     /// Return the canonical row predicate resolved from the application selectors.
     #[must_use]
     pub fn rows(&self) -> &RowSelection {
@@ -191,16 +215,20 @@ impl MeasurementSet {
         })?;
         let plan = MsReadPlan::new(self.row_count(), io)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.visit_main_row_selection_blocks(plan, |block| {
-            for offset in 0..block.len() {
-                let row = block
-                    .row(offset)
-                    .expect("offset is bounded by MAIN selection block length");
-                if predicate.matches(row) {
-                    visit(row);
+        self.visit_main_row_selection_blocks(
+            plan,
+            selection.rows.scans().ids().is_some(),
+            |block| {
+                for offset in 0..block.len() {
+                    let row = block
+                        .row(offset)
+                        .expect("offset is bounded by MAIN selection block length");
+                    if predicate.matches(row) {
+                        visit(row);
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 }
 

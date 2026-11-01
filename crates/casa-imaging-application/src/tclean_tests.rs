@@ -66,6 +66,22 @@ fn every_request_field_is_required_or_consumed_internal_provenance() {
         for name in fields.keys() {
             let mut without = fields.clone();
             without.remove(name);
+            if matches!(name.as_str(), "scan" | "observation") {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("internal selector defaults to unset");
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), json!("1,3~5"));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("internal selector is consumed");
+                let (default, explicit) = if name == "scan" {
+                    (default.scan, explicit.scan)
+                } else {
+                    (default.observation, explicit.observation)
+                };
+                assert_eq!(default, None);
+                assert_eq!(explicit.as_deref(), Some("1,3~5"));
+                continue;
+            }
             if name == "explicit_empty_mask" {
                 let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
                     .expect("internal mask provenance defaults to false");
@@ -430,4 +446,23 @@ fn zero_major_limit_is_valid_but_zero_minor_cycle_length_is_not() {
         value.validate().is_err(),
         "a zero minor-cycle limit remains invalid"
     );
+}
+
+#[test]
+fn native_scan_observation_preview_consumes_text_without_activating_catalog() {
+    for selectdata in [false, true] {
+        let mut values = resolved(json!({"selectdata": selectdata})).unwrap();
+        values.insert("scan".to_string(), json!("1,3~5"));
+        values.insert("observation".to_string(), json!("0"));
+        let request = ImagingRequest::from_tclean(&values).unwrap();
+        assert_eq!(request.scan.as_deref(), Some("1,3~5"));
+        assert_eq!(request.observation.as_deref(), Some("0"));
+    }
+    for (parameter, value) in [("scan", "1"), ("observation", "0")] {
+        let error = resolved(json!({parameter: value}))
+            .expect_err("production catalog still refuses non-default selectors")
+            .to_string();
+        assert!(error.contains(parameter), "{error}");
+        assert!(error.contains("#980"), "{error}");
+    }
 }

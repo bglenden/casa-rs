@@ -44,7 +44,10 @@ impl BoundObservationSource {
                 )
         };
         let mut counts = vec![0_usize; self.coordinates.len()];
-        let mut cursor = self.measurement_set.main_row_selection_cursor(plan)?;
+        let mut cursor = self
+            .measurement_set
+            .main_row_selection_cursor(plan)?
+            .with_scan_numbers(self.row_predicate.needs_scan_numbers());
         while let Some(row) = cursor.next(&self.measurement_set)? {
             if self.row_predicate.matches(row) {
                 counts[group_of(row)?] += 1;
@@ -59,7 +62,10 @@ impl BoundObservationSource {
             ends.push(total);
         }
         let mut rows = vec![0_u32; total];
-        let mut cursor = self.measurement_set.main_row_selection_cursor(plan)?;
+        let mut cursor = self
+            .measurement_set
+            .main_row_selection_cursor(plan)?
+            .with_scan_numbers(self.row_predicate.needs_scan_numbers());
         while let Some(row) = cursor.next(&self.measurement_set)? {
             if self.row_predicate.matches(row) {
                 let group = group_of(row)?;

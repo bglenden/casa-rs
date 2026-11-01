@@ -181,12 +181,14 @@ pub(super) fn survey(
         .as_deref()
         .map(|selector| ms.resolve_field_selector(selector))
         .transpose()?;
-    let row_selection = ms.selected_observation_row_selection(
-        &ddids,
-        field_ids.as_deref(),
-        request.uvrange.as_deref(),
-        request.intent.as_deref(),
-    )?;
+    let row_selection = ms
+        .selected_observation_row_selection(
+            &ddids,
+            field_ids.as_deref(),
+            request.uvrange.as_deref(),
+            request.intent.as_deref(),
+        )?
+        .with_numeric_row_selectors(request.scan.as_deref(), request.observation.as_deref())?;
     let mut spectral_windows = candidate_windows(ms, &data_description, &ddids)?;
     let mut continuum = continuum_envelope(
         request,
@@ -234,12 +236,14 @@ pub(super) fn survey(
     // A candidate data description no selected row has goes, with its
     // spectral window: the predicate admits a row only through its data
     // description, so over the observed ones it selects the same rows.
-    let row_selection = ms.selected_observation_row_selection(
-        &facts.ddids.iter().copied().collect::<Vec<_>>(),
-        field_ids.as_deref(),
-        request.uvrange.as_deref(),
-        request.intent.as_deref(),
-    )?;
+    let row_selection = ms
+        .selected_observation_row_selection(
+            &facts.ddids.iter().copied().collect::<Vec<_>>(),
+            field_ids.as_deref(),
+            request.uvrange.as_deref(),
+            request.intent.as_deref(),
+        )?
+        .with_numeric_row_selectors(request.scan.as_deref(), request.observation.as_deref())?;
     let spw_ids = row_selection
         .data_descriptions()
         .iter()

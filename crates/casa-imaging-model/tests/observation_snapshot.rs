@@ -655,3 +655,62 @@ fn compilation_fails_closed_on_an_empty_selection() {
         Err(CompileObservationError::EmptySelection)
     ));
 }
+
+#[test]
+fn scan_and_observation_ids_are_canonical_and_charge_owned_capacity() {
+    let base = selection(31, false);
+    let mut scans = Vec::with_capacity(17);
+    scans.extend([3, 1, 3]);
+    let mut observations = Vec::with_capacity(11);
+    observations.extend([1, 0, 1]);
+    let bytes = (scans.capacity() + observations.capacity()) * size_of::<u32>();
+    let selected = ObservationSelection::new(
+        base.rows().clone(),
+        base.rows_filter()
+            .clone()
+            .with_scan_observation(IdSelection::Only(scans), IdSelection::Only(observations)),
+        base.data_descriptions().to_vec(),
+        base.spectral_windows().to_vec(),
+        base.correlations().to_vec(),
+    );
+    assert_eq!(
+        selected.retained_manifest_bytes().unwrap(),
+        base.retained_manifest_bytes().unwrap() + bytes
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+        ObservationSourceInput::new(
+            ObservationSourceProvenance::new("selected.ms".to_string()),
+            selected,
+            columns(),
+            false,
+        ),
+    ]))
+    .unwrap();
+    let rows = snapshot.sources()[0].selection().rows_filter();
+    assert_eq!(rows.scans().ids(), Some(&[1, 3][..]));
+    assert_eq!(rows.observations().ids(), Some(&[0, 1][..]));
+}
+
+#[test]
+fn empty_exact_scan_and_observation_sets_are_not_unconstrained() {
+    for (scans, observations, expected) in [
+        (IdSelection::Only(vec![]), IdSelection::All, "scan"),
+        (IdSelection::All, IdSelection::Only(vec![]), "observation"),
+    ] {
+        let base = selection(31, false);
+        let selected = ObservationSelection::new(
+            base.rows().clone(),
+            base.rows_filter()
+                .clone()
+                .with_scan_observation(scans, observations),
+            base.data_descriptions().to_vec(),
+            base.spectral_windows().to_vec(),
+            base.correlations().to_vec(),
+        );
+        assert!(
+            matches!(compile_observation(ObservationSnapshotInput::new(vec![
+            ObservationSourceInput::new(ObservationSourceProvenance::new("selected.ms".to_string()), selected, columns(), false),
+        ])), Err(CompileObservationError::EmptyIdSelection { selector }) if selector == expected)
+        );
+    }
+}

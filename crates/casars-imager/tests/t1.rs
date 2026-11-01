@@ -37,6 +37,8 @@ mod restart;
 mod routes;
 #[path = "t1/selection.rs"]
 mod selection;
+#[path = "t1/selection_numeric.rs"]
+mod selection_numeric;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]

@@ -183,6 +183,10 @@ name = "field_selection_oracle"
 path = "tests/field_selection_oracle.rs"
 
 [[test]]
+name = "scan_observation_oracle"
+path = "tests/scan_observation_oracle.rs"
+
+[[test]]
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]

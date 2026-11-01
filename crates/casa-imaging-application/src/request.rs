@@ -90,6 +90,12 @@ pub struct ImagingRequest {
     /// CASA baseline-length selection.
     #[serde(deserialize_with = "optional")]
     pub uvrange: Option<String>,
+    /// CASA numeric scan-number selection, resolved by the MeasurementSet owner.
+    #[serde(default, deserialize_with = "optional")]
+    pub scan: Option<String>,
+    /// CASA numeric observation-ID selection, resolved by the MeasurementSet owner.
+    #[serde(default, deserialize_with = "optional")]
+    pub observation: Option<String>,
     /// CASA observing-intent selection.
     #[serde(deserialize_with = "optional")]
     pub intent: Option<String>,

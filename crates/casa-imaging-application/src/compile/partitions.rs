@@ -85,6 +85,18 @@ pub(crate) fn resolve_partitions(
     let mut partitions = Vec::new();
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);
+        if !rows.observations().holds(i64::from(entry.observation.0)) {
+            continue;
+        }
+        if rows.scans().ids().is_some()
+            && !entry.scans.iter().any(|scan| {
+                catalogue.scans[scan.0 as usize]
+                    .number
+                    .is_some_and(|number| rows.scans().holds(i64::from(number)))
+            })
+        {
+            continue;
+        }
         let data_description = observation.data_description_id(id);
         let Some(description) = selection
             .data_descriptions()
@@ -189,6 +201,7 @@ pub(crate) fn resolve_partitions(
         ))?,
         partitions,
         fields,
+        scans: rows.scans().clone(),
         uv: rows.uv_distances().clone(),
     })
 }

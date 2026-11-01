@@ -364,7 +364,8 @@ pub(super) fn build_aw_pointing_epoch_plan(
     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     let mut cursor = source
         .measurement_set
-        .main_row_selection_cursor(scan_plan)?;
+        .main_row_selection_cursor(scan_plan)?
+        .with_scan_numbers(source.row_predicate.needs_scan_numbers());
     let mut epochs = Vec::<AwPointingEpochInput>::new();
     while let Some(row) = cursor.next(&source.measurement_set)? {
         if !source.row_predicate.matches(row) {

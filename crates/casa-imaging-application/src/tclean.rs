@@ -330,10 +330,10 @@ impl<'a> Tclean<'a> {
         self.copy(&["vis", "imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
-        self.ignore(&["selectdata", "timerange", "antenna", "scan", "observation"])?;
+        self.ignore(&["selectdata", "timerange", "antenna"])?;
         let field = self.text("field")?;
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
+        for name in ["spw", "uvrange", "intent", "scan", "observation"] {
             let value = self.text(name)?;
             self.set(name, value);
         }

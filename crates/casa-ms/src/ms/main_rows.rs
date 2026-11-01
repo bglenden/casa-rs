@@ -25,6 +25,7 @@ pub(crate) struct MainRowSelectionBlock {
     pub(super) time_centroids_mjd_seconds: Vec<f64>,
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
+    scan_numbers: Option<Vec<i32>>,
     flag_rows: Vec<bool>,
     pub(super) uvw_m: Vec<f64>,
 }
@@ -45,6 +46,7 @@ impl MainRowSelectionBlock {
             time_centroids_mjd_seconds: Vec::with_capacity(rows),
             state_ids: Vec::with_capacity(rows),
             observation_ids: Vec::with_capacity(rows),
+            scan_numbers: None,
             flag_rows: Vec::with_capacity(rows),
             uvw_m: Vec::with_capacity(uvw_values),
         })
@@ -71,6 +73,7 @@ impl MainRowSelectionBlock {
             time_centroid_mjd_seconds: self.time_centroids_mjd_seconds[offset],
             state_id: self.state_ids[offset],
             observation_id: self.observation_ids[offset],
+            scan_number: self.scan_numbers.as_ref().map(|values| values[offset]),
             flag_row: self.flag_rows[offset],
             uvw_m: [
                 self.uvw_m[offset * 3],
@@ -135,6 +138,14 @@ impl MainRowWalk {
 }
 
 impl MainRowSelectionCursor {
+    /// Request scan cells only for a constrained scan predicate.
+    pub(crate) fn with_scan_numbers(mut self, required: bool) -> Self {
+        if required {
+            self.block.scan_numbers = Some(Vec::with_capacity(self.plan.rows_per_block));
+        }
+        self
+    }
+
     pub(crate) const fn retained_bytes_per_row() -> usize {
         SelectedObservationRow::STORAGE_BYTES_PER_ROW + size_of::<usize>()
     }
@@ -249,6 +260,20 @@ fn fill_main_row_selection_block(
         ];
         table.required_scalar_columns_for_rows_into(row_indices, &mut scalar_destinations)?;
     }
+    if let Some(scans) = &mut block.scan_numbers {
+        table.required_scalar_columns_for_rows_into(
+            row_indices,
+            &mut [RequiredScalarColumnDestination::new(
+                "SCAN_NUMBER",
+                RequiredScalarColumnValuesMut::Int32(scans),
+            )],
+        )?;
+        if scans.len() != row_indices.len() {
+            return Err(MsError::InvalidInput(
+                "MAIN SCAN_NUMBER length does not match the requested block".to_string(),
+            ));
+        }
+    }
     let uvw_shape = table
         .column_accessor("UVW")?
         .fill_array_cells_1d_typed_uncached(
@@ -290,9 +315,12 @@ impl MeasurementSet {
     pub(crate) fn visit_main_row_selection_blocks(
         &self,
         plan: crate::MsReadPlan,
+        scan_numbers: bool,
         mut visit: impl FnMut(&MainRowSelectionBlock),
     ) -> MsResult<()> {
-        let mut cursor = self.main_row_selection_cursor(plan)?;
+        let mut cursor = self
+            .main_row_selection_cursor(plan)?
+            .with_scan_numbers(scan_numbers);
         while cursor.next_row < cursor.plan.row_count {
             let first_row = cursor.next_row;
             let end = first_row

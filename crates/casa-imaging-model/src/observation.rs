@@ -97,10 +97,12 @@ pub enum IntentSelection {
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
 ///
 /// These are the MeasurementSet selections the imager exposes: field, UV
-/// distance and scan intent.
+/// distance, scan intent, scan number and observation identifier.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
+    scans: IdSelection,
+    observations: IdSelection,
     uv_distances: UvSelection,
     intents: IntentSelection,
 }
@@ -115,9 +117,32 @@ impl RowSelection {
     ) -> Self {
         Self {
             fields,
+            scans: IdSelection::All,
+            observations: IdSelection::All,
             uv_distances,
             intents,
         }
+    }
+
+    /// Constrain scan numbers and observation identifiers, conjunctively with
+    /// the other row predicates. Compilation canonicalizes both ID sets.
+    #[must_use]
+    pub fn with_scan_observation(mut self, scans: IdSelection, observations: IdSelection) -> Self {
+        self.scans = scans;
+        self.observations = observations;
+        self
+    }
+
+    /// Return resolved scan numbers.
+    #[must_use]
+    pub const fn scans(&self) -> &IdSelection {
+        &self.scans
+    }
+
+    /// Return resolved observation identifiers.
+    #[must_use]
+    pub const fn observations(&self) -> &IdSelection {
+        &self.observations
     }
 
     /// Return resolved field identifiers.
@@ -140,6 +165,8 @@ impl RowSelection {
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.fields.canonicalize("field")?;
+        self.scans.canonicalize("scan")?;
+        self.observations.canonicalize("observation")?;
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}
@@ -644,6 +671,8 @@ impl ObservationSelection {
             IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
         };
         bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.fields)?)?;
+        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.scans)?)?;
+        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.observations)?)?;
         if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
             bytes = bytes.checked_add(
                 ranges
