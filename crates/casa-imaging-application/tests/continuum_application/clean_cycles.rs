@@ -12,8 +12,12 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("hogbom");
 
-    let result = execute(&request(&measurement_set, &image_name, json!({})))
-        .expect("native Högbom application execution");
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "hogbom_iteration_mode": "strict" }),
+    ))
+    .expect("native strict Högbom application execution");
 
     assert_eq!(result.total_minor_iterations, 1);
     assert_eq!(result.stop, Some(CleanStop::Iterations));
@@ -203,6 +207,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
             "niter": 3,
             "cycleniter": 1,
             "nmajor": 3,
+            "hogbom_iteration_mode": "strict",
             "gain": 0.37,
             "threshold": "1e-12Jy",
             "nsigma": 1.0e-12,
