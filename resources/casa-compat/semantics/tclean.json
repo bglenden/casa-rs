@@ -1118,7 +1118,7 @@
       "title": "Precision, backend and resource acceptance",
       "status": "Partial",
       "scope": "backend=auto/cpu/gpu, gridprecision and all scientific products (#991).",
-      "gap": "Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. Contract32 False is now active and all20 small public numbering product checks pass. One Metal threshold output is owner-accepted by identity-bound review; its raw scalar failure stays visible, with no future waiver. Initial broad activation gate passed4704/4706 with two stale contract fixtures; both focused repairs pass. Remaining normal checks are consolidated at mask acceptance. Scientific accumulation is unchanged by those two slices. The later mask correction has38 small paired product/count rows passing and independent review without findings; its combined full normal gate is running. No numeric rule or solver arithmetic changed.",
+      "gap": "Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. Contract32 False is now active and all20 small public numbering product checks pass. One Metal threshold output is owner-accepted by identity-bound review; its raw scalar failure stays visible, with no future waiver. Combined normal gate at086a passes4710 workspace tests/45skips and all normal checks. Scientific accumulation is unchanged by those two slices. The later mask correction has38 small paired product/count rows passing and independent review without findings; its combined full normal gate passes4710 tests/45skips and all normal checks. No numeric rule or solver arithmetic changed.",
       "evidence": [
         "reader",
         "accuracy-issue",
@@ -1583,10 +1583,10 @@
     "numbering-activation": {
       "kind": "Executed public CLI/Python restart=False activation",
       "state": "All20 scoped product/preservation rows pass;19 raw scalar rows pass; one exact scalar output owner-accepted; prior-history preservation owner-agreed",
-      "source_revision": "7fa098d702bece30c5b7fab7a19d8fcddb0107e2",
+      "source_revision": "958c7e312cb5165bd9d7cd92032a5681aae58c6b",
       "revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
       "casa_version": "casatasks6.7.6.14;casatools6.7.6-14",
-      "scope": "Single-main standard Stokes-I MFS fresh/second/third/gap/common-string-seed numbering on CPU64/CPU32/Metal32 CLI and CPU64 public Python. Seven product inventory/mask/finite/NRMS/recorded metadata/beam/sumwt gates and exact counts. All114 binding names/order/defaults and other surfaces unchanged. Editable632,wheel632,sdist99 tests pass. Initial native broad gate4704pass/2 stale fixture failures; focused repairs pass1+5; remaining normal checks consolidated with mask acceptance. No full task, all returns or full history acceptance.",
+      "scope": "Single-main standard Stokes-I MFS fresh/second/third/gap/common-string-seed numbering on CPU64/CPU32/Metal32 CLI and CPU64 public Python. Seven product inventory/mask/finite/NRMS/recorded metadata/beam/sumwt gates and exact counts. All114 binding names/order/defaults and other surfaces unchanged. Editable632,wheel632,sdist99 tests pass. Combined normal gate at086a passes4710 tests/45skips and all normal checks;875 tooltests/307subtests use existing externalvenv after defaultPython dependency skip. No full task, all returns or full history acceptance.",
       "links": [
         "resources/casa-compat/evidence/tclean-numbering-activation-20261101.json",
         "docs/Planning/tclean-numbering-scalar-review-proposal-20261101.md",
@@ -1598,11 +1598,11 @@
     },
     "mask-boxes": {
       "kind": "Executed signed/clipped/empty-mask product and stop comparisons",
-      "state": "38 scoped paired rows pass and independent review clear; combined full normal gate running",
-      "source_revision": "9a9796b23fa2e59388aed4dc2e95154bece3e502",
+      "state": "38 scoped paired rows and final normal gate pass; independent review clear",
+      "source_revision": "958c7e312cb5165bd9d7cd92032a5681aae58c6b",
       "revision": "086a67f1d425035e206f77bf58329f59dddf9d5a",
       "casa_version": "casatasks6.7.6.14;casatools6.7.6-14",
-      "scope": "36 CLI rows:6 integer-box/empty-region forms x2 PB limits x3 backends, all seven products/exact counts;2 public Python rows add two selected scalar checks and preservation under False numbering. Focused red/green,61 T1, retained-mask memory law, touched clippy/dependencies pass. General regions/masks/modes unfinished.",
+      "scope": "36 CLI rows:6 integer-box/empty-region forms x2 PB limits x3 backends, all seven products/exact counts;2 public Python rows add two selected scalar checks and preservation under False numbering. Focused red/green,61 T1, retained-mask memory law, touched clippy/dependencies pass. Full normal gate passes4710 workspace tests/45skips,doctests,clippy,arch/SPDX/fmt,21CLIhosts and875 tooltests/307subtests. General regions/masks/modes unfinished.",
       "links": [
         "resources/casa-compat/evidence/tclean-mask-boxes-20261101.json",
         "crates/casa-imaging-deconvolution/src/mask.rs",
@@ -1610,7 +1610,7 @@
         "crates/casars-imager/tests/t1/standard_mfs_masks.rs"
       ],
       "command": "Pinned CASA Python -I tclean_mask_box_acceptance_20261101.py and public Python driver; native focused/integration/memory gates, combinednormalgate",
-      "receipt": "resources/casa-compat/evidence/tclean-mask-boxes-20261101.json"
+      "receipt": "resources/casa-compat/evidence/tclean-mask-boxes-20261101.json; NAS clipped-empty-masks-20261101.tar SHA c1d153de304c01a3f9c1c135931610f7550cb78ec891866d13b535fcfa722958; completed log identities in receipt"
     }
   }
 }
