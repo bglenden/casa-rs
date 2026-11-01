@@ -2,9 +2,9 @@
     ms: &amp;mut <a class="struct" href="../ms/struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a>,
     column: <a class="enum" href="../schema/main_table/enum.VisibilityDataColumn.html" title="enum casa_ms::schema::main_table::VisibilityDataColumn">VisibilityDataColumn</a>,
     adds: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
-    main_lock: &amp;mut TableWriteLock,
+    main_lock: &amp;mut <a class="struct" href="../../casa_tables/lock/write_lock/struct.TableWriteLock.html" title="struct casa_tables::lock::write_lock::TableWriteLock">TableWriteLock</a>,
 ) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p><a href="fn.prepare_write.html" title="fn casa_ms::scratch_columns::prepare_write"><code>prepare_write</code></a> for a caller that holds MAIN’s write lock through
-<code>main_lock</code>, a [<code>TableWriteLock</code>] on the MAIN of <code>ms</code> (opened without
+<code>main_lock</code>, a <a href="../../casa_tables/lock/write_lock/struct.TableWriteLock.html" title="struct casa_tables::lock::write_lock::TableWriteLock"><code>TableWriteLock</code></a> on the MAIN of <code>ms</code> (opened without
 locking), as a writer of several mutation sessions in turn holds it:
 MAIN’s metadata is written under it, the write recorded so that the
 caller’s release publishes it, and SOURCE’s lock is tried once, as while

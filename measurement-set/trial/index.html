@@ -1605,6 +1605,22 @@ observation with its field moving:
 <p>Regenerate them with <code>tools/ms-trial/make_ephemeris_fixtures.sh</code>, which
 starts from the committed <code>ms_trial.ms</code> and leaves the other fixtures
 alone.</p>
+<p>The <strong>sources-and-lines fixtures</strong> (#976, 21 and 17 KB) are another
+observation, of one field in two spectral windows:
+- <strong>MSv2 <code>ms_trial_lines.ms</code>.</strong> Simulated by
+  <code>crates/casa-ms/examples/ms_trial_lines.rs</code>: three VLA antennas, seven
+  10 s integrations, windows of four and three channels at 672 and
+  676 GHz, and a <code>SOURCE</code> stating the field's source with one line in the
+  first window and two in the second, each with its transition, rest
+  frequency and systemic velocity (both LSRK). <code>UVW</code>'s MEASINFO names
+  ITRF, as for <code>ms_trial.ms</code>.
+- <strong>MSv4 <code>ms_trial_lines.ps.zarr</code>.</strong> XRADIO's conversion with its default
+  partitioning, one dataset per window, without pointing.</p>
+<p>Regenerate them with <code>tools/ms-trial/make_lines_fixtures.sh</code>. The law
+<code>both_stores_state_a_fields_source_and_its_lines_by_window</code> reads both
+through their adapters: one source with a record per window, the same
+direction, transitions, rest frequencies and velocities (XRADIO's without a
+frame), and the MSv2 binds to its conversion.</p>
 <h3 id="fixture-findings">Fixture findings<a class="headerlink" href="#fixture-findings" title="Permanent link">&para;</a></h3>
 <ul>
 <li>casa-rs's synthetic writer leaves <code>UVW</code>'s MEASINFO without <code>Ref</code>; XRADIO
@@ -1629,6 +1645,18 @@ alone.</p>
 <li>The synthetic writer's corruption panics for four correlations (it
   indexes antenna gains by correlation, for at most two), so noise and gains
   are applied by the fixture script.</li>
+<li>XRADIO's converter writes the line names as <code>line_name</code>, where its
+  schema names the coordinate <code>line_names</code>, and names a source
+  <code>NAME_SOURCEID</code>; it takes a source's lines from the <code>SOURCE</code> rows of the
+  partition's window alone (never those for every window, −1), the first
+  in time.</li>
+<li>Where <code>FEED</code> has no row for a window (the synthetic writer's <code>FEED</code>
+  names window 0 only), XRADIO writes that dataset's <code>antenna_xds</code> without
+  <code>ANTENNA_RECEPTOR_ANGLE</code> but with <code>polarization_type</code>. The reader then
+  gives its antennas no receptors, as the MSv2 adapter reads that <code>FEED</code>.</li>
+<li>XRADIO writes a window whose channels descend (negative width) in
+  ascending order, so its partition does not bind to the MSv2's, whose
+  channels are in stored order (#1014). The lines fixture's windows ascend.</li>
 <li>XRADIO relabels MSv2's <code>UVW</code> ITRF as the phase centre's frame (<code>fk5</code>),
   following CASA <code>fixvis</code>'s note that the label is usually wrong; names
   antennas <code>NAME_STATION</code> and fields <code>NAME_FIELDID</code>; and declares the

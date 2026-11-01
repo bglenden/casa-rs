@@ -1112,9 +1112,16 @@ and SOURCE's fixed vectors have their length on one axis.
   then those for every window: CASA's default rest frequency is the first
   record's first line. A record for a window the store lacks is not read,
   and a line array whose length is not <code>NUM_LINES</code> is dropped, each with a
-  warning, since the table is readable otherwise. The MSv4 adapter does not
-  yet read <code>field_and_source</code>'s <code>SOURCE_DIRECTION</code> and line variables
-  (#976): its sources are empty.
+  warning, since the table is readable otherwise. The MSv4 adapter reads a
+  <code>field_and_source</code> dataset's sources (#976): one source per
+  <code>source_name</code> (XRADIO's <code>NAME_SOURCEID</code>), with one record per window the
+  datasets state it for, of its <code>SOURCE_DIRECTION</code> and its lines
+  (<code>line_name</code>, or the schema's <code>line_names</code>, with <code>LINE_REST_FREQUENCY</code>
+  and <code>LINE_SYSTEMIC_VELOCITY</code>, a line stated when any of them is not
+  XRADIO's padding). Such a record states nothing else (no time, interval
+  or code), and its velocities have no frame: none is invented. A
+  <code>field_and_source_ephemeris</code> dataset states lines per time; they are not
+  read, and its fields name no source.
 - <strong>States</strong> (<code>Catalogue::states</code>, <code>StateId</code>): every MSv2 <code>STATE</code> row, with
   <code>OBS_MODE</code> whole, <code>CAL</code> and <code>LOAD</code> (K), <code>SIG</code>, <code>REF</code>, <code>SUB_SCAN</code> and flag.
   A partition lists the states its rows use: several when they share an

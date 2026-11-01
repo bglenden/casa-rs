@@ -129,7 +129,7 @@
 <a href=#129 id=129 data-nosnippet>129</a>        })<span class="question-mark">?</span>;
 <a href=#130 id=130 data-nosnippet>130</a>    <span class="comment">// The catalogue is shared with the opening, not copied.
 <a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">let </span>catalogue = Arc::clone(observation.catalogue());
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span>kept = observation.held_bytes() + catalogue_bytes(<span class="kw-2">&amp;</span>catalogue);
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span>kept = observation.held_bytes();
 <a href=#133 id=133 data-nosnippet>133</a>    ledger.trim(<span class="string">"an input's opening"</span>, granted, kept)<span class="question-mark">?</span>;
 <a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">let </span><span class="kw-2">mut </span>first: Vec&lt;<span class="prelude-ty">Option</span>&lt;f64&gt;&gt; = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; catalogue.observations.len()];
 <a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">for </span>id <span class="kw">in </span>catalogue.partition_ids() {
