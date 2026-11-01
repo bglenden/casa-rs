@@ -5,7 +5,10 @@ use std::collections::BTreeSet;
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::syntax::{dedup_i32, parse_numeric_id_selector, parse_numeric_range};
+use crate::selection::syntax::{
+    canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector, parse_numeric_range,
+    parse_numeric_range_endpoints,
+};
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 use crate::subtables::{get_f64, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
@@ -69,10 +72,12 @@ impl MeasurementSet {
     ///
     /// # Errors
     ///
-    /// Unreadable FIELD metadata, or a name/pattern matching no FIELD row.
+    /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
+    /// no FIELD row, or a nonempty selection resolving to no existing fields.
     /// This resolver does not implement CASA's regex, quoted-name or comparison
-    /// expression forms, FIELD CODE/numeric-name fallback, or validate numeric
-    /// IDs against the FIELD row count. Name matching trims stored names and
+    /// expression forms, negative numeric IDs, or FIELD CODE/numeric-name fallback.
+    /// Numeric IDs are bounded by the FIELD row count before enumeration.
+    /// Name matching trims stored names and
     /// excludes flagged FIELD rows, following `MSFieldIndex`.
     pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
         let (mut ids, names) = parse_field_selector(self, value)?;
@@ -80,12 +85,17 @@ impl MeasurementSet {
             let names = names.iter().map(String::as_str).collect::<Vec<_>>();
             ids.extend(resolve_field_names(self, &names)?);
         }
+        if !value.trim().is_empty() && ids.is_empty() {
+            return Err(MsError::InvalidInput(format!(
+                "field selector {value:?} did not match any existing fields"
+            )));
+        }
         Ok(dedup_i32(ids))
     }
 }
 
 fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {
-    let mut ids = Vec::new();
+    let mut ranges = Vec::new();
     let mut names = Vec::new();
     for raw_part in value.split(',') {
         let part = raw_part.trim();
@@ -107,17 +117,32 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
             names.extend(matched);
             continue;
         }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
-        }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
+        let numeric = parse_numeric_range_endpoints(part)
+            .or_else(|| part.parse::<i32>().ok().map(|id| (id, id)));
+        if let Some((start, end)) = numeric {
+            if start < 0 || end < start {
+                return Err(MsError::InvalidInput(format!(
+                    "field numeric selector {part:?} requires nonnegative, ascending endpoints"
+                )));
+            }
+            ranges.push((start, end));
             continue;
         }
         names.push(part.to_string());
     }
-    Ok((dedup_i32(ids), dedup_strings(names)))
+    let mut ids = Vec::new();
+    if !ranges.is_empty() {
+        let count = ms.field()?.row_count();
+        if count > 0 {
+            let last = i32::try_from(count - 1).unwrap_or(i32::MAX);
+            // Merge before enumeration: neither width nor overlapping terms
+            // can materialize more numeric IDs than the FIELD table contains.
+            for (start, end) in canonical_numeric_ranges(ranges) {
+                ids.extend(start..=end.min(last));
+            }
+        }
+    }
+    Ok((ids, dedup_strings(names)))
 }
 
 fn apply_antenna_selector(

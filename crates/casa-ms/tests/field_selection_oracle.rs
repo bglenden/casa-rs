@@ -93,3 +93,41 @@ fn field_names_patterns_and_mixed_ids_select_casas_physical_rows_in_order() {
         }
     }
 }
+
+/// Numeric bounds use FIELD metadata, including flagged numeric IDs. These
+/// are native correctness/resource cases; INT_MAX is not a CASA oracle run.
+#[test]
+fn numeric_fields_are_bounded_by_existing_metadata() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let temp = tempfile::tempdir().unwrap();
+    let archive = File::open(root.join("tests/fixtures/mssel_test_small.ms.tgz")).unwrap();
+    tar::Archive::new(GzDecoder::new(archive))
+        .unpack(temp.path())
+        .unwrap();
+    let mut ms = MeasurementSet::open(temp.path().join("mssel_test_small.ms")).unwrap();
+    assert_eq!(ms.field().unwrap().row_count(), 2);
+    for (selector, expected) in [
+        ("", vec![]),
+        ("0~0", vec![0]),
+        ("0,99", vec![0]),
+        ("99,*", vec![0, 1]),
+        ("0~1000000", vec![0, 1]),
+        ("0~2147483647,1~2147483647,0,0~3", vec![0, 1]),
+        ("2147483647,1", vec![1]),
+    ] {
+        assert_eq!(
+            ms.resolve_field_selector(selector).unwrap(),
+            expected,
+            "{selector}"
+        );
+    }
+    for selector in ["1~0", "99", "99~2147483647", "-1", "-1~3", ", ,"] {
+        assert!(ms.resolve_field_selector(selector).is_err(), "{selector}");
+    }
+    ms.subtable_mut(SubtableId::Field)
+        .unwrap()
+        .row_accessor_mut()
+        .set_cell(0, "FLAG_ROW", Cell::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+    assert_eq!(ms.resolve_field_selector("0,99").unwrap(), vec![0]);
+}

@@ -449,3 +449,39 @@ fn numeric_selector_width_does_not_grow_the_heap_and_its_owner_covers_its_peak()
         );
     }
 }
+
+/// FIELD range width must not determine allocation. Existing metadata bounds
+/// both enumeration and retained IDs, even for repeated overlapping ranges.
+#[test]
+fn field_numeric_range_width_does_not_grow_the_heap() {
+    if !alone("field_numeric_range_width_does_not_grow_the_heap") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let ms = MeasurementSet::open(track(root.path(), 2, 1)).expect("open");
+    assert_eq!(ms.field().unwrap().row_count(), 1);
+    ms.resolve_field_selector("0~1").expect("warm metadata");
+    for (narrow, wide) in [
+        ("0~1", "0~2147483647"),
+        ("0~1,0~1,0", "0~2147483647,0~2147483647,0"),
+    ] {
+        let mut measurements = [(0, 0, 0); 2];
+        for (index, selector) in [narrow, wide].into_iter().enumerate() {
+            let before = LIVE.load(Ordering::Relaxed);
+            PEAK.store(before, Ordering::Relaxed);
+            let ids = ms.resolve_field_selector(selector).expect("existing IDs");
+            let peak = PEAK.load(Ordering::Relaxed) - before;
+            let held = LIVE.load(Ordering::Relaxed) - before;
+            measurements[index] = (peak, held, ids.capacity());
+            assert_eq!(ids, vec![0]);
+            eprintln!(
+                "{selector}: peak {peak} B, held {held} B, capacity {}",
+                ids.capacity()
+            );
+        }
+        assert_eq!(
+            measurements[0], measurements[1],
+            "range width has no heap cost"
+        );
+    }
+}

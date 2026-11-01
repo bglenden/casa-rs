@@ -174,7 +174,7 @@ pub(crate) fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<
     Ok(canonical_numeric_ranges(ranges))
 }
 
-fn canonical_numeric_ranges(mut values: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
+pub(super) fn canonical_numeric_ranges(mut values: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
     values.sort_unstable();
     let mut count = 0;
     for index in 0..values.len() {
@@ -287,7 +287,7 @@ fn parse_channel_selection(value: &str) -> MsResult<ChannelSelection> {
     Ok(ChannelSelection { segments })
 }
 
-fn parse_numeric_range_endpoints(value: &str) -> Option<(i32, i32)> {
+pub(super) fn parse_numeric_range_endpoints(value: &str) -> Option<(i32, i32)> {
     let (start, end) = value.split_once('~')?;
     Some((
         start.trim().parse::<i32>().ok()?,
