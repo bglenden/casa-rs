@@ -658,11 +658,12 @@
       ]
     },
     "niter": {
-      "status": "Implemented",
-      "scope": "Copied to request as total minor-cycle iterations.",
+      "status": "Partial",
+      "scope": "Copied to request as total minor-cycle iterations. Default native strict Hogbom counting does not reproduce CASA's extra component at a positive cycle limit; explicit casa-inclusive does. The default/deviation decision is pending.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "compensated-current"
       ],
       "behaviors": [
         "deconvolution"
@@ -1045,12 +1046,13 @@
       "title": "Gridder, weighting and beam combinations",
       "status": "Partial",
       "scope": "standard/W/mosaic/AW, rectangular geometry, facets, normtype, beam terms and density weighting.",
-      "gap": "Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings are incomplete. A native CF path is required; importing a CASA oracle cache is not proof of general native AW equivalence. Ordinary tclean now defaults casa-rs write_pb to True (contract 30), matching CASA artifact production on the verified small fixed-field case. ALMA-labelled homogeneous 7m arrays now select the existing ACA beam as upstream does. Analytic PB still refuses moving phase centres/fields, nonconstant PHASE_DIR, mixed/unsupported dish classes, unsupported telescopes and VLA frequencies outside implemented bands; explicit write_pb=False retains the previous scope. These are unfinished combinations, not agreed exclusions.",
+      "gap": "Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings are incomplete. A native CF path is required; importing a CASA oracle cache is not proof of general native AW equivalence. Ordinary tclean now defaults casa-rs write_pb to True (contract 30), matching CASA artifact production on the verified small fixed-field case. ALMA-labelled homogeneous 7m arrays now select the existing ACA beam as upstream does. Analytic PB still refuses moving phase centres/fields, nonconstant PHASE_DIR, mixed/unsupported dish classes, unsupported telescopes and VLA frequencies outside implemented bands; explicit write_pb=False retains the previous scope. These are unfinished combinations, not agreed exclusions. Explicit GPU requests still refuse W/AW; their exposed path is CPU. Fresh pinned probes also expose unfinished MT-MFS weight.tt1 products shared by CPU/f64: ALMA writes zero versus CASA peak 0.00561332935, and native AW weight.tt1 NRMS is about 0.00230 (f64) / 0.00239 (corrected f32). Odd sumwt.tt1 passes the existing #690 scale-aware 5e-5 gate; naive near-zero NRMS is not its comparator. No new weight-image tolerance or exception is accepted.",
       "evidence": [
         "reader",
         "additions",
         "representative",
-        "default-products"
+        "default-products",
+        "compensated-current"
       ]
     },
     {
@@ -1058,10 +1060,11 @@
       "title": "Deconvolution, masks and stopping",
       "status": "Partial",
       "scope": "Hogbom, Clark, multiscale, MT-MFS, iteration controls, user masks and auto-multithresh.",
-      "gap": "ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding.",
+      "gap": "Default Hogbom strict counting differs from CASA's inclusive extra component: fresh niter=10 point-source residual NRMS is about 0.111 on every native precision; the existing explicit casa-inclusive option makes all seven products pass. The same option removes the ALMA mosaic CLEAN mismatch. The separate default/accepted-deviation choice is pending; this is not an agreed exclusion. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding.",
       "evidence": [
         "reader",
-        "representative"
+        "representative",
+        "compensated-current"
       ]
     },
     {
@@ -1082,13 +1085,14 @@
       "title": "Precision, backend and resource acceptance",
       "status": "Partial",
       "scope": "backend=auto/cpu/gpu, gridprecision and all scientific products (#991).",
-      "gap": "Fresh CASA 6.7.6.14 reproduction at 5ad410a88eb9957e2a0de177218e766d89095d3a confirms #991: compact-array PSF NRMS CPU/f64 8.35e-8, CPU/f32 0.01919, auto/Metal/f32 about 0.01884. Native PB was explicitly disabled to isolate gridding. Two auto runs differ by PSF 1.63e-6 and residual 2.08e-5; atomic order does not account for the larger CASA error. Current Metal selected-observation versus observation-batch T1 laws also fail their existing 1e-6 bound, including explicit write_pb=False. Two local corrections are retired: partial-grid/f64 merging cost about 29 times its control major cycle; hash-based contribution grouping improved compact PSF NRMS to 1.88e-6 but made the ordinary VLA task 81% slower in a quiet same-source W1 comparison. Grouping also retained the ordinary beam-check failures. Its 109-test gate passed 103 cases and failed the same six route laws; no tolerance changed. Both experimental implementations were removed. Only the independently reviewed exact host-ring memory charge and allocation law remain. Local performance experiments are preauthorized; #991 and full-task acceptance remain open. Preserve admissions, native computation and per-mode performance requirements.",
+      "gap": "The ordinary build still has the reproduced #991 compact-array f32 failure. At 75155cd47f77cbfc4c1e1d6822774b7d1516d1ee, an off-by-default native correction passes pinned CASA 6.7.6.14 fixed ALMA64, moving Uranus256 (PB opt-out) and VLA100 product/mask/finite/beam/sumwt checks: corrected PSF NRMS CPU/f32 and GPU/f32 below 1e-6 on the ALMA cases and about 2.52e-6 on VLA. It also passes all 4671 workspace tests (44 skipped), doctests, workspace clippy and 21 CLI hosts with the feature, including the former six Metal route failures at their unchanged 1e-6 bound. CPU/f32 keeps one extra correction per cell, GPU/f32 two; actual allocation and interrupted/reset/drop laws pass. Quiet W1 cost is about +32%/+3% GPU wall on compact/VLA and about 2.1x CPU/f32, with f64 effectively unchanged. Adoption and its resource cost await the owner. The prior whole-grid host merge and hash-grouping candidates remain retired. No tolerance, CASA parameter/default or current backend policy was changed; no full T2 or entire-task acceptance is claimed.",
       "evidence": [
         "reader",
         "accuracy-issue",
         "representative",
         "accuracy-current",
-        "accuracy-experiments"
+        "accuracy-experiments",
+        "compensated-current"
       ]
     }
   ],
@@ -1188,6 +1192,19 @@
       "evidence": [
         "default-products",
         "reader"
+      ]
+    },
+    {
+      "id": "hogbom-default",
+      "state": "Proposed",
+      "inputs": "deconvolver='hogbom' with a positive minor-cycle iteration limit.",
+      "casa": "CASA6.7.6.14 may commit one extra component while clamping its reported count to the requested limit.",
+      "ours": "Default strict enforces physical updates; existing casa-inclusive reproduces the CASA count/products. niter10 model flux is 0.651321411 Jy strict versus CASA0.686189592 Jy and inclusive0.686189234 Jy.",
+      "rationale": "Strict corrects a documented CASA bug; the owner now requires explicit agreement for departures. Recommend CASA-inclusive default for tclean output parity.",
+      "impact": "Default point residual NRMS about0.111; explicit inclusive passes seven products and fixes the fresh mosaic clean case. Choosing strict instead requires an explicit agreed deviation.",
+      "owner_decision": "Pending; the choices were asked separately from the f32 adoption tradeoff. No provider default or accepted deviation has changed.",
+      "evidence": [
+        "compensated-current"
       ]
     }
   ],
@@ -1339,6 +1356,21 @@
       "casa_version": "casatasks6.7.6.14; casatools6.7.6-14",
       "command": "CASA Python -I probe-tclean-{partial-grids,grouped-refim}.py; python3 time-grouped-spread-quiet.py; recipes archived with products",
       "receipt": "/Volumes/home/casa-rs/tclean/20261031/{partial-grid,grouped-spread}-experiment-20261031.tar; SHA-256 reread verified."
+    },
+    "compensated-current": {
+      "kind": "Native experimental precision correction and fresh task diagnostics",
+      "state": "scoped experimental passes; adoption/default choices pending; wider gaps open",
+      "source_revision": "7ef81dde8b978cb85b7ae180ffd558f5e478609b",
+      "scope": "Corrected CPU/GPU f32 match pinned fixed/moving/ordinary MFS products; explicit inclusive Hogbom and W PB opt-out are labelled component checks. Normal build remains unchanged. All4671 workspace tests passed with the feature;44 skips are not science passes. Fresh wider probes retain PB, GPU-W/AW and MT-MFS weight-product gaps. No signature test, full T2 or entire-task equivalence claim.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json",
+        "docs/Planning/tclean-f32-accuracy-proposal-20261031.md",
+        "docs/Planning/tclean-hogbom-default-proposal-20261031.md"
+      ],
+      "revision": "75155cd47f77cbfc4c1e1d6822774b7d1516d1ee",
+      "casa_version": "casatasks6.7.6.14; casatools6.7.6-14",
+      "command": "cargo nextest run --workspace --features casa-imaging-metal/compensated-f32-prototype; pinned oracle recipes in the durable bundle",
+      "receipt": "resources/casa-compat/evidence/tclean-compensated-f32-experiment-20261031.json; /Volumes/home/casa-rs/tclean/20261031/compensated-f32-experiment-20261031.tar"
     }
   }
 }
