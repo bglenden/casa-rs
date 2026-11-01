@@ -144,9 +144,9 @@ records20 small public CLI/Python product/naming/preservation rows passing;
 19/20 selected scalar rows pass the original limits. The owner accepted the
 one exact Metal cyclethreshold output (1.5132ppm difference); its raw failure
 is retained and no future output inherits the waiver. Python package gates
-pass632 editable,632 wheel and99 fresh-sdist tests. The broad native run passed4704 tests and found two stale profile fixtures;
-both focused repairs pass. Remaining normal checks are consolidated with
-the mask acceptance; coordinated outliers, occupied chosen orphan namespaces, calc
+pass632 editable,632 wheel and99 fresh-sdist tests. The combined normal gate now passes4710 workspace tests/45 skips, doctests,
+workspace clippy, architecture/SPDX/fmt,21 CLI hosts and875 performance-tool
+tests/307 subtests. Initial stale profile fixtures are repaired; coordinated outliers, occupied chosen orphan namespaces, calc
 controls, broader returns/modes and representative acceptance remain unfinished.
 CASA appends later calls to old numbered images' histories; native leaves old
 files unchanged. The owner separately agreed to preserving prior histories; correct history
@@ -158,7 +158,8 @@ at`086a67f1d4`.All36 CLI CASA pairs and2 public Python pairs pass their scoped
 products/counts; Python additionally gates the two selected scalar returns and
 old-file preservation under False numbering. Focused red/green tests, all61
 imagerT1 tests, mask memory law, touched clippy/dependency checks and independent
-review pass. The combined normal gate is running. The
+review pass. The combined normal gate passes all4710 workspace tests/45 skips and the
+remaining normal checks above. The
 [receipt](../../resources/casa-compat/evidence/tclean-mask-boxes-20261101.json)
 keeps general/fractional/world regions and broader mask workflows unfinished.
 
@@ -167,8 +168,8 @@ baseline show four early-refused clean cases; dirty0 and a one-major control
 already pass products/counts. CASA's zero limit publishes the initial residual
 with no minor iterations/code9, while global threshold and zero-mask stops
 take precedence. The existing controller supports this; wrapper/request/model
-validation guards currently block it. A minimal patch/regression set is being
-prepared without changing provider/defaults/signatures or solver arithmetic.
+validation guards currently block it. An independently reviewed minimal patch/regression set is in red/green
+verification without changing provider/defaults/signatures or solver arithmetic.
 `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction
