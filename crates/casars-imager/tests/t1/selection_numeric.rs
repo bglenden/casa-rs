@@ -154,3 +154,65 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
         assert!(!observation.scratch(&format!("{name}.psf")).exists());
     }
 }
+
+#[test]
+fn single_term_controller_peak_matches_published_residual_units() {
+    use casa_images::PagedImage;
+    use casa_imaging_application::{Cancel, HostResources, RunContext, execute};
+    use casars_imager::resolve_request;
+
+    let observation = numeric_fixture();
+    let prefix = observation.scratch("residual-units");
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": prefix,
+        "backend": "cpu", "gridprecision": "f32", "parallel": false,
+        "field": "2", "datacolumn": "data", "gridder": "standard",
+        "deconvolver": "hogbom", "nterms": 1,
+        "niter": 10, "gain": 0.1, "threshold": "0Jy", "write_pb": false,
+    });
+    for (name, value) in observation.geometry().parameters() {
+        values[name] = value;
+    }
+    let (_, request) = resolve_request(&ImagingParameters(values.as_object().unwrap().clone()))
+        .expect("production field-selection request");
+    let outcome = execute(
+        &request,
+        RunContext {
+            host: HostResources::detect().unwrap(),
+            policy: request.resource_policy(),
+            cancel: Cancel::default(),
+            summary: None,
+        },
+    )
+    .expect("single-term clean");
+    assert_eq!(outcome.total_minor_iterations, 10);
+    let controller_peak = outcome
+        .final_residual_statistics
+        .expect("final convergence measurement")
+        .peak;
+
+    let residual = PagedImage::<f32>::open(prefix.with_extension("residual")).unwrap();
+    let pixels = residual.get().unwrap();
+    let shape = residual.shape();
+    let valid = residual
+        .get_mask_slice(&vec![0; shape.len()], shape, &vec![1; shape.len()])
+        .unwrap();
+    let mut published_peak = 0.0_f64;
+    for (index, &pixel) in pixels.indexed_iter() {
+        if valid.as_ref().is_none_or(|mask| mask[index]) {
+            assert!(pixel.is_finite(), "nonfinite valid residual");
+            published_peak = published_peak.max(f64::from(pixel).abs());
+        }
+    }
+    assert!(published_peak > 0.0 && controller_peak.is_finite());
+    // Both paths measure the same final residual in Jy/beam. Publishing a
+    // Float image rounds each value; taking a maximum does not accumulate
+    // those errors. Two Float epsilons allow the final cast and arithmetic
+    // ordering, but not a distinct PSF-peak normalization of the controller.
+    let budget = 2.0 * f64::from(f32::EPSILON) * published_peak;
+    assert!(
+        (controller_peak - published_peak).abs() <= budget,
+        "controller peak {controller_peak:.17e}, published peak {published_peak:.17e}, \
+         Float rounding budget {budget:.3e}"
+    );
+}
