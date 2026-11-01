@@ -489,18 +489,18 @@ Evidence: [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecy
 
 **Partial** — specmode, spw, start, width, nchan, reffreq, restfreq, outframe, veltype, interpolation and perchanweightdensity.
 
-Cube channel-count mapping exists, but selected-channel-derived defaults are refused; MFS frame/rest-frequency forms, multiple rest frequencies and cubic interpolation remain restricted. Moving-source cubesource needs its own representative oracle (#714). MVC removal is a separate prior owner decision, not a passing moving-source comparison.
+Cube channel-count mapping exists, but selected-channel-derived defaults are refused; MFS frame/rest-frequency forms, multiple rest frequencies and cubic interpolation remain restricted. Moving-source cubesource needs its own representative oracle (#714). MVC removal is a separate prior owner decision, not a passing moving-source comparison. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance.
 
-Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [mvc-decision](#tclean-evidence-mvc-decision).
+Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [mvc-decision](#tclean-evidence-mvc-decision), [taylor-pb-mfs](#tclean-evidence-taylor-pb-mfs).
 
 <a id="tclean-behavior-gridders"></a>
 ##### Gridder, weighting and beam combinations
 
 **Partial** — standard/W/mosaic/AW, rectangular geometry, facets, normtype, beam terms and density weighting.
 
-Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings are incomplete. A native CF path is required; importing a CASA oracle cache is not proof of general native AW equivalence. Ordinary tclean now defaults casa-rs write_pb to True (contract 30), matching CASA artifact production on the verified small fixed-field case. ALMA-labelled homogeneous 7m arrays now select the existing ACA beam as upstream does. Analytic PB still refuses moving phase centres/fields, nonconstant PHASE_DIR, mixed/unsupported dish classes, unsupported telescopes and VLA frequencies outside implemented bands; explicit write_pb=False retains the previous scope. These are unfinished combinations, not agreed exclusions. Explicit GPU requests still refuse W/AW; their exposed path is CPU. Fresh pinned probes also expose unfinished MT-MFS weight.tt1 products shared by CPU/f64: ALMA writes zero versus CASA peak 0.00561332935, and native AW weight.tt1 NRMS is about 0.00230 (f64) / 0.00239 (corrected f32). Odd sumwt.tt1 passes the existing #690 scale-aware 5e-5 gate; naive near-zero NRMS is not its comparator. No new weight-image tolerance or exception is accepted.
+Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, MFS-only, with fixed A/WB/conjugate terms and no PS term. Mosaic per-field density weighting is refused (#818); W/AW facets and additional gridders/weightings remain incomplete. Native CF generation is verified separately from CASA cache oracles. The native write_pb default is True. Homogeneous ALMA-labelled 7m arrays select ACA; legacy VLA PB now covers all named bands and NVSS frequency gaps. Fresh ordinary-default W/Hogbom20 CPU64/CPU32 runs pass all seven products, with PB NRMS zero. Moving/nonconstant FIELD directions, mixed dish classes, unsupported telescopes and remaining EVLA bands are unfinished. Explicit GPU W/AW remains refused. CASA Float channel-frequency narrowing is now matched in shared Taylor factors. Of five fresh mosaic/native-AW MT-MFS runs, three still fail the unchanged weight.tt1 NRMS rule (0.00162–0.00222); all other recorded checks pass. The guarded weak-moment comparison proposal is pending, not accepted. Existing #690 odd-sumwt scaling remains distinct.
 
-Evidence: [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions), [representative](#tclean-evidence-representative), [default-products](#tclean-evidence-default-products), [compensated-current](#tclean-evidence-compensated-current).
+Evidence: [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions), [representative](#tclean-evidence-representative), [default-products](#tclean-evidence-default-products), [compensated-current](#tclean-evidence-compensated-current), [taylor-pb-mfs](#tclean-evidence-taylor-pb-mfs).
 
 <a id="tclean-behavior-deconvolution"></a>
 ##### Deconvolution, masks and stopping
@@ -525,9 +525,9 @@ Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader)
 
 **Partial** — backend=auto/cpu/gpu, gridprecision and all scientific products (#991).
 
-Owner-approved compensated f32 is now the normal CPU/GPU path, with f64 accumulation unchanged. Native583cff5cc5 passes all4672 normal workspace tests (44 skipped), doctests, clippy, architecture/SPDX/format,21 CLI hosts and755 performance-tool tests/307 subtests. Editable/wheel632passed15skipped each and fresh-target sdist99passed. Normal release comparisons pass product/inventory/mask/finite/beam/sumwt checks on fixed ALMA512, moving Uranus256 with native PB opt-out, and default Hogbom10 point source, across CPU64/CPU32/GPU32. Corrected ALMA PSF NRMS is below1e-6. The moving-source spectral increment differs by about3.5Hz on f64 and f32 and remains a separate failed metadata check. Prior candidates remain retired; the measured correction cost is owner-approved. Full representative T2 and entire-task acceptance remain unfinished.
+Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation is unchanged. Normal adoption source583cff5cc5 passes its 4,672-test workspace/package gates and nine-run scoped scientific checks. Follow-up sourceac41519a63 passes 4,676 workspace tests (45 skipped), doctests, clippy, architecture/SPDX/format, 21 CLI hosts and 827 performance-tool tests/307 subtests. Six fixed ALMA512/moving Uranus256 runs pass products and recorded metadata after the MFS increment repair; moving PB remains explicitly disabled. Two ordinary-default W/Hogbom20 runs now pass with PB enabled. Three of five MT-MFS weight.tt1 comparisons still fail the current relative-error rule; a guarded matrix-scale proposal remains unwired pending owner agreement. Correction costs are approved and earlier candidates retired. Full representative T2, numeric returns, persistence and entire-task acceptance remain unfinished.
 
-Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults).
+Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [taylor-pb-mfs](#tclean-evidence-taylor-pb-mfs).
 
 #### tclean deviations and unfinished work
 
@@ -683,7 +683,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="tclean-evidence-accuracy-issue"></a>
 ##### accuracy-issue
 
-**Unresolved accuracy report — reproduced with pinned oracle.** The original report uses CASA 6.7.5. The separate accuracy-current receipt reproduces the ordinary fixed-field failure with CASA 6.7.6.14; this is an unresolved correctness gap, not a passing comparison.
+**Original accuracy defect — Reproduced, repaired and adopted locally; publication and broader acceptance open.** The original report used CASA6.7.5; the ordinary failure was reproduced with pinned6.7.6.14, then repaired by compensated f32. See adopted-defaults and taylor-pb-mfs for executed scoped results. This issue link alone is not evidence of full tclean equivalence.
 
 - [https://github.com/bglenden/casa-rs/issues/991](https://github.com/bglenden/casa-rs/issues/991)
 
@@ -758,7 +758,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="tclean-evidence-adopted-defaults"></a>
 ##### adopted-defaults
 
-**Normal native implementation and CASA-paired scientific products — normal gates and scoped product checks pass; moving-source WCS increment remains failed; wider tclean gaps open.** Unconditional corrected CPU/GPU f32 and owner-approved CASA-inclusive Hogbom default, provider31. All normal gates and scoped nine-run product checks pass. Fixed512 and point-Hogbom WCS values pass; moving increment fails equally on f64/f32. No full T2, numeric return or whole-task pass.
+**Normal native implementation and CASA-paired scientific products — Historical normal-adoption gates and scoped products passed; its moving increment failure is repaired by the later taylor-pb-mfs evidence; wider gaps open.** Unconditional corrected CPU/GPU f32 and owner-approved CASA-inclusive Hogbom default, provider31. All normal gates and scoped nine-run product checks pass. Fixed512 and point-Hogbom WCS values pass; moving increment fails equally on f64/f32. No full T2, numeric return or whole-task pass.
 
 - [resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json](https://github.com/bglenden/casa-rs/blob/4bb016fe0ed31d035399ff0f0ad807e08697d440/resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json)
 - [docs/Planning/tclean-f32-accuracy-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/4bb016fe0ed31d035399ff0f0ad807e08697d440/docs/Planning/tclean-f32-accuracy-proposal-20261031.md)
@@ -766,3 +766,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `583cff5cc5e82ed0dc2c98499e8fc68fa6d66da4`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
 - Command: `normal quick checks with nextest--no-fail-fast; package editable/wheel+fresh sdist; CASA Python -I probe-tclean-adopted-defaults.py`.
 - Receipt: `resources/casa-compat/evidence/tclean-adopted-defaults-20261031.json; /Volumes/home/casa-rs/tclean/20261031/adopted-tclean-defaults-20261031.tar; SHA9e55d997b060f172f20b1c59c3ef1a1e6c59492b79707868adf5cd6ccf031450 reread verified`.
+
+<a id="tclean-evidence-taylor-pb-mfs"></a>
+##### taylor-pb-mfs
+
+**Executed Taylor-frequency, VLA PB and moving-MFS production comparisons — Scoped PB/MFS repairs pass; three raw Taylor-weight failures retained; proposed rule inactive.** Current wave: 4,676 workspace tests/45 skips and affected gates pass. Six fixed/moving runs pass recorded products and WCS; ordinary W PB passes two CPU paths. Five MT-MFS runs retain three weight.tt1 numeric failures under the unchanged rule. The 72-test guarded matrix-scale helper is unwired. Not full T2, arbitrary metadata, numeric-return or whole-task acceptance.
+
+- [resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json](https://github.com/bglenden/casa-rs/blob/227b5e0929cbe9f4ec24f41ec596d24cb15bd094/resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json)
+- [docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md](https://github.com/bglenden/casa-rs/blob/227b5e0929cbe9f4ec24f41ec596d24cb15bd094/docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md)
+- [tools/perf/imager/perf_harness/taylor_moment_comparison.py](https://github.com/bglenden/casa-rs/blob/227b5e0929cbe9f4ec24f41ec596d24cb15bd094/tools/perf/imager/perf_harness/taylor_moment_comparison.py)
+- Revision: `b6a87fa91271e5bf809b86c68e40a979974c1368`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
+- Command: `Normal quick-equivalent; CASA Python -I probe-tclean-{taylor-frequency,vla-nvss,mfs-envelope}.py; exact per-run revisions and recipes in receipt/archive`.
+- Receipt: `resources/casa-compat/evidence/tclean-taylor-pb-mfs-20261031.json; NAS taylor-pb-mfs-evidence-20261031.tar SHA e90ea9054791827d6a637bb7468e5f37a15162bf3fb04c6ebbef7b286ec6a311`.
