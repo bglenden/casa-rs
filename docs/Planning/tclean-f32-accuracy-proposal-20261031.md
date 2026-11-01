@@ -163,13 +163,23 @@ remaining normal checks above. The
 [receipt](../../resources/casa-compat/evidence/tclean-mask-boxes-20261101.json)
 keeps general/fractional/world regions and broader mask workflows unfinished.
 
-The next bounded slice is`nmajor=0`: six pinned oracle cases and the native
-baseline show four early-refused clean cases; dirty0 and a one-major control
-already pass products/counts. CASA's zero limit publishes the initial residual
-with no minor iterations/code9, while global threshold and zero-mask stops
-take precedence. The existing controller supports this; wrapper/request/model
-validation guards currently block it. An independently reviewed minimal patch/regression set is in red/green
-verification without changing provider/defaults/signatures or solver arithmetic.
+The `nmajor=0` slice is committed at`c64f13cb09`.All18 CLI and2 public Python
+CASA pairs pass their scoped products/counts, including initial-only output,
+seed retention, threshold/zero-mask stop precedence and dirty/one-major controls.
+Python also gates two selected numeric scalars and prior-file preservation.
+Focused5,fullT1 62,surrounding71 tests,touched clippy/structure and independent
+review pass. The full normal gate is running. See the
+[receipt](../../resources/casa-compat/evidence/tclean-nmajor-zero-20261101.json).
+No controller math, defaults, signatures, provider or allocation changes.
+
+The next slice prepares scan/observation ID selection through the existing
+canonical parser and every native row/batch consumer, with ownership charges.
+Production non-default catalog refusal remains intact. Independent preview
+review is clear; tests and fresh genuine observation-subset/conjunction/CASA
+science remain required before any provider32->33 activation request. Existing
+field-name/pattern/False evidence is reused. Antenna/time/multi-MS remain open.
+The native extra `.summary.json` output has a separate concrete owner decision
+pending; current image-product checks do not claim identical whole-file output.
 `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction
