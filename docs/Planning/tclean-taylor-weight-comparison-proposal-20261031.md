@@ -1,7 +1,12 @@
 # Proposal: compare weak Taylor weight moments on their matrix scale
 
-Truth class: proposed owner decision; existing verdicts remain unchanged
+Truth class: owner-approved verification rule, 2026-11-01; raw verdicts retained
 Work issue: #980, following the approved #991 repair.
+
+The owner approved this scoped comparison rule on 2026-11-01. The versioned
+gate is `tclean-weak-taylor-weight-v1`; the original raw receipts remain
+unchanged. The [decision record](../../resources/casa-compat/evidence/tclean-owner-decisions-20261101.json)
+records its exact scope separately from the specific model-output decision.
 
 ## Concrete decision
 
@@ -11,8 +16,8 @@ All other product, mask, finite-value, topology, metadata, sumwt, beam and
 scientific checks remain binding. This changes verification only; no CASA
 parameter/default, native output, provider bundle or CASA installation changes.
 
-Recommendation: approve this narrowly scoped replacement after the guards and
-tests below. No current failed run has been reclassified.
+The replacement is approved within the guards and tests below. Numerical rule
+evaluations are recorded separately from the original raw-NRMS verdicts.
 
 ## Why the current relative error is misleading here
 
@@ -84,8 +89,9 @@ measurement; they are not dismissed because the images look alike.
 
 ## Implemented measurement guards and review
 
-The new `tools/perf/imager/perf_harness/taylor_moment_comparison.py` is
-**unwired** and returns measurements, not acceptance. It requires scalar
+The `tools/perf/imager/perf_harness/taylor_moment_comparison.py` returns
+measurements, and `taylor_weight_gate.py` applies the approved numeric rule.
+The accumulator requires scalar
 sum weights greater than CASA's invertible-normalization threshold `1e-7`,
 exact cross-moment/candidate/reference masks, finite nonnegative even
 moments, and Cauchy/PSD validity for both matrices. Zero scale anywhere,
@@ -105,10 +111,9 @@ guards and the weak-domain restriction. The review's stable-ratio arithmetic
 finding was repaired. Oracle Pro remains usage-limited; no external Pro review
 was submitted or counted as passing.
 
-Before activation, integration tests must cover eligibility at and immediately
-above `1e-3`, and prove a guard failure cannot yield a passing comparison.
-Representative T2 runs and all other unfinished tclean work remain required.
-
-Owner approval is required by AGENTS.md's Ask First rule covering changes to
-approved acceptance checks. Approval would authorize wiring this specific
-replacement rule; it would not accept missing evidence or close tclean.
+Integration tests cover eligibility at and immediately above `1e-3`, and
+ensure invalid guards cannot authorize a numeric override. Saved-product
+reevaluation retains all other recorded failures and labels full metadata
+unassessed. The newly observed default rest-frequency header discrepancy is
+unfinished work, not waived by this numeric rule. Representative T2 and the
+other unfinished tclean obligations remain required.

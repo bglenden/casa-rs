@@ -1,9 +1,16 @@
 # Proposal: review one weak MT-MFS model coefficient
 
-Truth class: proposed owner decision; the existing failure remains failed.
+Truth class: accepted identity-bound owner decision, 2026-11-01; raw failure retained.
 Work issues: #991 and #980.
 
-## Decision requested
+The owner accepted this specific reviewed output on 2026-11-01. The
+[decision record](../../resources/casa-compat/evidence/tclean-owner-decisions-20261101.json)
+binds the original raw receipt, measurement, binary, input, parameters and model
+payload identities. Its disposition is `accepted_by_identity_bound_owner_review`;
+the original raw `.model.tt1` failure remains unchanged. Future outputs do not
+inherit this approval.
+
+## Accepted decision
 
 Accept **this exact CPU/f32 `clean8` output** as published-model agreement
 with CASA, using the criterion below. Retain its raw `.model.tt1` NRMS
@@ -79,8 +86,7 @@ for an owner decision. Oracle Pro is usage-limited and supplied no review.
 The measured [comparison figure](/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/t2-standard-mtmfs-current/cpu32-model-tt1-failure.png)
 and raw failed verdict are retained.
 
-Approval would authorize an explicit reviewed disposition bound to these
-unchanged artifacts. Every other test and unfinished tclean obligation
-remains. The separate weak **weight** moment proposal grants no authority
-for this **model** result. I am treating this change to scientific acceptance
-as an Ask First decision under `AGENTS.md`; no acceptance has changed yet.
+The approved disposition is bound to these unchanged artifacts. Every other
+test and unfinished tclean obligation remains. The separate weak **weight**
+rule grants no authority for other **model** results. No algorithm, CASA
+parameter/default or output value changed when this review was finalized.
