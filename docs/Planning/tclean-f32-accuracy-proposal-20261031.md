@@ -153,13 +153,22 @@ files unchanged. The owner separately agreed to preserving prior histories; corr
 for new images remains required.
 Singleton-list startmodel is a measured existing input-domain gap.
 
-The next bounded implementation slice fixes pixel-box clipping and explicit
-empty CRTF masks. Pinned12-case CASA probes establish that out-of-image boxes
-and empty files produce zero masks/code7; native currently refuses clipping
-and interprets an empty file as a full-image mask. Signed bounds, intersection
-at existing materialization and explicit-empty provenance are in regression
-and integration verification after independent review; no
-provider/default/signature change is needed. The combined final gate will cover both slices. General regions and other mask modes remain open.
+The signed/clipped pixel-box and explicit-empty-CRTF correction is committed
+at`086a67f1d4`.All36 CLI CASA pairs and2 public Python pairs pass their scoped
+products/counts; Python additionally gates the two selected scalar returns and
+old-file preservation under False numbering. Focused red/green tests, all61
+imagerT1 tests, mask memory law, touched clippy/dependency checks and independent
+review pass. The combined normal gate is running. The
+[receipt](../../resources/casa-compat/evidence/tclean-mask-boxes-20261101.json)
+keeps general/fractional/world regions and broader mask workflows unfinished.
+
+The next bounded slice is`nmajor=0`: six pinned oracle cases and the native
+baseline show four early-refused clean cases; dirty0 and a one-major control
+already pass products/counts. CASA's zero limit publishes the initial residual
+with no minor iterations/code9, while global threshold and zero-mask stops
+take precedence. The existing controller supports this; wrapper/request/model
+validation guards currently block it. A minimal patch/regression set is being
+prepared without changing provider/defaults/signatures or solver arithmetic.
 `tclean` is not complete.
 
 ## Approved decision: measured cost of the retained correction

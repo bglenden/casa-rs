@@ -364,7 +364,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `99b1cfad559bf92de9ac070a387b4d2c9165ec97`. Status counts: Default only: 23, Implemented: 29, Not implemented: 0, Partial: 40, Unassessed: 0.
+Audit baseline: `086a67f1d425035e206f77bf58329f59dddf9d5a`. Status counts: Default only: 23, Implemented: 29, Not implemented: 0, Partial: 40, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -442,7 +442,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `nmajor` | `-1` | `-1`; `nmajor` → `nmajor` | Partial | Copied; -1 -> no limit; niter>0 with nmajor=0 refused (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `integer` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `fullsummary` | `False` | `False`; `fullsummary` → `fullsummary` | Partial | Long-form keys exist, but missing measurements and per-plane values are NaN. Return shape alone is not return-value equivalence. [returns](#tclean-behavior-returns)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [returns](#tclean-evidence-returns), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask) |
 | `usemask` | `'user'` | `'user'`; `usemask` → `usemask` | Partial | user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `auto-multithresh`, `pb`, `user` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `mask` | `''` | `''`; `mask` → `mask_box or mask_image` | Partial | One image or CRTF pixel boxes, including a region file. General CRTF shapes, multiple mask images and CASA clipping of out-of-grid boxes remain gaps. Correctly shaped all-zero image masks are accepted; small standard-MFS fresh/restart cases return code 7 without new components and preserve existing models. This does not complete every mask/mode combination. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask) |
+| `mask` | `''` | `''`; `mask` → `mask_box or mask_image` | Partial | One mask image or signed integer CRTF pixel boxes, inline or in a region file. Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support.38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. Fractional/world/general CRTF, multiple images, new masks on occupied default-restart outputs and broader mask/mode combinations remain unfinished. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [mask-boxes](#tclean-evidence-mask-boxes) |
 | `pbmask` | `0.0` | `0.0`; `pbmask` → `pbmask` | Default only | Read and ignored; non-default catalog-refused (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `sidelobethreshold` | `3.0` | `3.0`; `sidelobethreshold` → `sidelobethreshold` | Implemented | Copied as auto-multithresh parameters; presence is still read even outside that mode. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `noisethreshold` | `5.0` | `5.0`; `noisethreshold` → `noisethreshold` | Implemented | Copied as auto-multithresh parameters; presence is still read even outside that mode. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
@@ -506,9 +506,9 @@ Evidence: [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additi
 
 **Partial** — Hogbom, Clark, multiscale, MT-MFS, iteration controls, user masks and auto-multithresh.
 
-The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Normal-build ordinary Hogbom10 point-source comparisons pass seven products on CPU64/CPU32/GPU32 with no explicit accounting option; prototype ALMA mosaic CLEAN also passes in that mode. Independent default-continuation and migration tests pass. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding. The owner accepted only the original identity-bound b6a87 clean8/cpu32 weak model result; raw model.tt1 NRMS 0.0012759712 remains recorded. No general weak-model waiver or automatic future-output acceptance exists. Explicit all-zero image masks now stop with CASA code 7 for the verified standard-MFS cases; existing nonzero models are preserved on empty-mask restart. Broader mode combinations still require evidence.
+The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Normal-build ordinary Hogbom10 point-source comparisons pass seven products on CPU64/CPU32/GPU32 with no explicit accounting option; prototype ALMA mosaic CLEAN also passes in that mode. Independent default-continuation and migration tests pass. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams and nmajor=0 are incomplete or refused. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding. The owner accepted only the original identity-bound b6a87 clean8/cpu32 weak model result; raw model.tt1 NRMS 0.0012759712 remains recorded. No general weak-model waiver or automatic future-output acceptance exists. Explicit all-zero image masks now stop with CASA code 7 for the verified standard-MFS cases; existing nonzero models are preserved on empty-mask restart. Broader mode combinations still require evidence. Signed integer pixel-box clipping and explicit empty CRTF are repaired at086a67f1d4.36 CLI pairs pass recorded products/exact counts at two PB limits on three backends;2 public Python pairs additionally pass two selected scalars and old-file preservation under fresh numbering. General regions and other mask combinations remain unfinished.
 
-Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [standard-mtmfs-current](#tclean-evidence-standard-mtmfs-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask).
+Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [standard-mtmfs-current](#tclean-evidence-standard-mtmfs-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [mask-boxes](#tclean-evidence-mask-boxes).
 
 <a id="tclean-behavior-returns"></a>
 ##### Return values, exceptions and metadata
@@ -524,9 +524,9 @@ Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader)
 
 **Partial** — backend=auto/cpu/gpu, gridprecision and all scientific products (#991).
 
-Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. Contract32 False is now active and all20 small public numbering product checks pass. One Metal threshold output is owner-accepted by identity-bound review; its raw scalar failure stays visible, with no future waiver. Initial broad activation gate passed4704/4706 with two stale contract fixtures; both focused repairs pass. Remaining normal checks are consolidated at mask acceptance. Scientific accumulation is unchanged by those two slices.
+Owner-approved compensated f32 is the normal CPU/GPU path; f64 accumulation arithmetic is unchanged. Original compact/moving PSF failures are repaired and costs approved. The scoped matrix-scaled weak weight.tt1 gate is approved and all 5 fresh mosaic/native-AW rows pass; 3 raw NRMS failures remain visible as scoped overrides. Representative standard MT-MFS has 5 original passing runs and one specific CPU32 CLEAN result accepted by identity-bound owner review (ideal published intensity maximum difference 5.7469e-7). Its raw model.tt1 NRMS 0.0012759712 remains failed; no automatic future-output waiver. Full representative matrix, runtime prediction, remaining returns and task-wide acceptance are unfinished. Completed scalar/mask source fd7b8e7b2d passes 4,698 workspace tests/45 skips, normal gates and 875 performance-tool tests/307 subtests, plus 18 small paired lifecycle cases. Contract32 False is now active and all20 small public numbering product checks pass. One Metal threshold output is owner-accepted by identity-bound review; its raw scalar failure stays visible, with no future waiver. Initial broad activation gate passed4704/4706 with two stale contract fixtures; both focused repairs pass. Remaining normal checks are consolidated at mask acceptance. Scientific accumulation is unchanged by those two slices. The later mask correction has38 small paired product/count rows passing and independent review without findings; its combined full normal gate is running. No numeric rule or solver arithmetic changed.
 
-Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [taylor-pb-mfs](#tclean-evidence-taylor-pb-mfs), [standard-mtmfs-current](#tclean-evidence-standard-mtmfs-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [numbering-activation](#tclean-evidence-numbering-activation).
+Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-accuracy-issue), [representative](#tclean-evidence-representative), [accuracy-current](#tclean-evidence-accuracy-current), [accuracy-experiments](#tclean-evidence-accuracy-experiments), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [taylor-pb-mfs](#tclean-evidence-taylor-pb-mfs), [standard-mtmfs-current](#tclean-evidence-standard-mtmfs-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [numbering-activation](#tclean-evidence-numbering-activation), [mask-boxes](#tclean-evidence-mask-boxes).
 
 #### tclean deviations and unfinished work
 
@@ -659,27 +659,27 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Signature/default inventory — recorded.** CASA 6.7.6.14 names/defaults/XML domains only; not scientific behavior.
 
-- [resources/casa-compat/casa-6.7.6.14/tasks/tclean.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/casa-6.7.6.14/tasks/tclean.json)
+- [resources/casa-compat/casa-6.7.6.14/tasks/tclean.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/casa-6.7.6.14/tasks/tclean.json)
 
 <a id="tclean-evidence-reader"></a>
 ##### reader
 
 **Source audit — inspected.** Runtime mapping, reader refusals, typed validation, availability, publication preflight and summary gaps at the audit baseline plus this bounded work. Source/test definitions do not establish executed acceptance.
 
-- [crates/casa-imaging-application/src/tclean.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-imaging-application/src/tclean.rs)
-- [crates/casa-imaging-application/src/request.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-imaging-application/src/request.rs)
-- [crates/casa-imaging-application/src/availability.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-imaging-application/src/availability.rs)
-- [crates/casa-imaging-application/src/restart.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-imaging-application/src/restart.rs)
-- [crates/casars-imager/src/casa_return.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casars-imager/src/casa_return.rs)
-- [crates/casa-imaging-application/src/compile/outliers.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-imaging-application/src/compile/outliers.rs)
+- [crates/casa-imaging-application/src/tclean.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-imaging-application/src/tclean.rs)
+- [crates/casa-imaging-application/src/request.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-imaging-application/src/request.rs)
+- [crates/casa-imaging-application/src/availability.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-imaging-application/src/availability.rs)
+- [crates/casa-imaging-application/src/restart.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-imaging-application/src/restart.rs)
+- [crates/casars-imager/src/casa_return.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casars-imager/src/casa_return.rs)
+- [crates/casa-imaging-application/src/compile/outliers.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-imaging-application/src/compile/outliers.rs)
 
 <a id="tclean-evidence-returns"></a>
 ##### returns
 
 **Return structure — recorded.** Four CASA cases: dirty, CLEAN, fullsummary and cube. Values are deliberately not recorded; numeric summaries remain unverified.
 
-- [resources/casa-compat/casa-6.7.6.14/returns.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/casa-6.7.6.14/returns.json)
-- [tools/casa-compat/record_casa_returns.py](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/tools/casa-compat/record_casa_returns.py)
+- [resources/casa-compat/casa-6.7.6.14/returns.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/casa-6.7.6.14/returns.json)
+- [tools/casa-compat/record_casa_returns.py](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/tools/casa-compat/record_casa_returns.py)
 
 <a id="tclean-evidence-additions"></a>
 ##### additions
@@ -687,25 +687,25 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **CASA-paired small fixtures — historical reported pass.** Merged #970 reports CASA 6.7.6.14 against 75ec3c9c5d: rectangular geometry, taper and scoped start models; exact mask agreement and sumwt, per-product NRMS/beam measurements. This is scoped historical evidence, not a current full-task pass.
 
 - [https://github.com/bglenden/casa-rs/pull/970](https://github.com/bglenden/casa-rs/pull/970)
-- [tools/imaging/t15_imager_additions.py](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/tools/imaging/t15_imager_additions.py)
+- [tools/imaging/t15_imager_additions.py](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/tools/imaging/t15_imager_additions.py)
 
 <a id="tclean-evidence-representative"></a>
 ##### representative
 
 **Imaging acceptance framework — One current standard-MT-MFS representative case executed with mixed results; full matrix incomplete.** The retained scenario inventory defines required dimensions, not a current pass. Its old receipt and validator paths were removed by the foundation refactor. Archived #607 source content is reconciled byte-for-byte excluding filesystem sidecars; fresh pinned current standard-MT-MFS dirty/CLEAN results are linked separately, including one CPU32 failure. Other representative/resource/persistence obligations remain.
 
-- [TESTING.md](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/TESTING.md)
-- [resources/imaging-architecture/representative-science-matrix.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/imaging-architecture/representative-science-matrix.json)
-- [docs/agent-reference.md](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/docs/agent-reference.md)
+- [TESTING.md](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/TESTING.md)
+- [resources/imaging-architecture/representative-science-matrix.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/imaging-architecture/representative-science-matrix.json)
+- [docs/agent-reference.md](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/docs/agent-reference.md)
 
 <a id="tclean-evidence-lifecycle"></a>
 ##### lifecycle
 
 **CASA lifecycle characterization and native preservation check — passed.** Small fixed-field case: CASA continuation increases model flux; restart=False chooses _2 then _3; explicit startmodel conflicts with an existing model. Native rerun refusal preserves 43 output files. This verifies a safety refusal, not CASA-equivalent restart. The absolute-directory bug is separately observed.
 
-- [resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json)
-- [tools/casa-compat/tclean_lifecycle_probe.py](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/tools/casa-compat/tclean_lifecycle_probe.py)
-- [crates/casars-imager/tests/t1/restart.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casars-imager/tests/t1/restart.rs)
+- [resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/evidence/tclean-lifecycle-stokes-20261031.json)
+- [tools/casa-compat/tclean_lifecycle_probe.py](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/tools/casa-compat/tclean_lifecycle_probe.py)
+- [crates/casars-imager/tests/t1/restart.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casars-imager/tests/t1/restart.rs)
 - [https://github.com/bglenden/casa-rs/issues/944#issuecomment-6548323855](https://github.com/bglenden/casa-rs/issues/944#issuecomment-6548323855)
 - Revision: `ad40d127779ef75d5bfbe30475be85e61e52bf3a`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `CASA Python -I tools/casa-compat/tclean_lifecycle_probe.py --work <SSD>/probe-final-2 --imager target/release/casars-imager --revision ad40d127779ef75d5bfbe30475be85e61e52bf3a --stokes --out <SSD>/lifecycle-stokes-final-2.json`.
@@ -738,9 +738,9 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA-paired default products and single Q-to-I startmodel — passed.** Small noiseless standard-MFS seed, niter=0, natural weights, pblimit=-0.1, CPU/f64/W1. Exact six-product membership and masks; all valid samples finite; shape/units/Stokes, WCS reference pixel/value/increment, sumwt and beam comparisons pass. Worst product NRMS is PB 0.0001779001; five others <=4.114e-7. Not representative T2, full metadata coverage, general PB, multi-plane polarization, or numeric return acceptance.
 
-- [resources/casa-compat/evidence/tclean-default-products-20261031.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/evidence/tclean-default-products-20261031.json)
-- [crates/casars-imager/tests/t1/pb_default.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casars-imager/tests/t1/pb_default.rs)
-- [crates/casars-imager/tests/pb_default.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casars-imager/tests/pb_default.rs)
+- [resources/casa-compat/evidence/tclean-default-products-20261031.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/evidence/tclean-default-products-20261031.json)
+- [crates/casars-imager/tests/t1/pb_default.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casars-imager/tests/t1/pb_default.rs)
+- [crates/casars-imager/tests/pb_default.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casars-imager/tests/pb_default.rs)
 - Revision: `add245da9ba5d0bb66d0ca45a0e000fd1e27cd94`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `CASA Python -I /private/tmp/probe-tclean-default-products.py (executed; recipe retained on NAS)`.
 - Receipt: `resources/casa-compat/evidence/tclean-default-products-20261031.json; recipe, figure, PDF and native products durably retained at /Volumes/home/casa-rs/tclean/20261031/default-products-contract30.tar and sibling recipe files`.
@@ -750,11 +750,11 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA physical-row oracle and native production selection laws — passed.** 16 field cases: 11 exact ordered physical MAIN-row matches and five refusal matches on the unchanged public fixture or recorded private FLAG_ROW/NAME transformations. Three native production ID-versus-name/pattern/mixed pairs pass, including selectdata=False and PB products. The row oracle is CASA-paired; the production image comparison is native-to-native, not an additional CASA science pass. Other selectors in the receipt are oracle-only and not claimed implemented.
 
-- [resources/casa-compat/evidence/tclean-selection-casa-20261031.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/evidence/tclean-selection-casa-20261031.json)
-- [resources/casa-compat/evidence/tclean-selection-metadata-casa-20261031.json](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/resources/casa-compat/evidence/tclean-selection-metadata-casa-20261031.json)
-- [tools/casa-compat/tclean_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/tools/casa-compat/tclean_selection_oracle.py)
-- [crates/casa-ms/tests/field_selection_oracle.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casa-ms/tests/field_selection_oracle.rs)
-- [crates/casars-imager/tests/t1/selection.rs](https://github.com/bglenden/casa-rs/blob/99b1cfad559bf92de9ac070a387b4d2c9165ec97/crates/casars-imager/tests/t1/selection.rs)
+- [resources/casa-compat/evidence/tclean-selection-casa-20261031.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/evidence/tclean-selection-casa-20261031.json)
+- [resources/casa-compat/evidence/tclean-selection-metadata-casa-20261031.json](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/resources/casa-compat/evidence/tclean-selection-metadata-casa-20261031.json)
+- [tools/casa-compat/tclean_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/tools/casa-compat/tclean_selection_oracle.py)
+- [crates/casa-ms/tests/field_selection_oracle.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casa-ms/tests/field_selection_oracle.rs)
+- [crates/casars-imager/tests/t1/selection.rs](https://github.com/bglenden/casa-rs/blob/086a67f1d425035e206f77bf58329f59dddf9d5a/crates/casars-imager/tests/t1/selection.rs)
 - Revision: `5ad410a88eb9957e2a0de177218e766d89095d3a`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `CARGO_INCREMENTAL=0 cargo nextest run -p casa-ms --test field_selection_oracle; production T1 selection::field_names_patterns_and_mixed_lists_image_the_same_rows_as_ids`.
 - Receipt: `resources/casa-compat/evidence/tclean-selection{,-metadata}-casa-20261031.json; native logs in /Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/field-selection-{reviewed,restored,t1}.log. Deliberately erasing selection fails the oracle test; correct source restored.`.
@@ -894,3 +894,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `99b1cfad559bf92de9ac070a387b4d2c9165ec97`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
 - Command: `Pinned CASA Python -I tclean_numbering_acceptance_20261101.py plus current Python child and package gate; raw commands/identities in receipt`.
 - Receipt: `resources/casa-compat/evidence/tclean-numbering-activation-20261101.json; verified NAS restart-numbering-activation-20261101.tar SHAa5fb603f18b91a839c77f280038a8cbbffaded403d714efbe3ff754f781e3257; corrected recipe companion pinned in receipt`.
+
+<a id="tclean-evidence-mask-boxes"></a>
+##### mask-boxes
+
+**Executed signed/clipped/empty-mask product and stop comparisons — 38 scoped paired rows pass and independent review clear; combined full normal gate running.** 36 CLI rows:6 integer-box/empty-region forms x2 PB limits x3 backends, all seven products/exact counts;2 public Python rows add two selected scalar checks and preservation under False numbering. Focused red/green,61 T1, retained-mask memory law, touched clippy/dependencies pass. General regions/masks/modes unfinished.
+
+- [resources/casa-compat/evidence/tclean-mask-boxes-20261101.json](https://github.com/bglenden/casa-rs/blob/9a9796b23fa2e59388aed4dc2e95154bece3e502/resources/casa-compat/evidence/tclean-mask-boxes-20261101.json)
+- [crates/casa-imaging-deconvolution/src/mask.rs](https://github.com/bglenden/casa-rs/blob/9a9796b23fa2e59388aed4dc2e95154bece3e502/crates/casa-imaging-deconvolution/src/mask.rs)
+- [crates/casa-imaging-application/src/compile/domains.rs](https://github.com/bglenden/casa-rs/blob/9a9796b23fa2e59388aed4dc2e95154bece3e502/crates/casa-imaging-application/src/compile/domains.rs)
+- [crates/casars-imager/tests/t1/standard_mfs_masks.rs](https://github.com/bglenden/casa-rs/blob/9a9796b23fa2e59388aed4dc2e95154bece3e502/crates/casars-imager/tests/t1/standard_mfs_masks.rs)
+- Revision: `086a67f1d425035e206f77bf58329f59dddf9d5a`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
+- Command: `Pinned CASA Python -I tclean_mask_box_acceptance_20261101.py and public Python driver; native focused/integration/memory gates, combinednormalgate`.
+- Receipt: `resources/casa-compat/evidence/tclean-mask-boxes-20261101.json`.
