@@ -17,7 +17,7 @@ The bound inputs and products are in the current T2 receipt and its diagnostic
 512 square, four SPWs, 1,336,320 nominal correlation-channel samples,
 eight iterations in cycles of two. The retained input tree SHA-256 is
 `e1f1e030a1d1968b627863b3b5386e03fc7ed5770760698a1f6b603f4e885548`.
-CASA is casatasks **6.7.6.14** / casatools **6.7.6-14**. The receipt binds
+CASA is casatasks **6.7.6.14** / casatools **6.7.6-14**. The measurement binds
 the uninstrumented binary, parameters and numeric product fingerprints.
 
 ## Evidence and proposed criterion
@@ -29,6 +29,9 @@ the native TT1 coefficient is -0.0002667966 Jy. Its raw TT1 NRMS is
 18 product checks pass, including their required masks, finite values,
 recorded WCS, beams and independent intensity/flux checks. CPU/f64 and
 Metal/f32 pass this CLEAN case; all three paths pass the dirty case.
+The existing #607 alpha/alpha.error rule requires exact validity within
+CASA's PB support; each CLEAN alpha product has one differing pixel outside
+that support, counted in the receipt. Every other product's validity is exact.
 
 For this output, require those other gates unchanged, identical spatial
 support, finite coefficients, compatible coordinates and a common spectral
