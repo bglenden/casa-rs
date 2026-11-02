@@ -433,11 +433,11 @@ mod tests {
     #[test]
     fn a_cube_is_masked_in_casa_channel_blocks() {
         // 100 by 100: blocks of 800 channels, so a small cube is one block.
-        assert_eq!(channel_blocks(3, [100, 100]), [0..3]);
-        assert_eq!(channel_blocks(1, [100, 100]), [0..1]);
+        assert_eq!(channel_blocks(3, [100, 100]), vec![0..3]);
+        assert_eq!(channel_blocks(1, [100, 100]), vec![0..1]);
         // 2000 by 2000: 2 channels by size, at least ten.
         assert_eq!(channel_blocks(25, [2000, 2000]), [0..10, 10..20, 20..25]);
-        assert_eq!(channel_blocks(10, [2000, 2000]), [0..10]);
+        assert_eq!(channel_blocks(10, [2000, 2000]), vec![0..10]);
         // 1000 by 1000: eight channels by size, so ten.
         assert_eq!(channel_blocks(21, [1000, 1000]), [0..10, 10..20, 20..21]);
         // 900 by 900: 9.87 truncates to nine, so ten.

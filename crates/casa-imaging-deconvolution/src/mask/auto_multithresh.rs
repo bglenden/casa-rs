@@ -173,7 +173,7 @@ pub struct AutoMaskCycle {
 }
 
 /// Heap bytes per pixel one plane's automatic mask holds at most while it
-/// is made ([`plane_mask`]): the residual it reads and a copy for its
+/// is made: the residual it reads and a copy for its
 /// statistics and a smoothed plane (`f64` each); region pruning's
 /// component list and queue, grown by pushes (`usize` each, twice); and
 /// its twelve `bool` planes, the valid pixels and new support among them.

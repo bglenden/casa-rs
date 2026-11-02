@@ -118,8 +118,8 @@ fn a_cube_is_automasked_channel_by_channel() {
         plane(&mask, 0, 0).iter().all(|value| *value == 0.0),
         "the channel without data is not masked"
     );
-    for channel in 1..=CHANNELS {
-        assert!(sumwt[channel] > 0.0, "channel {channel} holds data");
+    for (channel, sumwt) in sumwt.iter().enumerate().skip(1) {
+        assert!(*sumwt > 0.0, "channel {channel} holds data");
         assert_holds_the_sources(&plane(&mask, 0, channel), &format!("channel {channel}"));
     }
     assert_model_inside_each_plane(&products);
@@ -163,6 +163,9 @@ fn box_about(centre: [usize; 2], half: usize) -> Array2<f32> {
         f32::from(x.abs_diff(centre[0]) <= half && y.abs_diff(centre[1]) <= half)
     })
 }
+
+/// The expected pixels of each Stokes plane and channel.
+type Planes<'a> = dyn Fn(usize, usize) -> Array2<f32> + 'a;
 
 /// A mask image at `path` on `coordinates` with `stokes` Stokes planes and
 /// `channels` channels, `planes(stokes, channel)` its pixels.
@@ -238,7 +241,7 @@ fn a_mask_image_expands_to_the_planes_as_casa_expands_it() {
         fields.insert("deconvolver".to_string(), json!("hogbom"));
         observation.try_image(name, controls)
     };
-    let cases: [(&str, &str, Value, &dyn Fn(usize, usize) -> Array2<f32>); 5] = [
+    let cases: [(&str, &str, Value, &Planes); 5] = [
         // A continuum Stokes I mask to every channel, every Stokes plane,
         // and both.
         (
