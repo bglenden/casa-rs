@@ -608,473 +608,492 @@
 <a href=#608 id=608 data-nosnippet>608</a>            )<span class="question-mark">?</span>;
 <a href=#609 id=609 data-nosnippet>609</a>        }
 <a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>observer = <span class="kw">super</span>::metadata::frequency_observer(entry.frequency_frame);
-<a href=#611 id=611 data-nosnippet>611</a>        <span class="kw">let </span>reference = entry.frequencies_hz[entry.frequencies_hz.len() / <span class="number">2</span>];
-<a href=#612 id=612 data-nosnippet>612</a>        coordinate(
-<a href=#613 id=613 data-nosnippet>613</a>            store,
-<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/frequency"</span>),
-<a href=#615 id=615 data-nosnippet>615</a>            <span class="macro">json!</span>(<span class="string">"float64"</span>),
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="macro">json!</span>(<span class="string">"NaN"</span>),
-<a href=#617 id=617 data-nosnippet>617</a>            <span class="string">"frequency"</span>,
-<a href=#618 id=618 data-nosnippet>618</a>            <span class="kw-2">&amp;</span>entry.frequencies_hz,
-<a href=#619 id=619 data-nosnippet>619</a>            <span class="macro">json!</span>({
-<a href=#620 id=620 data-nosnippet>620</a>                <span class="string">"type"</span>: <span class="string">"spectral_coord"</span>,
-<a href=#621 id=621 data-nosnippet>621</a>                <span class="string">"units"</span>: <span class="string">"Hz"</span>,
-<a href=#622 id=622 data-nosnippet>622</a>                <span class="string">"observer"</span>: observer,
-<a href=#623 id=623 data-nosnippet>623</a>                <span class="string">"spectral_window_name"</span>: entry.spectral_window,
-<a href=#624 id=624 data-nosnippet>624</a>                <span class="string">"spectral_window_intents"</span>: [<span class="string">"UNSPECIFIED"</span>],
-<a href=#625 id=625 data-nosnippet>625</a>                <span class="string">"reference_frequency"</span>: {<span class="string">"data"</span>: reference, <span class="string">"dims"</span>: [], <span class="string">"attrs"</span>: {<span class="string">"units"</span>: <span class="string">"Hz"</span>, <span class="string">"observer"</span>: observer, <span class="string">"type"</span>: <span class="string">"spectral_coord"</span>}},
-<a href=#626 id=626 data-nosnippet>626</a>                <span class="string">"channel_width"</span>: quantity(entry.channel_widths_hz[<span class="number">0</span>], <span class="string">"Hz"</span>),
-<a href=#627 id=627 data-nosnippet>627</a>            }),
-<a href=#628 id=628 data-nosnippet>628</a>        )<span class="question-mark">?</span>;
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>labels: Vec&lt;String&gt; = entry
-<a href=#630 id=630 data-nosnippet>630</a>            .correlations
-<a href=#631 id=631 data-nosnippet>631</a>            .iter()
-<a href=#632 id=632 data-nosnippet>632</a>            .map(|c| c.label().to_string())
-<a href=#633 id=633 data-nosnippet>633</a>            .collect();
-<a href=#634 id=634 data-nosnippet>634</a>        strings(
-<a href=#635 id=635 data-nosnippet>635</a>            store,
-<a href=#636 id=636 data-nosnippet>636</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/polarization"</span>),
-<a href=#637 id=637 data-nosnippet>637</a>            <span class="kw-2">&amp;</span>[labels.len() <span class="kw">as </span>u64],
-<a href=#638 id=638 data-nosnippet>638</a>            <span class="kw-2">&amp;</span>[<span class="string">"polarization"</span>],
-<a href=#639 id=639 data-nosnippet>639</a>            <span class="kw-2">&amp;</span>labels,
-<a href=#640 id=640 data-nosnippet>640</a>        )<span class="question-mark">?</span>;
-<a href=#641 id=641 data-nosnippet>641</a>        strings(
-<a href=#642 id=642 data-nosnippet>642</a>            store,
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/uvw_label"</span>),
-<a href=#644 id=644 data-nosnippet>644</a>            <span class="kw-2">&amp;</span>[<span class="number">3</span>],
-<a href=#645 id=645 data-nosnippet>645</a>            <span class="kw-2">&amp;</span>[<span class="string">"uvw_label"</span>],
-<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw-2">&amp;</span>[<span class="string">"u"</span>, <span class="string">"v"</span>, <span class="string">"w"</span>].map(String::from),
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="comment">// MSv4 requires a reference frequency (XRADIO's schema): the
+<a href=#612 id=612 data-nosnippet>612</a>        // window's own as its source states it (MSv2 `REF_FREQUENCY`, an
+<a href=#613 id=613 data-nosnippet>613</a>        // MSv4's `reference_frequency`), in its frame, as XRADIO's
+<a href=#614 id=614 data-nosnippet>614</a>        // converter writes it; the middle channel only where the source
+<a href=#615 id=615 data-nosnippet>615</a>        // states none, or none that is finite (JSON holds no NaN).
+<a href=#616 id=616 data-nosnippet>616</a>        </span><span class="kw">let </span>(reference, reference_observer) = <span class="kw">match </span>catalogue
+<a href=#617 id=617 data-nosnippet>617</a>            .windows
+<a href=#618 id=618 data-nosnippet>618</a>            .get(entry.window.<span class="number">0 </span><span class="kw">as </span>usize)
+<a href=#619 id=619 data-nosnippet>619</a>            .and_then(|window| window.reference_frequency.as_ref())
+<a href=#620 id=620 data-nosnippet>620</a>            .filter(|frequency| frequency.hz().is_finite())
+<a href=#621 id=621 data-nosnippet>621</a>        {
+<a href=#622 id=622 data-nosnippet>622</a>            <span class="prelude-val">Some</span>(frequency) =&gt; (
+<a href=#623 id=623 data-nosnippet>623</a>                frequency.hz(),
+<a href=#624 id=624 data-nosnippet>624</a>                <span class="kw">super</span>::metadata::frequency_observer(frequency.refer()),
+<a href=#625 id=625 data-nosnippet>625</a>            ),
+<a href=#626 id=626 data-nosnippet>626</a>            <span class="prelude-val">None </span>=&gt; (
+<a href=#627 id=627 data-nosnippet>627</a>                entry.frequencies_hz[entry.frequencies_hz.len() / <span class="number">2</span>],
+<a href=#628 id=628 data-nosnippet>628</a>                observer,
+<a href=#629 id=629 data-nosnippet>629</a>            ),
+<a href=#630 id=630 data-nosnippet>630</a>        };
+<a href=#631 id=631 data-nosnippet>631</a>        coordinate(
+<a href=#632 id=632 data-nosnippet>632</a>            store,
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/frequency"</span>),
+<a href=#634 id=634 data-nosnippet>634</a>            <span class="macro">json!</span>(<span class="string">"float64"</span>),
+<a href=#635 id=635 data-nosnippet>635</a>            <span class="macro">json!</span>(<span class="string">"NaN"</span>),
+<a href=#636 id=636 data-nosnippet>636</a>            <span class="string">"frequency"</span>,
+<a href=#637 id=637 data-nosnippet>637</a>            <span class="kw-2">&amp;</span>entry.frequencies_hz,
+<a href=#638 id=638 data-nosnippet>638</a>            <span class="macro">json!</span>({
+<a href=#639 id=639 data-nosnippet>639</a>                <span class="string">"type"</span>: <span class="string">"spectral_coord"</span>,
+<a href=#640 id=640 data-nosnippet>640</a>                <span class="string">"units"</span>: <span class="string">"Hz"</span>,
+<a href=#641 id=641 data-nosnippet>641</a>                <span class="string">"observer"</span>: observer,
+<a href=#642 id=642 data-nosnippet>642</a>                <span class="string">"spectral_window_name"</span>: entry.spectral_window,
+<a href=#643 id=643 data-nosnippet>643</a>                <span class="string">"spectral_window_intents"</span>: [<span class="string">"UNSPECIFIED"</span>],
+<a href=#644 id=644 data-nosnippet>644</a>                <span class="string">"reference_frequency"</span>: {<span class="string">"data"</span>: reference, <span class="string">"dims"</span>: [], <span class="string">"attrs"</span>: {<span class="string">"units"</span>: <span class="string">"Hz"</span>, <span class="string">"observer"</span>: reference_observer, <span class="string">"type"</span>: <span class="string">"spectral_coord"</span>}},
+<a href=#645 id=645 data-nosnippet>645</a>                <span class="string">"channel_width"</span>: quantity(entry.channel_widths_hz[<span class="number">0</span>], <span class="string">"Hz"</span>),
+<a href=#646 id=646 data-nosnippet>646</a>            }),
 <a href=#647 id=647 data-nosnippet>647</a>        )<span class="question-mark">?</span>;
-<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>times = grid.times_s.len() <span class="kw">as </span>u64;
-<a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">let </span>fields: Vec&lt;String&gt; = grid
-<a href=#650 id=650 data-nosnippet>650</a>            .field_per_time
-<a href=#651 id=651 data-nosnippet>651</a>            .iter()
-<a href=#652 id=652 data-nosnippet>652</a>            .map(|field| catalogue.fields[field.<span class="number">0 </span><span class="kw">as </span>usize].name.clone())
-<a href=#653 id=653 data-nosnippet>653</a>            .collect();
-<a href=#654 id=654 data-nosnippet>654</a>        strings(
-<a href=#655 id=655 data-nosnippet>655</a>            store,
-<a href=#656 id=656 data-nosnippet>656</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/field_name"</span>),
-<a href=#657 id=657 data-nosnippet>657</a>            <span class="kw-2">&amp;</span>[times],
-<a href=#658 id=658 data-nosnippet>658</a>            <span class="kw-2">&amp;</span>[<span class="string">"time"</span>],
-<a href=#659 id=659 data-nosnippet>659</a>            <span class="kw-2">&amp;</span>fields,
-<a href=#660 id=660 data-nosnippet>660</a>        )<span class="question-mark">?</span>;
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>scans: Vec&lt;String&gt; = grid
-<a href=#662 id=662 data-nosnippet>662</a>            .scan_per_time
-<a href=#663 id=663 data-nosnippet>663</a>            .iter()
-<a href=#664 id=664 data-nosnippet>664</a>            .map(|scan| catalogue.scans[scan.<span class="number">0 </span><span class="kw">as </span>usize].name.clone())
-<a href=#665 id=665 data-nosnippet>665</a>            .collect();
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span><span class="kw-2">mut </span>scan = strings(
-<a href=#667 id=667 data-nosnippet>667</a>            store,
-<a href=#668 id=668 data-nosnippet>668</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/scan_name"</span>),
-<a href=#669 id=669 data-nosnippet>669</a>            <span class="kw-2">&amp;</span>[times],
-<a href=#670 id=670 data-nosnippet>670</a>            <span class="kw-2">&amp;</span>[<span class="string">"time"</span>],
-<a href=#671 id=671 data-nosnippet>671</a>            <span class="kw-2">&amp;</span>scans,
-<a href=#672 id=672 data-nosnippet>672</a>        )<span class="question-mark">?</span>;
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="comment">// The scan intents are the scan coordinate's attribute: the
-<a href=#674 id=674 data-nosnippet>674</a>        // partition's, then any further intent of a scan written, in order
-<a href=#675 id=675 data-nosnippet>675</a>        // of first use.
-<a href=#676 id=676 data-nosnippet>676</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>intents = entry.intents.clone();
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">for </span>ScanId(id) <span class="kw">in </span><span class="kw-2">&amp;</span>grid.scan_per_time {
-<a href=#678 id=678 data-nosnippet>678</a>            <span class="kw">for </span>intent <span class="kw">in </span><span class="kw-2">&amp;</span>catalogue.scans[<span class="kw-2">*</span>id <span class="kw">as </span>usize].intents {
-<a href=#679 id=679 data-nosnippet>679</a>                <span class="kw">if </span>!intents.contains(intent) {
-<a href=#680 id=680 data-nosnippet>680</a>                    intents.push(intent.clone());
-<a href=#681 id=681 data-nosnippet>681</a>                }
-<a href=#682 id=682 data-nosnippet>682</a>            }
-<a href=#683 id=683 data-nosnippet>683</a>        }
-<a href=#684 id=684 data-nosnippet>684</a>        scan.attributes_mut()
-<a href=#685 id=685 data-nosnippet>685</a>            .insert(<span class="string">"scan_intents"</span>.into(), <span class="macro">json!</span>(intents));
-<a href=#686 id=686 data-nosnippet>686</a>        scan.store_metadata_opt(<span class="kw-2">&amp;</span>metadata_options())
-<a href=#687 id=687 data-nosnippet>687</a>            .map_err(storage)
-<a href=#688 id=688 data-nosnippet>688</a>    }
-<a href=#689 id=689 data-nosnippet>689</a>
-<a href=#690 id=690 data-nosnippet>690</a>    <span class="kw">fn </span>create_payload(
-<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#692 id=692 data-nosnippet>692</a>        store: <span class="kw-2">&amp;</span>Arc&lt;FilesystemStore&gt;,
-<a href=#693 id=693 data-nosnippet>693</a>        root: <span class="kw-2">&amp;</span>str,
-<a href=#694 id=694 data-nosnippet>694</a>        options: <span class="kw-2">&amp;</span>Msv4StorageOptions,
-<a href=#695 id=695 data-nosnippet>695</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Payload, ObservationError&gt; {
-<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape.map(|n| n <span class="kw">as </span>u64);
-<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>dims = [<span class="string">"time"</span>, <span class="string">"baseline_id"</span>, <span class="string">"frequency"</span>, <span class="string">"polarization"</span>];
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>chunks = options.chunks;
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="comment">// An undeclared unit is written as XRADIO's converter spells it, so
-<a href=#700 id=700 data-nosnippet>700</a>        // that no reader takes the data for calibrated janskys.
-<a href=#701 id=701 data-nosnippet>701</a>        </span><span class="kw">let </span>units = |group: <span class="kw-2">&amp;</span>DataGroupEntry| <span class="kw">match </span><span class="kw-2">&amp;</span>group.units {
-<a href=#702 id=702 data-nosnippet>702</a>            VisibilityUnits::Jansky =&gt; <span class="string">"Jy"</span>.to_string(),
-<a href=#703 id=703 data-nosnippet>703</a>            VisibilityUnits::Declared(units) =&gt; units.clone(),
-<a href=#704 id=704 data-nosnippet>704</a>            VisibilityUnits::Undeclared =&gt; <span class="string">"unkown"</span>.to_string(),
-<a href=#705 id=705 data-nosnippet>705</a>        };
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>cube = |data_type: <span class="kw-2">&amp;</span>str, size: usize, fill: Value, attributes: Value| ArraySpec {
-<a href=#707 id=707 data-nosnippet>707</a>            shape: <span class="kw-2">&amp;</span>shape,
-<a href=#708 id=708 data-nosnippet>708</a>            chunks: <span class="kw-2">&amp;</span>chunks,
-<a href=#709 id=709 data-nosnippet>709</a>            data_type: <span class="macro">json!</span>(data_type),
-<a href=#710 id=710 data-nosnippet>710</a>            codecs: codecs(options.codec, size),
-<a href=#711 id=711 data-nosnippet>711</a>            fill,
-<a href=#712 id=712 data-nosnippet>712</a>            dimensions: <span class="kw-2">&amp;</span>dims,
-<a href=#713 id=713 data-nosnippet>713</a>            attributes,
-<a href=#714 id=714 data-nosnippet>714</a>        };
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>coordinates = <span class="macro">json!</span>(PAYLOAD_COORDINATES);
-<a href=#716 id=716 data-nosnippet>716</a>        <span class="comment">// Fill values are the padding convention: a cell never delivered
-<a href=#717 id=717 data-nosnippet>717</a>        // reads back flagged, its values and weight NaN as XRADIO pads
-<a href=#718 id=718 data-nosnippet>718</a>        // them, so the non-finite weight marks it as padding.
-<a href=#719 id=719 data-nosnippet>719</a>        </span><span class="kw">let </span>values = <span class="self">self
-<a href=#720 id=720 data-nosnippet>720</a>            </span>.target
-<a href=#721 id=721 data-nosnippet>721</a>            .groups
-<a href=#722 id=722 data-nosnippet>722</a>            .iter()
-<a href=#723 id=723 data-nosnippet>723</a>            .enumerate()
-<a href=#724 id=724 data-nosnippet>724</a>            .map(|(index, group)| {
-<a href=#725 id=725 data-nosnippet>725</a>                create_array(
-<a href=#726 id=726 data-nosnippet>726</a>                    store,
-<a href=#727 id=727 data-nosnippet>727</a>                    <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/{}"</span>, visibility_variable(index, <span class="kw-2">&amp;</span>group.name)),
-<a href=#728 id=728 data-nosnippet>728</a>                    cube(
-<a href=#729 id=729 data-nosnippet>729</a>                        <span class="string">"complex64"</span>,
-<a href=#730 id=730 data-nosnippet>730</a>                        <span class="number">8</span>,
-<a href=#731 id=731 data-nosnippet>731</a>                        <span class="macro">json!</span>([<span class="string">"NaN"</span>, <span class="string">"NaN"</span>]),
-<a href=#732 id=732 data-nosnippet>732</a>                        <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quanta"</span>, <span class="string">"units"</span>: units(group), <span class="string">"coordinates"</span>: coordinates}),
-<a href=#733 id=733 data-nosnippet>733</a>                    ),
-<a href=#734 id=734 data-nosnippet>734</a>                )
-<a href=#735 id=735 data-nosnippet>735</a>            })
-<a href=#736 id=736 data-nosnippet>736</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>flags = create_array(
-<a href=#738 id=738 data-nosnippet>738</a>            store,
-<a href=#739 id=739 data-nosnippet>739</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/FLAG"</span>),
-<a href=#740 id=740 data-nosnippet>740</a>            cube(<span class="string">"bool"</span>, <span class="number">1</span>, <span class="macro">json!</span>(<span class="bool-val">true</span>), <span class="macro">json!</span>({<span class="string">"coordinates"</span>: coordinates})),
-<a href=#741 id=741 data-nosnippet>741</a>        )<span class="question-mark">?</span>;
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>weights = create_array(
-<a href=#743 id=743 data-nosnippet>743</a>            store,
-<a href=#744 id=744 data-nosnippet>744</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/WEIGHT"</span>),
-<a href=#745 id=745 data-nosnippet>745</a>            cube(
-<a href=#746 id=746 data-nosnippet>746</a>                <span class="string">"float32"</span>,
-<a href=#747 id=747 data-nosnippet>747</a>                <span class="number">4</span>,
-<a href=#748 id=748 data-nosnippet>748</a>                <span class="macro">json!</span>(<span class="string">"NaN"</span>),
-<a href=#749 id=749 data-nosnippet>749</a>                <span class="macro">json!</span>({<span class="string">"coordinates"</span>: coordinates}),
-<a href=#750 id=750 data-nosnippet>750</a>            ),
-<a href=#751 id=751 data-nosnippet>751</a>        )<span class="question-mark">?</span>;
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>triple = [shape[<span class="number">0</span>], shape[<span class="number">1</span>], <span class="number">3</span>];
-<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span>uvw = create_array(
-<a href=#754 id=754 data-nosnippet>754</a>            store,
-<a href=#755 id=755 data-nosnippet>755</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/UVW"</span>),
-<a href=#756 id=756 data-nosnippet>756</a>            ArraySpec {
-<a href=#757 id=757 data-nosnippet>757</a>                shape: <span class="kw-2">&amp;</span>triple,
-<a href=#758 id=758 data-nosnippet>758</a>                chunks: <span class="kw-2">&amp;</span>[chunks[<span class="number">0</span>], chunks[<span class="number">1</span>], <span class="number">3</span>],
-<a href=#759 id=759 data-nosnippet>759</a>                data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
-<a href=#760 id=760 data-nosnippet>760</a>                codecs: codecs(options.codec, <span class="number">8</span>),
-<a href=#761 id=761 data-nosnippet>761</a>                fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
-<a href=#762 id=762 data-nosnippet>762</a>                dimensions: <span class="kw-2">&amp;</span>[<span class="string">"time"</span>, <span class="string">"baseline_id"</span>, <span class="string">"uvw_label"</span>],
-<a href=#763 id=763 data-nosnippet>763</a>                attributes: <span class="macro">json!</span>({
-<a href=#764 id=764 data-nosnippet>764</a>                    <span class="string">"type"</span>: <span class="string">"uvw"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>,
-<a href=#765 id=765 data-nosnippet>765</a>                    <span class="string">"frame"</span>: <span class="kw">super</span>::metadata::direction_name(<span class="self">self</span>.target.groups[<span class="number">0</span>].uvw_frame.effective)<span class="question-mark">?</span>,
-<a href=#766 id=766 data-nosnippet>766</a>                    <span class="string">"coordinates"</span>: coordinates,
-<a href=#767 id=767 data-nosnippet>767</a>                }),
-<a href=#768 id=768 data-nosnippet>768</a>            },
-<a href=#769 id=769 data-nosnippet>769</a>        )<span class="question-mark">?</span>;
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>plane = [shape[<span class="number">0</span>], shape[<span class="number">1</span>]];
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">let </span>time_baseline = |name: <span class="kw-2">&amp;</span>str, attributes: Value| {
-<a href=#772 id=772 data-nosnippet>772</a>            create_array(
-<a href=#773 id=773 data-nosnippet>773</a>                store,
-<a href=#774 id=774 data-nosnippet>774</a>                <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/{name}"</span>),
-<a href=#775 id=775 data-nosnippet>775</a>                ArraySpec {
-<a href=#776 id=776 data-nosnippet>776</a>                    shape: <span class="kw-2">&amp;</span>plane,
-<a href=#777 id=777 data-nosnippet>777</a>                    chunks: <span class="kw-2">&amp;</span>[chunks[<span class="number">0</span>], chunks[<span class="number">1</span>]],
-<a href=#778 id=778 data-nosnippet>778</a>                    data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
-<a href=#779 id=779 data-nosnippet>779</a>                    codecs: codecs(options.codec, <span class="number">8</span>),
-<a href=#780 id=780 data-nosnippet>780</a>                    fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
-<a href=#781 id=781 data-nosnippet>781</a>                    dimensions: <span class="kw-2">&amp;</span>[<span class="string">"time"</span>, <span class="string">"baseline_id"</span>],
-<a href=#782 id=782 data-nosnippet>782</a>                    attributes,
-<a href=#783 id=783 data-nosnippet>783</a>                },
-<a href=#784 id=784 data-nosnippet>784</a>            )
-<a href=#785 id=785 data-nosnippet>785</a>        };
-<a href=#786 id=786 data-nosnippet>786</a>        <span class="kw">let </span><span class="kw-2">mut </span>centroid = <span class="kw">super</span>::metadata::time_attributes(<span class="self">self</span>.target.grid.time_scale)<span class="question-mark">?</span>;
-<a href=#787 id=787 data-nosnippet>787</a>        centroid.insert(<span class="string">"coordinates"</span>.into(), coordinates.clone());
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="prelude-val">Ok</span>(Payload {
-<a href=#789 id=789 data-nosnippet>789</a>            values,
-<a href=#790 id=790 data-nosnippet>790</a>            flags,
-<a href=#791 id=791 data-nosnippet>791</a>            weights,
-<a href=#792 id=792 data-nosnippet>792</a>            uvw,
-<a href=#793 id=793 data-nosnippet>793</a>            centroid: time_baseline(<span class="string">"TIME_CENTROID"</span>, Value::Object(centroid))<span class="question-mark">?</span>,
-<a href=#794 id=794 data-nosnippet>794</a>            exposure: time_baseline(
-<a href=#795 id=795 data-nosnippet>795</a>                <span class="string">"EFFECTIVE_INTEGRATION_TIME"</span>,
-<a href=#796 id=796 data-nosnippet>796</a>                <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"s"</span>, <span class="string">"coordinates"</span>: coordinates}),
-<a href=#797 id=797 data-nosnippet>797</a>            )<span class="question-mark">?</span>,
-<a href=#798 id=798 data-nosnippet>798</a>        })
-<a href=#799 id=799 data-nosnippet>799</a>    }
-<a href=#800 id=800 data-nosnippet>800</a>
-<a href=#801 id=801 data-nosnippet>801</a>    <span class="doccomment">/// Write the dataset's `pointing_xds`: `series`, the partition's
-<a href=#802 id=802 data-nosnippet>802</a>    /// pointing ([`casa_observation::Observation::pointing`], times in the
-<a href=#803 id=803 data-nosnippet>803</a>    /// partition's time system), for the antennas the dataset's baselines
-<a href=#804 id=804 data-nosnippet>804</a>    /// name. Nothing is written when none has a sample.
-<a href=#805 id=805 data-nosnippet>805</a>    ///
-<a href=#806 id=806 data-nosnippet>806</a>    /// # Errors
-<a href=#807 id=807 data-nosnippet>807</a>    ///
-<a href=#808 id=808 data-nosnippet>808</a>    /// [`ObservationError::Unsupported`] for a frame MSv4 does not name, or
-<a href=#809 id=809 data-nosnippet>809</a>    /// two samples of an antenna at one time; any error writing the store.
-<a href=#810 id=810 data-nosnippet>810</a>    </span><span class="kw">pub fn </span>write_pointing(
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#812 id=812 data-nosnippet>812</a>        catalogue: <span class="kw-2">&amp;</span>Catalogue,
-<a href=#813 id=813 data-nosnippet>813</a>        series: <span class="kw-2">&amp;</span>casa_observation::PointingSeries,
-<a href=#814 id=814 data-nosnippet>814</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#815 id=815 data-nosnippet>815</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span><span class="self">self</span>.target.grid;
-<a href=#816 id=816 data-nosnippet>816</a>        <span class="kw">let </span>antennas = dataset_antennas(catalogue, grid);
-<a href=#817 id=817 data-nosnippet>817</a>        pointing::write_pointing(
-<a href=#818 id=818 data-nosnippet>818</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.store,
-<a href=#819 id=819 data-nosnippet>819</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"/{}/pointing_xds"</span>, <span class="self">self</span>.dataset),
-<a href=#820 id=820 data-nosnippet>820</a>            <span class="kw-2">&amp;</span>antennas,
-<a href=#821 id=821 data-nosnippet>821</a>            series,
-<a href=#822 id=822 data-nosnippet>822</a>            grid.time_scale,
-<a href=#823 id=823 data-nosnippet>823</a>            grid.time_origin,
-<a href=#824 id=824 data-nosnippet>824</a>        )
-<a href=#825 id=825 data-nosnippet>825</a>    }
-<a href=#826 id=826 data-nosnippet>826</a>
-<a href=#827 id=827 data-nosnippet>827</a>    <span class="doccomment">/// What the writer has done.
-<a href=#828 id=828 data-nosnippet>828</a>    </span><span class="attr">#[must_use]
-<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="kw">pub fn </span>counters(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Msv4WriteCounters {
-<a href=#830 id=830 data-nosnippet>830</a>        <span class="self">self</span>.counters
-<a href=#831 id=831 data-nosnippet>831</a>    }
-<a href=#832 id=832 data-nosnippet>832</a>
-<a href=#833 id=833 data-nosnippet>833</a>    <span class="doccomment">/// Times per chunk ([`Msv4StorageOptions::chunks`]). Batches in time
-<a href=#834 id=834 data-nosnippet>834</a>    /// order write each chunk once whatever their size: the times of a
-<a href=#835 id=835 data-nosnippet>835</a>    /// chunk a batch covers only partly are held until the chunk is
-<a href=#836 id=836 data-nosnippet>836</a>    /// complete ([`Self::buffer_bytes`]). A producer whose batches hold a
-<a href=#837 id=837 data-nosnippet>837</a>    /// multiple of this many times, from a chunk boundary, makes the writer
-<a href=#838 id=838 data-nosnippet>838</a>    /// hold nothing and copy nothing more.
-<a href=#839 id=839 data-nosnippet>839</a>    </span><span class="attr">#[must_use]
-<a href=#840 id=840 data-nosnippet>840</a>    </span><span class="kw">pub fn </span>chunk_times(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#841 id=841 data-nosnippet>841</a>        <span class="self">self</span>.chunk_times
-<a href=#842 id=842 data-nosnippet>842</a>    }
-<a href=#843 id=843 data-nosnippet>843</a>}
-<a href=#844 id=844 data-nosnippet>844</a>
-<a href=#845 id=845 data-nosnippet>845</a><span class="doccomment">/// The antennas `grid`'s baselines name, in catalogue order: a dataset's
-<a href=#846 id=846 data-nosnippet>846</a>/// `antenna_xds` holds these alone, as XRADIO's converter writes the
-<a href=#847 id=847 data-nosnippet>847</a>/// antennas of a partition's baselines. The grid was checked against the
-<a href=#848 id=848 data-nosnippet>848</a>/// catalogue.
-<a href=#849 id=849 data-nosnippet>849</a></span><span class="kw">fn </span>dataset_antennas&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#850 id=850 data-nosnippet>850</a>    catalogue: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Catalogue,
-<a href=#851 id=851 data-nosnippet>851</a>    grid: <span class="kw-2">&amp;</span>TimeBaselineGrid,
-<a href=#852 id=852 data-nosnippet>852</a>) -&gt; Vec&lt;(AntennaId, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AntennaEntry)&gt; {
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span><span class="kw-2">mut </span>named = <span class="macro">vec!</span>[<span class="bool-val">false</span>; catalogue.antennas.len()];
-<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">for </span>baseline <span class="kw">in </span><span class="kw-2">&amp;</span>grid.baselines {
-<a href=#855 id=855 data-nosnippet>855</a>        named[baseline.antenna1.<span class="number">0 </span><span class="kw">as </span>usize] = <span class="bool-val">true</span>;
-<a href=#856 id=856 data-nosnippet>856</a>        named[baseline.antenna2.<span class="number">0 </span><span class="kw">as </span>usize] = <span class="bool-val">true</span>;
-<a href=#857 id=857 data-nosnippet>857</a>    }
-<a href=#858 id=858 data-nosnippet>858</a>    catalogue
-<a href=#859 id=859 data-nosnippet>859</a>        .antennas
-<a href=#860 id=860 data-nosnippet>860</a>        .iter()
-<a href=#861 id=861 data-nosnippet>861</a>        .zip(named)
-<a href=#862 id=862 data-nosnippet>862</a>        .enumerate()
-<a href=#863 id=863 data-nosnippet>863</a>        .filter(|(<span class="kw">_</span>, (<span class="kw">_</span>, named))| <span class="kw-2">*</span>named)
-<a href=#864 id=864 data-nosnippet>864</a>        .map(|(id, (antenna, <span class="kw">_</span>))| (AntennaId(id <span class="kw">as </span>u32), antenna))
-<a href=#865 id=865 data-nosnippet>865</a>        .collect()
-<a href=#866 id=866 data-nosnippet>866</a>}
-<a href=#867 id=867 data-nosnippet>867</a>
-<a href=#868 id=868 data-nosnippet>868</a><span class="doccomment">/// `antennas` as an `antenna_xds`, with their receptors in the dataset's
-<a href=#869 id=869 data-nosnippet>869</a>/// partition `entry`. Where the partition states none (`FEED` has no row
-<a href=#870 id=870 data-nosnippet>870</a>/// for its window), the receptors its correlation products name stand as
-<a href=#871 id=871 data-nosnippet>871</a>/// every antenna's `polarization_type`, without angles
-<a href=#872 id=872 data-nosnippet>872</a>/// ([`product_receptors`]), as XRADIO writes them: its schema requires
-<a href=#873 id=873 data-nosnippet>873</a>/// `receptor_label` and `polarization_type`, and an MSv4 reader takes
-<a href=#874 id=874 data-nosnippet>874</a>/// types without angles as no receptors.
-<a href=#875 id=875 data-nosnippet>875</a></span><span class="kw">fn </span>write_antennas(
-<a href=#876 id=876 data-nosnippet>876</a>    store: <span class="kw-2">&amp;</span>Arc&lt;FilesystemStore&gt;,
-<a href=#877 id=877 data-nosnippet>877</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#878 id=878 data-nosnippet>878</a>    antennas: <span class="kw-2">&amp;</span>[(AntennaId, <span class="kw-2">&amp;</span>AntennaEntry)],
-<a href=#879 id=879 data-nosnippet>879</a>    entry: <span class="kw-2">&amp;</span>PartitionEntry,
-<a href=#880 id=880 data-nosnippet>880</a>    telescope: <span class="kw-2">&amp;</span>str,
-<a href=#881 id=881 data-nosnippet>881</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="kw">let </span>none = Receptors {
-<a href=#883 id=883 data-nosnippet>883</a>        types: Vec::new(),
-<a href=#884 id=884 data-nosnippet>884</a>        angles: Vec::new(),
-<a href=#885 id=885 data-nosnippet>885</a>    };
-<a href=#886 id=886 data-nosnippet>886</a>    <span class="kw">let </span>own: Vec&lt;<span class="kw-2">&amp;</span>Receptors&gt; = antennas
-<a href=#887 id=887 data-nosnippet>887</a>        .iter()
-<a href=#888 id=888 data-nosnippet>888</a>        .map(|(id, <span class="kw">_</span>)| entry.receptors.get(id).unwrap_or(<span class="kw-2">&amp;</span>none))
-<a href=#889 id=889 data-nosnippet>889</a>        .collect();
-<a href=#890 id=890 data-nosnippet>890</a>    <span class="kw">let </span>antennas: Vec&lt;<span class="kw-2">&amp;</span>AntennaEntry&gt; = antennas.iter().map(|(<span class="kw">_</span>, antenna)| <span class="kw-2">*</span>antenna).collect();
-<a href=#891 id=891 data-nosnippet>891</a>    <span class="kw">let </span>count = antennas.len() <span class="kw">as </span>u64;
-<a href=#892 id=892 data-nosnippet>892</a>    <span class="kw">let </span>receptors = own.first().map_or(<span class="number">0</span>, |own| own.types.len());
-<a href=#893 id=893 data-nosnippet>893</a>    <span class="kw">if </span>own
-<a href=#894 id=894 data-nosnippet>894</a>        .iter()
-<a href=#895 id=895 data-nosnippet>895</a>        .any(|own| own.types.len() != receptors || own.angles.len() != receptors)
-<a href=#896 id=896 data-nosnippet>896</a>    {
-<a href=#897 id=897 data-nosnippet>897</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#898 id=898 data-nosnippet>898</a>            what: <span class="string">"antennas with different receptor counts"</span>,
-<a href=#899 id=899 data-nosnippet>899</a>        });
-<a href=#900 id=900 data-nosnippet>900</a>    }
-<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">let </span><span class="kw-2">mut </span>attributes = <span class="macro">json!</span>({
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="string">"type"</span>: <span class="string">"antenna"</span>,
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="string">"overall_telescope_name"</span>: telescope,
-<a href=#904 id=904 data-nosnippet>904</a>        <span class="string">"relocatable_antennas"</span>: <span class="kw">super</span>::STATION_NAMED.contains(<span class="kw-2">&amp;</span>telescope),
-<a href=#905 id=905 data-nosnippet>905</a>    });
-<a href=#906 id=906 data-nosnippet>906</a>    <span class="kw">if </span>receptors == <span class="number">0 </span>{
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="comment">// No ANTENNA_RECEPTOR_ANGLE names polarization_type among its
-<a href=#908 id=908 data-nosnippet>908</a>        // coordinates, so the group does, as xarray (and XRADIO) writes a
-<a href=#909 id=909 data-nosnippet>909</a>        // coordinate no variable refers to.
-<a href=#910 id=910 data-nosnippet>910</a>        </span>attributes[<span class="string">"coordinates"</span>] = <span class="macro">json!</span>(<span class="string">"polarization_type"</span>);
-<a href=#911 id=911 data-nosnippet>911</a>    }
-<a href=#912 id=912 data-nosnippet>912</a>    create_group(store, path, attributes)<span class="question-mark">?</span>;
-<a href=#913 id=913 data-nosnippet>913</a>    <span class="kw">if </span>antennas
-<a href=#914 id=914 data-nosnippet>914</a>        .iter()
-<a href=#915 id=915 data-nosnippet>915</a>        .any(|antenna| antenna.position.refer() != PositionRef::ITRF)
-<a href=#916 id=916 data-nosnippet>916</a>    {
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#918 id=918 data-nosnippet>918</a>            what: <span class="string">"writing antenna positions in other than ITRF"</span>,
-<a href=#919 id=919 data-nosnippet>919</a>        });
-<a href=#920 id=920 data-nosnippet>920</a>    }
-<a href=#921 id=921 data-nosnippet>921</a>    <span class="kw">let </span>column = |f: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>AntennaEntry) -&gt; String| {
-<a href=#922 id=922 data-nosnippet>922</a>        antennas
-<a href=#923 id=923 data-nosnippet>923</a>            .iter()
-<a href=#924 id=924 data-nosnippet>924</a>            .map(|antenna| f(antenna))
-<a href=#925 id=925 data-nosnippet>925</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#926 id=926 data-nosnippet>926</a>    };
-<a href=#927 id=927 data-nosnippet>927</a>    <span class="kw">for </span>(name, values) <span class="kw">in </span>[
-<a href=#928 id=928 data-nosnippet>928</a>        (<span class="string">"antenna_name"</span>, column(|a| a.name.clone())),
-<a href=#929 id=929 data-nosnippet>929</a>        (<span class="string">"station_name"</span>, column(|a| a.station.clone())),
-<a href=#930 id=930 data-nosnippet>930</a>        (<span class="string">"mount"</span>, column(|a| a.mount.clone())),
-<a href=#931 id=931 data-nosnippet>931</a>        (
-<a href=#932 id=932 data-nosnippet>932</a>            <span class="string">"telescope_name"</span>,
-<a href=#933 id=933 data-nosnippet>933</a>            <span class="macro">vec!</span>[telescope.to_string(); antennas.len()],
-<a href=#934 id=934 data-nosnippet>934</a>        ),
-<a href=#935 id=935 data-nosnippet>935</a>    ] {
-<a href=#936 id=936 data-nosnippet>936</a>        strings(
-<a href=#937 id=937 data-nosnippet>937</a>            store,
-<a href=#938 id=938 data-nosnippet>938</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/{name}"</span>),
-<a href=#939 id=939 data-nosnippet>939</a>            <span class="kw-2">&amp;</span>[count],
-<a href=#940 id=940 data-nosnippet>940</a>            <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>],
-<a href=#941 id=941 data-nosnippet>941</a>            <span class="kw-2">&amp;</span>values,
-<a href=#942 id=942 data-nosnippet>942</a>        )<span class="question-mark">?</span>;
-<a href=#943 id=943 data-nosnippet>943</a>    }
-<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">let </span>types: Vec&lt;String&gt; = <span class="kw">if </span>receptors &gt; <span class="number">0 </span>{
-<a href=#945 id=945 data-nosnippet>945</a>        own.iter()
-<a href=#946 id=946 data-nosnippet>946</a>            .flat_map(|own| own.types.iter().cloned())
-<a href=#947 id=947 data-nosnippet>947</a>            .collect()
-<a href=#948 id=948 data-nosnippet>948</a>    } <span class="kw">else </span>{
-<a href=#949 id=949 data-nosnippet>949</a>        <span class="kw">let </span>named = product_receptors(<span class="kw-2">&amp;</span>entry.correlations);
-<a href=#950 id=950 data-nosnippet>950</a>        own.iter().flat_map(|<span class="kw">_</span>| named.iter().cloned()).collect()
-<a href=#951 id=951 data-nosnippet>951</a>    };
-<a href=#952 id=952 data-nosnippet>952</a>    <span class="kw">let </span>width = types.len() / own.len().max(<span class="number">1</span>);
-<a href=#953 id=953 data-nosnippet>953</a>    <span class="kw">if </span>width &gt; <span class="number">0 </span>{
-<a href=#954 id=954 data-nosnippet>954</a>        <span class="kw">let </span>labels: Vec&lt;String&gt; = (<span class="number">0</span>..width).map(|r| <span class="macro">format!</span>(<span class="string">"pol_{r}"</span>)).collect();
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>labels: Vec&lt;String&gt; = entry
+<a href=#649 id=649 data-nosnippet>649</a>            .correlations
+<a href=#650 id=650 data-nosnippet>650</a>            .iter()
+<a href=#651 id=651 data-nosnippet>651</a>            .map(|c| c.label().to_string())
+<a href=#652 id=652 data-nosnippet>652</a>            .collect();
+<a href=#653 id=653 data-nosnippet>653</a>        strings(
+<a href=#654 id=654 data-nosnippet>654</a>            store,
+<a href=#655 id=655 data-nosnippet>655</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/polarization"</span>),
+<a href=#656 id=656 data-nosnippet>656</a>            <span class="kw-2">&amp;</span>[labels.len() <span class="kw">as </span>u64],
+<a href=#657 id=657 data-nosnippet>657</a>            <span class="kw-2">&amp;</span>[<span class="string">"polarization"</span>],
+<a href=#658 id=658 data-nosnippet>658</a>            <span class="kw-2">&amp;</span>labels,
+<a href=#659 id=659 data-nosnippet>659</a>        )<span class="question-mark">?</span>;
+<a href=#660 id=660 data-nosnippet>660</a>        strings(
+<a href=#661 id=661 data-nosnippet>661</a>            store,
+<a href=#662 id=662 data-nosnippet>662</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/uvw_label"</span>),
+<a href=#663 id=663 data-nosnippet>663</a>            <span class="kw-2">&amp;</span>[<span class="number">3</span>],
+<a href=#664 id=664 data-nosnippet>664</a>            <span class="kw-2">&amp;</span>[<span class="string">"uvw_label"</span>],
+<a href=#665 id=665 data-nosnippet>665</a>            <span class="kw-2">&amp;</span>[<span class="string">"u"</span>, <span class="string">"v"</span>, <span class="string">"w"</span>].map(String::from),
+<a href=#666 id=666 data-nosnippet>666</a>        )<span class="question-mark">?</span>;
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">let </span>times = grid.times_s.len() <span class="kw">as </span>u64;
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>fields: Vec&lt;String&gt; = grid
+<a href=#669 id=669 data-nosnippet>669</a>            .field_per_time
+<a href=#670 id=670 data-nosnippet>670</a>            .iter()
+<a href=#671 id=671 data-nosnippet>671</a>            .map(|field| catalogue.fields[field.<span class="number">0 </span><span class="kw">as </span>usize].name.clone())
+<a href=#672 id=672 data-nosnippet>672</a>            .collect();
+<a href=#673 id=673 data-nosnippet>673</a>        strings(
+<a href=#674 id=674 data-nosnippet>674</a>            store,
+<a href=#675 id=675 data-nosnippet>675</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/field_name"</span>),
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="kw-2">&amp;</span>[times],
+<a href=#677 id=677 data-nosnippet>677</a>            <span class="kw-2">&amp;</span>[<span class="string">"time"</span>],
+<a href=#678 id=678 data-nosnippet>678</a>            <span class="kw-2">&amp;</span>fields,
+<a href=#679 id=679 data-nosnippet>679</a>        )<span class="question-mark">?</span>;
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>scans: Vec&lt;String&gt; = grid
+<a href=#681 id=681 data-nosnippet>681</a>            .scan_per_time
+<a href=#682 id=682 data-nosnippet>682</a>            .iter()
+<a href=#683 id=683 data-nosnippet>683</a>            .map(|scan| catalogue.scans[scan.<span class="number">0 </span><span class="kw">as </span>usize].name.clone())
+<a href=#684 id=684 data-nosnippet>684</a>            .collect();
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span><span class="kw-2">mut </span>scan = strings(
+<a href=#686 id=686 data-nosnippet>686</a>            store,
+<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/scan_name"</span>),
+<a href=#688 id=688 data-nosnippet>688</a>            <span class="kw-2">&amp;</span>[times],
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="kw-2">&amp;</span>[<span class="string">"time"</span>],
+<a href=#690 id=690 data-nosnippet>690</a>            <span class="kw-2">&amp;</span>scans,
+<a href=#691 id=691 data-nosnippet>691</a>        )<span class="question-mark">?</span>;
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="comment">// The scan intents are the scan coordinate's attribute: the
+<a href=#693 id=693 data-nosnippet>693</a>        // partition's, then any further intent of a scan written, in order
+<a href=#694 id=694 data-nosnippet>694</a>        // of first use.
+<a href=#695 id=695 data-nosnippet>695</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>intents = entry.intents.clone();
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">for </span>ScanId(id) <span class="kw">in </span><span class="kw-2">&amp;</span>grid.scan_per_time {
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">for </span>intent <span class="kw">in </span><span class="kw-2">&amp;</span>catalogue.scans[<span class="kw-2">*</span>id <span class="kw">as </span>usize].intents {
+<a href=#698 id=698 data-nosnippet>698</a>                <span class="kw">if </span>!intents.contains(intent) {
+<a href=#699 id=699 data-nosnippet>699</a>                    intents.push(intent.clone());
+<a href=#700 id=700 data-nosnippet>700</a>                }
+<a href=#701 id=701 data-nosnippet>701</a>            }
+<a href=#702 id=702 data-nosnippet>702</a>        }
+<a href=#703 id=703 data-nosnippet>703</a>        scan.attributes_mut()
+<a href=#704 id=704 data-nosnippet>704</a>            .insert(<span class="string">"scan_intents"</span>.into(), <span class="macro">json!</span>(intents));
+<a href=#705 id=705 data-nosnippet>705</a>        scan.store_metadata_opt(<span class="kw-2">&amp;</span>metadata_options())
+<a href=#706 id=706 data-nosnippet>706</a>            .map_err(storage)
+<a href=#707 id=707 data-nosnippet>707</a>    }
+<a href=#708 id=708 data-nosnippet>708</a>
+<a href=#709 id=709 data-nosnippet>709</a>    <span class="kw">fn </span>create_payload(
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#711 id=711 data-nosnippet>711</a>        store: <span class="kw-2">&amp;</span>Arc&lt;FilesystemStore&gt;,
+<a href=#712 id=712 data-nosnippet>712</a>        root: <span class="kw-2">&amp;</span>str,
+<a href=#713 id=713 data-nosnippet>713</a>        options: <span class="kw-2">&amp;</span>Msv4StorageOptions,
+<a href=#714 id=714 data-nosnippet>714</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Payload, ObservationError&gt; {
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape.map(|n| n <span class="kw">as </span>u64);
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>dims = [<span class="string">"time"</span>, <span class="string">"baseline_id"</span>, <span class="string">"frequency"</span>, <span class="string">"polarization"</span>];
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>chunks = options.chunks;
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="comment">// An undeclared unit is written as XRADIO's converter spells it, so
+<a href=#719 id=719 data-nosnippet>719</a>        // that no reader takes the data for calibrated janskys.
+<a href=#720 id=720 data-nosnippet>720</a>        </span><span class="kw">let </span>units = |group: <span class="kw-2">&amp;</span>DataGroupEntry| <span class="kw">match </span><span class="kw-2">&amp;</span>group.units {
+<a href=#721 id=721 data-nosnippet>721</a>            VisibilityUnits::Jansky =&gt; <span class="string">"Jy"</span>.to_string(),
+<a href=#722 id=722 data-nosnippet>722</a>            VisibilityUnits::Declared(units) =&gt; units.clone(),
+<a href=#723 id=723 data-nosnippet>723</a>            VisibilityUnits::Undeclared =&gt; <span class="string">"unkown"</span>.to_string(),
+<a href=#724 id=724 data-nosnippet>724</a>        };
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>cube = |data_type: <span class="kw-2">&amp;</span>str, size: usize, fill: Value, attributes: Value| ArraySpec {
+<a href=#726 id=726 data-nosnippet>726</a>            shape: <span class="kw-2">&amp;</span>shape,
+<a href=#727 id=727 data-nosnippet>727</a>            chunks: <span class="kw-2">&amp;</span>chunks,
+<a href=#728 id=728 data-nosnippet>728</a>            data_type: <span class="macro">json!</span>(data_type),
+<a href=#729 id=729 data-nosnippet>729</a>            codecs: codecs(options.codec, size),
+<a href=#730 id=730 data-nosnippet>730</a>            fill,
+<a href=#731 id=731 data-nosnippet>731</a>            dimensions: <span class="kw-2">&amp;</span>dims,
+<a href=#732 id=732 data-nosnippet>732</a>            attributes,
+<a href=#733 id=733 data-nosnippet>733</a>        };
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>coordinates = <span class="macro">json!</span>(PAYLOAD_COORDINATES);
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="comment">// Fill values are the padding convention: a cell never delivered
+<a href=#736 id=736 data-nosnippet>736</a>        // reads back flagged, its values and weight NaN as XRADIO pads
+<a href=#737 id=737 data-nosnippet>737</a>        // them, so the non-finite weight marks it as padding.
+<a href=#738 id=738 data-nosnippet>738</a>        </span><span class="kw">let </span>values = <span class="self">self
+<a href=#739 id=739 data-nosnippet>739</a>            </span>.target
+<a href=#740 id=740 data-nosnippet>740</a>            .groups
+<a href=#741 id=741 data-nosnippet>741</a>            .iter()
+<a href=#742 id=742 data-nosnippet>742</a>            .enumerate()
+<a href=#743 id=743 data-nosnippet>743</a>            .map(|(index, group)| {
+<a href=#744 id=744 data-nosnippet>744</a>                create_array(
+<a href=#745 id=745 data-nosnippet>745</a>                    store,
+<a href=#746 id=746 data-nosnippet>746</a>                    <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/{}"</span>, visibility_variable(index, <span class="kw-2">&amp;</span>group.name)),
+<a href=#747 id=747 data-nosnippet>747</a>                    cube(
+<a href=#748 id=748 data-nosnippet>748</a>                        <span class="string">"complex64"</span>,
+<a href=#749 id=749 data-nosnippet>749</a>                        <span class="number">8</span>,
+<a href=#750 id=750 data-nosnippet>750</a>                        <span class="macro">json!</span>([<span class="string">"NaN"</span>, <span class="string">"NaN"</span>]),
+<a href=#751 id=751 data-nosnippet>751</a>                        <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quanta"</span>, <span class="string">"units"</span>: units(group), <span class="string">"coordinates"</span>: coordinates}),
+<a href=#752 id=752 data-nosnippet>752</a>                    ),
+<a href=#753 id=753 data-nosnippet>753</a>                )
+<a href=#754 id=754 data-nosnippet>754</a>            })
+<a href=#755 id=755 data-nosnippet>755</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>flags = create_array(
+<a href=#757 id=757 data-nosnippet>757</a>            store,
+<a href=#758 id=758 data-nosnippet>758</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/FLAG"</span>),
+<a href=#759 id=759 data-nosnippet>759</a>            cube(<span class="string">"bool"</span>, <span class="number">1</span>, <span class="macro">json!</span>(<span class="bool-val">true</span>), <span class="macro">json!</span>({<span class="string">"coordinates"</span>: coordinates})),
+<a href=#760 id=760 data-nosnippet>760</a>        )<span class="question-mark">?</span>;
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>weights = create_array(
+<a href=#762 id=762 data-nosnippet>762</a>            store,
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/WEIGHT"</span>),
+<a href=#764 id=764 data-nosnippet>764</a>            cube(
+<a href=#765 id=765 data-nosnippet>765</a>                <span class="string">"float32"</span>,
+<a href=#766 id=766 data-nosnippet>766</a>                <span class="number">4</span>,
+<a href=#767 id=767 data-nosnippet>767</a>                <span class="macro">json!</span>(<span class="string">"NaN"</span>),
+<a href=#768 id=768 data-nosnippet>768</a>                <span class="macro">json!</span>({<span class="string">"coordinates"</span>: coordinates}),
+<a href=#769 id=769 data-nosnippet>769</a>            ),
+<a href=#770 id=770 data-nosnippet>770</a>        )<span class="question-mark">?</span>;
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">let </span>triple = [shape[<span class="number">0</span>], shape[<span class="number">1</span>], <span class="number">3</span>];
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>uvw = create_array(
+<a href=#773 id=773 data-nosnippet>773</a>            store,
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/UVW"</span>),
+<a href=#775 id=775 data-nosnippet>775</a>            ArraySpec {
+<a href=#776 id=776 data-nosnippet>776</a>                shape: <span class="kw-2">&amp;</span>triple,
+<a href=#777 id=777 data-nosnippet>777</a>                chunks: <span class="kw-2">&amp;</span>[chunks[<span class="number">0</span>], chunks[<span class="number">1</span>], <span class="number">3</span>],
+<a href=#778 id=778 data-nosnippet>778</a>                data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
+<a href=#779 id=779 data-nosnippet>779</a>                codecs: codecs(options.codec, <span class="number">8</span>),
+<a href=#780 id=780 data-nosnippet>780</a>                fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
+<a href=#781 id=781 data-nosnippet>781</a>                dimensions: <span class="kw-2">&amp;</span>[<span class="string">"time"</span>, <span class="string">"baseline_id"</span>, <span class="string">"uvw_label"</span>],
+<a href=#782 id=782 data-nosnippet>782</a>                attributes: <span class="macro">json!</span>({
+<a href=#783 id=783 data-nosnippet>783</a>                    <span class="string">"type"</span>: <span class="string">"uvw"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>,
+<a href=#784 id=784 data-nosnippet>784</a>                    <span class="string">"frame"</span>: <span class="kw">super</span>::metadata::direction_name(<span class="self">self</span>.target.groups[<span class="number">0</span>].uvw_frame.effective)<span class="question-mark">?</span>,
+<a href=#785 id=785 data-nosnippet>785</a>                    <span class="string">"coordinates"</span>: coordinates,
+<a href=#786 id=786 data-nosnippet>786</a>                }),
+<a href=#787 id=787 data-nosnippet>787</a>            },
+<a href=#788 id=788 data-nosnippet>788</a>        )<span class="question-mark">?</span>;
+<a href=#789 id=789 data-nosnippet>789</a>        <span class="kw">let </span>plane = [shape[<span class="number">0</span>], shape[<span class="number">1</span>]];
+<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>time_baseline = |name: <span class="kw-2">&amp;</span>str, attributes: Value| {
+<a href=#791 id=791 data-nosnippet>791</a>            create_array(
+<a href=#792 id=792 data-nosnippet>792</a>                store,
+<a href=#793 id=793 data-nosnippet>793</a>                <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{root}/{name}"</span>),
+<a href=#794 id=794 data-nosnippet>794</a>                ArraySpec {
+<a href=#795 id=795 data-nosnippet>795</a>                    shape: <span class="kw-2">&amp;</span>plane,
+<a href=#796 id=796 data-nosnippet>796</a>                    chunks: <span class="kw-2">&amp;</span>[chunks[<span class="number">0</span>], chunks[<span class="number">1</span>]],
+<a href=#797 id=797 data-nosnippet>797</a>                    data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
+<a href=#798 id=798 data-nosnippet>798</a>                    codecs: codecs(options.codec, <span class="number">8</span>),
+<a href=#799 id=799 data-nosnippet>799</a>                    fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
+<a href=#800 id=800 data-nosnippet>800</a>                    dimensions: <span class="kw-2">&amp;</span>[<span class="string">"time"</span>, <span class="string">"baseline_id"</span>],
+<a href=#801 id=801 data-nosnippet>801</a>                    attributes,
+<a href=#802 id=802 data-nosnippet>802</a>                },
+<a href=#803 id=803 data-nosnippet>803</a>            )
+<a href=#804 id=804 data-nosnippet>804</a>        };
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="kw">let </span><span class="kw-2">mut </span>centroid = <span class="kw">super</span>::metadata::time_attributes(<span class="self">self</span>.target.grid.time_scale)<span class="question-mark">?</span>;
+<a href=#806 id=806 data-nosnippet>806</a>        centroid.insert(<span class="string">"coordinates"</span>.into(), coordinates.clone());
+<a href=#807 id=807 data-nosnippet>807</a>        <span class="prelude-val">Ok</span>(Payload {
+<a href=#808 id=808 data-nosnippet>808</a>            values,
+<a href=#809 id=809 data-nosnippet>809</a>            flags,
+<a href=#810 id=810 data-nosnippet>810</a>            weights,
+<a href=#811 id=811 data-nosnippet>811</a>            uvw,
+<a href=#812 id=812 data-nosnippet>812</a>            centroid: time_baseline(<span class="string">"TIME_CENTROID"</span>, Value::Object(centroid))<span class="question-mark">?</span>,
+<a href=#813 id=813 data-nosnippet>813</a>            exposure: time_baseline(
+<a href=#814 id=814 data-nosnippet>814</a>                <span class="string">"EFFECTIVE_INTEGRATION_TIME"</span>,
+<a href=#815 id=815 data-nosnippet>815</a>                <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"s"</span>, <span class="string">"coordinates"</span>: coordinates}),
+<a href=#816 id=816 data-nosnippet>816</a>            )<span class="question-mark">?</span>,
+<a href=#817 id=817 data-nosnippet>817</a>        })
+<a href=#818 id=818 data-nosnippet>818</a>    }
+<a href=#819 id=819 data-nosnippet>819</a>
+<a href=#820 id=820 data-nosnippet>820</a>    <span class="doccomment">/// Write the dataset's `pointing_xds`: `series`, the partition's
+<a href=#821 id=821 data-nosnippet>821</a>    /// pointing ([`casa_observation::Observation::pointing`], times in the
+<a href=#822 id=822 data-nosnippet>822</a>    /// partition's time system), for the antennas the dataset's baselines
+<a href=#823 id=823 data-nosnippet>823</a>    /// name. Nothing is written when none has a sample.
+<a href=#824 id=824 data-nosnippet>824</a>    ///
+<a href=#825 id=825 data-nosnippet>825</a>    /// # Errors
+<a href=#826 id=826 data-nosnippet>826</a>    ///
+<a href=#827 id=827 data-nosnippet>827</a>    /// [`ObservationError::Unsupported`] for a frame MSv4 does not name, or
+<a href=#828 id=828 data-nosnippet>828</a>    /// two samples of an antenna at one time; any error writing the store.
+<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="kw">pub fn </span>write_pointing(
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#831 id=831 data-nosnippet>831</a>        catalogue: <span class="kw-2">&amp;</span>Catalogue,
+<a href=#832 id=832 data-nosnippet>832</a>        series: <span class="kw-2">&amp;</span>casa_observation::PointingSeries,
+<a href=#833 id=833 data-nosnippet>833</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>grid = <span class="kw-2">&amp;</span><span class="self">self</span>.target.grid;
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">let </span>antennas = dataset_antennas(catalogue, grid);
+<a href=#836 id=836 data-nosnippet>836</a>        pointing::write_pointing(
+<a href=#837 id=837 data-nosnippet>837</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.store,
+<a href=#838 id=838 data-nosnippet>838</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"/{}/pointing_xds"</span>, <span class="self">self</span>.dataset),
+<a href=#839 id=839 data-nosnippet>839</a>            <span class="kw-2">&amp;</span>antennas,
+<a href=#840 id=840 data-nosnippet>840</a>            series,
+<a href=#841 id=841 data-nosnippet>841</a>            grid.time_scale,
+<a href=#842 id=842 data-nosnippet>842</a>            grid.time_origin,
+<a href=#843 id=843 data-nosnippet>843</a>        )
+<a href=#844 id=844 data-nosnippet>844</a>    }
+<a href=#845 id=845 data-nosnippet>845</a>
+<a href=#846 id=846 data-nosnippet>846</a>    <span class="doccomment">/// What the writer has done.
+<a href=#847 id=847 data-nosnippet>847</a>    </span><span class="attr">#[must_use]
+<a href=#848 id=848 data-nosnippet>848</a>    </span><span class="kw">pub fn </span>counters(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Msv4WriteCounters {
+<a href=#849 id=849 data-nosnippet>849</a>        <span class="self">self</span>.counters
+<a href=#850 id=850 data-nosnippet>850</a>    }
+<a href=#851 id=851 data-nosnippet>851</a>
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="doccomment">/// Times per chunk ([`Msv4StorageOptions::chunks`]). Batches in time
+<a href=#853 id=853 data-nosnippet>853</a>    /// order write each chunk once whatever their size: the times of a
+<a href=#854 id=854 data-nosnippet>854</a>    /// chunk a batch covers only partly are held until the chunk is
+<a href=#855 id=855 data-nosnippet>855</a>    /// complete ([`Self::buffer_bytes`]). A producer whose batches hold a
+<a href=#856 id=856 data-nosnippet>856</a>    /// multiple of this many times, from a chunk boundary, makes the writer
+<a href=#857 id=857 data-nosnippet>857</a>    /// hold nothing and copy nothing more.
+<a href=#858 id=858 data-nosnippet>858</a>    </span><span class="attr">#[must_use]
+<a href=#859 id=859 data-nosnippet>859</a>    </span><span class="kw">pub fn </span>chunk_times(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="self">self</span>.chunk_times
+<a href=#861 id=861 data-nosnippet>861</a>    }
+<a href=#862 id=862 data-nosnippet>862</a>}
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a><span class="doccomment">/// The antennas `grid`'s baselines name, in catalogue order: a dataset's
+<a href=#865 id=865 data-nosnippet>865</a>/// `antenna_xds` holds these alone, as XRADIO's converter writes the
+<a href=#866 id=866 data-nosnippet>866</a>/// antennas of a partition's baselines. The grid was checked against the
+<a href=#867 id=867 data-nosnippet>867</a>/// catalogue.
+<a href=#868 id=868 data-nosnippet>868</a></span><span class="kw">fn </span>dataset_antennas&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#869 id=869 data-nosnippet>869</a>    catalogue: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Catalogue,
+<a href=#870 id=870 data-nosnippet>870</a>    grid: <span class="kw-2">&amp;</span>TimeBaselineGrid,
+<a href=#871 id=871 data-nosnippet>871</a>) -&gt; Vec&lt;(AntennaId, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AntennaEntry)&gt; {
+<a href=#872 id=872 data-nosnippet>872</a>    <span class="kw">let </span><span class="kw-2">mut </span>named = <span class="macro">vec!</span>[<span class="bool-val">false</span>; catalogue.antennas.len()];
+<a href=#873 id=873 data-nosnippet>873</a>    <span class="kw">for </span>baseline <span class="kw">in </span><span class="kw-2">&amp;</span>grid.baselines {
+<a href=#874 id=874 data-nosnippet>874</a>        named[baseline.antenna1.<span class="number">0 </span><span class="kw">as </span>usize] = <span class="bool-val">true</span>;
+<a href=#875 id=875 data-nosnippet>875</a>        named[baseline.antenna2.<span class="number">0 </span><span class="kw">as </span>usize] = <span class="bool-val">true</span>;
+<a href=#876 id=876 data-nosnippet>876</a>    }
+<a href=#877 id=877 data-nosnippet>877</a>    catalogue
+<a href=#878 id=878 data-nosnippet>878</a>        .antennas
+<a href=#879 id=879 data-nosnippet>879</a>        .iter()
+<a href=#880 id=880 data-nosnippet>880</a>        .zip(named)
+<a href=#881 id=881 data-nosnippet>881</a>        .enumerate()
+<a href=#882 id=882 data-nosnippet>882</a>        .filter(|(<span class="kw">_</span>, (<span class="kw">_</span>, named))| <span class="kw-2">*</span>named)
+<a href=#883 id=883 data-nosnippet>883</a>        .map(|(id, (antenna, <span class="kw">_</span>))| (AntennaId(id <span class="kw">as </span>u32), antenna))
+<a href=#884 id=884 data-nosnippet>884</a>        .collect()
+<a href=#885 id=885 data-nosnippet>885</a>}
+<a href=#886 id=886 data-nosnippet>886</a>
+<a href=#887 id=887 data-nosnippet>887</a><span class="doccomment">/// `antennas` as an `antenna_xds`, with their receptors in the dataset's
+<a href=#888 id=888 data-nosnippet>888</a>/// partition `entry`. Where the partition states none (`FEED` has no row
+<a href=#889 id=889 data-nosnippet>889</a>/// for its window), the receptors its correlation products name stand as
+<a href=#890 id=890 data-nosnippet>890</a>/// every antenna's `polarization_type`, without angles
+<a href=#891 id=891 data-nosnippet>891</a>/// ([`product_receptors`]), as XRADIO writes them: its schema requires
+<a href=#892 id=892 data-nosnippet>892</a>/// `receptor_label` and `polarization_type`, and an MSv4 reader takes
+<a href=#893 id=893 data-nosnippet>893</a>/// types without angles as no receptors.
+<a href=#894 id=894 data-nosnippet>894</a></span><span class="kw">fn </span>write_antennas(
+<a href=#895 id=895 data-nosnippet>895</a>    store: <span class="kw-2">&amp;</span>Arc&lt;FilesystemStore&gt;,
+<a href=#896 id=896 data-nosnippet>896</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#897 id=897 data-nosnippet>897</a>    antennas: <span class="kw-2">&amp;</span>[(AntennaId, <span class="kw-2">&amp;</span>AntennaEntry)],
+<a href=#898 id=898 data-nosnippet>898</a>    entry: <span class="kw-2">&amp;</span>PartitionEntry,
+<a href=#899 id=899 data-nosnippet>899</a>    telescope: <span class="kw-2">&amp;</span>str,
+<a href=#900 id=900 data-nosnippet>900</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">let </span>none = Receptors {
+<a href=#902 id=902 data-nosnippet>902</a>        types: Vec::new(),
+<a href=#903 id=903 data-nosnippet>903</a>        angles: Vec::new(),
+<a href=#904 id=904 data-nosnippet>904</a>    };
+<a href=#905 id=905 data-nosnippet>905</a>    <span class="kw">let </span>own: Vec&lt;<span class="kw-2">&amp;</span>Receptors&gt; = antennas
+<a href=#906 id=906 data-nosnippet>906</a>        .iter()
+<a href=#907 id=907 data-nosnippet>907</a>        .map(|(id, <span class="kw">_</span>)| entry.receptors.get(id).unwrap_or(<span class="kw-2">&amp;</span>none))
+<a href=#908 id=908 data-nosnippet>908</a>        .collect();
+<a href=#909 id=909 data-nosnippet>909</a>    <span class="kw">let </span>antennas: Vec&lt;<span class="kw-2">&amp;</span>AntennaEntry&gt; = antennas.iter().map(|(<span class="kw">_</span>, antenna)| <span class="kw-2">*</span>antenna).collect();
+<a href=#910 id=910 data-nosnippet>910</a>    <span class="kw">let </span>count = antennas.len() <span class="kw">as </span>u64;
+<a href=#911 id=911 data-nosnippet>911</a>    <span class="kw">let </span>receptors = own.first().map_or(<span class="number">0</span>, |own| own.types.len());
+<a href=#912 id=912 data-nosnippet>912</a>    <span class="kw">if </span>own
+<a href=#913 id=913 data-nosnippet>913</a>        .iter()
+<a href=#914 id=914 data-nosnippet>914</a>        .any(|own| own.types.len() != receptors || own.angles.len() != receptors)
+<a href=#915 id=915 data-nosnippet>915</a>    {
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#917 id=917 data-nosnippet>917</a>            what: <span class="string">"antennas with different receptor counts"</span>,
+<a href=#918 id=918 data-nosnippet>918</a>        });
+<a href=#919 id=919 data-nosnippet>919</a>    }
+<a href=#920 id=920 data-nosnippet>920</a>    <span class="kw">let </span><span class="kw-2">mut </span>attributes = <span class="macro">json!</span>({
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="string">"type"</span>: <span class="string">"antenna"</span>,
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="string">"overall_telescope_name"</span>: telescope,
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="string">"relocatable_antennas"</span>: <span class="kw">super</span>::STATION_NAMED.contains(<span class="kw-2">&amp;</span>telescope),
+<a href=#924 id=924 data-nosnippet>924</a>    });
+<a href=#925 id=925 data-nosnippet>925</a>    <span class="kw">if </span>receptors == <span class="number">0 </span>{
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="comment">// No ANTENNA_RECEPTOR_ANGLE names polarization_type among its
+<a href=#927 id=927 data-nosnippet>927</a>        // coordinates, so the group does, as xarray (and XRADIO) writes a
+<a href=#928 id=928 data-nosnippet>928</a>        // coordinate no variable refers to.
+<a href=#929 id=929 data-nosnippet>929</a>        </span>attributes[<span class="string">"coordinates"</span>] = <span class="macro">json!</span>(<span class="string">"polarization_type"</span>);
+<a href=#930 id=930 data-nosnippet>930</a>    }
+<a href=#931 id=931 data-nosnippet>931</a>    create_group(store, path, attributes)<span class="question-mark">?</span>;
+<a href=#932 id=932 data-nosnippet>932</a>    <span class="kw">if </span>antennas
+<a href=#933 id=933 data-nosnippet>933</a>        .iter()
+<a href=#934 id=934 data-nosnippet>934</a>        .any(|antenna| antenna.position.refer() != PositionRef::ITRF)
+<a href=#935 id=935 data-nosnippet>935</a>    {
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#937 id=937 data-nosnippet>937</a>            what: <span class="string">"writing antenna positions in other than ITRF"</span>,
+<a href=#938 id=938 data-nosnippet>938</a>        });
+<a href=#939 id=939 data-nosnippet>939</a>    }
+<a href=#940 id=940 data-nosnippet>940</a>    <span class="kw">let </span>column = |f: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>AntennaEntry) -&gt; String| {
+<a href=#941 id=941 data-nosnippet>941</a>        antennas
+<a href=#942 id=942 data-nosnippet>942</a>            .iter()
+<a href=#943 id=943 data-nosnippet>943</a>            .map(|antenna| f(antenna))
+<a href=#944 id=944 data-nosnippet>944</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#945 id=945 data-nosnippet>945</a>    };
+<a href=#946 id=946 data-nosnippet>946</a>    <span class="kw">for </span>(name, values) <span class="kw">in </span>[
+<a href=#947 id=947 data-nosnippet>947</a>        (<span class="string">"antenna_name"</span>, column(|a| a.name.clone())),
+<a href=#948 id=948 data-nosnippet>948</a>        (<span class="string">"station_name"</span>, column(|a| a.station.clone())),
+<a href=#949 id=949 data-nosnippet>949</a>        (<span class="string">"mount"</span>, column(|a| a.mount.clone())),
+<a href=#950 id=950 data-nosnippet>950</a>        (
+<a href=#951 id=951 data-nosnippet>951</a>            <span class="string">"telescope_name"</span>,
+<a href=#952 id=952 data-nosnippet>952</a>            <span class="macro">vec!</span>[telescope.to_string(); antennas.len()],
+<a href=#953 id=953 data-nosnippet>953</a>        ),
+<a href=#954 id=954 data-nosnippet>954</a>    ] {
 <a href=#955 id=955 data-nosnippet>955</a>        strings(
 <a href=#956 id=956 data-nosnippet>956</a>            store,
-<a href=#957 id=957 data-nosnippet>957</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/receptor_label"</span>),
-<a href=#958 id=958 data-nosnippet>958</a>            <span class="kw-2">&amp;</span>[width <span class="kw">as </span>u64],
-<a href=#959 id=959 data-nosnippet>959</a>            <span class="kw-2">&amp;</span>[<span class="string">"receptor_label"</span>],
-<a href=#960 id=960 data-nosnippet>960</a>            <span class="kw-2">&amp;</span>labels,
+<a href=#957 id=957 data-nosnippet>957</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/{name}"</span>),
+<a href=#958 id=958 data-nosnippet>958</a>            <span class="kw-2">&amp;</span>[count],
+<a href=#959 id=959 data-nosnippet>959</a>            <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>],
+<a href=#960 id=960 data-nosnippet>960</a>            <span class="kw-2">&amp;</span>values,
 <a href=#961 id=961 data-nosnippet>961</a>        )<span class="question-mark">?</span>;
-<a href=#962 id=962 data-nosnippet>962</a>        strings(
-<a href=#963 id=963 data-nosnippet>963</a>            store,
-<a href=#964 id=964 data-nosnippet>964</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/polarization_type"</span>),
-<a href=#965 id=965 data-nosnippet>965</a>            <span class="kw-2">&amp;</span>[count, width <span class="kw">as </span>u64],
-<a href=#966 id=966 data-nosnippet>966</a>            <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"receptor_label"</span>],
-<a href=#967 id=967 data-nosnippet>967</a>            <span class="kw-2">&amp;</span>types,
-<a href=#968 id=968 data-nosnippet>968</a>        )<span class="question-mark">?</span>;
-<a href=#969 id=969 data-nosnippet>969</a>    }
-<a href=#970 id=970 data-nosnippet>970</a>    strings(
-<a href=#971 id=971 data-nosnippet>971</a>        store,
-<a href=#972 id=972 data-nosnippet>972</a>        <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/cartesian_pos_label"</span>),
-<a href=#973 id=973 data-nosnippet>973</a>        <span class="kw-2">&amp;</span>[<span class="number">3</span>],
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw-2">&amp;</span>[<span class="string">"cartesian_pos_label"</span>],
-<a href=#975 id=975 data-nosnippet>975</a>        <span class="kw-2">&amp;</span>[<span class="string">"x"</span>, <span class="string">"y"</span>, <span class="string">"z"</span>].map(String::from),
-<a href=#976 id=976 data-nosnippet>976</a>    )<span class="question-mark">?</span>;
-<a href=#977 id=977 data-nosnippet>977</a>    <span class="kw">let </span>small = |name: <span class="kw-2">&amp;</span>str, shape: <span class="kw-2">&amp;</span>[u64], dims: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str], values: <span class="kw-2">&amp;</span>[f64], attributes: Value| {
-<a href=#978 id=978 data-nosnippet>978</a>        <span class="kw">let </span>array = create_array(
-<a href=#979 id=979 data-nosnippet>979</a>            store,
-<a href=#980 id=980 data-nosnippet>980</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/{name}"</span>),
-<a href=#981 id=981 data-nosnippet>981</a>            ArraySpec {
-<a href=#982 id=982 data-nosnippet>982</a>                shape,
-<a href=#983 id=983 data-nosnippet>983</a>                chunks: shape,
-<a href=#984 id=984 data-nosnippet>984</a>                data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
-<a href=#985 id=985 data-nosnippet>985</a>                codecs: codecs(Msv4Codec::Zstd, <span class="number">8</span>),
-<a href=#986 id=986 data-nosnippet>986</a>                fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
-<a href=#987 id=987 data-nosnippet>987</a>                dimensions: dims,
-<a href=#988 id=988 data-nosnippet>988</a>                attributes,
-<a href=#989 id=989 data-nosnippet>989</a>            },
-<a href=#990 id=990 data-nosnippet>990</a>        )<span class="question-mark">?</span>;
-<a href=#991 id=991 data-nosnippet>991</a>        array
-<a href=#992 id=992 data-nosnippet>992</a>            .store_array_subset(<span class="kw-2">&amp;</span>ArraySubset::new_with_shape(shape.to_vec()), values)
-<a href=#993 id=993 data-nosnippet>993</a>            .map_err(storage)
-<a href=#994 id=994 data-nosnippet>994</a>    };
-<a href=#995 id=995 data-nosnippet>995</a>    <span class="kw">let </span>positions: Vec&lt;f64&gt; = antennas.iter().flat_map(|a| a.position.values()).collect();
-<a href=#996 id=996 data-nosnippet>996</a>    small(
-<a href=#997 id=997 data-nosnippet>997</a>        <span class="string">"ANTENNA_POSITION"</span>,
-<a href=#998 id=998 data-nosnippet>998</a>        <span class="kw-2">&amp;</span>[count, <span class="number">3</span>],
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"cartesian_pos_label"</span>],
-<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw-2">&amp;</span>positions,
-<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="macro">json!</span>({
-<a href=#1002 id=1002 data-nosnippet>1002</a>            <span class="string">"type"</span>: <span class="string">"location"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>, <span class="string">"frame"</span>: <span class="string">"ITRS"</span>, <span class="string">"coordinate_system"</span>: <span class="string">"geocentric"</span>,
-<a href=#1003 id=1003 data-nosnippet>1003</a>            <span class="string">"origin_object_name"</span>: <span class="string">"earth"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount station_name telescope_name"</span>,
-<a href=#1004 id=1004 data-nosnippet>1004</a>        }),
-<a href=#1005 id=1005 data-nosnippet>1005</a>    )<span class="question-mark">?</span>;
-<a href=#1006 id=1006 data-nosnippet>1006</a>    <span class="kw">let </span>diameters = antennas
-<a href=#1007 id=1007 data-nosnippet>1007</a>        .iter()
-<a href=#1008 id=1008 data-nosnippet>1008</a>        .map(|a| value_in(<span class="kw-2">&amp;</span>a.dish_diameter, <span class="string">"m"</span>))
-<a href=#1009 id=1009 data-nosnippet>1009</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#1010 id=1010 data-nosnippet>1010</a>    small(
-<a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="string">"ANTENNA_DISH_DIAMETER"</span>,
-<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="kw-2">&amp;</span>[count],
-<a href=#1013 id=1013 data-nosnippet>1013</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>],
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw-2">&amp;</span>diameters,
-<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount station_name telescope_name"</span>}),
-<a href=#1016 id=1016 data-nosnippet>1016</a>    )<span class="question-mark">?</span>;
-<a href=#1017 id=1017 data-nosnippet>1017</a>    <span class="kw">if </span>receptors == <span class="number">0 </span>{
-<a href=#1018 id=1018 data-nosnippet>1018</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#1019 id=1019 data-nosnippet>1019</a>    }
-<a href=#1020 id=1020 data-nosnippet>1020</a>    <span class="kw">let </span><span class="kw-2">mut </span>angles = Vec::new();
-<a href=#1021 id=1021 data-nosnippet>1021</a>    <span class="kw">for </span>own <span class="kw">in </span><span class="kw-2">&amp;</span>own {
-<a href=#1022 id=1022 data-nosnippet>1022</a>        <span class="kw">for </span>angle <span class="kw">in </span><span class="kw-2">&amp;</span>own.angles {
-<a href=#1023 id=1023 data-nosnippet>1023</a>            angles.push(value_in(angle, <span class="string">"rad"</span>)<span class="question-mark">?</span>);
-<a href=#1024 id=1024 data-nosnippet>1024</a>        }
-<a href=#1025 id=1025 data-nosnippet>1025</a>    }
-<a href=#1026 id=1026 data-nosnippet>1026</a>    small(
-<a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="string">"ANTENNA_RECEPTOR_ANGLE"</span>,
-<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="kw-2">&amp;</span>[count, receptors <span class="kw">as </span>u64],
-<a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"receptor_label"</span>],
-<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="kw-2">&amp;</span>angles,
-<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="macro">json!</span>({
-<a href=#1032 id=1032 data-nosnippet>1032</a>            <span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"rad"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount polarization_type station_name telescope_name"</span>,
-<a href=#1033 id=1033 data-nosnippet>1033</a>        }),
-<a href=#1034 id=1034 data-nosnippet>1034</a>    )
-<a href=#1035 id=1035 data-nosnippet>1035</a>}
-<a href=#1036 id=1036 data-nosnippet>1036</a>
-<a href=#1037 id=1037 data-nosnippet>1037</a><span class="doccomment">/// The receptor types a partition's correlation products name, for the
-<a href=#1038 id=1038 data-nosnippet>1038</a>/// `antenna_xds` of a window `FEED` states no receptors for: each receptor
-<a href=#1039 id=1039 data-nosnippet>1039</a>/// of its receptor products (`RR` to `QQ` in casacore's order, mixed
-<a href=#1040 id=1040 data-nosnippet>1040</a>/// products included) once, in order of first appearance, so `RR, LL`
-<a href=#1041 id=1041 data-nosnippet>1041</a>/// names `R, L`. Without a receptor product (Stokes or single-dish
-<a href=#1042 id=1042 data-nosnippet>1042</a>/// products only), the letters of the first product's label.
-<a href=#1043 id=1043 data-nosnippet>1043</a>///
-<a href=#1044 id=1044 data-nosnippet>1044</a>/// XRADIO's converter (1.3.1, `create_antenna_xds`) takes the letters of
-<a href=#1045 id=1045 data-nosnippet>1045</a>/// the first product's label alone, which names `R, R` for `RR, LL`,
-<a href=#1046 id=1046 data-nosnippet>1046</a>/// where its schema describes `polarization_type` as the receptors'
-<a href=#1047 id=1047 data-nosnippet>1047</a>/// types (`['R', 'L']`): a divergence recorded in
-<a href=#1048 id=1048 data-nosnippet>1048</a>/// `docs/measurement-set/trial/README.md` ("Fixture findings"). A single
-<a href=#1049 id=1049 data-nosnippet>1049</a>/// receptor product (`RR` alone) names one receptor here and two in
-<a href=#1050 id=1050 data-nosnippet>1050</a>/// XRADIO.
-<a href=#1051 id=1051 data-nosnippet>1051</a></span><span class="kw">fn </span>product_receptors(correlations: <span class="kw-2">&amp;</span>[Correlation]) -&gt; Vec&lt;String&gt; {
-<a href=#1052 id=1052 data-nosnippet>1052</a>    <span class="kw">let </span>receptor_products = Correlation::RR.casacore_code()..=Correlation::QQ.casacore_code();
-<a href=#1053 id=1053 data-nosnippet>1053</a>    <span class="kw">let </span><span class="kw-2">mut </span>types: Vec&lt;String&gt; = Vec::new();
-<a href=#1054 id=1054 data-nosnippet>1054</a>    <span class="kw">for </span>correlation <span class="kw">in </span>correlations
-<a href=#1055 id=1055 data-nosnippet>1055</a>        .iter()
-<a href=#1056 id=1056 data-nosnippet>1056</a>        .filter(|correlation| receptor_products.contains(<span class="kw-2">&amp;</span>correlation.casacore_code()))
-<a href=#1057 id=1057 data-nosnippet>1057</a>    {
-<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="kw">for </span>letter <span class="kw">in </span>correlation.label().chars().map(String::from) {
-<a href=#1059 id=1059 data-nosnippet>1059</a>            <span class="kw">if </span>!types.contains(<span class="kw-2">&amp;</span>letter) {
-<a href=#1060 id=1060 data-nosnippet>1060</a>                types.push(letter);
-<a href=#1061 id=1061 data-nosnippet>1061</a>            }
-<a href=#1062 id=1062 data-nosnippet>1062</a>        }
-<a href=#1063 id=1063 data-nosnippet>1063</a>    }
-<a href=#1064 id=1064 data-nosnippet>1064</a>    <span class="kw">if </span>types.is_empty()
-<a href=#1065 id=1065 data-nosnippet>1065</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(first) = correlations.first()
-<a href=#1066 id=1066 data-nosnippet>1066</a>    {
-<a href=#1067 id=1067 data-nosnippet>1067</a>        types = first.label().chars().map(String::from).collect();
-<a href=#1068 id=1068 data-nosnippet>1068</a>    }
-<a href=#1069 id=1069 data-nosnippet>1069</a>    types
-<a href=#1070 id=1070 data-nosnippet>1070</a>}
-<a href=#1071 id=1071 data-nosnippet>1071</a>
-<a href=#1072 id=1072 data-nosnippet>1072</a><span class="kw">impl </span>std::fmt::Debug <span class="kw">for </span>Msv4Writer {
-<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
-<a href=#1074 id=1074 data-nosnippet>1074</a>        f.debug_struct(<span class="string">"Msv4Writer"</span>)
-<a href=#1075 id=1075 data-nosnippet>1075</a>            .field(<span class="string">"dataset"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.dataset)
-<a href=#1076 id=1076 data-nosnippet>1076</a>            .field(<span class="string">"shape"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.shape)
-<a href=#1077 id=1077 data-nosnippet>1077</a>            .finish_non_exhaustive()
-<a href=#1078 id=1078 data-nosnippet>1078</a>    }
-<a href=#1079 id=1079 data-nosnippet>1079</a>}
+<a href=#962 id=962 data-nosnippet>962</a>    }
+<a href=#963 id=963 data-nosnippet>963</a>    <span class="kw">let </span>types: Vec&lt;String&gt; = <span class="kw">if </span>receptors &gt; <span class="number">0 </span>{
+<a href=#964 id=964 data-nosnippet>964</a>        own.iter()
+<a href=#965 id=965 data-nosnippet>965</a>            .flat_map(|own| own.types.iter().cloned())
+<a href=#966 id=966 data-nosnippet>966</a>            .collect()
+<a href=#967 id=967 data-nosnippet>967</a>    } <span class="kw">else </span>{
+<a href=#968 id=968 data-nosnippet>968</a>        <span class="kw">let </span>named = product_receptors(<span class="kw-2">&amp;</span>entry.correlations);
+<a href=#969 id=969 data-nosnippet>969</a>        own.iter().flat_map(|<span class="kw">_</span>| named.iter().cloned()).collect()
+<a href=#970 id=970 data-nosnippet>970</a>    };
+<a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">let </span>width = types.len() / own.len().max(<span class="number">1</span>);
+<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">if </span>width &gt; <span class="number">0 </span>{
+<a href=#973 id=973 data-nosnippet>973</a>        <span class="kw">let </span>labels: Vec&lt;String&gt; = (<span class="number">0</span>..width).map(|r| <span class="macro">format!</span>(<span class="string">"pol_{r}"</span>)).collect();
+<a href=#974 id=974 data-nosnippet>974</a>        strings(
+<a href=#975 id=975 data-nosnippet>975</a>            store,
+<a href=#976 id=976 data-nosnippet>976</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/receptor_label"</span>),
+<a href=#977 id=977 data-nosnippet>977</a>            <span class="kw-2">&amp;</span>[width <span class="kw">as </span>u64],
+<a href=#978 id=978 data-nosnippet>978</a>            <span class="kw-2">&amp;</span>[<span class="string">"receptor_label"</span>],
+<a href=#979 id=979 data-nosnippet>979</a>            <span class="kw-2">&amp;</span>labels,
+<a href=#980 id=980 data-nosnippet>980</a>        )<span class="question-mark">?</span>;
+<a href=#981 id=981 data-nosnippet>981</a>        strings(
+<a href=#982 id=982 data-nosnippet>982</a>            store,
+<a href=#983 id=983 data-nosnippet>983</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/polarization_type"</span>),
+<a href=#984 id=984 data-nosnippet>984</a>            <span class="kw-2">&amp;</span>[count, width <span class="kw">as </span>u64],
+<a href=#985 id=985 data-nosnippet>985</a>            <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"receptor_label"</span>],
+<a href=#986 id=986 data-nosnippet>986</a>            <span class="kw-2">&amp;</span>types,
+<a href=#987 id=987 data-nosnippet>987</a>        )<span class="question-mark">?</span>;
+<a href=#988 id=988 data-nosnippet>988</a>    }
+<a href=#989 id=989 data-nosnippet>989</a>    strings(
+<a href=#990 id=990 data-nosnippet>990</a>        store,
+<a href=#991 id=991 data-nosnippet>991</a>        <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/cartesian_pos_label"</span>),
+<a href=#992 id=992 data-nosnippet>992</a>        <span class="kw-2">&amp;</span>[<span class="number">3</span>],
+<a href=#993 id=993 data-nosnippet>993</a>        <span class="kw-2">&amp;</span>[<span class="string">"cartesian_pos_label"</span>],
+<a href=#994 id=994 data-nosnippet>994</a>        <span class="kw-2">&amp;</span>[<span class="string">"x"</span>, <span class="string">"y"</span>, <span class="string">"z"</span>].map(String::from),
+<a href=#995 id=995 data-nosnippet>995</a>    )<span class="question-mark">?</span>;
+<a href=#996 id=996 data-nosnippet>996</a>    <span class="kw">let </span>small = |name: <span class="kw-2">&amp;</span>str, shape: <span class="kw-2">&amp;</span>[u64], dims: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str], values: <span class="kw-2">&amp;</span>[f64], attributes: Value| {
+<a href=#997 id=997 data-nosnippet>997</a>        <span class="kw">let </span>array = create_array(
+<a href=#998 id=998 data-nosnippet>998</a>            store,
+<a href=#999 id=999 data-nosnippet>999</a>            <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{path}/{name}"</span>),
+<a href=#1000 id=1000 data-nosnippet>1000</a>            ArraySpec {
+<a href=#1001 id=1001 data-nosnippet>1001</a>                shape,
+<a href=#1002 id=1002 data-nosnippet>1002</a>                chunks: shape,
+<a href=#1003 id=1003 data-nosnippet>1003</a>                data_type: <span class="macro">json!</span>(<span class="string">"float64"</span>),
+<a href=#1004 id=1004 data-nosnippet>1004</a>                codecs: codecs(Msv4Codec::Zstd, <span class="number">8</span>),
+<a href=#1005 id=1005 data-nosnippet>1005</a>                fill: <span class="macro">json!</span>(<span class="string">"NaN"</span>),
+<a href=#1006 id=1006 data-nosnippet>1006</a>                dimensions: dims,
+<a href=#1007 id=1007 data-nosnippet>1007</a>                attributes,
+<a href=#1008 id=1008 data-nosnippet>1008</a>            },
+<a href=#1009 id=1009 data-nosnippet>1009</a>        )<span class="question-mark">?</span>;
+<a href=#1010 id=1010 data-nosnippet>1010</a>        array
+<a href=#1011 id=1011 data-nosnippet>1011</a>            .store_array_subset(<span class="kw-2">&amp;</span>ArraySubset::new_with_shape(shape.to_vec()), values)
+<a href=#1012 id=1012 data-nosnippet>1012</a>            .map_err(storage)
+<a href=#1013 id=1013 data-nosnippet>1013</a>    };
+<a href=#1014 id=1014 data-nosnippet>1014</a>    <span class="kw">let </span>positions: Vec&lt;f64&gt; = antennas.iter().flat_map(|a| a.position.values()).collect();
+<a href=#1015 id=1015 data-nosnippet>1015</a>    small(
+<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="string">"ANTENNA_POSITION"</span>,
+<a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="kw-2">&amp;</span>[count, <span class="number">3</span>],
+<a href=#1018 id=1018 data-nosnippet>1018</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"cartesian_pos_label"</span>],
+<a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="kw-2">&amp;</span>positions,
+<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="macro">json!</span>({
+<a href=#1021 id=1021 data-nosnippet>1021</a>            <span class="string">"type"</span>: <span class="string">"location"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>, <span class="string">"frame"</span>: <span class="string">"ITRS"</span>, <span class="string">"coordinate_system"</span>: <span class="string">"geocentric"</span>,
+<a href=#1022 id=1022 data-nosnippet>1022</a>            <span class="string">"origin_object_name"</span>: <span class="string">"earth"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount station_name telescope_name"</span>,
+<a href=#1023 id=1023 data-nosnippet>1023</a>        }),
+<a href=#1024 id=1024 data-nosnippet>1024</a>    )<span class="question-mark">?</span>;
+<a href=#1025 id=1025 data-nosnippet>1025</a>    <span class="kw">let </span>diameters = antennas
+<a href=#1026 id=1026 data-nosnippet>1026</a>        .iter()
+<a href=#1027 id=1027 data-nosnippet>1027</a>        .map(|a| value_in(<span class="kw-2">&amp;</span>a.dish_diameter, <span class="string">"m"</span>))
+<a href=#1028 id=1028 data-nosnippet>1028</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#1029 id=1029 data-nosnippet>1029</a>    small(
+<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="string">"ANTENNA_DISH_DIAMETER"</span>,
+<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="kw-2">&amp;</span>[count],
+<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>],
+<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw-2">&amp;</span>diameters,
+<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="macro">json!</span>({<span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"m"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount station_name telescope_name"</span>}),
+<a href=#1035 id=1035 data-nosnippet>1035</a>    )<span class="question-mark">?</span>;
+<a href=#1036 id=1036 data-nosnippet>1036</a>    <span class="kw">if </span>receptors == <span class="number">0 </span>{
+<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#1038 id=1038 data-nosnippet>1038</a>    }
+<a href=#1039 id=1039 data-nosnippet>1039</a>    <span class="kw">let </span><span class="kw-2">mut </span>angles = Vec::new();
+<a href=#1040 id=1040 data-nosnippet>1040</a>    <span class="kw">for </span>own <span class="kw">in </span><span class="kw-2">&amp;</span>own {
+<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="kw">for </span>angle <span class="kw">in </span><span class="kw-2">&amp;</span>own.angles {
+<a href=#1042 id=1042 data-nosnippet>1042</a>            angles.push(value_in(angle, <span class="string">"rad"</span>)<span class="question-mark">?</span>);
+<a href=#1043 id=1043 data-nosnippet>1043</a>        }
+<a href=#1044 id=1044 data-nosnippet>1044</a>    }
+<a href=#1045 id=1045 data-nosnippet>1045</a>    small(
+<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="string">"ANTENNA_RECEPTOR_ANGLE"</span>,
+<a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="kw-2">&amp;</span>[count, receptors <span class="kw">as </span>u64],
+<a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="kw-2">&amp;</span>[<span class="string">"antenna_name"</span>, <span class="string">"receptor_label"</span>],
+<a href=#1049 id=1049 data-nosnippet>1049</a>        <span class="kw-2">&amp;</span>angles,
+<a href=#1050 id=1050 data-nosnippet>1050</a>        <span class="macro">json!</span>({
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="string">"type"</span>: <span class="string">"quantity"</span>, <span class="string">"units"</span>: <span class="string">"rad"</span>, <span class="string">"coordinates"</span>: <span class="string">"mount polarization_type station_name telescope_name"</span>,
+<a href=#1052 id=1052 data-nosnippet>1052</a>        }),
+<a href=#1053 id=1053 data-nosnippet>1053</a>    )
+<a href=#1054 id=1054 data-nosnippet>1054</a>}
+<a href=#1055 id=1055 data-nosnippet>1055</a>
+<a href=#1056 id=1056 data-nosnippet>1056</a><span class="doccomment">/// The receptor types a partition's correlation products name, for the
+<a href=#1057 id=1057 data-nosnippet>1057</a>/// `antenna_xds` of a window `FEED` states no receptors for: each receptor
+<a href=#1058 id=1058 data-nosnippet>1058</a>/// of its receptor products (`RR` to `QQ` in casacore's order, mixed
+<a href=#1059 id=1059 data-nosnippet>1059</a>/// products included) once, in order of first appearance, so `RR, LL`
+<a href=#1060 id=1060 data-nosnippet>1060</a>/// names `R, L`. Without a receptor product (Stokes or single-dish
+<a href=#1061 id=1061 data-nosnippet>1061</a>/// products only), the letters of the first product's label.
+<a href=#1062 id=1062 data-nosnippet>1062</a>///
+<a href=#1063 id=1063 data-nosnippet>1063</a>/// XRADIO's converter (1.3.1, `create_antenna_xds`) takes the letters of
+<a href=#1064 id=1064 data-nosnippet>1064</a>/// the first product's label alone, which names `R, R` for `RR, LL`,
+<a href=#1065 id=1065 data-nosnippet>1065</a>/// where its schema describes `polarization_type` as the receptors'
+<a href=#1066 id=1066 data-nosnippet>1066</a>/// types (`['R', 'L']`): a divergence recorded in
+<a href=#1067 id=1067 data-nosnippet>1067</a>/// `docs/measurement-set/trial/README.md` ("Fixture findings"). A single
+<a href=#1068 id=1068 data-nosnippet>1068</a>/// receptor product (`RR` alone) names one receptor here and two in
+<a href=#1069 id=1069 data-nosnippet>1069</a>/// XRADIO.
+<a href=#1070 id=1070 data-nosnippet>1070</a></span><span class="kw">fn </span>product_receptors(correlations: <span class="kw-2">&amp;</span>[Correlation]) -&gt; Vec&lt;String&gt; {
+<a href=#1071 id=1071 data-nosnippet>1071</a>    <span class="kw">let </span>receptor_products = Correlation::RR.casacore_code()..=Correlation::QQ.casacore_code();
+<a href=#1072 id=1072 data-nosnippet>1072</a>    <span class="kw">let </span><span class="kw-2">mut </span>types: Vec&lt;String&gt; = Vec::new();
+<a href=#1073 id=1073 data-nosnippet>1073</a>    <span class="kw">for </span>correlation <span class="kw">in </span>correlations
+<a href=#1074 id=1074 data-nosnippet>1074</a>        .iter()
+<a href=#1075 id=1075 data-nosnippet>1075</a>        .filter(|correlation| receptor_products.contains(<span class="kw-2">&amp;</span>correlation.casacore_code()))
+<a href=#1076 id=1076 data-nosnippet>1076</a>    {
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="kw">for </span>letter <span class="kw">in </span>correlation.label().chars().map(String::from) {
+<a href=#1078 id=1078 data-nosnippet>1078</a>            <span class="kw">if </span>!types.contains(<span class="kw-2">&amp;</span>letter) {
+<a href=#1079 id=1079 data-nosnippet>1079</a>                types.push(letter);
+<a href=#1080 id=1080 data-nosnippet>1080</a>            }
+<a href=#1081 id=1081 data-nosnippet>1081</a>        }
+<a href=#1082 id=1082 data-nosnippet>1082</a>    }
+<a href=#1083 id=1083 data-nosnippet>1083</a>    <span class="kw">if </span>types.is_empty()
+<a href=#1084 id=1084 data-nosnippet>1084</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(first) = correlations.first()
+<a href=#1085 id=1085 data-nosnippet>1085</a>    {
+<a href=#1086 id=1086 data-nosnippet>1086</a>        types = first.label().chars().map(String::from).collect();
+<a href=#1087 id=1087 data-nosnippet>1087</a>    }
+<a href=#1088 id=1088 data-nosnippet>1088</a>    types
+<a href=#1089 id=1089 data-nosnippet>1089</a>}
+<a href=#1090 id=1090 data-nosnippet>1090</a>
+<a href=#1091 id=1091 data-nosnippet>1091</a><span class="kw">impl </span>std::fmt::Debug <span class="kw">for </span>Msv4Writer {
+<a href=#1092 id=1092 data-nosnippet>1092</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
+<a href=#1093 id=1093 data-nosnippet>1093</a>        f.debug_struct(<span class="string">"Msv4Writer"</span>)
+<a href=#1094 id=1094 data-nosnippet>1094</a>            .field(<span class="string">"dataset"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.dataset)
+<a href=#1095 id=1095 data-nosnippet>1095</a>            .field(<span class="string">"shape"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.shape)
+<a href=#1096 id=1096 data-nosnippet>1096</a>            .finish_non_exhaustive()
+<a href=#1097 id=1097 data-nosnippet>1097</a>    }
+<a href=#1098 id=1098 data-nosnippet>1098</a>}
 </code></pre></div></section></main></body></html>

@@ -1698,7 +1698,19 @@ the MSv2's order.</p>
   <code>Binding::channel_orders</code> states the order, so a consumer carrying
   per-channel values between the stores maps channel <code>c</code> through
   <code>ChannelOrder::channel</code>. <code>check_convert.py compare</code> compares such a dataset
-  with its channels reversed and lists it.</li>
+  with its channels reversed and lists it, and the imaging store law
+  (<code>casa_imaging_application::store_law</code>) compares each MeasurementSet
+  channel with the same channel of the other store
+  (<code>a_window_another_store_reverses_holds_the_store_law</code>, on this MS and
+  XRADIO's conversion of it).</li>
+<li>XRADIO's schema requires the frequency coordinate's <code>reference_frequency</code>
+  and XRADIO writes the window's MSv2 <code>REF_FREQUENCY</code> there; its schema
+  check validates only that the attribute is present and well formed.
+  casa-rs's MSv4 writer wrote the middle channel's frequency, which the
+  trial fixture's <code>REF_FREQUENCY</code> happens to equal; it now writes the
+  window's stated reference frequency in its frame (the middle channel only
+  where the source states none), and <code>check_convert.py compare</code> checks the
+  value, units and observer, and the channel width's magnitude and units.</li>
 <li>XRADIO relabels MSv2's <code>UVW</code> ITRF as the phase centre's frame (<code>fk5</code>),
   following CASA <code>fixvis</code>'s note that the label is usually wrong; names
   antennas <code>NAME_STATION</code> and fields <code>NAME_FIELDID</code>; and declares the
