@@ -239,6 +239,54 @@ fn save_preserves_existing_measure_reference_keywords() {
     );
 }
 
+/// UVW's MEASINFO record, read back from `ms`.
+fn uvw_measinfo(ms: &MeasurementSet) -> RecordValue {
+    match ms
+        .main_table()
+        .column_keywords("UVW")
+        .unwrap()
+        .get("MEASINFO")
+    {
+        Some(Value::Record(record)) => record.clone(),
+        other => panic!("expected UVW.MEASINFO record, got {other:?}"),
+    }
+}
+
+#[test]
+fn saves_keep_a_uvw_measinfo_without_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("legacy-uvw.ms");
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+
+    // A new MS takes casacore's default, Muvw's ITRF.
+    let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+    assert_eq!(uvw_measinfo(&ms).get("Ref"), Some(&string("ITRF")));
+
+    // casa-rs wrote {type: uvw} without a Ref before that default, which
+    // casacore reads as J2000. No save may fill in ITRF.
+    let mut keywords = ms.main_table().column_keywords("UVW").unwrap().clone();
+    keywords.upsert(
+        "MEASINFO",
+        Value::Record(RecordValue::new(vec![RecordField::new(
+            "type",
+            string("uvw"),
+        )])),
+    );
+    ms.main_table_mut().set_column_keywords("UVW", keywords);
+    ms.save().unwrap();
+
+    let mut reopened = MeasurementSet::open(&ms_path).unwrap();
+    assert_eq!(uvw_measinfo(&reopened).get("type"), Some(&string("uvw")));
+    assert_eq!(uvw_measinfo(&reopened).get("Ref"), None);
+    reopened.save_main_table_only().unwrap();
+    let mut reopened = MeasurementSet::open(&ms_path).unwrap();
+    assert_eq!(uvw_measinfo(&reopened).get("Ref"), None);
+    let copy_path = dir.path().join("legacy-uvw-copy.ms");
+    reopened.save_as(&copy_path).unwrap();
+    let copy = MeasurementSet::open(&copy_path).unwrap();
+    assert_eq!(uvw_measinfo(&copy).get("Ref"), None);
+}
+
 #[test]
 fn selection_round_trip() {
     let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();

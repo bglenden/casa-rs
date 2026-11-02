@@ -1386,10 +1386,20 @@ fn a_failed_replacement_leaves_the_measurement_set_as_it_was() {
     for path in &payload {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).expect("hide");
     }
-    let failed = plan.write();
-    for path in &payload {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("show");
+    let show = || {
+        for path in &payload {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("show");
+        }
+    };
+    // Root, as in a cloud container, reads a file whatever its mode, so
+    // hiding the payload cannot make the write fail there.
+    if payload.iter().any(|path| std::fs::File::open(path).is_ok()) {
+        show();
+        eprintln!("skipping: this user reads files of mode 000 (root?), so no write fails");
+        return;
     }
+    let failed = plan.write();
+    show();
     assert!(failed.is_err(), "{:?}", failed.ok());
     assert_eq!(main_ints(&early, "ANTENNA1").len(), 60, "as it was");
     assert_eq!(

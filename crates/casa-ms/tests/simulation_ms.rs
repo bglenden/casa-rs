@@ -143,6 +143,24 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
 }
 
 #[test]
+fn uvw_measinfo_carries_casacore_default_itrf_reference() {
+    let temp = tempfile::tempdir().unwrap();
+    let request = request(temp.path());
+    generate_synthetic_observation_ms(&request).unwrap();
+
+    // casacore's MS definition gives UVW Muvw's default reference, ITRF
+    // (`MSTableImpl::addMeasColumn`), and CASA's simulator keeps it.
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    let keywords = ms.main_table().column_keywords("UVW").unwrap();
+    let Some(Value::Record(measinfo)) = keywords.get("MEASINFO") else {
+        panic!("UVW has no MEASINFO record: {keywords:?}");
+    };
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+    assert_eq!(measinfo.get("type"), Some(&string("uvw")));
+    assert_eq!(measinfo.get("Ref"), Some(&string("ITRF")));
+}
+
+#[test]
 fn analytic_component_model_generates_predicted_ms_data() {
     let temp = tempfile::tempdir().unwrap();
     let mut request = SyntheticObservationRequest::vla_ppdisk(
@@ -935,6 +953,8 @@ tb = table()
 tb.open(path)
 try:
     data = tb.getcell("DATA", 0)
+    uvw_info = tb.getcolkeyword("UVW", "MEASINFO")
+    assert uvw_info["type"] == "uvw" and uvw_info["Ref"] == "ITRF", uvw_info
     result = {
         "rows": tb.nrows(),
         "nonzero": int((abs(data) > 0).sum()),
