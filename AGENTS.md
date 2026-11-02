@@ -218,13 +218,29 @@ Three levels, by how far a change reaches.
   brief on its issue, ask the owner to arrange the review, and keep working
   on whatever does not depend on it.
 
-Both reviews: brief the reviewer with the revision, the diff or design, the
-contracts it touches and the evidence, and ask it to look for shallow or
-tautological tests too. One round. Fix blocking and should-fix findings or
-answer them on the PR or issue; decline optional ones with a reason. A fix
-needs no second review unless it adds a mechanism the reviewer did not see.
-Start the review once the diff or design is stable, and keep working while
-it runs.
+No review loops. Each change gets at most one review, one round:
+
+- Fix blocking and should-fix findings, each with its own test, or answer
+  them on the PR or issue; decline optional ones with a reason. The fixes
+  are never reviewed again, at any level.
+- A finding that needs more than a fix (a redesign, new scope) becomes a
+  follow-up issue at its own level, not a second round on this change.
+- An externally reviewed design is not reviewed again when it is built;
+  the implementation takes level 1 or 2 by its own reach.
+
+Reviews are expensive, above all external ones and `xhigh` agents, so
+spend them deliberately:
+
+- Use one reviewer, not a panel, and review once: a final, green diff, or a
+  stable design, never drafts.
+- Batch related small changes into one review.
+- Brief it narrowly: the revision, the diff or design, the contracts it
+  touches, where the risk is, and what the tests already show, so it does
+  not re-derive them. Ask for blocking and should-fix findings, ranked,
+  including shallow or tautological tests; not a sweep of the repository.
+- When unsure whether a change is isolated, strengthen its demonstration
+  test rather than add a review.
+- Keep working while a review runs.
 
 ## Checks And Merging
 
