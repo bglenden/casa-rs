@@ -57,9 +57,15 @@ def load_reader():
     return module
 
 
-def members(folder):
+def members(folder, prefix="image"):
+    """The image products under `folder` whose names start with `prefix` and a dot."""
+    folder = Path(folder)
+    if not folder.is_dir():
+        return []
     return sorted(
-        path.name for path in folder.iterdir() if path.name.startswith("image.") and path.is_dir()
+        path.name
+        for path in folder.iterdir()
+        if path.name.startswith(prefix + ".") and path.is_dir()
     )
 
 
@@ -126,25 +132,36 @@ def compare_product(native, casa, name, reader, casatools, numpy):
     return entry
 
 
-def run_native(casars_python, imager_binary, values, folder):
+def run_native(casars_python, imager_binary, values, folder, log_name="stderr.log", timeout=600):
+    """Call `casars.tasks.tclean(**values)` from `folder` in the casars interpreter.
+
+    The reply holds `result` (tclean's record) or `refused` (the exception);
+    `failed` instead when the interpreter timed out or did not reply.
+    """
+    folder = Path(folder)
     environment = {
         name: value for name, value in os.environ.items() if name != "CASA_RS_IMAGER_RUN_SUMMARY"
     }
     environment["CASARS_IMAGER_BIN"] = str(imager_binary)
     started = time.monotonic()
-    run = subprocess.run(
-        [str(casars_python), "-I", "-c", CHILD],
-        input=json.dumps(values),
-        cwd=folder,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    (folder / "stderr.log").write_text(run.stderr)
-    reply = json.loads(run.stdout.strip().splitlines()[-1]) if run.stdout.strip() else {}
+    try:
+        run = subprocess.run(
+            [str(casars_python), "-I", "-c", CHILD],
+            input=json.dumps(values),
+            cwd=folder,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"failed": f"timed out after {timeout} s",
+                "driver_elapsed_seconds": time.monotonic() - started}
+    (folder / log_name).write_text(run.stderr)
+    try:
+        reply = json.loads(run.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        reply = {"failed": "no reply", "stdout_tail": run.stdout[-2000:]}
     reply["exit_code"] = run.returncode
     reply["driver_elapsed_seconds"] = time.monotonic() - started
     return reply
-
-
