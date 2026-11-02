@@ -967,12 +967,14 @@
 
 
 <h1 id="intermediate-observation-contracts">Intermediate observation contracts<a class="headerlink" href="#intermediate-observation-contracts" title="Permanent link">&para;</a></h1>
-<p>Status: revision 9; the read contract the M0/M1 trial realizes, frozen
+<p>Status: revision 10; the read contract the M0/M1 trial realizes, frozen
 narrowly for M2 by the owner on 2026-10-25. Revision 8 (2026-10-28, #937
 design revision 3) adds the catalogue's descriptive metadata, pointing's
 <code>store_has_pointing</code> and intent selection, and corrects how CASA matches
 intents. Revision 9 (2026-10-29, #937 PR B) adds creating one MSv2 from
-several observations (section 7).
+several observations (section 7). Revision 10 (2026-11-02, #1014, the
+owner's decision) lets a partition bind to its channels in the reverse
+order and the binding state each partition's order.
 Truth class: design proposal
 Date: 2026-10-28</p>
 <p>This is the interface between persistent observations and numerical consumers.
@@ -1193,7 +1195,7 @@ fields):</p>
 </tr>
 <tr>
 <td>Partition</td>
-<td>the spectral and product content (frequencies and widths bit for bit, frame, products in order, intents), compatible window metadata (a member one store leaves unstated does not distinguish), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one</td>
+<td>the spectral and product content (frame, products in order, intents, and the channels: frequencies and widths bit for bit, or the frequencies bit for bit in the reverse order with widths of the same magnitudes), compatible window metadata (a member one store leaves unstated does not distinguish), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one</td>
 </tr>
 </tbody>
 </table>
@@ -1203,6 +1205,14 @@ entities that one catalogue keeps apart never bind to the same entity of the
 other. An entity that matches nothing, more than one, or the same counterpart
 as another is a typed refusal; an ambiguity is never resolved by position.
 Ephemeris is not yet a partition key.</p>
+<p>Each store keeps a window's channels in its own order. An MSv2, and
+casa-rs's MSv4 conversion of it, keep the stored order (CASA's channel
+numbering); XRADIO writes every window in ascending frequency, so a window
+whose channels descend holds the same channels reversed in XRADIO's store.
+Both orders are allowed (#1014): <code>Binding::channel_orders</code> states, for each
+partition, whether the bound partition's channels run the same way or
+reversed (<code>ChannelOrder</code>), and a consumer carrying per-channel values from
+one store to the other maps channel <code>c</code> through <code>ChannelOrder::channel</code>.</p>
 <h3 id="binding-a-calibration-table">Binding a calibration table<a class="headerlink" href="#binding-a-calibration-table" title="Permanent link">&para;</a></h3>
 <p>A calibration table numbers antennas, fields and spectral windows by the rows
 of its own <code>ANTENNA</code>, <code>FIELD</code> and <code>SPECTRAL_WINDOW</code> subtables. Catalogue
