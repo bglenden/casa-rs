@@ -412,6 +412,37 @@ impl DirectionCoordinate {
         Ok(coord)
     }
 
+    /// The world coordinates `[longitude, latitude]`, in radians, of
+    /// `pixel`: what [`Coordinate::to_world`] returns, without allocating,
+    /// for callers that convert many pixels (casacore's
+    /// `DirectionCoordinate::toWorld`).
+    ///
+    /// # Errors
+    ///
+    /// A pixel the projection has no sky position for (beyond a SIN
+    /// image's horizon, for instance).
+    pub fn pixel_to_world(&self, pixel: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
+        let (x, y) = self.pixel_to_intermediate(&pixel);
+        let (phi, theta) = self.projection.deproject(x, y)?;
+        let (longitude, latitude) = self.native_to_celestial(phi, theta);
+        Ok([longitude, latitude])
+    }
+
+    /// The pixel of `world`, `[longitude, latitude]` in radians in this
+    /// coordinate's frame: what [`Coordinate::to_pixel`] returns, without
+    /// allocating (casacore's `DirectionCoordinate::toPixel`).
+    ///
+    /// # Errors
+    ///
+    /// A direction the projection cannot place (behind a TAN image's
+    /// tangent plane, for instance), or a singular PC matrix.
+    pub fn world_to_pixel(&self, world: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
+        let (phi, theta) = self.celestial_to_native(world[0], world[1]);
+        let (x, y) = self.projection.project(phi, theta)?;
+        let (px, py) = self.intermediate_to_pixel(x, y)?;
+        Ok([px, py])
+    }
+
     /// Pixel to intermediate world coordinates.
     fn pixel_to_intermediate(&self, pixel: &[f64]) -> (f64, f64) {
         let dx = pixel[0] - self.crpix[0];
@@ -676,16 +707,7 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        // Step 1: pixel -> intermediate
-        let (x, y) = self.pixel_to_intermediate(pixel);
-
-        // Step 2: intermediate -> native spherical
-        let (phi, theta) = self.projection.deproject(x, y)?;
-
-        // Step 3: native spherical -> celestial
-        let (lon, lat) = self.native_to_celestial(phi, theta);
-
-        Ok(vec![lon, lat])
+        Ok(self.pixel_to_world([pixel[0], pixel[1]])?.to_vec())
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -696,18 +718,7 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        let (lon, lat) = (world[0], world[1]);
-
-        // Step 1: celestial -> native spherical
-        let (phi, theta) = self.celestial_to_native(lon, lat);
-
-        // Step 2: native spherical -> intermediate
-        let (x, y) = self.projection.project(phi, theta)?;
-
-        // Step 3: intermediate -> pixel
-        let (px, py) = self.intermediate_to_pixel(x, y)?;
-
-        Ok(vec![px, py])
+        Ok(self.world_to_pixel([world[0], world[1]])?.to_vec())
     }
 
     fn reference_value(&self) -> Vec<f64> {
