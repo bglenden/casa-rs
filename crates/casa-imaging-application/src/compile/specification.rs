@@ -5,7 +5,7 @@
 //! products and their validity, and a sequential continuum subtraction.
 
 use std::collections::BTreeSet;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 use casa_imaging_model::{
     AwProjectionContract, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
@@ -44,6 +44,10 @@ pub(super) struct SpecificationInputs {
     /// image of one plane (`HetArrayConvFunc` takes the conjugate only
     /// when `nchan_p == 1`).
     pub(super) mosaic_conjugate_beams: bool,
+    /// The FIELD_IDs a density weighs by field over under `mosweight`: the
+    /// first and the span to the last selected field with data
+    /// ([`density_fields`]).
+    pub(super) density_fields: Option<(u32, NonZeroU32)>,
     pub(super) cube_density_padding: Option<usize>,
     pub(super) continuum_transform: Option<SequentialContinuumTransform>,
 }
@@ -131,7 +135,7 @@ pub(super) fn specification(
     if let Some(model) = inputs.instrument {
         science = science.with_instrument_model(model);
     }
-    let mut weighting = weighting(request);
+    let mut weighting = weighting(request, inputs.density_fields);
     if let Some(padding) = inputs.cube_density_padding {
         weighting = weighting.with_casa_cube_density_padding(padding);
     }
@@ -263,11 +267,24 @@ fn reconstruction_controls(
     }
 }
 
+/// The FIELD_IDs `mosweight` grids a density for: the selected fields
+/// with data, as a span from the first to the last (`VisImagingWeight`
+/// keys a density by each field its traversal meets); `None` without one.
+pub(super) fn density_fields(fields: &BTreeSet<i32>) -> Option<(u32, NonZeroU32)> {
+    let first = u32::try_from(*fields.first()?).ok()?;
+    let last = u32::try_from(*fields.last()?).ok()?;
+    Some((
+        first,
+        NonZeroU32::new(last.checked_sub(first)?.checked_add(1)?)?,
+    ))
+}
+
 /// The weighting: a cube's density per output channel under
 /// `perchanweightdensity`, the whole selection's otherwise (CASA disables
-/// cube density for continuum requests), and `uvtaper`'s Gaussian.
-fn weighting(request: &ImagingRequest) -> WeightingContract {
-    let contract = density_weighting(request);
+/// cube density for continuum requests) or each of `fields`' under
+/// `mosweight`, and `uvtaper`'s Gaussian.
+fn weighting(request: &ImagingRequest, fields: Option<(u32, NonZeroU32)>) -> WeightingContract {
+    let contract = density_weighting(request, fields);
     match request.uvtaper {
         Some(taper) => contract.with_uv_taper(taper),
         None => contract,
@@ -285,18 +302,29 @@ fn weighting(request: &ImagingRequest) -> WeightingContract {
 /// `VisImagingWeight` knows no `bwtaper` mode, so its robustness factors
 /// stay `f2 = 1, d2 = 0` and `weightUniform` divides each weight by its
 /// cell's density alone (`VisImagingWeight.cc`).
-fn density_weighting(request: &ImagingRequest) -> WeightingContract {
+///
+/// Under `mosweight` (`fields`), `VisImagingWeight` grids one such
+/// continuum density per field (`multiField`); the reader refuses it with
+/// a per-channel density.
+fn density_weighting(
+    request: &ImagingRequest,
+    fields: Option<(u32, NonZeroU32)>,
+) -> WeightingContract {
     let robust = request.robust;
     let per_channel_requested = request.specmode != SpecMode::Mfs && request.perchanweightdensity;
+    let continuum = match fields {
+        Some((first_field, fields)) => WeightDensityScope::PerField {
+            first_field,
+            fields,
+        },
+        None => WeightDensityScope::GlobalSelection,
+    };
     if request.weighting == Weighting::Briggsbwtaper && !per_channel_requested {
         tracing::warn!(
             "The briggsbwtaper weighting scheme is not compatable with perchanweightdensity=False."
         );
-        return WeightingContract::new(
-            WeightingScheme::Uniform,
-            WeightDensityScope::GlobalSelection,
-        )
-        .with_density_cells(DensityCells::Image);
+        return WeightingContract::new(WeightingScheme::Uniform, continuum)
+            .with_density_cells(DensityCells::Image);
     }
     let scheme = match request.weighting {
         Weighting::Natural => WeightingScheme::Natural,
@@ -318,7 +346,7 @@ fn density_weighting(request: &ImagingRequest) -> WeightingContract {
     let scope = if per_channel {
         WeightDensityScope::PerOutputChannel
     } else {
-        WeightDensityScope::GlobalSelection
+        continuum
     };
     let cells = match NonZeroUsize::new(request.npixels) {
         None => DensityCells::Image,
@@ -526,7 +554,10 @@ mod tests {
         let compiled = |overrides: serde_json::Value, npixels: i64| {
             let mut values = crate::request::tests::resolved(overrides).expect("catalog values");
             values.insert("npixels".into(), npixels.into());
-            weighting(&ImagingRequest::from_tclean(&values).expect("request"))
+            weighting(
+                &ImagingRequest::from_tclean(&values).expect("request"),
+                None,
+            )
         };
         let cube = |weighting: &str| json_cube(weighting, true);
         for (overrides, npixels, scheme, scope, density) in [
@@ -602,10 +633,10 @@ mod tests {
     #[test]
     fn a_cube_briggsbwtaper_without_per_channel_density_is_uniform() {
         let compiled = |perchanweightdensity| {
-            weighting(&crate::request::tests::request(json_cube(
-                "briggsbwtaper",
-                perchanweightdensity,
-            )))
+            weighting(
+                &crate::request::tests::request(json_cube("briggsbwtaper", perchanweightdensity)),
+                None,
+            )
         };
         let shared = compiled(false);
         assert_eq!(shared.scheme(), WeightingScheme::Uniform);
@@ -615,6 +646,39 @@ mod tests {
             compiled(true).scheme(),
             WeightingScheme::BriggsBandwidthTaper { .. }
         ));
+    }
+
+    /// `mosweight` weighs each selected field's continuum density on its
+    /// own, over the span of FIELD_IDs from the first to the last with data;
+    /// a cube without `perchanweightdensity` and `briggsbwtaper`'s uniform
+    /// fallback do too.
+    #[test]
+    fn mosweight_weighs_a_continuum_density_per_field() {
+        let fields = density_fields(&BTreeSet::from([3, 5, 4, 7]));
+        let span = NonZeroU32::new(5).expect("non-zero");
+        assert_eq!(fields, Some((3, span)));
+        assert_eq!(density_fields(&BTreeSet::new()), None);
+        let per_field = WeightDensityScope::PerField {
+            first_field: 3,
+            fields: span,
+        };
+        let mosaic = |overrides: serde_json::Value| {
+            let mut overrides = overrides;
+            overrides["gridder"] = "mosaic".into();
+            weighting(&crate::request::tests::request(overrides), fields)
+        };
+        let briggs = mosaic(serde_json::json!({ "weighting": "briggs" }));
+        assert_eq!(briggs.density_scope(), per_field);
+        for overrides in [
+            json_cube("briggs", false),
+            json_cube("briggsbwtaper", false),
+        ] {
+            assert_eq!(mosaic(overrides).density_scope(), per_field);
+        }
+        assert_eq!(
+            mosaic(serde_json::json!({ "weighting": "natural" })).density_scope(),
+            WeightDensityScope::NotApplicable
+        );
     }
 
     fn json_cube(weighting: &str, perchanweightdensity: bool) -> serde_json::Value {

@@ -241,6 +241,7 @@ mod tests {
             usepointing,
             normtype: ProductNormalization::FlatNoise,
             conjbeams: false,
+            mosweight: false,
         };
         assert!(matches!(
             pointing_centre_law(&Gridder::Standard {

@@ -784,6 +784,7 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
         box_half_width,
         increment_rad: [-1.0e-5, 1.0e-5],
         rule: DensityCellRule::Standard,
+        first_field: None,
     };
     for ((side, box_half_width), workers) in [(64, 0), (8, 0), (300, 0), (64, 3)]
         .into_iter()

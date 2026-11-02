@@ -754,6 +754,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
         box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
+        first_field: None,
     };
     let density = run_density_pass(
         &spheroidal,
@@ -897,6 +898,7 @@ fn streamed_density_grid_equals_the_one_shot_build() {
         box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Cube,
+        first_field: None,
     };
     let mut buffer = SampleBuffer::new(1);
     for index in 0..rows.rows.len() {
@@ -1020,6 +1022,7 @@ fn kept_density_weights_hold_across_blocks_and_model_writing() {
         box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
+        first_field: None,
     };
     let team = WorkerTeam::new(1).expect("team");
     let grid = run_density_pass(

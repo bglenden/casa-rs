@@ -20,6 +20,7 @@ fn shape(rule: DensityCellRule) -> DensityGridShape {
         box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
+        first_field: None,
     }
 }
 
@@ -144,6 +145,7 @@ fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
         box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
+        first_field: None,
     };
     // (rule, density at columns 2, 3 and 4 of row 3)
     for (rule, expected) in [
@@ -211,6 +213,7 @@ fn a_float_tie_rounds_in_casas_orientation() {
         box_half_width: 0,
         increment_rad: [-cell_rad, cell_rad],
         rule: DensityCellRule::Cube,
+        first_field: None,
     };
     let tie = DensityUv::casa(
         [96.620_773_734_500_32, -870.029_305_110_418_4, 0.0],
@@ -247,6 +250,7 @@ fn an_odd_width_keeps_casas_outermost_column() {
         box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule: DensityCellRule::Cube,
+        first_field: None,
     };
     let buffer = density_buffer(&[(430.0, 0.0, 1.0)]);
     let grid = build_density_grid(std::iter::once(buffer.block()), odd);

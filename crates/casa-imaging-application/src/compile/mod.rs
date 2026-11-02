@@ -470,6 +470,12 @@ fn specification_inputs(
                 ..
             }
         ) && surveyed.spectral.output_channels == 1,
+        density_fields: match request.gridder {
+            Gridder::Mosaic {
+                mosweight: true, ..
+            } => specification::density_fields(&surveyed.survey.fields),
+            _ => None,
+        },
         cube_density_padding: cube_density_padding(request, surveyed)?,
         continuum_transform,
     })

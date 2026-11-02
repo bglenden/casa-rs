@@ -588,13 +588,15 @@ pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
 }
 
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
-/// `VisImagingWeight` cells, or one plane per output channel, plus the
-/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
+/// `VisImagingWeight` cells, one such plane per field under `mosweight`, or
+/// one plane per output channel, plus the compiled padding planes on each
+/// side, on `BriggsCubeWeightor` cells.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
 ) -> Result<DensityGridShape, ImagingError> {
     let [width, height] = domain.shape().pixels();
+    let mut first_field = None;
     let (planes, padding, rule) = match problem.weighting().density_scope() {
         WeightDensityScope::PerOutputChannel => {
             // CASA always pads the cube density axis
@@ -621,6 +623,13 @@ pub(crate) fn density_shape(
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
             (1, 0, DensityCellRule::Standard)
         }
+        WeightDensityScope::PerField {
+            first_field: first,
+            fields,
+        } => {
+            first_field = Some(first);
+            (fields.get() as usize, 0, DensityCellRule::Standard)
+        }
     };
     let increment = domain.direction().increment_rad();
     let cells = problem.weighting().density_cells();
@@ -643,6 +652,7 @@ pub(crate) fn density_shape(
         box_half_width,
         increment_rad,
         rule,
+        first_field,
     })
 }
 

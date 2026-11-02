@@ -448,7 +448,10 @@ fn sample_weight(
                 Some(plane) => plane,
                 None => return 0.0,
             },
-            None => placement.plane,
+            None => match weighting.density_plane(placement.plane, row.context.field) {
+                Some(plane) => plane,
+                None => return 0.0,
+            },
         };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         // `VisImagingWeight` weighs, tapers and bins the MeasurementSet
@@ -1022,8 +1025,12 @@ impl SpectralResampler {
         };
         match rule {
             DensityCellRule::Standard => {
+                // `mosweight` grids each field's samples on its own plane.
+                let Some(plane) = shape.density_plane(0, row.context.field) else {
+                    return Ok(());
+                };
                 for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
-                    visit(0, *frequency_hz, Source::Channel(channel));
+                    visit(plane, *frequency_hz, Source::Channel(channel));
                 }
             }
             DensityCellRule::Cube => self
