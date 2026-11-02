@@ -31,8 +31,7 @@ use crate::{ImagingRequest, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
-    /// Each store's source channels the axis reads, in store order; empty
-    /// for a store none of whose channels reaches the axis.
+    /// Each store's source channels the axis reads, in store order.
     pub(super) selected_source_channels: Vec<WindowChannels>,
     pub(super) source_frame: FrequencyFrame,
     pub(super) output_frequency_reference: FrequencyRef,
@@ -426,7 +425,9 @@ fn cube_law(
 /// selected times ([`CubeSpectralSetup::source_channel_support`]), within
 /// its `spw` selection, as CASA's cube gridding selects each
 /// MeasurementSet's channels in the image's band. A store none of whose
-/// channels reaches the axis reads nothing.
+/// channels reaches the axis reads its selected channels, which place
+/// nothing, so that a final pass writes the cube model's prediction there,
+/// zero, into its `MODEL_DATA`, as CASA does.
 ///
 /// # Errors
 ///
@@ -461,14 +462,18 @@ fn cube_store_channels(
                     &store.engine,
                 )?
                 .indices;
-            if let Some(explicit) = survey.spw_channels.get(&window.spw_id) {
+            let explicit = survey.spw_channels.get(&window.spw_id);
+            if let Some(explicit) = explicit {
                 selected.retain(|channel| explicit.contains(channel));
             }
-            Ok(if selected.is_empty() {
-                WindowChannels::new()
-            } else {
-                BTreeMap::from([(window.spw_id, selected)])
-            })
+            if selected.is_empty() {
+                // CASA still predicts the cube's model, zero, into such a
+                // MeasurementSet's MODEL_DATA (test_modelvis_29).
+                selected = explicit
+                    .cloned()
+                    .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect());
+            }
+            Ok(BTreeMap::from([(window.spw_id, selected)]))
         })
         .collect()
 }

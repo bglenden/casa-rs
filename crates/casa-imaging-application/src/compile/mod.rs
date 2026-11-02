@@ -236,12 +236,9 @@ pub(crate) fn prepare(
         .and_then(PhaseCentreEphemeris::external_series)
         .cloned();
     let virtual_model = match request.savemodel {
-        SaveModel::Virtual => virtual_model_plans(
-            request,
-            (&stores, &channels),
-            &domains[0].coordinates,
-            &measures,
-        )?,
+        SaveModel::Virtual => {
+            virtual_model_plans(request, &stores, &domains[0].coordinates, &measures)?
+        }
         SaveModel::None | SaveModel::ModelColumn => Vec::new(),
     };
     let (snapshot, stores, survey_charge) = snapshot_input(stores, &channels)?;
@@ -277,20 +274,17 @@ pub(crate) fn prepare(
     })
 }
 
-/// The virtual model of `savemodel='virtual'` of each store the run reads
-/// (each with a channel in `channels`): CASA saves the model in each
-/// MeasurementSet of its list, each a MeasurementSet v2.
+/// The virtual model of `savemodel='virtual'` of each store: CASA saves
+/// the model in each MeasurementSet of its list, each a MeasurementSet v2.
 fn virtual_model_plans(
     request: &ImagingRequest,
-    (stores, channels): (&[stores::SurveyedStore], &[WindowChannels]),
+    stores: &[stores::SurveyedStore],
     coordinates: &casa_coordinates::CoordinateSystem,
     measures: &Arc<dyn casa_types::measures::MeasuresProvider>,
 ) -> Result<Vec<crate::virtual_model::VirtualModelPlan>, PrepareError> {
     stores
         .iter()
-        .zip(channels)
-        .filter(|(_, channels)| !channels.is_empty())
-        .map(|(store, _)| {
+        .map(|store| {
             if store.msv2().is_none() {
                 return Err(PrepareError::MeasurementSet(
                     casa_ms::MsError::InvalidInput(
@@ -493,12 +487,13 @@ fn specification_inputs(
     })
 }
 
-/// The selected observation's manifest, one source per store that reads a
-/// channel (`channels`, in store order): its survey's samples, the channels
-/// read with each selected window's whole frequency axis, the visibility
-/// column, and the weights the selected partitions hold (each partition's
-/// by CASA's rule, [`partitions::stored_weights`]); with the stores the
-/// run reads, in the manifest's order, and the charge of their surveys.
+/// The selected observation's manifest, one source per store, each
+/// reading its `channels` (in store order): its survey's samples, the
+/// channels read with each selected window's whole frequency axis, the
+/// visibility column, and the weights the selected partitions hold (each
+/// partition's by CASA's rule, [`partitions::stored_weights`]); with the
+/// stores the run reads, in the manifest's order, and the charge of their
+/// surveys.
 fn snapshot_input(
     stores: Vec<stores::SurveyedStore>,
     channels: &[WindowChannels],
@@ -514,13 +509,6 @@ fn snapshot_input(
     let mut opened = Vec::with_capacity(stores.len());
     let mut charge = casa_imaging_runtime::Reservation::none();
     for (store, channels) in stores.into_iter().zip(channels) {
-        if channels.is_empty() {
-            tracing::info!(
-                "{}: no selected channel reaches the image's spectral axis, so it is not read",
-                store.selection.vis.display()
-            );
-            continue;
-        }
         let visibility = store.columns.visibility;
         let weights = partitions::stored_weights(
             &store.opened.value,
@@ -540,9 +528,6 @@ fn snapshot_input(
         ));
         opened.push(store.opened);
         charge.join(store.survey_charge);
-    }
-    if sources.is_empty() {
-        return Err(PrepareError::NoCommonCubeChannels);
     }
     Ok((ObservationSnapshotInput::new(sources), opened, charge))
 }

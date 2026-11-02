@@ -205,6 +205,53 @@ fn the_model_is_written_into_each_measurement_set() {
     assert!(largest < 1.0e-5 * scale, "{largest} of {scale}");
 }
 
+/// A cube on the first MeasurementSet's channels (its default axis) reads
+/// a second whose channels lie outside it, which places nothing: the cube
+/// and the first one's `MODEL_DATA` are the first one's alone, and the
+/// second's `MODEL_DATA` holds the cube model's prediction there, zero, as
+/// CASA writes it (test_modelvis_29).
+#[test]
+fn a_measurement_set_outside_the_cube_holds_a_zero_model() {
+    let split = Split::new();
+    let controls = json!({
+        "specmode": "cube",
+        "interpolation": "nearest",
+        "deconvolver": "hogbom",
+        "niter": 20,
+        "savemodel": "modelcolumn",
+    });
+    let (alone_run, alone) =
+        split
+            .whole
+            .image_stores(&[split.low.measurement_set()], "alone", controls.clone());
+    let alone_model = model_rows(split.low.measurement_set());
+    let (run, products) = split
+        .whole
+        .image_stores(&split.halves(), "outside", controls);
+    assert_eq!(run.gridded_samples, alone_run.gridded_samples);
+    assert_products(
+        &products,
+        &alone,
+        &[".sumwt", ".psf", ".residual", ".model"],
+        "outside",
+    );
+    let low = model_rows(split.low.measurement_set());
+    let largest = low
+        .iter()
+        .zip(&alone_model)
+        .flat_map(|(low, alone)| low.iter().zip(alone).map(|(a, b)| (a - b).norm()))
+        .fold(0.0_f32, f32::max);
+    assert!(largest < 1.0e-6, "the first MODEL_DATA moved by {largest}");
+    let high = model_rows(split.high.measurement_set());
+    assert!(!high.is_empty());
+    assert!(
+        high.iter()
+            .flatten()
+            .all(|value| *value == Complex32::new(0.0, 0.0)),
+        "the second MeasurementSet's MODEL_DATA is the zero prediction"
+    );
+}
+
 /// Every MAIN row's `MODEL_DATA`, `[correlation, channel]`.
 fn model_rows(path: &Path) -> Vec<Array2<Complex32>> {
     let ms = MeasurementSet::open(path).expect("reopen the MeasurementSet");
