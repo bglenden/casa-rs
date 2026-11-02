@@ -38,12 +38,12 @@ mod set;
 pub(in crate::observation_io) use fields::{check_fields, kept_samples};
 pub use set::Msv4ProcessingSetWriter;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use casa_observation::{
-    AntennaEntry, AntennaId, Catalogue, DataGroupEntry, ObservationError, PartitionEntry,
-    PartitionId, Receptors, ScanId, TimeBaselineGrid, VisibilityUnits,
+    AntennaEntry, AntennaId, Catalogue, Correlation, DataGroupEntry, ObservationError,
+    PartitionEntry, PartitionId, Receptors, ScanId, TimeBaselineGrid, VisibilityUnits,
 };
 use casa_types::measures::position::PositionRef;
 use casa_types::measures::{EpochView, MjdHighPrec};
@@ -488,7 +488,7 @@ impl Msv4Writer {
             store,
             &format!("{root}/antenna_xds"),
             &dataset_antennas(catalogue, grid),
-            &writer.target.entry.receptors,
+            &writer.target.entry,
             &observation.telescope,
         )?;
         fields::write_fields(
@@ -865,14 +865,18 @@ fn dataset_antennas<'a>(
         .collect()
 }
 
-/// `antennas` as an `antenna_xds`, with their `receptors` in the
-/// dataset's partition (none for an antenna the partition states none
-/// for).
+/// `antennas` as an `antenna_xds`, with their receptors in the dataset's
+/// partition `entry`. Where the partition states none (`FEED` has no row
+/// for its window), the receptors its correlation products name stand as
+/// every antenna's `polarization_type`, without angles
+/// ([`product_receptors`]), as XRADIO writes them: its schema requires
+/// `receptor_label` and `polarization_type`, and an MSv4 reader takes
+/// types without angles as no receptors.
 fn write_antennas(
     store: &Arc<FilesystemStore>,
     path: &str,
     antennas: &[(AntennaId, &AntennaEntry)],
-    receptors: &BTreeMap<AntennaId, Receptors>,
+    entry: &PartitionEntry,
     telescope: &str,
 ) -> Result<(), ObservationError> {
     let none = Receptors {
@@ -881,7 +885,7 @@ fn write_antennas(
     };
     let own: Vec<&Receptors> = antennas
         .iter()
-        .map(|(id, _)| receptors.get(id).unwrap_or(&none))
+        .map(|(id, _)| entry.receptors.get(id).unwrap_or(&none))
         .collect();
     let antennas: Vec<&AntennaEntry> = antennas.iter().map(|(_, antenna)| *antenna).collect();
     create_group(
@@ -934,25 +938,28 @@ fn write_antennas(
             &values,
         )?;
     }
-    // Without receptors (FEED states none for the window), XRADIO writes no
-    // receptor variables.
-    if receptors > 0 {
-        let labels: Vec<String> = (0..receptors).map(|r| format!("pol_{r}")).collect();
+    let types: Vec<String> = if receptors > 0 {
+        own.iter()
+            .flat_map(|own| own.types.iter().cloned())
+            .collect()
+    } else {
+        let named = product_receptors(&entry.correlations);
+        own.iter().flat_map(|_| named.iter().cloned()).collect()
+    };
+    let width = types.len() / own.len().max(1);
+    if width > 0 {
+        let labels: Vec<String> = (0..width).map(|r| format!("pol_{r}")).collect();
         strings(
             store,
             &format!("{path}/receptor_label"),
-            &[receptors as u64],
+            &[width as u64],
             &["receptor_label"],
             &labels,
         )?;
-        let types: Vec<String> = own
-            .iter()
-            .flat_map(|own| own.types.iter().cloned())
-            .collect();
         strings(
             store,
             &format!("{path}/polarization_type"),
-            &[count, receptors as u64],
+            &[count, width as u64],
             &["antenna_name", "receptor_label"],
             &types,
         )?;
@@ -1022,6 +1029,41 @@ fn write_antennas(
             "type": "quantity", "units": "rad", "coordinates": "mount polarization_type station_name telescope_name",
         }),
     )
+}
+
+/// The receptor types a partition's correlation products name, for the
+/// `antenna_xds` of a window `FEED` states no receptors for: each receptor
+/// of its receptor products (`RR` to `QQ` in casacore's order, mixed
+/// products included) once, in order of first appearance, so `RR, LL`
+/// names `R, L`. Without a receptor product (Stokes or single-dish
+/// products only), the letters of the first product's label.
+///
+/// XRADIO's converter (1.3.1, `create_antenna_xds`) takes the letters of
+/// the first product's label alone, which names `R, R` for `RR, LL`,
+/// where its schema describes `polarization_type` as the receptors'
+/// types (`['R', 'L']`): a divergence recorded in
+/// `docs/measurement-set/trial/README.md` ("Fixture findings"). A single
+/// receptor product (`RR` alone) names one receptor here and two in
+/// XRADIO.
+fn product_receptors(correlations: &[Correlation]) -> Vec<String> {
+    let receptor_products = Correlation::RR.casacore_code()..=Correlation::QQ.casacore_code();
+    let mut types: Vec<String> = Vec::new();
+    for correlation in correlations
+        .iter()
+        .filter(|correlation| receptor_products.contains(&correlation.casacore_code()))
+    {
+        for letter in correlation.label().chars().map(String::from) {
+            if !types.contains(&letter) {
+                types.push(letter);
+            }
+        }
+    }
+    if types.is_empty()
+        && let Some(first) = correlations.first()
+    {
+        types = first.label().chars().map(String::from).collect();
+    }
+    types
 }
 
 impl std::fmt::Debug for Msv4Writer {

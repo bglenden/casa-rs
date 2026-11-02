@@ -428,9 +428,6 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
 /// window -1 standing for every window, in table order.
 pub(crate) struct Feeds {
     rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
-    /// Some row names a window: casacore's `MSIter` then reads only each
-    /// window's own rows, and XRADIO's converter likewise.
-    window_dependent: bool,
 }
 
 /// The `FEED` rows.
@@ -458,11 +455,7 @@ pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError>
             .or_default()
             .push(Receptors { types, angles });
     }
-    let window_dependent = rows.keys().any(|(_, _, window)| *window != -1);
-    Ok(Feeds {
-        rows,
-        window_dependent,
-    })
+    Ok(Feeds { rows })
 }
 
 impl Feeds {
@@ -477,18 +470,32 @@ impl Feeds {
     }
 
     /// Antenna `antenna`'s receptors through feed `feed` in spectral window
-    /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
-    /// select them: the window's own rows when any row names a window, else
-    /// the rows for every window (-1). A partition's receptors are one set
-    /// (MSv4 holds no time dependence), so where rows of one antenna, feed
-    /// and window differ, `FEED` stating receptors per time, the last row
-    /// in table order is taken, as casacore's `MSIter` takes it (with a
-    /// warning); XRADIO's converter refuses such rows, and a conversion
-    /// reports them as a loss ([`Self::varying`]). `None` without a row.
+    /// `window`: the rows of that antenna, feed and window, else its rows
+    /// for every window (-1), which the MeasurementSet definition (and
+    /// casacore's `MSFeed`) makes valid for all windows. `None` without
+    /// either, as for ALMA's WVR window or a window a simulator wrote no
+    /// row for (#943).
+    ///
+    /// XRADIO's converter (1.3.1, `extract_feed_info`) and casacore's
+    /// `MSIter::setFeedInfo` choose the same rows wherever a table's rows
+    /// are all for every window or all name windows. Where the two kinds
+    /// stand together, both take only a window's own rows (XRADIO once any
+    /// row of the dataset's antennas and feeds names a window, `MSIter`
+    /// once any row of the table does), so a window without its own row
+    /// has none in XRADIO and keeps the previous window's angles in
+    /// `MSIter`'s cache. Here the rows for every window serve it, as the
+    /// definition says.
+    ///
+    /// A partition's receptors are one set (MSv4 holds no time
+    /// dependence), so where rows of one antenna, feed and window differ,
+    /// `FEED` stating receptors per time, the last row in table order is
+    /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
+    /// converter refuses such rows, and a conversion reports them as a
+    /// loss ([`Self::varying`]).
     pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
-        let window = if self.window_dependent { window } else { -1 };
         self.rows
             .get(&(antenna, feed, window))
+            .or_else(|| self.rows.get(&(antenna, feed, -1)))
             .and_then(|rows| rows.last())
     }
 
@@ -504,13 +511,23 @@ impl Feeds {
     }
 
     /// The first (antenna, feed, window) whose rows differ, among the rows
-    /// [`Self::receptors`] reads: `FEED` states receptors that vary in
-    /// time, of which it keeps the last. Rows for every window (-1) beside
-    /// window rows are never read, and do not count.
-    pub(crate) fn varying(&self) -> Option<(i32, i32, i32)> {
+    /// [`Self::receptors`] reads for `windows` (the partitions' windows):
+    /// `FEED` states receptors that vary in time, of which it keeps the
+    /// last. An antenna and feed's rows for every window (-1) are read only
+    /// for a window of `windows` it has no row of its own in; otherwise
+    /// they do not count.
+    pub(crate) fn varying(&self, windows: &BTreeSet<i32>) -> Option<(i32, i32, i32)> {
         self.rows
             .iter()
-            .filter(|((_, _, window), _)| !self.window_dependent || *window != -1)
+            .filter(|((antenna, feed, window), _)| {
+                if *window == -1 {
+                    windows
+                        .iter()
+                        .any(|own| !self.rows.contains_key(&(*antenna, *feed, *own)))
+                } else {
+                    windows.contains(window)
+                }
+            })
             .find(|(_, rows)| rows.iter().any(|row| row != &rows[0]))
             .map(|(key, _)| *key)
     }

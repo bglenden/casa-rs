@@ -352,11 +352,12 @@ fn feeds(
 
 /// The `FEED` rows (antenna, window, receptors) of `antennas` antennas that
 /// read back as each partition's receptors (`partitions`: its window, the
-/// antennas its baselines name and the receptors it states) under
-/// casacore's rule (`MSIter::setFeedInfo`, as XRADIO's converter reads it
-/// too): once any row names a window, a window takes its own rows only and
-/// rows for every window (-1) are ignored. So when every antenna states the
-/// same receptors in every window it appears in, each has one row for every
+/// antennas its baselines name and the receptors it states) alike under
+/// the MSv2 adapter's rule (a window's own row, else the row for every
+/// window, -1) and casacore's (`MSIter::setFeedInfo`) and XRADIO's, which
+/// ignore rows for every window once a row names a window: rows of the two
+/// kinds never stand together. So when every antenna states the same
+/// receptors in every window it appears in, each has one row for every
 /// window (-1); otherwise each has a row per window it states receptors in,
 /// and a window where it states none (ALMA's WVR window) has no row, as
 /// ALMA writes `FEED`. An antenna stating none has no row, unless no antenna

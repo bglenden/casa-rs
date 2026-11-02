@@ -27,7 +27,8 @@ CASA behaviours casa-rs does not follow:
 [`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
-[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails).
+[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
+[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2786,3 +2787,27 @@ does not fit the output column's type is wrapped as a C cast does (a `Short`
 `putcell` above. casa-rs raises `RuntimeError: a value is out of range for a
 column of ...`, before the output is touched, rather than store a wrong
 number.
+
+## `MSIter` keeps the previous window's receptor angles for a window without its own `FEED` row
+
+- Date noted: 2026-11-02
+- Status: casacore behaviour that casa-rs does not follow (MSv2 adapter,
+  `Feeds::receptors`)
+- Affected code: casacore `ms/MeasurementSets/MSIter.cc` (`setFeedInfo`,
+  lines 779-814 on `master`)
+
+The MeasurementSet definition makes a `FEED` row with `SPECTRAL_WINDOW_ID`
+-1 valid for every spectral window. `setFeedInfo` instead decides once per
+table: if every row is -1 it uses them for every window, and otherwise
+(`spwDepFeed_p`) it copies into its cache only the rows whose window is the
+iterator's current one. A window with no row of its own for an antenna and
+feed (a -1 row beside rows for other windows, or no row at all, as for
+ALMA's WVR window) leaves that cache entry untouched: `receptorAngles_p`
+is resized to the same shape, which casacore's `Array::resize` does not
+reinitialise, so `receptorAngles()` gives the previous window's angles (or,
+for the first window iterated, the newly allocated array's contents). XRADIO 1.3.1's converter makes the
+same per-dataset choice and writes such a dataset with no receptor angles.
+casa-rs reads an antenna and feed's rows in the window, else its rows for
+every window, and states no receptors where it has neither. Where `FEED`'s
+rows are all -1 or all name windows, which is how CASA's simulator, ALMA
+and casa-rs's MSv2 writer write it, the receptors are the same.

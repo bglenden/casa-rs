@@ -295,8 +295,13 @@ fn msv2(
         ));
     }
     main_keys(main, destination, losses)?;
+    let windows = catalogue
+        .partitions
+        .iter()
+        .map(|entry| entry.window.0 as i32)
+        .collect();
     if crate::observation_io::msv2::catalogue::read_feeds(&ms)?
-        .varying()
+        .varying(&windows)
         .is_some()
     {
         losses.push(Loss::Column(
