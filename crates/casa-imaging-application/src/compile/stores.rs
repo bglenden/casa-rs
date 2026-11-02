@@ -345,4 +345,29 @@ mod tests {
         let visited = order((0..12).collect(), |index: &i32| f64::from(*index));
         assert_eq!(visited, [0, 1, 10, 11, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
+
+    /// CASA's `getCubeImageStartFreq`: a frequency as given, a velocity at
+    /// the first rest frequency in the request's convention, no start for a
+    /// channel or none.
+    #[test]
+    fn a_cube_start_is_its_frequency_or_its_velocity_at_the_rest_frequency() {
+        use serde_json::json;
+        let start = |overrides: serde_json::Value| {
+            let mut values = json!({ "specmode": "cube", "nchan": 10 });
+            values
+                .as_object_mut()
+                .expect("an object")
+                .extend(overrides.as_object().expect("an object").clone());
+            cube_start_hz(&crate::request::tests::request(values)).expect("a start")
+        };
+        assert_eq!(start(json!({ "start": "1.199989GHz" })), Some(1.199_989e9));
+        let hertz = start(json!({
+            "start": "11994.3km/s", "restfreq": ["1.25GHz"], "veltype": "radio",
+        }))
+        .expect("a velocity start");
+        let expected = 1.25e9 * (1.0 - 11_994.3e3 / SPEED_OF_LIGHT_M_S);
+        assert!((hertz - expected).abs() < 1.0e-3, "{hertz} {expected}");
+        assert_eq!(start(json!({ "start": "3" })), None);
+        assert_eq!(start(json!({})), None);
+    }
 }
