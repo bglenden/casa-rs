@@ -131,7 +131,7 @@ impl DensityGridShape {
 
     /// The density plane a sample on output plane `plane` from FIELD_ID
     /// `field` grids into and reads: its field's for a per-field generation
-    /// (`None` outside its span), else `plane`, which [`Self::plane_of`]
+    /// (`None` outside its span), else `plane`, which `plane_of`
     /// resolves.
     #[must_use]
     pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
