@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Update sessions: one owner that reads a store and writes its declared
-//! targets back (`docs/measurement-set/contracts.md`, section 7).
+//! targets back.
 //!
 //! [`open_update`] takes this process's write intent on the store, opens it
 //! once for reading, and resolves the declared targets before any payload:

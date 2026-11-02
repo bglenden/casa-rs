@@ -690,7 +690,7 @@ pub enum SpectralAxis {
     NativeChannels,
 }
 
-/// The product contract (plan section 5.7) a T1 run is held to, beyond its
+/// The product contract a T1 run is held to, beyond its
 /// science: what it publishes, their coordinates, and the normalization rows
 /// the fixture can check from the observation alone.
 pub struct ProductContract<'a> {

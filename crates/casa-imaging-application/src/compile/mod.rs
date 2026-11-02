@@ -677,7 +677,7 @@ impl AwPlan {
     /// complete and holding nothing else. Generation fills in the absent
     /// cells of such a directory, and clears and regenerates any other.
     /// Regeneration clears the cache first. The loader then checks each
-    /// cell's sky increment against the image (plan section 5.6).
+    /// cell's sky increment against the image.
     ///
     /// The run reads a native cache under its shared [`NativeCacheLock`],
     /// held in the deployment for as long as the run lives, since cells load

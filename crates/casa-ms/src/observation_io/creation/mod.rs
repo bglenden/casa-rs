@@ -206,7 +206,7 @@ impl std::str::FromStr for LossKind {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaddingRows {
     /// A row flagged throughout, its data, weights and UVW NaN, as the MSv2
-    /// creator writes padding (revision 2 design, D23); its interval is the
+    /// creator writes padding by default; its interval is the
     /// grid's, its exposure 0 and its time centroid its time, so that the
     /// row's keys stay valid. `FLAG_ROW` stays false: every element's flag
     /// already excludes the row, and a reader that folds `FLAG_ROW` into
@@ -214,8 +214,8 @@ pub enum PaddingRows {
     /// is known from the grids.
     #[default]
     Flagged,
-    /// No row: the declared policy that reproduces an original sparse MSv2
-    /// (D23), since a NaN weight is padding's one mark. The row count then
+    /// No row: the declared policy that reproduces an original sparse
+    /// MSv2, since a NaN weight is padding's one mark. The row count then
     /// needs the acquisitions counted first, from the weights.
     Omitted,
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Regenerate the trial's ephemeris fixtures in crates/casa-ms/tests/fixtures/ms_trial/
-# (docs/measurement-set/trial/README.md): the trial MSv2 with its field
+# Regenerate the trial's ephemeris fixtures in
+# crates/casa-ms/tests/fixtures/ms_trial/: the trial MSv2 with its field
 # following a Moon-like body (ms_trial_ephemeris.ms), and XRADIO's
 # conversions of it in its two layouts, the samples on their own times
 # (ms_trial_ephemeris.ps.zarr, XRADIO's default) and interpolated onto the

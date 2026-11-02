@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""XRADIO side of the trial's ephemeris check (docs/measurement-set/trial/README.md,
-"Ephemerides in MSv4"). Python here is only the oracle.
+"""XRADIO side of the trial's ephemeris check (check_ephemeris.sh). Python
+here is only the oracle.
 
     check_ephemeris.py --ours RUST.ps.zarr --theirs XRADIO.ps.zarr
 

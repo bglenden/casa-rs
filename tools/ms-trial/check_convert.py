@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""XRADIO side of the trial converter's measurements
-(docs/measurement-set/trial/README.md, "Converter"). Python here is only the
-oracle.
+"""XRADIO side of the trial converter's measurements. Python here is only
+the oracle.
 
     check_convert.py xradio-convert --ms MS --out XRADIO.ps.zarr
             [--partition-scheme KEY ...] [--with-pointing]

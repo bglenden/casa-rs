@@ -2,8 +2,8 @@
 
 Truth class: normative plan
 Date: 2026-10-20
-Work issue: #841
-Status: accepted by the owner on 2026-10-20, after a Fable xhigh review.
+Work issue: #841, which keeps the phase checklist and status
+Status: accepted by the owner on 2026-10-20.
 
 ## 1. Goal and requirements
 
@@ -17,688 +17,206 @@ and run them dramatically faster:
 
 Requirements:
 
-- **ADR-0018 applies.** All computation is in Rust, including the parts CASA
-  writes in Python (`task_simobserve.py`, `simutil.py`). Python only presents
-  CASA's interface.
-- **ADR-0017 applies.** Tasks are one-shot surfaces, and tools are in-process
-  objects.
-- **Agreement with CASA follows AGENTS.md.**
-  - The MS has the same columns, subtables and keywords as CASA's, apart from
-    decision 6. Data managers may differ; see the storage layout below.
-  - Predicted visibilities agree to about 1e-3 normalized RMS.
-  - Noise and corruptions are statistically equivalent, not bit-identical.
-  - Every divergence is justified and recorded in `docs/CASA (C++) bugs.md`.
-- **casacore C++ can read the MS.** An interop test proves it.
-- **Performance is the point** (owner, 2026-10-20).
-  - Prediction uses Metal where it pays.
-  - Geometry, prediction, corruption and writing use multiple workers.
-  - Results do not depend on the worker count or the backend.
-  - Every benchmark reports wall time, single-worker (W1) user CPU and peak
-    RSS, so parallelism cannot mask serial cost.
-  - The targets for each mode are in §5.
-- **Memory is bounded** (owner, 2026-10-20).
-  - Peak resident memory stays under a declared budget, whatever the number
-    of rows, channels or fields. A counting-law test proves it, as in imaging.
-  - Work is streamed in time and channel chunks sized from the budget, and
-    Metal device buffers count against the same budget.
-  - The MS write session stays bounded (ADR-0008).
-- **The MS I/O routines are open to optimization** (owner, 2026-10-20).
-  - Once prediction runs on Metal, writing the MS is likely the bottleneck,
-    so the `casa-ms` and `casa-tables` write path may be reworked.
-  - **What is on disk does not change:** the same storage managers, tile
-    formats and table metadata, guarded by the casacore C++ interop tests.
-  - **What can change is how the bytes get there:** larger tile-aligned batch
-    writes, fewer copies and system calls, write-behind that overlaps
-    prediction with I/O, and buffers sized from the memory budget.
-  - Every casa-rs MS writer gains: `split`, `mstransform`, `importvla`,
-    `flagdata`, and imaging's MODEL_DATA writes.
-- **The storage layout is conventional** (owner, 2026-10-20).
-  - The simulator uses the layout casa-rs's other MS writers share
-    (`casa-ms/src/ms.rs:1183-1234`), and writes every row:
-    - IncrementalStMan for the slowly varying scalar columns;
-    - StandardStMan for ANTENNA1/2, DATA_DESC_ID and FLAG_ROW;
-    - TiledShapeStMan, with CASA's standard tile shapes, for the data, flag
-      and weight columns;
-    - TiledColumnStMan for UVW.
-  - It does not copy `NewMSSimulator`, which binds every other column to
-    IncrementalStMan (UVW included) and writes the scalar columns only at the
-    first row of each integration.
+- **ADR-0017, ADR-0018 and ADR-0019 apply.** All computation is in Rust,
+  including the parts CASA writes in Python (`task_simobserve.py`,
+  `task_simanalyze.py`, `task_simalma.py`, `simutil.py`); Python only
+  presents CASA's interface.
+- **Agreement with CASA follows AGENTS.md.** The MS has CASA's columns,
+  subtables and keywords, apart from decision 6; predicted visibilities agree
+  to about 1e-3 normalized RMS; noise and corruptions are statistically
+  equivalent, not bit-identical. casacore C++ reads the MS, proved by an
+  interop test.
+- **Performance is the point.** Prediction uses Metal where it pays;
+  geometry, prediction, corruption and writing use multiple workers; results
+  do not depend on the worker count or the backend. Every benchmark reports
+  wall time, single-worker (W1) user CPU and peak RSS, so parallelism cannot
+  mask serial cost. The targets are in §5.
+- **Memory is bounded.** Peak resident memory stays under a declared budget
+  whatever the number of rows, channels or fields, proved by a counting-law
+  test. Work streams in time and channel chunks sized from the budget, and
+  Metal device buffers count against it. The MS write session stays
+  bounded (ADR-0008).
+- **The MS write path may be optimized; what is on disk may not change.**
+  The same storage managers, tile formats and table metadata, guarded by the
+  casacore C++ interop tests. The simulator writes every row in the layout
+  casa-rs's other MS writers share, not `NewMSSimulator`'s.
 
-## 2. Starting point
+## 2. Status
 
-### CASA
-
-- **`sm` is C++** (`Simulator.cc`), and casacore's `NewMSSimulator` writes the
-  MS.
-- **`predict` builds a SkyEquation.**
-  - Its FTMachine is `GridFT` by default, with padding 1.3 from `setoptions`.
-    The alternatives are `mosaic`, `wproject`, `sd` and `both`.
-  - The primary beam is a separate `VPSkyJones`. It is attached only after
-    `setvp(dovp=True)`; `doVP_p` is false at construction
-    (`Simulator.cc:327`, `:2549`). `simobserve` always calls
-    `setvp(dovp=True, usedefaultvp=False)` for interferometric runs
-    (`task_simobserve.py:1045`).
-  - Default voltage patterns: `PBMath1DEVLA` for EVLA, a polynomial for the old
-    VLA, and Airy only for ALMA and ACA (`PBMath.cc`).
-- **`corrupt` runs `VisEquation::collapseForSim`.** Its terms:
-  - noise: `ANoise`, scaled by a `T` or `Tf` term for Tsys noise;
-  - gain: `G`, in fBM or random mode;
-  - troposphere: a `Tf` phase screen;
-  - leakage: `Dlin`;
-  - any calibration table, through `setapply`.
-
-  `setbandpass`, `setpa` and `setpointingerror` are disabled in CASA itself and
-  throw "temporarily disabled".
-- **Defaults come from the installed binding, not the XML.**
-  - Parameters of "any" type default to `[]`, which the C++ reads as 0 before
-    applying its own fallbacks: `setnoise()` gives simplenoise 0 Jy, and
-    `settimes()` gives a 0 s integration.
-  - If `setlimits` is never called, the limits are 8° elevation and 1e-6
-    shadowing. If `setauto` is never called, autocorrelations are written
-    with weight 1.
-  - The seed is 11111 until `setseed` is called. `setseed()` with no argument
-    sets 185349251.
-  - Task defaults are the Python signature defaults; casashell's differ.
-- **TIME is TAI labelled UTC.** Verified 2026-10-20 with CASA 6.7: data start
-  TAI − UTC at the reference epoch after the requested epoch (37 s for a 2026
-  epoch). UVW is computed with that stored number read as UT1, so the data
-  are self-consistent; only the schedule is shifted.
-- **`simobserve`, `simanalyze`, `simalma` and `simutil` are Python.** They
-  cover:
-  - sky-model rescaling;
-  - antenna `.cfg` reading in XYZ, LOC and UTM coordinates;
-  - pointing generation: hexagonal, square, and ALMA OT tiling;
-  - scheduling;
-  - `noisetemp` efficiencies;
-  - imaging and the fidelity analysis.
-
-  `simanalyze` itself calls `concat` and `tsdimaging`
-  (`task_simanalyze.py:7`, `:231`).
-- **ATM.** `tsys-atm` noise, which is `simobserve`'s default, and `settrop`
-  need ATM: about 27,000 lines of C++ in 53 files under
-  `casatools/src/code/atmosphere`.
-
-### casa-rs
-
-**Existing simulator.** `casa-ms/src/simulation.rs` (6,660 lines) and
-`simulation_task.rs` (2,669 lines) are both on the file-length allowlist.
-- It generates in one shot: one request writes one new MS.
-- It handles several spectral windows, mosaics, analytic and FITS models, and
-  total power.
-- Its corruptions are simple noise, gain, bandpass, leakage and a global
-  pointing offset.
-- MS writes are streamed and bounded.
-- Prediction uses its own serial spheroidal degridder
-  (`casa-simulation-synthesis`), with no w-term and one beam for the whole
-  array.
-
-**Evidence on record.**
-- Same-input CASA comparisons from July (#257) are 3.9× (VLA) and 4.5×
-  (ALMA) for image models.
-- The July analytic-model family runs wrote 1,253 MB/s end to end on the
-  internal disk (1 GiB; it probably fits in the page cache), or 1,243 MB/s
-  with prediction disabled. They reached 0.77 GB/s on a 100 GiB run to an
-  external drive. CASA's small ACA and simalma runs wrote 4.1–4.6 MB/s, but
-  that is not a same-input comparison.
-
-**Gaps.**
-- a stateful `sm`-style API, and appending rows to an MS: the write plan fixes
-  the row count up front (`write_session.rs:335`, `:1559`);
-- corrupting an existing MS;
-- CASA images and CASA component lists as input (nothing in casa-rs reads
-  component lists);
-- `tsys-*` noise, `settrop` and `setapply`;
-- pointing generation, `simutil`, `simanalyze` and `simalma`;
-- CASA parameter names;
-- a casacore C++ interop test;
-- bounded prediction memory;
-- two defects (#840);
-- packaging: `simobserve` is missing from the installed suite.
-
-**Prediction in the imaging operator.**
-- It provides row-level degridding (`SpectralResampler::predict_row` over
-  prepared model grids, with a `ModelPrescale` hook for image-plane weighting)
-  and four kernel sets: standard, W, AW and mosaic.
-- Metal grids only the standard and mosaic sets; W and AW wait on #653
-  (`availability.rs:32-34`).
-- `GridGeometry` hard-codes CASA's tclean padding of 1.2 (`geometry.rs:29`).
-- ADR-0016 fixes the kernel sets at exactly four.
-- No entry point predicts from an external model.
-- Worker teams, Metal backends and the memory budget (`HostResources`,
-  `ResourcePolicy`, `admit`/`Reservation`, `WorkerTeam`) live in
-  `casa-imaging-runtime`.
-
-**Python.** `casars._core` (pyo3) provides `Image` and `Table`. Both are
-`unsendable` and hold the GIL (#839).
+Phases 1 to 5 are merged, except 5e (`simobserve` graphics), which is now
+part of #1025. By the owner's priority of 2026-10-31 (#841), the new tasks of
+Phase 6 wait until the existing conversions reach behavioral equivalence
+with CASA; their design and dependencies stand (§6). Phase 7 follows.
 
 ## 3. Owner decisions (accepted 2026-10-20)
 
-1. **Namespace.**
-   - CASA tool classes go in `casars.tools` under casatools' names, so
-     `from casars.tools import simulator; sm = simulator()`.
-   - Tasks stay in `casars.tasks`.
-   - There are no `casatools` or `casatasks` alias packages.
-2. **Replace the `simobserve` task surface.**
-   - The new surface has CASA's parameters and defaults, at contract 5.
-   - Profiles that use today's casa-rs-only parameters fail with a clear
-     diagnostic.
-   - The family generator, used for benchmark and fixture datasets, becomes a
-     developer binary outside the catalog, `synthetic-ms`.
-   - *Consequence found in review:* `synthetic-ms` needs predicted
-     visibilities, so it must live in `casa-simulation`, not `casa-ms`.
-     The imaging T1 fixtures and the perf fixtures depend on it through a
-     dev-dependency, which the layer check allows.
-3. **New crate `casa-simulation` at the application layer.**
-   - It depends on `casa-ms`, `casa-images`, `casa-imaging-operator` and
-     `casa-imaging-runtime` (worker teams, Metal, the budget), and later
-     `casa-calibration` and `casa-atmosphere`.
-   - `casa-ms` keeps the MS primitives.
-   - `simulation.rs`, `simulation_task.rs` and `casa-simulation-synthesis`
-     are deleted at the end.
-   - The crate is added to ADR-0016's dependency policy. The edges it needs
-     (application → observation, reconstruction and execution) are already
-     allowed.
-4. **Port ATM to Rust** as `casa-atmosphere`, in its own phase. Until it lands,
-   `tsys-atm` and `settrop` raise a clear "not yet implemented" error.
-   (`tsys-atm` landed in Phase 4c and `settrop` in 4d.)
-5. **TIME honours the requested UTC.**
-   - The divergence is recorded.
-   - CASA computed its geometry at the requested time + (TAI − UTC). A parity
-     run therefore requests a start later by TAI − UTC at the reference
-     epoch, taken from the measures data, and compares rows at equal stored
-     TIME.
-6. **DATA only, unless a later step needs MODEL_DATA.**
-   - MODEL_DATA is created only when something needs it. Nothing in Phase 1
-     does: `predict(incremental=True)` adds its prediction in the deferred
-     fold (§4), which needs no scratch column, and CASA's final MODEL_DATA
-     is all 1 (Phase 1d decision 5 on #841).
-   - CORRECTED_DATA is not written.
-   - casa-rs's `imager` falls back from `datacolumn='corrected'` to DATA, as
-     CASA's `tclean` does.
+1. **Namespace.** CASA tool classes are in `casars.tools` under casatools'
+   names, tasks in `casars.tasks`; there are no `casatools` or `casatasks`
+   alias packages (ADR-0019).
+2. **The `simobserve` surface is CASA's.** The old family generator is the
+   developer binary `synthetic-ms`, outside the catalog.
+3. **`casa-simulation` is an application-layer crate** in ADR-0016's
+   dependency policy. `simulation.rs`, `simulation_task.rs` and
+   `casa-simulation-synthesis` are deleted at the end (Phase 7).
+4. **ATM is ported to Rust** as `casa-atmosphere`.
+5. **TIME honours the requested UTC.** CASA computes its geometry at the
+   requested time + (TAI − UTC); the divergence is recorded in
+   `docs/CASA (C++) bugs.md`. A parity run requests a start later by
+   TAI − UTC at the reference epoch and compares rows at equal stored TIME.
+6. **DATA only, unless a later step needs MODEL_DATA.** MODEL_DATA is created
+   only when something needs it, and CORRECTED_DATA is not written.
+   casa-rs's imager falls back from `datacolumn='corrected'` to DATA, as
+   CASA's `tclean` does.
 
 ## 4. Design decided in planning
 
-These choices are open to objection.
-
-### Tool binding
-- `simulator` is a pyo3 class in `casars._core`.
-- Its method signatures and defaults are declared in Rust (pyo3 `signature`),
-  copying the installed CASA binding's effective defaults. The object-surface
-  bundle describes the methods from the same Rust types.
-- Session state is `Send`, so long calls release the GIL; #839 brings `Image`
-  and `Table` to the same pattern.
-- The memory budget and the backend are constructor arguments, such as
-  `simulator(memory_budget=..., backend='auto')`. No environment variables are
-  read (ADR-0016).
-- Every method in `simulator.xml` exists:
-  - `setbandpass`, `setpa` and `setpointingerror` raise CASA's "temporarily
-    disabled" error;
-  - `oldsetnoise` raises a deprecation error;
-  - `name`, `type` and `summary` are implemented.
-
 ### Deferred, single-pass execution
-- CASA's `sm` writes DATA three times: zeros at `observe`, again at `predict`
-  and again at `corrupt`.
-- The casa-rs session records `observe`, `predict` and `corrupt` as a plan.
-  At `close`/`done` it materializes the MS in one streamed pass: geometry,
-  prediction, corruption and the write for each chunk.
-- The MS is published at `close`, as ADR-0008 staging requires, so no reader
-  can see an intermediate state.
-- **The plan is a fold.** Each `predict` and `corrupt` applies only to the
-  scans observed before it, and a `predict` that is not incremental replaces
-  every step before it. For each scan, DATA is the steps covering it applied
-  in order, so no sequence of `predict` and `corrupt` needs data on disk and
-  `close` stays one pass (Phase 1d decision 4 on #841).
-- **A call that needs data on disk** forces the pending pass. These are
-  `openfromms` on the output and `setdata` selections that depend on written
-  rows (Phase 2).
-- **Corrupting an existing MS** (`openfromms` + `corrupt`) patches it in place
-  through the bounded selected-row mutation path (`write_session.rs:541`). The
-  chunks are aligned to the DATA tile's channel extent, so each tile is
-  written once.
-- `simobserve`'s noise-free and noisy MSs are written in the same pass, rather
-  than CASA's copy-then-`corrupt`.
+The session records `observe`, `predict` and `corrupt` as a plan and, at
+`close`/`done`, materializes the MS in one streamed pass (geometry,
+prediction, corruption and the write for each chunk), published at `close`
+as ADR-0008 staging requires. The plan is a fold: each `predict` and
+`corrupt` applies to the scans observed before it, and a `predict` that is
+not incremental replaces every step before it. A call that needs data on
+disk forces the pending pass. Corrupting an existing MS (`openfromms` +
+`corrupt`) patches it in place through the bounded selected-row mutation
+path, in chunks aligned to the DATA tile.
 
 ### Prediction
-- Prediction goes through the imaging operator:
-  - a new application-layer entry point prepares model grids from an
-    external sky model (cell, frequency axis, Stokes);
-  - the padding factor becomes a parameter of the operator's geometry, set
-    from `setoptions` with default 1.3;
-  - the primary beam is applied through `ModelPrescale` only after
-    `setvp(dovp=True)`, using CASA's voltage pattern for the telescope;
-  - the EVLA model is shared from `casa-imaging-products` rather than copied.
-- Execution uses `casa-imaging-runtime`'s worker teams and Metal backends.
-  The budget is `HostResources`/`ResourcePolicy` with `admit`/`Reservation`.
-  The simulator builds no second budget or worker model.
-- **Backends.** `auto` chooses Metal where it is available and pays: standard
-  and mosaic kernels. W-projection is CPU-only until Metal W lands (#653).
-- **Per-field beam grids.** Under `setvp(dovp=True)` with several fields,
-  each field's grids have the beam centred on it. `predict` holds the
-  model's planes, and `close` prepares a field's grids as its write
-  reaches the field, keeping as many sets as its budget leaves after the
-  workers. It evicts the set used again latest, and prepares a field again
-  when it returns, as CASA's `GridFT` transforms the model again at each
-  field change. The MeasurementSet does not depend on the budget. Holding
-  one set per field from `predict` refused a 106-pointing mosaic of a
-  1873² model, which needed 5.3 GB.
-- **Total power (`sd`)** is image-plane sampling of the model convolved with
-  the primary beam, inside `casa-simulation`. ADR-0016 keeps the operator to
-  four kernel sets.
-- `casa-simulation-synthesis` and the old predictor are deleted once nothing
-  uses them.
+Prediction goes through the imaging operator, so simulation and imaging
+share one forward model, and through `casa-imaging-runtime`'s worker teams,
+Metal backends and budget (`HostResources`, `ResourcePolicy`): the simulator
+builds no second budget or worker model. Total power is image-plane
+sampling of the model convolved with the primary beam, in
+`casa-imaging-singledish`.
 
 ### Random numbers
-- A counter-based generator keys each draw by seed, row, channel, correlation
-  and real/imaginary part. Results are therefore bitwise identical for any
-  worker count, chunking or backend, and need no shared state.
-- Its statistical quality is tested, including independence across rows,
-  channels and correlations.
-- It is not CASA's MLCG stream; AGENTS.md says bitwise reproducibility is not
-  a goal.
+A counter-based generator keys each draw by seed, row, channel, correlation
+and real/imaginary part, so noise is bitwise identical for any worker count,
+chunking or backend. It is not CASA's MLCG stream.
 
 ### CASA quirks
-- **Matched**, where they shape outputs users compare:
-  - default limits;
-  - SIGMA and WEIGHT left at their geometric values after `corrupt`;
-  - noise scaling: independent real and imaginary draws for
-    cross-correlations, one real draw for autocorrelations, and an
-    independent draw for every correlation, the cross-hands of
-    4-correlation data included (measured on CASA 6.7.6 in Phase 1d; this
-    plan first said the cross-hands get none, #841);
-  - fBM normalisation;
-  - scan numbering;
-  - autocorrelation defaults.
-- **Diverged and recorded**, only for crashes, undefined behaviour or data
-  corruption:
-  - 2-D fBM out-of-bounds writes;
-  - UVW throwing for non-J2000 fields;
-  - the integer-division bug in `setmosaicfield`.
-
-  These three are checked against CASA when their phase starts.
-- Other quirks are decided phase by phase and recorded.
-
-### Code shape
-- The crate's module split is planned before any code, so every file stays
-  under 1,500 lines.
-- Plotting in `simobserve` and `simanalyze` (their `graphics` option) is
-  rendered in Python (ADR-0018 item 4).
-- Every new binary and surface is in the installed suite.
-
-### The tool pattern is ADR-0019
-- ADR-0019 (accepted 2026-10-20) records, for every tool:
-  - decision 1's `casars.tools` namespace;
-  - the binding pattern above: Rust-declared signatures and defaults;
-  - budget and backend as constructor arguments;
-  - the GIL rule.
-- Decision 6 stays in this plan, under ADR-0008's existing rule that casa-rs
-  writes nothing CASA does not.
+CASA quirks that shape outputs users compare are matched (default limits,
+SIGMA and WEIGHT left at their geometric values after `corrupt`, noise
+scaling, fBM normalization, scan numbering, autocorrelation defaults).
+casa-rs diverges only for crashes, undefined behaviour or data corruption,
+such as `setmosaicfield`'s integer division; every divergence is recorded
+in `docs/CASA (C++) bugs.md`.
 
 ## 5. Performance and I/O targets
 
-### Per-mode targets
-Each benchmark is timed for CASA, today's simulator, and casa-rs on CPU and on
-Metal. CASA's time is measured in-process, per `sm` call, excluding Python
+Each benchmark is timed for CASA, the old simulator, and casa-rs on CPU and
+on Metal. CASA's time is measured in-process, per call, excluding Python
 start-up.
 
 | Mode | Target |
 |---|---|
-| Analytic and component-list prediction | No slower than July's record on the same case. The CASA multiple is measured on the same input, on a case where CASA runs ≥ 60 s. |
-| Image-model prediction, CPU | ≥ 10× CASA on the same input (July: 3.9–4.5×). W1 user CPU is reported. |
-| Image-model prediction, Metal | I/O-bound: meets the end-to-end I/O fraction below. The CASA multiple is reported. |
+| Analytic and component-list prediction | No slower than July's record (#257) on the same case; the CASA multiple measured on a case where CASA runs ≥ 60 s. |
+| Image-model prediction, CPU | ≥ 10× CASA on the same input, with W1 user CPU reported. |
+| Image-model prediction, Metal | I/O-bound: meets the I/O target below; the CASA multiple reported. |
 | I/O-bound passes (geometry only, noise only, write only) | Judged against the device's ceiling, not against CASA. |
 
 **No-regression rule.** On every case, the new simulator is no slower than
-today's, within 5%. Any trade-off is recorded and needs owner approval.
+the old one, within 5%; a trade-off needs owner approval.
 
-### I/O target
-- **The measure** is a sustained MAIN-table rate: bytes on disk divided by the
-  wall time from the first row to publication, including the final sync. It
-  is measured on a dataset at least twice the size of RAM, with the page cache
-  purged first.
-- **The comparison** is a fraction of the same volume's raw sequential-write
-  ceiling, measured in the same session with a file larger than RAM:
-  - at least 70% for the write-only case;
-  - at least 50% end to end with Metal prediction.
-- **Where it runs.** Sustained runs go on GLENDENNING, the 1 TB NVMe external
-  drive (about 3 GB/s). The internal disk has 72 GB free and must stay above
-  40 GB.
-- **Phase 1's record (owner decision, 2026-10-22).** The indicative runs at
-  #855's final head stand as Phase 1's acceptance; there is no purged,
-  repeated rerun. That record is `sustained-20261022-d6ab21e2de` on the NAS:
-  - the page cache was not purged;
-  - each case ran once, between two ceiling runs;
-  - the dataset was 81.6 GiB against 32 GiB of RAM.
+**I/O target.** The sustained MAIN-table rate (bytes on disk over the wall
+time from the first row to publication, including the final sync), on a
+dataset at least twice the size of RAM with the page cache purged, is at
+least 70% of the same volume's raw sequential-write ceiling for the
+write-only case and at least 50% end to end with Metal prediction
+(`tools/simulation/bench_sustained_io.py`). Phase 1 met both on the external
+NVMe drive (owner decision, 2026-10-22, #855). The 1 GiB internal-disk case
+stays as a quick, cache-resident check.
 
-  It met both targets with a wide margin: 104% write-only and 100% with Metal.
-- **Fast regression check.** The 1 GiB internal-disk case stays as a quick
-  check, labelled cache-resident. A 4 GB `dd` on the internal disk measured
-  about 2 GB/s on 2026-10-20, but that file is smaller than RAM and so went
-  partly through the page cache.
-
-### Benchmark cases
-1. **ALMA:** about 43 antennas, 1 h of 10 s integrations, 256 channels and a
-   1024² image model.
-2. **VLA**, of similar size.
-3. **MFS model with many channels:** one model plane degridded at 256
-   frequencies, the common `simobserve` shape.
-4. **Analytic and component-list:** carries July's record.
-5. **Write-only.**
+**Benchmark cases.** ALMA (about 43 antennas, 1 h of 10 s integrations,
+256 channels, a 1024² image model); VLA of similar size; one MFS model plane
+degridded at 256 frequencies; analytic and component-list models; write only.
 
 ## 6. Phases
 
-The phases are ordered by risk. Each PR is reviewed independently when it
-touches science, persistence or interop.
-
-### Phase 1, the first example: an `sm` script runs unchanged
-
-This is delivered as four PRs, in order.
-
-**1a. Prediction spike (the gating risk).**
-- Prove that the imaging operator reproduces CASA's `sm.predict`:
-  - with `GridFT` at padding 1.3;
-  - with and without `setvp`;
-  - on a CASA-made MS, compared sample by sample with the geometry held
-    fixed.
-- If it misses 1e-3 normalized RMS and the cause cannot be fixed in the
-  operator, stop and report before going further.
-
-**1b. MS write path.**
-- Profile the write session on the benchmark shapes.
-- Improve buffering, batch layout and overlap.
-- Persistence review.
-- Time `split` and `mstransform` before and after.
-- Run the I/O targets of §5.
-
-**1c. Session and observe.**
-- The `casa-simulation` crate, with its module plan.
-- The `Simulator` session with `open`, `setconfig`, `setfeed`,
-  `setspwindow`, `setfield`, `settimes`, `setlimits`, `setauto`, `observe`
-  and `close`/`done`.
-- `simutil.readantenna`.
-- Writing that appends rows within staging.
-- The casacore C++ interop test.
-- `casars.tools.simulator` and its object-surface bundle.
-
-**1d. Predict and corrupt.**
-- `predict` from a CASA image, `setvp`, `setoptions` (padding),
-  `setseed`, `setnoise(mode='simplenoise')` and `corrupt`.
-- Deferred single-pass execution.
-- Metal.
-- The benchmarks.
-- The #840 fixes in the new code.
-
-**Acceptance for Phase 1.**
-- **The scripts.** A CASA `sm` script runs with only its imports changed:
-  - for a VLA configuration and an ALMA configuration;
-  - with one spectral window and one field;
-  - with 1, 2 and 4 correlations.
-- **Agreement with CASA.**
-  - Columns, subtables, keywords, row counts, scans and flags are identical.
-  - TIME follows decision 5.
-  - UVW agrees within 1 µm at equal stored TIME as the goal; the tolerance is
-    set from the first measurement, and the existing oracle uses 1 mm.
-  - DATA agrees within 1e-3 normalized RMS.
-- **Noise.** The variance of noisy minus noise-free data matches CASA's
-  effective σ:
-  - real and imaginary parts tested separately;
-  - autocorrelations separately;
-  - draws tested for independence across rows, channels and correlations.
-- **Backends and workers.**
-  - CPU and Metal agree within the tolerance of the imaging T0 Metal law.
-  - Geometry and noise are bitwise identical for 1 and N workers.
-- **casacore C++ reads the MS.**
-- **Performance:** the §5 targets on cases 1 to 3 and 5, plus the
-  no-regression rule.
-- **Memory:** a counting-law test shows peak memory under the budget as rows
-  and channels grow 10×.
-- The oracle and benchmark scripts live under `tools/simulation/`.
-
-### Phase 2: complete `observe` and `predict`
-
-**Scope.**
-- `observemany`, `setmosaicfield`, `setdata` and `openfromms`.
-- **Component lists:**
-  - reading CASA `ComponentList` tables, as an interop deliverable tested
-    against a fixture written by C++;
-  - the `cl` tool, as far as simulation scripts need it.
-- **FTMachines:**
-  - `mosaic`, including heterogeneous arrays (CPU and Metal);
-  - `wproject` (CPU only);
-  - `sd`, by image-plane sampling.
-- The default voltage patterns for VLA and EVLA.
-
-**Acceptance.**
-- Parity with CASA for:
-  - a heterogeneous ALMA/ACA mosaic;
-  - a wide-field W case;
-  - total power;
-  - a component-list case.
-- Benchmark case 4 meets its §5 target.
-
-### Phase 3: corruptions
-
-**Scope.**
-- `setnoise(mode='tsys-manual')`.
-- `setgain`, in fBM and random modes.
-- `setleakage`.
-- `setapply`, through `casa-calibration`.
-- `reset`.
-- Receptor pairs for 4 correlations.
-
-**Acceptance.**
-- Statistical parity with CASA for each corruption.
-- Exact agreement for the deterministic parts: the Tsys formula, the
-  radiometer σ and the collapse order.
-
-### Phase 4: ATM
-
-**Scope.**
-- `casa-atmosphere`.
-- `setnoise(mode='tsys-atm')`.
-- `settrop`, in individual and screen modes.
-
-**Acceptance.**
-- Tebb and opacity agree with CASA's ATM, through the `at` tool, to about
-  1e-6 relative across its bands. casa-rs corrects four of ATM's data
-  errors (owner decision, 2026-10-24; `docs/CASA (C++) bugs.md`), so
-  `tools/atmosphere/at_tool_check.py` checks the agreement through the C++:
-  ATM as CASA ships it against the `at` tool, and casa-atmosphere against
-  ATM with the corrections, each to 1e-6; it reports what the corrections
-  change.
-- `tsys-atm` noise agrees with CASA statistically, each implementation's
-  noise against its own ATM (CASA's through the `at` tool, casa-rs's
-  through casa-atmosphere).
-- `settrop` (added in 4d, where CASA's phase is the dispersive wet delay
-  alone and casa-rs's the whole one, `docs/CASA (C++) bugs.md`): each
-  implementation's `Tf Jones` table is one water-vapour excess per
-  solution times its own delay model (CASA's through the `at` tool,
-  casa-rs's through casa-atmosphere) to single precision; DATA is the
-  table's `g_p·conj(g_q)`; CASA applies casa-rs's
-  table (`setapply`) to the same DATA; casa-rs's `individual` series have
-  the root-mean-square `deltapwv`, and the screens' statistics are
-  reported.
-
-### Phase 5: `simutil` and `simobserve`
-
-**Scope.**
-- The CASA-signature `simobserve` (decision 2), built on the Rust session.
-- The parts of `simutil` it uses:
-  - `modifymodel` and `flatimage`;
-  - `calc_pointings2`, including the ALMA OT tiling;
-  - pointing files;
-  - `noisetemp`, `bandname` and the direction helpers.
-- The calibrator, leakage and the project-directory outputs.
-- `synthetic-ms` replaces the family mode.
-- Callers moved to it:
-  - `tools/perf/imager/bench_simobserve.py`;
-  - `bench_aca_simalma.py`;
-  - `perf_harness/casa_aca_scenarios.py`;
-  - `stage_wave1_datasets.py`;
-  - `generate_wave1_casa_datasets.py`;
-  - the justfile's t48 target;
-  - `scripts/test-task-cli-hosts.py`.
-
-**Acceptance.**
-- CASA `simobserve` parity on the VLA ppdisk tutorial and on an ALMA
-  configuration: the same output files, with the MS agreeing as in Phase 1.
-- Pointing lists identical to CASA's.
-
-**Split** (2026-10-26; the full text is on #841). Each part is one PR.
-- **5a:** `simutil`'s directions, pointings (`calc_pointings2`, pointing
-  files), `noisetemp`, `bandname`, `polsettings` and baselines; `qa.formxxx`
-  and `qa.tos`.
-- **5b:** sky-model preparation: `modifymodel`, `flatimage`, components
-  sampled on an image, and the component-only model.
-- **5d (done, #915):** `synthetic-ms`, a developer binary hosting the old
-  family mode unchanged, with its callers moved to it. It lives in casa-ms,
-  beside the generator, because ADR-0016's dependency checker keeps
-  casa-simulation free of casa-logging, `eprintln!` and environment reads,
-  binaries included. Rebuilding the families on the new session stays in
-  Phase 7.
-- **5c:** the `simobserve` task at contract 5 on the session, with the
-  `alma/simmos` data-path resolver its antenna-list search uses (moved from
-  5a). The same checker rule means its task binary needs a host the checker
-  admits rather than casa-simulation. Owner decision, 2026-10-26:
-  `overwrite` keeps CASA's default, True, with no confirmation, since the
-  task writes only inside its project directory. Owner decision,
-  2026-10-27: the task's binary lives in a new app crate,
-  `casars-simulation`, which will host `simanalyze` and `simalma` too.
-  - *Deviation:* the noisy and leaked MeasurementSets are copies of the
-    observed one corrupted in place (`openfromms`, then `corrupt`), as CASA
-    makes them. Writing them in the observed one's pass (§4) needs the
-    session to write several outputs, and is deferred.
-- **5e:** graphics, rendered in Python from Rust plot documents, and
-  `.quick.psf`.
-- **The acceptance data:** the ppdisk model is casatestdata's
-  `regression/sim_components_and_skymodel/input50pc_672GHz.fits`, and the
-  ALMA case is CASA's regression on `alma.out20` with components. Pointing
-  strings are compared exactly, numbers to tolerances.
+Phases 1 to 5 are on #841. What remains:
 
 ### Phase 6: `simanalyze` and `simalma`
 
 **Scope** (planned 2026-10-27; the split is on #841).
 - **Both tasks,** ported to Rust (ADR-0018) from CASA 6.7.6's installed
-  `task_simanalyze.py` and `task_simalma.py`. The port includes the `simutil`
-  and `sdbeamutil` parts they use: `imtclean`, `convimage`, `statim`,
+  `task_simanalyze.py` and `task_simalma.py`, with the `simutil` and
+  `sdbeamutil` parts they use: `imtclean`, `convimage`, `statim`,
   `cellsize`, `ismstp`, `primaryBeamArcsec` and `TheoreticalBeam`.
-- **`simanalyze`:**
-  - finds the project's MeasurementSets and sky model;
-  - grids total power with `tsdimaging`;
-  - concatenates several interferometric MeasurementSets and images them
-    through the imager, with `tclean`'s arguments as `imtclean` builds them;
-  - feathers;
-  - analyses: the convolved model, the difference, the fidelity and the
-    statistics.
-- **`simalma`:** it runs `simobserve`, `simanalyze`, `concat` and `feather`. Its
-  own logic chooses the configurations and allocates the time. It also lays out
-  the total-power pointings, scales the total power, and makes the
+- **`simanalyze`:** finds the project's MeasurementSets and sky model; grids
+  total power with `tsdimaging`; concatenates several interferometric
+  MeasurementSets and images them through the imager, with `tclean`'s
+  arguments as `imtclean` builds them; feathers; and analyses the convolved
+  model, the difference, the fidelity and the statistics.
+- **`simalma`:** runs `simobserve`, `simanalyze`, `concat` and `feather`.
+  Its own logic chooses the configurations and allocates the time; it lays
+  out the total-power pointings, scales the total power, and makes the
   primary-beam-weighted feather.
 - **The Python surfaces** mimic CASA's exactly from the start (#931).
 
-**What casa-rs lacks** (research of 2026-10-27):
-- single-dish gridding of any kind;
-- `concat`;
-- in the imager: `startmodel`, `uvtaper`, non-square `imsize` and CASA's
-  optimum image size;
-- in `imregrid`: `cubic` interpolation and a record template
-  (`template='get'`);
-- an `ia.convolve2d` equivalent, and a public regrid that takes a coordinate
-  system and a shape;
-- `convimage`, `statim`, `cellsize` and `imtclean`;
-- CASA comparisons of `feather`, `imregrid` and `impbcor`.
-
 **Owner decisions (2026-10-27).**
-- **The single-dish gridder goes in a new library crate,**
-  `casa-imaging-singledish` (#938). It holds the kernels and the image-plane
-  gridder, and `simobserve`'s total-power predictor, which is the gridder's
-  adjoint, moves there too. ADR-0016 gains a note: single-dish image-plane
-  gridding is its own operator family, outside the four interferometric kernel
-  sets.
+- The single-dish gridder is in its own library crate,
+  `casa-imaging-singledish` (#938), which holds the kernels, the image-plane
+  gridder and `simobserve`'s total-power predictor (the gridder's adjoint).
+  Single-dish image-plane gridding is its own operator family, outside
+  ADR-0016's four interferometric kernel sets.
 - **`tsdimaging` and `concat` read and write through `casa-observation`**
-  (#937, #938, #939), not through today's `casa-ms` paths. They wait for the
-  MeasurementSet programme to provide pointing windows, autocorrelation reads
-  and creation of one MeasurementSet from several.
+  (#937, #938, #939), not through `casa-ms`'s older access paths.
 
 **Decided in planning.** Each part records these in `docs/CASA (C++) bugs.md`
 when it implements them.
 - **Total-power intensity scaling:** each task keeps its own formula, which
-  differ by 8.7%. A part departs from one only if it measures that formula to
-  be physically wrong.
+  differ by 8.7%. A part departs from one only if it measures that formula
+  to be physically wrong.
 - **`simalma`'s `TypeError`** for configuration names without "cycleN"
   (`task_simalma.py:523`) is fixed.
-- **The user's `modelimage`** is not changed in place; CASA's master branch has
-  removed those lines.
+- **The user's `modelimage`** is not changed in place; CASA's master branch
+  has removed those lines.
 - **No `.tclean.last`** is written (#931: no Last profiles from Python).
-- **Products do not depend on `graphics`.** In CASA, `simalma`'s combine figure
-  deletes `simanalyze`'s flat images.
+- **Products do not depend on `graphics`.** In CASA, `simalma`'s combine
+  figure deletes `simanalyze`'s flat images.
 - **Sky-model discovery** takes candidates in sorted order, not in `glob`
   order.
-- **Acceptance avoids `simanalyze`'s feather of total power with interferometer
-  data,** which is not primary-beam weighted. CASA skips its own test of that
-  path because `feather` fails. The `simanalyze` part decides it by the
-  better-physics rule; `simalma`'s weighted feather is the candidate.
+- **Acceptance avoids `simanalyze`'s feather of total power with
+  interferometer data,** which is not primary-beam weighted. CASA skips its
+  own test of that path because `feather` fails. The `simanalyze` part
+  decides it by the better-physics rule; `simalma`'s weighted feather is the
+  candidate.
 
-**Parts,** one PR each:
+**Parts,** one PR each. 6a (image analysis in `casa-images`), 6b (imager
+`startmodel`, `uvtaper`, non-square `imsize`, optimum size), 6c (the
+`casa-imaging-singledish` core) and 6f (`simanalyze`'s analysis) are merged.
 
 | Part | Content | Waits for |
 |---|---|---|
-| 6a | Image-analysis gaps in `casa-images`: `imregrid` with `cubic` and a record template; a public regrid by coordinate system and shape; `convolve2d` with Jy/pixel to Jy/beam and no wrap-around at the edges; the channel-mean moment; robust statistics; `feather` at its defaults against CASA | none; surface changes go with #931's image PRs |
-| 6b | Imager: `startmodel`, `uvtaper`, non-square `imsize`, CASA's optimum size; T0, T1 and T1.5 | none; the names follow #931 4e; #932's source path is not touched |
-| 6c | `casa-imaging-singledish` core: kernels, gridder over in-memory samples, `sdbeamutil`, the predictor moved in (#938 part 1) | none |
-| 6d | `tsdimaging` on `casa-observation` (#938 part 2) | 6c, #937, #931 2a and 3 |
-| 6e | `concat` core on `casa-observation` (#939) | #937, #931 2a and 3 |
-| 6f | `simanalyze`'s analysis: `convimage`, `statim`, `cellsize`, a public `ismstp`, flat images of cubes, difference, fidelity and statistics | 6a |
-| 6g | `simanalyze`: discovery, imaging, total power, concat, feather; its host and Python surface | 6b, 6d, 6e, 6f, #931 3 |
+| 6d | `tsdimaging` on `casa-observation` (#938 part 2) | #931 2a and 3 |
+| 6e | `concat` core on `casa-observation` (#939) | #931 2a and 3 |
+| 6g | `simanalyze`: discovery, imaging, total power, concat, feather; its host and Python surface | 6d, 6e, #931 3 |
 | 6h | `simalma` | 6g |
-| 6i | Graphics for both, on 5e's plot document | 5e, which waits for #931 1 |
-
-6a, 6b, 6c and 6f can start now.
+| 6i | Graphics for both, on 5e's plot document | 5e (#1025) |
 
 **Acceptance.**
-- **`regression/sim_multi_arrays_and_TP`.** It runs `simobserve` for 12 m, 7 m
-  and total power, then `simanalyze` twice.
-  - The oracle is CASA 6.7.6-14's products, regenerated by a committed recipe.
-    The references in the test data are from an older CASA: 6.7.6-14 differs
-    from them by 4–7% NRMS in DATA.
-  - Compared by NRMS: the MeasurementSets (DATA within 1e-6, as in Phase 5),
-    the total-power image, and the images and difference images.
-- **`regression/simalma_12m_ACA_combination`.** CASA's test checks only that 14
-  PNGs and 5 MeasurementSets exist. Acceptance instead compares every product
-  with CASA 6.7.6-14's:
-  - the MeasurementSets, the concatenation included;
-  - the total-power image, each configuration's image and the concatenation's;
-  - the feathered image, the differences and the fidelities.
-  
+- **`regression/sim_multi_arrays_and_TP`.** It runs `simobserve` for 12 m,
+  7 m and total power, then `simanalyze` twice.
+  - The oracle is CASA 6.7.6-14's products, regenerated by a committed
+    recipe. The references in the test data are from an older CASA:
+    6.7.6-14 differs from them by 4–7% NRMS in DATA.
+  - Compared by NRMS: the MeasurementSets (DATA within 1e-6, as in
+    Phase 5), the total-power image, and the images and difference images.
+- **`regression/simalma_12m_ACA_combination`.** CASA's test checks only that
+  14 PNGs and 5 MeasurementSets exist. Acceptance instead compares every
+  product with CASA 6.7.6-14's: the MeasurementSets, the concatenation
+  included; the total-power image, each configuration's image and the
+  concatenation's; the feathered image, the differences and the fidelities.
   The PNGs come after 6i.
-- **Timing rows** for both cases, against CASA. The multi-array case takes about
-  30 s in CASA 6.7.6-14 on the Mac mini.
+- **Timing rows** for both cases, against CASA. The multi-array case takes
+  about 30 s in CASA 6.7.6-14 on the Mac mini.
 
 ### Phase 7: retire the old code
 
 **Scope.**
-- Delete `simulation.rs`, `simulation_task.rs` and `casa-simulation-synthesis`,
-  shrinking the allowlist.
+- Delete `simulation.rs`, `simulation_task.rs` and
+  `casa-simulation-synthesis`, shrinking the file-length allowlist.
 - Move the imaging T1 fixtures and the perf benches to the new API.
 - Update the capability matrix and the docs.
 
 **Acceptance.** No caller of the old API remains, and `just quick` is green.
-
-## 7. Risks
-
-- **The operator's model preparation is shaped for imaging.** Phase 1a tests
-  it before anything is built on it.
-- **ATM's size.** About 27,000 lines may take more than one phase. Tests
-  against CASA's `at` tool keep the port honest.
-- **The ALMA OT tiling is intricate.** Pointing lists are compared with CASA's
-  exactly.
-- **Shared I/O code.** A faster write path touches every MS writer.
-  - The casacore C++ interop suite must stay green.
-  - The bounded write session keeps its memory model.
-  - Gains are measured on quiet runs; the fanless laptop throttles, so A/B
-    runs alternate with rests.
-- **GLENDENNING must be mounted** for the sustained I/O runs. It is not
-  mounted today.
-- **Deferred execution changes when work happens.** The tests must cover
-  scripts that interleave calls, such as `predict` twice, or `corrupt` before
-  `predict`, and check they match CASA's sequential results.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The measurement operator, spectral resampler and weighting rule of one
-//! compiled problem: plan section 5.3 projected from `CompiledProblem`.
+//! compiled problem, projected from `CompiledProblem`.
 
 use casa_imaging_model::{
     AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, InstrumentModel,
@@ -174,8 +174,7 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// The grid precision: the requested one, else plan decision D2's rule as
-/// the owner amended it on 2026-10-15 (`gridprecision = auto`): f64 on the
+/// The grid precision: the requested one, else (`gridprecision = auto`) f64 on the
 /// CPU for every basis, since CASA accumulates its grids in double
 /// (`useDoublePrec`, `SynthesisUtilMethods.cc:3722`), and f32 on Metal,
 /// which accumulates in `f32` only.

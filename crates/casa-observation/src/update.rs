@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Writing back: what an update session may write, and the values one
-//! delivered batch's samples receive (`docs/measurement-set/contracts.md`,
-//! section 7, "Updates").
+//! delivered batch's samples receive.
 //!
 //! An update addresses the samples of a batch the same session delivered:
 //! the store maps them to its own native units (MAIN rows, Zarr chunks),
@@ -14,9 +13,8 @@
 //! batch before anything is written; a refused write writes nothing of its
 //! batch.
 //!
-//! **Trial status.** This is the write-back trial (`docs/measurement-set/
-//! trial/README.md`, "Write-back"): one updater per traversal, written
-//! batch for batch in any order, boolean flags only; the slices of a
+//! One updater serves one traversal, written batch for batch in any order,
+//! with boolean flags only; the slices of a
 //! [`TimeSplit`](crate::TimeSplit) each have their own updater, live at
 //! once.
 

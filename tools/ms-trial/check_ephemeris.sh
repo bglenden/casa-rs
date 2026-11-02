@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# The trial's ephemeris check (docs/measurement-set/trial/README.md,
-# "Ephemerides in MSv4"), on the committed fixtures: the converter writes the
-# moving-field MSv2 as MSv4, and XRADIO must open it, schema-check it and find
-# its field_and_source_ephemeris equal to XRADIO's own conversion. Writes the
-# JSON report to OUT (default docs/measurement-set/trial/interop) and exits
+# The trial's ephemeris check, on the committed fixtures: the converter
+# writes the moving-field MSv2 as MSv4, and XRADIO must open it,
+# schema-check it and find its field_and_source_ephemeris equal to XRADIO's
+# own conversion. Writes the
+# JSON report to OUT (default target/ms-trial/interop) and exits
 # non-zero if the check fails or cannot run. Needs cargo and uv.
 
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
-out="${1:-docs/measurement-set/trial/interop}"
+out="${1:-target/ms-trial/interop}"
 mkdir -p "$out"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

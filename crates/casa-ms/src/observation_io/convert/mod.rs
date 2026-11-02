@@ -106,7 +106,7 @@ pub struct ConversionReport {
 /// subtable rows. Every grid cell becomes one row; padding becomes a row
 /// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
-/// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
+/// it). With [`PaddingRows::Omitted`], padding becomes no
 /// row, which reproduces an original sparse MSv2. A field that follows an
 /// ephemeris gets the table casacore reads (`FIELD/EPHEM<id>_<name>.tab`)
 /// and its `EPHEMERIS_ID`, its `PHASE_DIR` the offset from the body and its

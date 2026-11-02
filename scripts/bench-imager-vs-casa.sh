@@ -395,7 +395,7 @@ case "$standard_mfs_acceleration" in
     ;;
 esac
 # The workload's grid precision (`imaging_fft_precision`) is casars-imager's
-# `gridprecision`; `auto` leaves plan decision D2's rule.
+# `gridprecision`; `auto` leaves the default (f64 on the CPU, f32 on Metal).
 case "${IMAGER_BENCH_IMAGING_FFT_PRECISION:-auto}" in
   auto)
     ;;

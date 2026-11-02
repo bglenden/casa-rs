@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The caltable round trip (`docs/measurement-set/trial/README.md`,
-//! "Caltable round trip"): solve from batches, persist through the store's
+//! The caltable round trip: solve from batches, persist through the store's
 //! namespace, close, reopen a store that numbers its entities otherwise,
 //! bind, and apply.
 

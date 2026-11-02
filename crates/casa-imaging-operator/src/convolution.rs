@@ -309,7 +309,7 @@ impl CellHold {
 /// How a set's kernels are normalised: what a prediction divides by and
 /// what `sumwt` accumulates, with `N` the sum of the w-conjugated taps a
 /// visibility polarization uses at its fine offset, without the pointing
-/// ramp (plan section 5.3; R1 on #650). CASA's machines differ, so the
+/// ramp (#650). CASA's machines differ, so the
 /// rule is a property of the set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KernelNormalisation {

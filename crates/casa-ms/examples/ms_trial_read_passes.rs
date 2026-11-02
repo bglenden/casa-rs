@@ -2,8 +2,7 @@
 //! Read every partition of a store, every role, several times in one
 //! process, and report each pass's time and the process's peak resident
 //! memory after it: whether what the store stack keeps (zarrs_filesystem's
-//! per-key locks, codec scratch) plateaus over passes, for the measurements
-//! in `docs/measurement-set/trial/README.md`.
+//! per-key locks, codec scratch) plateaus over passes.
 //!
 //! ```text
 //! ms_trial_read_passes SOURCE [--passes N] [--workers W] [--batch-mib M]

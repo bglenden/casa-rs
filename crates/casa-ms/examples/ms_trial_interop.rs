@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The Rust side of the MSv2/MSv4 trial's interoperability check
-//! (`docs/measurement-set/trial/README.md`); `tools/ms-trial/check_interop.py`
+//! (`tools/ms-trial/check_interop.sh`); `tools/ms-trial/check_interop.py`
 //! is the XRADIO side.
 //!
 //! ```text

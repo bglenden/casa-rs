@@ -23,8 +23,7 @@
 //!
 //! Every rule follows CASA's `tclean` (`synthesis/ImagerObjects` and
 //! `synthesis/MeasurementEquations`); each item names the function it
-//! follows. The design is section 5.5 of
-//! `docs/imaging-architecture/imaging-foundation-plan-20261007.md`.
+//! follows. ADR-0016 (decision 3) records the design.
 
 mod beam;
 mod clark;
