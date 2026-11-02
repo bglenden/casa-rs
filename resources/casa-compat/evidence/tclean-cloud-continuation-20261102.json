@@ -1,0 +1,66 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "Cloud continuation: main integration, VLA cube PB, cube Briggs weighting",
+  "work_issue": 980,
+  "date": "2026-11-02",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14",
+    "casa_source_tag": "6.7.6.14",
+    "casa_source_commit": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2"
+  },
+  "host": {
+    "name": "bg-mac-mini",
+    "os": "macOS 27.0.1",
+    "cpu": "Apple M2",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "fftw": "Homebrew /opt/homebrew/Cellar/fftw/3.3.11/lib (scalar: 0 NEON n1fv codelets); correctness comparisons only, no timing claims"
+  },
+  "comparator": {
+    "driver": "tools/casa-compat/tclean_cloud_replay.py",
+    "inputs": "NAS casa-rs/tclean/20261031/tclean-handoff-20261101.tar (SHA256 6721d4c96b7ed31876dc4f1b5bbc4937a9c02babb8635f8f89cac5a3530d6416) with the T1.5 comparators of casa-rs/if10/t15-py-20261016b.tar and t15-harness-additions-20261015.tar",
+    "backend": "CPU, grid precision f64 (saved CASA requests)",
+    "limits": "T1.5 products NRMS <= 1e-3 and .sumwt within 5e-5; selected scalars 1e-6 relative plus 1e-8 absolute; exact counts",
+    "scope": "Six saved handoff cases. Whole-task equivalence, full file inventory and beam position angle are not established; the native summary sidecar is reported separately."
+  },
+  "runs": [
+    {
+      "label": "pre-merge diagnostic",
+      "native_revision": "9768bb1e87ca8cc1a9ab66f095f826d633c96b73",
+      "binary_sha256": "c5200dbd91536a6d550789ca76f2ce150d4e603ce2c775a46fea103ff2f1ec16",
+      "result": "6/6 products and counts pass; both VLA cube .pb NRMS 0.0 (pre-candidate 0.0135702511); point-cube-briggs maxpsfsidelobe 0.04809821397066116 vs CASA 0.048097819089889526 FAILS the scalar limit; 5/6 scalar cases pass"
+    },
+    {
+      "label": "post-merge (main imaging cutover integrated)",
+      "native_revision": "3016f1ba69c268450acb207516b747d47966f812",
+      "binary_sha256": "fe0f0f7444f4e9f653d435b874a724c1b03ccdbe9517dbb1f7b239f31a5273ff",
+      "result": "identical classification to the pre-merge run: 6/6 products and counts, the same single scalar failure"
+    },
+    {
+      "label": "cube Briggs orientation fix",
+      "native_revision": "2628d8b05902ee44ba63088f53a23efde8f8af1c",
+      "binary_sha256": "0c41aecad85272ebb324ceec65b47386f55ae56433c44d61a446dbbf678d53e5",
+      "result": "6/6 cases pass products, counts and both selected scalars (driver exit 0). point-cube-briggs maxpsfsidelobe 0.04809781536459923 vs CASA 0.048097819089889526 (relative 7.7e-8); its .psf NRMS 9.82e-8 (was 1.04e-5) and .residual NRMS 2.50e-6 (was 1.05e-5). Every case's .pb NRMS is 0.0."
+    }
+  ],
+  "cube_briggs_diagnosis": {
+    "method": "CASA's per-row IMAGING_WEIGHT scratch table, captured by wrapping PySynthesisImager.makePSF around an unchanged casatasks.tclean (point-cube-briggs request, niter=0), against an evidence-only native dump of every (MAIN row, channel) imaging weight (patch evidence-weight-dump.patch, never committed).",
+    "before_fix": "7 of 3,056,967 weights differ (channels 1, 4 twice, 6, 10, 12, 15; 0.2% to 32%); every other weight agrees to 1.4e-7. All 7 have a native Float u-cell coordinate exactly at k + 1/2.",
+    "cause": "Native evaluated the cube rule with u mirrored relative to BriggsCubeWeightor (which negates u and v, FTMachine::negateUV and u = -uvw*f). Mirrored grids agree for interior samples, but rounding half away from zero is not mirror-symmetric at an exact Float tie.",
+    "rejected_hypothesis": "Fused multiply-add contraction in CASA's arm64 build: a native mul_add experiment changed only one of the seven, and row 32452 shows CASA rounds the unfused tie.",
+    "after_fix": "0 of 3,056,967 weights differ; worst relative difference per channel <= 1.35e-7.",
+    "regression": "crates/casa-imaging-operator/tests/weighting.rs a_float_tie_rounds_in_casas_orientation fails on the parent and passes at 2628d8b."
+  },
+  "gates": {
+    "mac_full_normal_gate": "just quick at 3016f1ba69c268450acb207516b747d47966f812 on the Mac mini: exit 0; 4,684 workspace tests passed, 42 skipped; 97 doctests passed, 1 ignored; 21 CLI hosts; arch/SPDX/fmt and workspace clippy -D warnings. Its performance-tool step skipped for lack of pytest; CI's perf_tools job passed.",
+    "metal": "On Apple M2 at 3016f1ba69: casa-imaging-metal 23 passed (1 skipped), pass_laws metal 6/6, continuum_application metal:: 3/3, T1 metal:: 6/6; no 'skipped: no Metal device'.",
+    "linux": "Cloud container: workspace clippy -D warnings clean after 7b25e63; casa-imaging-operator, -runtime, -application and casars-imager 574 passed, 25 skipped at 2628d8b."
+  },
+  "archive": {
+    "nas_share_relative": "casa-rs/tclean/20261102/tclean-cloud-continuation-20261102.tar",
+    "bytes": 263898624,
+    "members": 1659,
+    "sha256": "d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055",
+    "verified": "shasum reread on the NAS"
+  }
+}
