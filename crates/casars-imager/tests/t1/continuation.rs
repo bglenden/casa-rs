@@ -116,52 +116,65 @@ fn calcpsf_and_calcres_false_continue_an_mfs_run_as_casa_does() {
 
 /// CASA's `test_onefield_restart_mtmfs` and `test_onefield_restore_mtmfs_niter0`:
 /// a Taylor family's PSF moments, sums and residual terms are read as one
-/// run forms them, and a run of no iterations restores what it read.
+/// run forms them, and a run of no iterations restores what it read. One
+/// Taylor term (`nterms=1`) is a family like two: its images are `.tt0`
+/// and it has no spectral index.
 #[test]
 fn a_taylor_family_reads_its_psf_moments_and_residual_terms() {
+    for terms in [1, 2] {
+        taylor_family_continues(terms);
+    }
+}
+
+/// [`a_taylor_family_reads_its_psf_moments_and_residual_terms`] for a
+/// family of `terms` Taylor terms.
+fn taylor_family_continues(terms: usize) {
     let observation = Observation::synthesise_band(4, &[("point", POINT)]);
-    let base = json!({"deconvolver": "mtmfs", "nterms": 2});
-    let prefix = observation.scratch("taylor");
-    let step = |overrides: Value| observation.image("taylor", with(&base, overrides));
+    let base = json!({"deconvolver": "mtmfs", "nterms": terms});
+    let label = format!("taylor{terms}");
+    let prefix = observation.scratch(&label);
+    let step = |overrides: Value| observation.image(&label, with(&base, overrides));
+    let family = |base: &str, count: usize| -> Vec<String> {
+        (0..count).map(|term| format!("{base}.tt{term}")).collect()
+    };
+    let moments = 2 * terms - 1;
 
     step(json!({"niter": 0, "calcres": false}));
     assert_eq!(
         inventory(&prefix),
-        names(&[
-            "psf.tt0",
-            "psf.tt1",
-            "psf.tt2",
-            "sumwt.tt0",
-            "sumwt.tt1",
-            "sumwt.tt2"
-        ])
+        [family("psf", moments), family("sumwt", moments)]
+            .concat()
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "{terms} terms"
     );
     step(json!({"niter": 0, "calcpsf": false, "restoration": false}));
     let (restored_report, restored) = step(json!({
         "niter": 0, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(restored_report.major_cycles, 0);
-    let (_, dirty) = observation.image("taylor-dirty", with(&base, json!({"niter": 0})));
-    for suffix in [
-        ".residual.tt0",
-        ".residual.tt1",
-        ".psf.tt2",
-        ".image.tt0",
-        ".image.tt1",
-    ] {
+    let (_, dirty) = observation.image(
+        &format!("{label}-dirty"),
+        with(&base, json!({"niter": 0})),
+    );
+    let images = [family(".residual", terms), family(".image", terms)].concat();
+    for suffix in images.iter().chain(&family(".psf", moments)) {
         let error = nrms(&restored, &dirty, suffix);
-        assert!(error < 1e-5, "{suffix}: {error}");
+        assert!(error < 1e-5, "{terms} terms, {suffix}: {error}");
     }
-    assert!(inventory(&prefix).contains("alpha"));
+    assert_eq!(inventory(&prefix).contains("alpha"), terms > 1);
 
     let (cleaned_report, cleaned) = step(json!({
         "niter": 10, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(cleaned_report.major_cycles, 1);
-    let (_, reference) = observation.image("taylor-once", with(&base, json!({"niter": 10})));
-    for suffix in [".model.tt0", ".model.tt1", ".residual.tt0", ".image.tt1"] {
-        let error = nrms(&cleaned, &reference, suffix);
-        assert!(error < 1e-5, "{suffix}: {error}");
+    let (_, reference) = observation.image(
+        &format!("{label}-once"),
+        with(&base, json!({"niter": 10})),
+    );
+    for suffix in [family(".model", terms), images].concat() {
+        let error = nrms(&cleaned, &reference, &suffix);
+        assert!(error < 1e-5, "{terms} terms, {suffix}: {error}");
     }
     // calcres=True forms the residual of the continued model: a major cycle.
     let (formed, _) = step(json!({"niter": 10, "calcpsf": false}));

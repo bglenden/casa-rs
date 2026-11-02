@@ -33,14 +33,22 @@ pub(crate) struct TaylorProducts {
     sum_weights: Vec<f32>,
     primary_beam: Vec<Vec<f32>>,
     pb_corrected: Vec<Vec<f32>>,
-    alpha: Vec<f32>,
-    alpha_pbcor: Vec<f32>,
-    alpha_error: Vec<f32>,
-    alpha_validity: Vec<bool>,
+    /// `None` for one Taylor term, which has no spectral index
+    /// (`SIImageStoreMultiTerm::calculateAlphaBeta` needs `itsNTerms > 1`).
+    spectral_index: Option<SpectralIndexProducts>,
     primary_beam_validity: Vec<bool>,
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
+}
+
+/// The spectral index of a family of two or more Taylor terms, its error,
+/// its PB correction (zero unless published) and its support.
+struct SpectralIndexProducts {
+    alpha: Vec<f32>,
+    alpha_pbcor: Vec<f32>,
+    alpha_error: Vec<f32>,
+    alpha_validity: Vec<bool>,
 }
 
 fn primary_beam_correct_spectral_index(
@@ -529,28 +537,39 @@ impl TaylorProducts {
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 
-        let (alpha, alpha_error, alpha_validity) = spectral_index(
-            inputs.problem().products().validity(),
-            &principal_residual,
-            &restored,
-        )?;
-        let alpha_pbcor = if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex)
-        {
-            if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                return Err(ProductsError::UnsupportedProblem);
-            }
-            primary_beam_correct_spectral_index(
-                &alpha,
-                &sensitivity,
-                &family.weight,
-                &inverse,
-                terms,
-                &alpha_validity,
-                &primary_beam_validity,
-            )?
-        } else {
-            vec![0.0; cells]
-        };
+        let alpha = (terms >= 2)
+            .then(|| {
+                let (alpha, alpha_error, alpha_validity) = spectral_index(
+                    inputs.problem().products().validity(),
+                    &principal_residual,
+                    &restored,
+                )?;
+                let alpha_pbcor = if publishes(inputs, |role| {
+                    role == ProductRole::PbCorrectedSpectralIndex
+                }) {
+                    if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                        return Err(ProductsError::UnsupportedProblem);
+                    }
+                    primary_beam_correct_spectral_index(
+                        &alpha,
+                        &sensitivity,
+                        &family.weight,
+                        &inverse,
+                        terms,
+                        &alpha_validity,
+                        &primary_beam_validity,
+                    )?
+                } else {
+                    vec![0.0; cells]
+                };
+                Ok(SpectralIndexProducts {
+                    alpha,
+                    alpha_pbcor,
+                    alpha_error,
+                    alpha_validity,
+                })
+            })
+            .transpose()?;
 
         Ok(Self {
             shape,
@@ -564,10 +583,7 @@ impl TaylorProducts {
             sum_weights: family.sum_weights,
             primary_beam,
             pb_corrected,
-            alpha,
-            alpha_pbcor,
-            alpha_error,
-            alpha_validity,
+            spectral_index: alpha,
             primary_beam_validity,
             clean_mask: crate::plane::reconstruction_support_plane(inputs, domain_role, cells),
             fitted_beam,
@@ -581,6 +597,15 @@ impl TaylorProducts {
 
     pub(crate) const fn restoring_beam(&self) -> Option<RestoringBeam> {
         self.restoring_beam
+    }
+
+    /// The spectral index's support; planning names it only for a family of
+    /// two or more terms.
+    fn spectral_index_validity(&self) -> Result<&[bool], ProductsError> {
+        self.spectral_index
+            .as_ref()
+            .map(|index| index.alpha_validity.as_slice())
+            .ok_or(ProductsError::UnsupportedProblem)
     }
 
     pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
@@ -603,9 +628,13 @@ impl TaylorProducts {
             ProductRole::Weight(value) => self.weight.get(term(value)?),
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
-            ProductRole::SpectralIndex => return Ok(self.alpha.clone()),
-            ProductRole::PbCorrectedSpectralIndex => return Ok(self.alpha_pbcor.clone()),
-            ProductRole::SpectralIndexError => return Ok(self.alpha_error.clone()),
+            ProductRole::SpectralIndex => self.spectral_index.as_ref().map(|index| &index.alpha),
+            ProductRole::PbCorrectedSpectralIndex => {
+                self.spectral_index.as_ref().map(|index| &index.alpha_pbcor)
+            }
+            ProductRole::SpectralIndexError => {
+                self.spectral_index.as_ref().map(|index| &index.alpha_error)
+            }
             ProductRole::CleanMask => return Ok(self.clean_mask.clone()),
             ProductRole::Sensitivity => return Ok(self.sensitivity.clone()),
             ProductRole::SumWeights(value) => return Ok(vec![self.sum_weights[term(value)?]]),
@@ -621,9 +650,9 @@ impl TaylorProducts {
                 Ok(vec![true; self.shape[0] * self.shape[1]])
             }
             ProductValidityRule::PrimaryBeam(_) => Ok(self.primary_beam_validity.clone()),
-            ProductValidityRule::Taylor(_) => Ok(self.alpha_validity.clone()),
+            ProductValidityRule::Taylor(_) => Ok(self.spectral_index_validity()?.to_vec()),
             ProductValidityRule::TaylorAndPrimaryBeam { .. } => Ok(self
-                .alpha_validity
+                .spectral_index_validity()?
                 .iter()
                 .zip(&self.primary_beam_validity)
                 .map(|(taylor, pb)| *taylor && *pb)

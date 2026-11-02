@@ -404,7 +404,9 @@ fn requested_products(
     products.push(ProductKind::Beam);
     if mtmfs {
         products.push(ProductKind::TaylorTerms);
-        if restored {
+        // A spectral index needs two terms (`calculateAlphaBeta`'s
+        // `itsNTerms > 1`): one Taylor term writes none.
+        if restored && request.nterms > 1 {
             products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
         }
     }
@@ -416,7 +418,7 @@ fn requested_products(
     }
     if request.pbcor && restored {
         products.push(ProductKind::PbCorrectedImage);
-        if mtmfs && matches!(request.gridder, Gridder::Mosaic { .. }) {
+        if mtmfs && request.nterms > 1 && matches!(request.gridder, Gridder::Mosaic { .. }) {
             products.push(ProductKind::PbCorrectedSpectralIndex);
         }
     }
@@ -921,5 +923,33 @@ mod tests {
             assert!(products.contains(&product));
         }
         assert!(!products.contains(&ProductKind::Sensitivity));
+    }
+
+    /// One Taylor term writes the family (`.tt0`) and no spectral index,
+    /// corrected or not (`calculateAlphaBeta` needs `itsNTerms > 1`).
+    #[test]
+    fn one_taylor_term_writes_no_spectral_index() {
+        let products = products(serde_json::json!({
+            "deconvolver": "mtmfs",
+            "nterms": 1,
+            "niter": 10,
+            "gridder": "mosaic",
+            "pbcor": true,
+        }));
+        for product in [
+            ProductKind::TaylorTerms,
+            ProductKind::RestoredImage,
+            ProductKind::PbCorrectedImage,
+            ProductKind::Weight,
+        ] {
+            assert!(products.contains(&product), "{product:?}");
+        }
+        for product in [
+            ProductKind::SpectralIndex,
+            ProductKind::SpectralIndexError,
+            ProductKind::PbCorrectedSpectralIndex,
+        ] {
+            assert!(!products.contains(&product), "{product:?}");
+        }
     }
 }

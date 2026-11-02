@@ -883,27 +883,92 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
     ));
 }
 
+/// CASA's `mtmfs` with `nterms=1` is a one-term Taylor family
+/// (`SIImageStoreMultiTerm` with `itsNTerms = 1`): its products are named
+/// `.tt0`, its PSF has `2·1 − 1 = 1` moment, and it has no spectral index
+/// (`calculateAlphaBeta` needs `itsNTerms > 1`). Every other deconvolver
+/// images one term on the constant basis, and a Taylor basis needs a term.
 #[test]
-fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
-    let specification = ProblemSpecification::new(
-        science(),
-        ReconstructionContract::new(
-            ReconstructionBasis::Taylor { terms: 1 },
-            ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            ReconstructionControls::new(100, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        ),
-        weighting(),
-        products(false),
-        read_only_transaction(),
-        numerics(false),
-    );
+fn one_taylor_term_is_an_mtmfs_family_and_needs_mtmfs() {
+    let one_term = |basis, algorithm, products: Vec<ProductKind>| {
+        compile_request(
+            ProblemSpecification::new(
+                science(),
+                ReconstructionContract::new(
+                    basis,
+                    algorithm,
+                    ReconstructionControls::new(100, 0.1, 0.0),
+                    PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                ),
+                weighting(),
+                ProductRequirements::new(
+                    products,
+                    ProductNormalization::FlatNoise,
+                    RestoringBeamPolicy::PerPlane,
+                    product_validity(),
+                ),
+                read_only_transaction(),
+                numerics(false),
+            ),
+            observation(),
+        )
+    };
+    let mtmfs = ReconstructionAlgorithm::Mtmfs {
+        scales_px: vec![0.0],
+        small_scale_bias: 0.0,
+    };
+    let images = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::TaylorTerms,
+    ];
 
+    let compiled = one_term(
+        ReconstructionBasis::Taylor { terms: 1 },
+        mtmfs.clone(),
+        images.clone(),
+    )
+    .expect("one Taylor term under MT-MFS");
+    assert_eq!(
+        compiled
+            .product_list()
+            .entries()
+            .iter()
+            .filter_map(|entry| entry.name())
+            .collect::<Vec<_>>(),
+        [
+            ".psf.tt0",
+            ".residual.tt0",
+            ".model.tt0",
+            ".image.tt0",
+            ".sumwt.tt0"
+        ]
+    );
+    assert_eq!(compiled.model_lifecycle().target().coefficients(), 1);
+
+    let mut with_alpha = images.clone();
+    with_alpha.push(ProductKind::SpectralIndex);
     assert!(matches!(
-        compile_request(specification, observation()),
+        one_term(ReconstructionBasis::Taylor { terms: 1 }, mtmfs.clone(), with_alpha),
+        Err(CompileProblemError::InvalidProductCombination { .. })
+    ));
+    assert!(matches!(
+        one_term(
+            ReconstructionBasis::Taylor { terms: 0 },
+            mtmfs,
+            images.clone()
+        ),
+        Err(CompileProblemError::InvalidCapabilityCombination { .. })
+    ));
+    assert!(matches!(
+        one_term(
+            ReconstructionBasis::Taylor { terms: 1 },
+            ReconstructionAlgorithm::Hogbom,
+            images
+        ),
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }

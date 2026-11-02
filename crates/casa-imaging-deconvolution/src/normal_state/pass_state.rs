@@ -439,21 +439,21 @@ fn widen(values: &[f32]) -> Box<[Complex64]> {
 /// The coefficient basis of `problem`. A constant or Taylor basis needs a
 /// linear spectral axis, whose reference frequency it expands about.
 fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, NormalStateError> {
-    let polynomial = |terms: usize| {
-        if matches!(
+    let basis = problem.reconstruction().basis();
+    if !matches!(basis, ReconstructionBasis::ChannelLocal { .. })
+        && matches!(
             problem.geometry().spectral().wcs(),
             SpectralWcs::Tabular { .. }
-        ) {
-            return Err(NormalStateError::UnsupportedProblem);
-        }
-        terms
-            .checked_mul(2)
-            .map(|_| SpectralBasisPlan::Polynomial { terms })
-            .ok_or(NormalStateError::ResidencyOverflow)
-    };
-    match problem.reconstruction().basis() {
+        )
+    {
+        return Err(NormalStateError::UnsupportedProblem);
+    }
+    match basis {
         ReconstructionBasis::ChannelLocal { .. } => Ok(SpectralBasisPlan::ChannelLocal),
-        ReconstructionBasis::Constant => polynomial(1),
-        ReconstructionBasis::Taylor { terms } => polynomial(terms),
+        ReconstructionBasis::Constant => Ok(SpectralBasisPlan::Constant),
+        ReconstructionBasis::Taylor { terms } => terms
+            .checked_mul(2)
+            .map(|_| SpectralBasisPlan::Taylor { terms })
+            .ok_or(NormalStateError::ResidencyOverflow),
     }
 }

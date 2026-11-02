@@ -78,7 +78,7 @@ impl<'a> ContinuumProductInputs<'a> {
                     panic!("a Taylor normal state comes from a Taylor-basis problem");
                 };
                 assert!(
-                    terms >= 2
+                    terms >= 1
                         && normal.coefficient_term_count() == terms
                         && normal.normal_moment_count() == 2 * terms - 1
                         && model.coefficients() == terms

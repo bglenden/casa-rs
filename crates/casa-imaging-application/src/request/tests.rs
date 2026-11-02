@@ -173,6 +173,21 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
     }
 }
 
+/// `mtmfs` images one Taylor term or more (CASA's
+/// `test_onefield_mtmfs_nterms1`); every other deconvolver images one.
+#[test]
+fn nterms_is_one_or_more_and_more_than_one_only_with_mtmfs() {
+    request(json!({ "deconvolver": "mtmfs", "nterms": 1 }))
+        .validate()
+        .expect("one Taylor term");
+    let mut hogbom = request(json!({ "deconvolver": "hogbom" }));
+    hogbom.nterms = 2;
+    assert_eq!(
+        hogbom.validate().expect_err("two terms need mtmfs").parameters,
+        "nterms, deconvolver"
+    );
+}
+
 /// AW projection takes any positive W-plane count, its cache's or the
 /// planes a native cache generates; CASA's `AWConvFunc` refuses both the
 /// aperture and the spheroidal off, and a native cache must hold every

@@ -747,13 +747,6 @@ impl<'a> Tclean<'a> {
             },
         );
         let nterms = self.integer("nterms")?;
-        if modes.deconvolver == "mtmfs" && nterms == 1 {
-            return Err(TcleanRefusal::not_yet(
-                "nterms",
-                "1 with deconvolver='mtmfs'",
-                980,
-            ));
-        }
         self.set(
             "nterms",
             if modes.deconvolver == "mtmfs" {

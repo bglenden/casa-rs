@@ -13,24 +13,20 @@ use crate::restart::{ExistingProducts, Family};
 pub struct Input(ExistingProducts);
 
 impl Input {
-    /// Open the products at `prefix` of a run of `terms` Taylor terms (one
-    /// for a single image) of `shape`, `polarizations` and `channels`; the
-    /// residual too when `residual`.
+    /// Open the products at `prefix` of a run of `taylor_terms` Taylor terms
+    /// (`.psf.tt0`, ...; `None` for a single image, `.psf`) of `shape`,
+    /// `polarizations` and `channels`; the residual too when `residual`.
     ///
     /// # Errors
     /// An image cannot be opened, or its sums of weights are not one per
     /// Stokes plane and channel.
     pub fn open(
         prefix: &Path,
-        terms: usize,
+        taylor_terms: Option<usize>,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         residual: bool,
     ) -> Result<Self, crate::PrepareError> {
-        let family = if terms > 1 {
-            Family::Taylor { terms }
-        } else {
-            Family::Single
-        };
+        let family = taylor_terms.map_or(Family::Single, |terms| Family::Taylor { terms });
         ExistingProducts::new(
             prefix,
             family,

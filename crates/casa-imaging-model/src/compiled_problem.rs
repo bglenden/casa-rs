@@ -2099,9 +2099,13 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
+        // CASA's `mtmfs` runs one Taylor term as a multi-term family
+        // (`SIImageStoreMultiTerm` with `itsNTerms = 1`); every other
+        // single-term MFS deconvolver uses the constant basis, which the
+        // MT-MFS pairing check below keeps apart.
+        ReconstructionBasis::Taylor { terms: 0 } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
+                reason: "a Taylor basis requires at least one term",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
