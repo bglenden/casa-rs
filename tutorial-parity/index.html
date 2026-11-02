@@ -21,7 +21,7 @@
     
     
       
-        <title>CASA Tutorial Parity Program - casa-rs</title>
+        <title>CASA Tutorial Parity - casa-rs</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#casa-tutorial-parity-program" class="md-skip">
+        <a href="#casa-tutorial-parity" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              CASA Tutorial Parity Program
+              CASA Tutorial Parity
             
           </span>
         </div>
@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -629,10 +656,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#current-reference" class="md-nav__link">
+  <a href="#runtime-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current Reference
+        Runtime contract
       
     </span>
   </a>
@@ -640,10 +667,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#imaging-migration-evidence" class="md-nav__link">
+  <a href="#commands" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Imaging Migration Evidence
+        Commands
       
     </span>
   </a>
@@ -654,7 +681,7 @@
   <a href="#source-pages" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Source Pages
+        Source pages
       
     </span>
   </a>
@@ -678,36 +705,51 @@
 
 
 
-<h1 id="casa-tutorial-parity-program">CASA Tutorial Parity Program<a class="headerlink" href="#casa-tutorial-parity-program" title="Permanent link">&para;</a></h1>
+<h1 id="casa-tutorial-parity">CASA Tutorial Parity<a class="headerlink" href="#casa-tutorial-parity" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-10-20
+Last reality check: 2026-11-02
 Verification: just docs-check</p>
-<p>This directory contains the CASA Guide tutorial-parity reference material that
-is still in use. GitHub issues and pull requests remain the active planning and
-status surface. Finished wave evidence and the ImPerformance programme records
-were removed on 2026-10-05; retrieve them from git history at commit
-<code>08542713b7</code>.</p>
-<h2 id="current-reference">Current Reference<a class="headerlink" href="#current-reference" title="Permanent link">&para;</a></h2>
+<p>The CASA Guide "First Look" tutorials are checked section by section by the
+declarative runner in <code>scripts/tutorial_parity</code>. Its twelve version-1 section
+manifests (<code>scripts/tutorial_parity/sections/</code>) cover First Look at Image
+Analysis (<code>imhead</code>, <code>imstat</code>, <code>immoments</code>, <code>exportfits</code>) and First Look at
+Imaging (from <code>listobs</code> and the uv-coverage plots through cleaning and
+primary-beam correction). Each section runs on three surfaces, CASA, the
+command line and Python, and compares their products.</p>
+<h2 id="runtime-contract">Runtime contract<a class="headerlink" href="#runtime-contract" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="capability-matrix/">Tutorial capability matrix</a></li>
-<li><a href="first-look-section-runner/">Declarative First-Look section runner</a></li>
-<li><a href="synthetic-ms-families/">Synthetic MeasurementSet families</a></li>
+<li><code>CASA_RS_TUTORIAL_DATA_ROOT</code> is the only tutorial-data root; it holds the
+  pack paths the manifests declare.</li>
+<li><code>CASA_RS_CASA_PYTHON</code> selects the optional CASA oracle interpreter.</li>
+<li>Native Python is found by <code>scripts/resolve-python.sh</code> and counts only when
+  it can import the installed <code>casars._core</code> extension.</li>
+<li>Task and parameter names are allowlisted by the schema. Workers accept only
+  JSON requests produced from validated manifests, never Python or shell
+  fragments.</li>
+<li>A missing CASA, native Python, network or dataset is recorded as typed
+  <code>unavailable</code> evidence, never as a success or a fallback to another surface.</li>
+<li>Plot sections compare text point manifests; casa-rs does not render PNG
+  plots.</li>
 </ul>
-<h2 id="imaging-migration-evidence">Imaging Migration Evidence<a class="headerlink" href="#imaging-migration-evidence" title="Permanent link">&para;</a></h2>
-<p>These records document the imaging migration.</p>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<p>Validate the manifests and list the sections, without external resources:</p>
+<div class="codehilite"><pre><span></span><code>python3<span class="w"> </span>scripts/tutorial_parity/runner.py<span class="w"> </span>validate<span class="w"> </span>--all
+python3<span class="w"> </span>scripts/tutorial_parity/runner.py<span class="w"> </span>run<span class="w"> </span>--dry-run<span class="w"> </span>--all
+</code></pre></div>
+
+<p>Run one section (omit <code>--surface</code> for all three):</p>
+<div class="codehilite"><pre><span></span><code>python3<span class="w"> </span>scripts/tutorial_parity/runner.py<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>alma-first-look-image-analysis:01-imhead-continuum-header<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--surface<span class="w"> </span>casa<span class="w"> </span>--surface<span class="w"> </span>cli<span class="w"> </span>--surface<span class="w"> </span>python
+</code></pre></div>
+
+<p>Evidence, review records and the section's Markdown and HTML documentation are
+written atomically under the pack paths the manifest declares. The runner's
+tests run with <code>scripts/test-perf-tools.sh</code>.</p>
+<h2 id="source-pages">Source pages<a class="headerlink" href="#source-pages" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="vlass-imaging-recovery-contract/">VLASS imaging merge-recovery contract</a></li>
-<li><a href="outlierfile-inventory/">CASA <code>outlierfile</code> inventory</a></li>
-</ul>
-<p>The Issue 119 line-imaging and Issue 167 automasking evidence records were
-removed with the wave-era scripts on 2026-10-20 (#833); retrieve them from the
-tag <code>ui-experiments-2026-10-20</code>.</p>
-<h2 id="source-pages">Source Pages<a class="headerlink" href="#source-pages" title="Permanent link">&para;</a></h2>
-<ul>
-<li>CASA Guides main page:
-  <a href="https://casaguides.nrao.edu/index.php/Main_Page">https://casaguides.nrao.edu/index.php/Main_Page</a></li>
-<li>ALMA tutorials:
-  <a href="https://casaguides.nrao.edu/index.php/ALMA_Tutorials">https://casaguides.nrao.edu/index.php/ALMA_Tutorials</a></li>
+<li>CASA Guides: <a href="https://casaguides.nrao.edu/index.php/Main_Page">https://casaguides.nrao.edu/index.php/Main_Page</a></li>
+<li>ALMA tutorials: <a href="https://casaguides.nrao.edu/index.php/ALMA_Tutorials">https://casaguides.nrao.edu/index.php/ALMA_Tutorials</a></li>
 <li>VLA tutorials:
   <a href="https://casaguides.nrao.edu/index.php?title=Karl_G._Jansky_VLA_Tutorials">https://casaguides.nrao.edu/index.php?title=Karl_G._Jansky_VLA_Tutorials</a></li>
 <li>Simulation tutorials:

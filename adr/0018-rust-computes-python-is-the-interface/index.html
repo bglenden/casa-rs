@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -753,9 +780,11 @@ parallelism, memory budgets and casacore-compatible I/O.</p>
    Rust-built plot documents into Matplotlib figures, including deriving the
    coordinate metadata that Matplotlib and Astropy need. This is the only
    computation the Python layer performs.
-5. <strong>Rust APIs stay idiomatic</strong> (ADR-0002). CASA's call shapes exist only in
-   the Python layer, which maps them onto Rust APIs. Rust crates do not grow
-   CASA-shaped wrappers for the binding's convenience.
+5. <strong>Rust APIs stay idiomatic</strong>: casa-rs is a native Rust implementation,
+   not a C++ API mirror (<code>AGENTS.md</code>, "Engineering Rules"). CASA's call
+   shapes exist only in the Python layer, which maps them onto Rust APIs.
+   Rust crates do not grow CASA-shaped wrappers for the binding's
+   convenience.
 6. <strong>Rust owns parallelism, and long calls release the GIL.</strong>
    - Python never divides work into chunks, processes or threads for speed.
    - A Rust call that can run for more than a moment releases the GIL, so

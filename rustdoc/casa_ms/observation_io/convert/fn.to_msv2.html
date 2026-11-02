@@ -12,7 +12,7 @@ sharing a spectral window, polarization or intents share their
 subtable rows. Every grid cell becomes one row; padding becomes a row
 whose every <code>FLAG</code> is set, with NaN data, weights and <code>UVW</code>, the grid’s
 interval, no exposure and <code>FLAG_ROW</code> false (its flags already exclude
-it), as D23 decided. With <a href="../creation/enum.PaddingRows.html#variant.Omitted" title="variant casa_ms::observation_io::creation::PaddingRows::Omitted"><code>PaddingRows::Omitted</code></a>, padding becomes no
+it). With <a href="../creation/enum.PaddingRows.html#variant.Omitted" title="variant casa_ms::observation_io::creation::PaddingRows::Omitted"><code>PaddingRows::Omitted</code></a>, padding becomes no
 row, which reproduces an original sparse MSv2. A field that follows an
 ephemeris gets the table casacore reads (<code>FIELD/EPHEM&lt;id&gt;_&lt;name&gt;.tab</code>)
 and its <code>EPHEMERIS_ID</code>, its <code>PHASE_DIR</code> the offset from the body and its

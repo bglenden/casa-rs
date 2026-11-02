@@ -618,6 +618,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -660,7 +687,7 @@
   <code>solve_gain</code>, <code>solve_bandpass</code>, <code>fluxscale</code>, <code>gencal</code>, <code>summary</code>, <code>stats</code>
   and <code>export_corrected_data</code>;</li>
 <li><code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>, with CASA
-  6.7.6's signatures (#931): CASA's parameters in CASA's order with CASA's
+  6.7.6's signatures: CASA's parameters in CASA's order with CASA's
   defaults, then casa-rs's keyword-only <code>output</code>, <code>overwrite</code> and <code>format</code>
   (and <code>array</code>, <code>gaincurve_table</code> where they apply).</li>
 </ul>
@@ -676,7 +703,7 @@ does not implement yet is refused; both refusals name #979.</p>
 <p>Each call starts the <code>calibrate</code> executable directly, with
 the surface as its first word (<code>calibrate gaincal</code>), and sends one
 <code>TaskRunRequest</code> on <code>--json-run -</code>: the values the call set, resolved inside
-the executable against the same contract as its own command line (#931). Its
+the executable against the same contract as its own command line. Its
 log lines reach <code>sys.stderr</code> as they arrive. Python projects no flags and
 builds no Rust request. A refused value names its parameter: the task's
 refusal raises <code>TaskParameterError</code>, a <code>ValueError</code>, and a run that does not
@@ -692,9 +719,7 @@ no window map). <code>calwt</code> holds one flag for every table or one per tab
 calibration-table paths: a list, or one comma-separated string. Its per-table
 controls (<code>gainfield</code>, <code>interp</code>, <code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings
 aligned to <code>gaintables</code>, one value for every table or one per table.</p>
-<p>The <code>calibrate</code> binary takes the same parameters on its own command line. The
-developer subcommands it once had (<code>summary</code>, <code>plan-apply</code>, <code>solve-gain</code> and
-the rest) are the surfaces and modes above.</p>
+<p>The <code>calibrate</code> binary takes the same parameters on its own command line.</p>
 
 
 

@@ -11,6 +11,8 @@
       
       
       
+        <link rel="prev" href="../python/api/">
+      
       
       
         
@@ -21,7 +23,7 @@
     
     
       
-        <title>Calibration Tasks User Guide - casa-rs</title>
+        <title>Calibration Guide - casa-rs</title>
       
     
     
@@ -100,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Calibration Tasks User Guide
+              Calibration Guide
             
           </span>
         </div>
@@ -602,6 +604,124 @@
   
 
     
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-calibration-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The calibration surfaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ngc5921ms-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ngc5921.ms walkthrough
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -700,7 +820,7 @@ application catalog exposes it as these task surfaces:</p>
   <code>export_corrected_data</code>, <code>fluxscale</code>, <code>gencal</code>, <code>solve_bandpass</code>,
   <code>solve_gain</code>, <code>stats</code>, or <code>summary</code></li>
 <li><code>gaincal</code>, <code>bandpass</code>, <code>applycal</code>, <code>fluxscale</code>, <code>gencal</code>: CASA's tasks,
-  with CASA 6.7.6's parameters, defaults and values (#931)</li>
+  with CASA 6.7.6's parameters, defaults and values</li>
 </ul>
 <p>Every surface is a one-shot task. Run it as <code>calibrate &lt;surface&gt;</code>
 (<code>calibrate bandpass --ms ...</code>; <code>calibrate</code> alone is the general surface),
@@ -725,7 +845,7 @@ next <code>applycal_N</code> flag version (<code>flagbackup</code>, default on),
 </ul>
 <p>Recommended reference antenna: <code>VA15</code>.</p>
 <div class="codehilite"><pre><span></span><code><span class="nv">workdir</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="w"> </span>/tmp/casars-cal.XXXXXX<span class="k">)</span>
-cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms"</span>
+cp<span class="w"> </span>-R<span class="w"> </span>/path/to/casatestdata/measurementset/vla/ngc5921.ms<span class="w"> </span><span class="s2">"</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms"</span>
 <span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$workdir</span><span class="s2">"</span>
 </code></pre></div>
 
@@ -808,8 +928,6 @@ existing caltable, is <a href="https://github.com/bglenden/casa-rs/issues/945">#
 <h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>there is not yet a dedicated <code>setjy</code> task</li>
-<li>multi-field role assignment and more sophisticated workflows need more
-  polish than the basic <code>ngc5921.ms</code> path</li>
 </ul>
 
 

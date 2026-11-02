@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>/// The concurrency target alone does not do this: zarrs 0.23.14 encodes and
 <a href=#55 id=55 data-nosnippet>55</a>/// decodes `min(chunk_concurrent_minimum, chunks)` chunks of one access at
 <a href=#56 id=56 data-nosnippet>56</a>/// once on rayon's global pool whatever the target, and the minimum
-<a href=#57 id=57 data-nosnippet>57</a>/// defaults to 4 (trial README, "Converter"). Building the options still
+<a href=#57 id=57 data-nosnippet>57</a>/// defaults to 4. Building the options still
 <a href=#58 id=58 data-nosnippet>58</a>/// starts rayon's global pool, which then stays idle.
 <a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>codec_options() -&gt; zarrs::array::CodecOptions {
 <a href=#60 id=60 data-nosnippet>60</a>    zarrs::array::CodecOptions::default()

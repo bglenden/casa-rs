@@ -677,6 +677,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -835,40 +862,8 @@ projection entry and falls back to the bundle's. The provider contract
 <p><code>casars.simutil</code> is the public import of CASA's <code>simutil</code> helper class
 (<code>from casars import simutil</code>, for CASA's <code>from casatasks.private import
 simutil</code>). It is not a CASA tool and is not in the bundle.</p>
-<p>The installer-managed suite install layout behind steps 4-6 is:</p>
-<div class="codehilite"><pre><span></span><code>~/.local/opt/casa-rs/&lt;version&gt;/
-  bin/
-    calibrate
-    casars-imager
-    imexplore
-    mstransform
-    ...                 (every task executable of the catalog)
-  python/
-    ...
-  wheels/
-    ...
-  bundle-manifest.json
-~/.local/opt/casa-rs/stable -&gt; ~/.local/opt/casa-rs/&lt;stable-version&gt;
-~/.local/opt/casa-rs/rc -&gt; ~/.local/opt/casa-rs/&lt;rc-version&gt;
-~/.local/opt/casa-rs/current -&gt; ~/.local/opt/casa-rs/&lt;version&gt;
-~/.local/bin/
-  calibrate -&gt; ~/.local/opt/casa-rs/current/bin/calibrate
-  calibrate-stable -&gt; ~/.local/opt/casa-rs/stable/bin/calibrate
-  calibrate-rc -&gt; ~/.local/opt/casa-rs/rc/bin/calibrate
-  ...                   (the same links for each executable in bin/,
-                         except feather, immath and impv)
-</code></pre></div>
-
-<p>Each executable in the suite's <code>bin/</code> gets <code>&lt;command&gt;-&lt;channel&gt;</code> and, for
-the active suite, <code>&lt;command&gt;</code> in <code>~/.local/bin</code>, except the CASA names that
-are system commands or generic words: <code>feather</code>, <code>immath</code> and <code>impv</code> stay
-off <code>PATH</code>, as <code>split</code> would (it is a coreutil; <code>mstransform split</code> runs
-CASA's split). Python still starts them from the suite's <code>bin/</code>. A dangling
-link into the install root, such as one to a command a newer suite no longer
-has, is removed. A file of the user's, or a link elsewhere, at one of these
-names is left in place, with a warning. That lets Python and the task executables behave as one
-installed suite while keeping <code>~/.local/bin</code> as the only <code>PATH</code> entry users
-generally need.</p>
+<p>The installed suite's layout, channels and command links are described in
+<a href="../../install/#stable-and-rc-installs">Install</a>.</p>
 
 
 

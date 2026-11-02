@@ -14,6 +14,8 @@
         <link rel="prev" href="../versioning/">
       
       
+        <link rel="next" href="../../casars-calibrate-user-guide/">
+      
       
         
       
@@ -1551,6 +1553,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -2494,7 +2523,7 @@
 
 <h1 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
 <h2 id="common-parameter-api">Common parameter API<a class="headerlink" href="#common-parameter-api" title="Permanent link">&para;</a></h2>
-<p>ADR-0006 defines this common surface for task profiles; ADR-0012 defines
+<p>ADR-0006 defines this common surface for task profiles, including
 current-only surface evolution:</p>
 <div class="codehilite"><pre><span></span><code><span class="n">casars</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="n">surface</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 <span class="n">casars</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">last</span><span class="p">(</span><span class="n">surface</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
@@ -2516,15 +2545,14 @@ current-only surface evolution:</p>
 <code>TaskCompletion</code> (<code>task</code>, <code>command</code>, <code>workspace</code>, <code>returncode</code>, <code>stdout</code>, the
 reply; <code>stderr</code>, the log; <code>provider_invocation</code>, <code>status</code>, <code>message</code>,
 <code>parameter</code>, <code>value</code>, CASA's return value; and <code>result</code>, the declared
-products). A wrapper whose surface names its CASA task (the image tasks,
-<code>flagdata</code>, <code>flagmanager</code>, <code>importvla</code>, <code>mstransform</code>, <code>split</code>, <code>applycal</code>,
-<code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>gencal</code> and <code>simobserve</code> so far) has
+products). A wrapper whose surface names its CASA task (every task but the
+casa-rs tasks <code>calibrate</code>, <code>msexplore</code> and <code>msconvert</code>, and <code>plotms</code>) has
 CASA's signature, positional or by keyword with
 CASA's defaults, then casa-rs's own controls, keyword-only, and returns
 CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
 does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
-<code>TaskCompletion</code> until their families are converted (#931).</p>
+<code>TaskCompletion</code>.</p>
 <p>A value the contract refuses raises <code>ValueError</code> before anything starts, or
 <code>TypeError</code> for a value of the wrong type. A task that refuses its
 parameters raises <code>TaskParameterError</code>, a <code>ValueError</code>, and one that starts

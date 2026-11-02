@@ -732,6 +732,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -861,8 +888,8 @@ Verification: <code>just docs-check</code>; <code>&lt;executable&gt; --help</cod
 loaded by a task executable's command line or manipulated from Python without
 changing the parameter names or their meaning. Every parameter surface is a
 task (ADR-0017).</p>
-<p>This guide describes the implemented interface from ADR-0006, with current-only
-surface evolution defined by ADR-0012. Provider JSON requests, results, and
+<p>This guide describes the implemented interface from ADR-0006, including
+current-only surface evolution. Provider JSON requests, results, and
 progress remain machine transports; TOML is the sole human-authored
 parameter-profile format.</p>
 <p>The <a href="../reference/task-parameters/">generated parameter reference</a> lists every
@@ -902,8 +929,8 @@ are not recursive merge patches.</p>
 <p>A surface retains older profiles only when its canonical definition publishes
 an explicit ordered migration chain; other stale contracts and historical
 aliases are rejected rather than silently interpreted. The imager surface
-became CASA's <code>tclean</code> at contract 29 (#931): a profile naming surface
-<code>imager</code> at contract 28, its last, migrates. Its casa-rs names move to
+became CASA's <code>tclean</code> at contract 29: a profile naming surface <code>imager</code> at
+contract 28, its last, migrates. Its casa-rs names move to
 CASA's (<code>phasecenter_field</code> to <code>phasecenter</code>, <code>mask_box</code> and <code>mask_image</code> to
 <code>mask</code>, <code>minor_cycle_length</code> to <code>cycleniter</code>, and <code>dirty_only = true</code> to
 <code>niter = 0</code>), its values to CASA's forms, and an omitted value whose default
@@ -1093,9 +1120,8 @@ declared products (<code>result</code>, <code>products</code>); result projectio
 Rust-owned.</p>
 <p>The CASA-named wrappers and their type stubs are generated from the catalog,
 under <code>casars.tasks</code>; there is no second provider-specific task API. A
-surface that names its CASA task (<code>casa_task</code>; the image tasks, <code>flagdata</code>,
-<code>flagmanager</code>, <code>importvla</code>, <code>mstransform</code>, <code>split</code>, <code>applycal</code>, <code>gaincal</code>,
-<code>bandpass</code>, <code>fluxscale</code>, <code>gencal</code> and <code>simobserve</code> so far) has CASA's exact
+surface that names its CASA task (<code>casa_task</code>; every surface but the casa-rs
+tasks <code>calibrate</code>, <code>msexplore</code> and <code>msconvert</code>, and <code>plotms</code>) has CASA's exact
 signature: CASA's parameters in CASA's order, positional or by keyword, with
 CASA's defaults, then casa-rs's own controls, keyword-only. Its wrapper
 returns CASA's value: <code>imstat</code>'s statistics dictionary with NumPy arrays,
@@ -1106,7 +1132,7 @@ and <code>bandpass</code>'s tables and selected data, <code>fluxscale</code>'s f
 only at CASA's
 default and refused at any other value, naming its issue; the wrapper's
 docstring lists them. The other wrappers take keyword arguments and return
-the <code>TaskCompletion</code> until their families are converted (#931).
+the <code>TaskCompletion</code>.
 <a href="../reference/casa-compatibility/">CASA compatibility</a> compares each surface
 with its CASA task.</p>
 <h2 id="what-profiles-intentionally-exclude">What profiles intentionally exclude<a class="headerlink" href="#what-profiles-intentionally-exclude" title="Permanent link">&para;</a></h2>

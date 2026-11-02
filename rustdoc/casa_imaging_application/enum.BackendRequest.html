@@ -5,7 +5,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The device a request asks to grid on (<code>backend</code>).</p>
 <p><code>auto</code> takes the host’s GPU for what it implements and has been checked
 on, end to end, against the CPU; everything else grids on the CPU. The
-GPU accumulates in <code>f32</code> (plan decision D2), so choosing it accepts
+GPU accumulates in <code>f32</code> (ADR-0016 decision 6), so choosing it accepts
 single-precision grids, and an explicit <code>gridprecision = f64</code> keeps
 <code>auto</code> on the CPU.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Auto" class="variant"><a href="#variant.Auto" class="anchor">§</a><h3 class="code-header">Auto</h3></section><div class="docblock"><p>The GPU where it runs the problem, else the CPU.</p>

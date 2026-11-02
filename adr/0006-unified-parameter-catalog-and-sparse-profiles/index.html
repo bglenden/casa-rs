@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -647,6 +674,56 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-catalog-the-bundle-is-a-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One catalog; the bundle is a projection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sparse-toml-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse TOML profiles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-only-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current-only surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managed-last-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed Last state
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -719,53 +796,59 @@ Supersedes:
 Superseded by: ADR-0017, in part (session surfaces, session Last handling and
 the TUI and GUI consumers were removed on 2026-10-20; the parameter catalog
 and sparse task profiles stand)</p>
+<p>Amended: 2026-11-02, on owner approval. This record now also holds the
+current-only profile contracts (decided 2026-09-03, #551) and the surviving
+rule of the provider schema bundle decision (2026-04-19); their separate
+records were deleted and git history keeps them. Text that ADR-0017
+superseded is removed.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>ADR-0003 makes the provider bundle the boundary contract, but it does not yet
-define one authoritative model for user-editable parameters. Task defaults,
-aliases, validation, UI fields, Python signatures, and saved requests can
-therefore drift between providers and consumers. Session surfaces add another
-failure mode: a useful startup configuration can be confused with viewport,
-cursor, cache, or command-stream state.</p>
-<p>Users need parameter files that are readable in a Markdown code block, easy to
-edit and review, sparse enough to adopt newly added defaults, and usable from
-the CLI, TUI, native GUI, and Python without changing meaning.</p>
+<p>Task defaults, aliases, validation, command-line parsers, Python signatures
+and saved requests drift apart when each consumer defines its own
+parameters. Users need parameter files that are readable in a Markdown code
+block, easy to edit and review, sparse enough to adopt newly added defaults,
+and usable from a task's command line and from Python without changing
+meaning.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>The provider bundle remains the self-contained boundary contract and gains a
-format-neutral parameter model. The repository also maintains one checked
-aggregate catalog from which the concepts embedded in those bundles are
-selected. Its authoritative concepts are:</p>
+<h3 id="one-catalog-the-bundle-is-a-projection">One catalog; the bundle is a projection<a class="headerlink" href="#one-catalog-the-bundle-is-a-projection" title="Permanent link">&para;</a></h3>
+<p>The repository maintains one checked aggregate catalog. Its authoritative
+concepts are:</p>
 <ul>
 <li><code>ParameterCatalog</code>: reusable parameter concepts with stable semantic IDs,
   canonical CASA-facing names, value types, units or dimensions,
   normalization, semantic roles, persistence classes, constraints, and
   documentation.</li>
-<li><code>ParameterBinding</code>: a surface-specific use of a catalog concept, including
-  its default, requirement and activation rules, narrowing constraints,
-  aliases, presentation hints, and private provider projection.</li>
-<li><code>SurfaceDefinition</code>: a tagged task or session definition containing the
-  ordered parameter bindings and the adapter or protocol projection needed by
-  that surface.</li>
+<li><code>SurfaceParameterBinding</code>: a surface-specific use of a catalog concept,
+  including its default, requirement and activation rules, narrowing
+  constraints, aliases, presentation hints, and private provider projection.</li>
+<li><code>SurfaceDefinition</code>: a task definition containing the ordered bindings,
+  the migrations and the provider projection that surface needs.</li>
 </ul>
-<p>A canonical name has one meaning. For example, <code>imsize</code> must retain the same
-value semantics wherever it is bound. Parameters that happen to share a CLI
-spelling but have different meanings use different semantic IDs and must not be
-silently unified. Roles such as input, output, selection, science control, and
-presentation remain explicit so a path or scalar cannot be reused in an unsafe
-role merely because its storage type matches.</p>
-<p>Task definitions resolve parameters into one-shot invocation requests. Session
-definitions resolve only durable startup intent for stateful surfaces such as
-<code>imexplore</code> and <code>tablebrowser</code>; their command/event protocols remain separate.
-The <code>casars</code> launcher, object constructors and handles, runtime controls, and
-transient session state are not parameterized surfaces.</p>
+<p>Each provider's versioned schema bundle is the machine boundary between the
+provider and its consumers. It embeds the catalog concepts and surface
+definitions it uses and is generated from them. The bundle must not become a
+second source of truth: CLI parsers, JSON Schema and Python signatures are
+views derived from it, and no consumer hand-defines a default, alias, shape
+or behaviour that the catalog does not carry.</p>
+<p>A canonical name has one meaning. <code>imsize</code> keeps the same value semantics
+wherever it is bound. Parameters that share a spelling but differ in meaning
+use different semantic IDs and are never silently unified; such a binding
+carries a <code>reviewed_homonym</code> record citing this ADR. Roles such as input,
+output, selection, science control and presentation stay explicit, so a path
+or scalar cannot be reused in an unsafe role because its storage type
+matches.</p>
+<p>Task definitions resolve parameters into one-shot invocation requests. Tool
+objects (ADR-0019), runtime controls and transient state are not
+parameterized surfaces.</p>
+<h3 id="sparse-toml-profiles">Sparse TOML profiles<a class="headerlink" href="#sparse-toml-profiles" title="Permanent link">&para;</a></h3>
 <p>Human parameter documents use sparse TOML. The metadata table identifies the
-document format, logical surface, surface kind, and contract version; the
-<code>parameters</code> table contains required values and semantic differences from the
+document format, logical surface, surface kind and contract version; the
+<code>parameters</code> table holds required values and semantic differences from the
 current defaults. Optional values equal to their defaults are omitted.</p>
 <div class="codehilite"><pre><span></span><code><span class="k">[casars]</span>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
-<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
+<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tclean"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">29</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -776,83 +859,119 @@ current defaults. Optional values equal to their defaults are omitted.</p>
 <span class="n">threshold</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2mJy"</span>
 </code></pre></div>
 
-<p>The following evolution rules apply:</p>
+<p>Evolution rules:</p>
 <ul>
 <li>Adding an optional defaulted parameter does not require existing files to
   change.</li>
-<li>An omitted parameter adopts the current default. Loading warns when that
-  default changed since the document contract version.</li>
+<li>An omitted parameter adopts the current default. Loading warns when a
+  migration lists that default as changed since the document's contract.</li>
 <li>Renames and type or value changes use explicit ordered migrations of the
-  sparse overrides.</li>
+  sparse overrides, each advancing one contract version. A chain may start
+  after contract 1; a profile older than its first migration is refused
+  (<code>tclean</code> migrates contract 28 to 29 and refuses older profiles). A
+  renamed surface keeps its former ids, which a saved profile may still
+  name (<code>imager</code>, now <code>tclean</code>).</li>
 <li>A newly required parameter needs a migration or causes a load error.</li>
 <li>Future document or contract versions are rejected.</li>
 <li>Saving rewrites a document at the current contract version against the
   current defaults.</li>
 </ul>
+<h3 id="current-only-surfaces">Current-only surfaces<a class="headerlink" href="#current-only-surfaces" title="Permanent link">&para;</a></h3>
+<p>A surface declares a <strong>current-only</strong> profile contract by publishing an
+empty migration set. Such a surface accepts exactly its current contract
+version, exposes and accepts only canonical names with no compatibility
+aliases, rejects stale and future contract versions instead of interpreting
+or rewriting them, and serializes only required values and non-default
+overrides whose persistence class is <code>profile</code>. Omitted optional values adopt
+the current defaults; they are not materialized to preserve an older
+contract's behaviour. Shipped profiles, tutorials and examples advance with
+the contract. <code>simobserve</code> and <code>msconvert</code> are current-only; the other
+surfaces keep ordered migration chains.</p>
+<h3 id="managed-last-state">Managed Last state<a class="headerlink" href="#managed-last-state" title="Permanent link">&para;</a></h3>
 <p>The managed workspace store is:</p>
 <div class="codehilite"><pre><span></span><code>&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/
   last.toml
   last-successful.toml
 </code></pre></div>
 
-<p><code>CASA_RS_STATE_DIR</code> may redirect the managed state root for automation without
-changing how relative task paths resolve. Managed writes use a per-surface lock,
-a same-directory temporary file, and atomic replacement.</p>
-<p>For tasks, <code>last.toml</code> records the validated resolved user intent immediately
-before execution and <code>last-successful.toml</code> updates only after successful
-completion. Failure or cancellation does not replace the successful state. For
-sessions, <code>last.toml</code> updates after a successful open and after debounced,
-validated durable-setting changes; sessions have no <code>last-successful.toml</code>
-because they have no single successful-completion event. Failed opens and
-transient navigation do not replace Last.</p>
-<p><code>casa-task-runtime</code> is the sole application lifecycle owner for these rules.
-Task and session consumers delegate source parsing, resolution, attempted-state
-capture, managed persistence, completion, debounce, and coalescing to its typed
-coordinators. GUI, TUI, Python, assistant, and project-MCP layers may project
-state or report warnings, but may not maintain alternate lifecycle maps,
-timers, Last writers, or test-only persistence paths.</p>
+<p><code>CASA_RS_STATE_DIR</code> may redirect the managed state root for automation
+without changing how relative task paths resolve. Managed writes use a
+per-surface lock, a same-directory temporary file and atomic replacement.</p>
+<p><code>last.toml</code> records the validated resolved intent of a command-line run
+immediately before execution; <code>last-successful.toml</code> updates only after
+successful completion. Failure or cancellation does not replace the
+successful state. <code>--json-run</code>, which Python's task calls use, reads and
+writes no Last (ADR-0017 item 4).</p>
+<p><code>casa-task-runtime</code> is the sole owner of these rules: source parsing,
+resolution, attempted-state capture, managed persistence and completion.
+Task executables and the Python package delegate to it and keep no alternate
+lifecycle maps, Last writers or test-only persistence paths.</p>
 <p>Opening an explicit profile never grants permission to overwrite that file.
 Automatic persistence always targets the managed store; changing an explicit
-file requires Save As or another explicit save operation.</p>
+file needs an explicit save.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <p>Positive:
-- defaults, validation, docs, projections, and persistence share one source of truth
-- sparse files remain readable and naturally adopt additive parameters
-- the same profile has the same meaning across CLI, TUI, GUI, and Python
-- task aliases retain distinct logical identities and Last files even when they share a provider binary
-- browser startup settings can be reloaded without persisting event logs or UI internals</p>
+- defaults, validation, docs, projections and persistence share one source
+  of truth
+- sparse files stay readable and naturally adopt additive parameters
+- a profile has the same meaning on a task's command line and in Python
+- task aliases keep distinct logical identities and Last files even when
+  they share a provider binary
+- a current-only surface's meaning is its one canonical request vocabulary</p>
 <p>Negative:
-- every parameterized surface must define complete typed bindings and migrations
-- default changes require deliberate compatibility diagnostics
-- consumers must migrate away from app-local default, alias, and type inference</p>
+- every parameterized surface defines complete typed bindings, and migrations
+  unless it is current-only
+- default changes need deliberate compatibility diagnostics
+- a contract bump of a current-only surface deliberately invalidates
+  profiles that were not updated</p>
 <p>Neutral / tradeoffs:
-- sparse profiles reproduce user intent under current defaults; they are not exact historical run-replay records
-- provider bundles may still use JSON as a machine transport, but JSON Schema and CLI flags are projections rather than the semantic model
-- exact workspace restoration may use a separate opaque artifact, but it is not a human parameter profile</p>
+- sparse profiles reproduce user intent under current defaults; they are
+  not exact historical run-replay records
+- provider bundles may use JSON as a machine transport, but JSON Schema and
+  CLI flags are projections rather than the semantic model</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Persist complete JSON request envelopes, freezing old defaults into every file.</li>
-<li>Keep independent CLI, TUI, GUI, and Python parameter definitions.</li>
-<li>Serialize complete session snapshots or replay command histories.</li>
-<li>Use unversioned TOML maps without catalog identities or explicit migrations.</li>
+<li>Persist complete JSON request envelopes, freezing old defaults into every
+   file.</li>
+<li>Keep independent command-line and Python parameter definitions, or let
+   each consumer define its own bundle shape.</li>
+<li>Use unversioned TOML maps without catalog identities or explicit
+   migrations.</li>
+<li>Keep every historical migration and alias on every surface, including
+   those that declare themselves current-only.</li>
+<li>Load stale profiles silently against current defaults, which changes
+   meaning while looking valid.</li>
 </ol>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p>This decision is enforced by:
-- tests: catalog completeness, contract invariants, sparse TOML round trips, migrations, managed-store lifecycle, and cross-surface resolution parity
-- lifecycle conformance: real runtime coordinators cover task success/failure/cancellation and deterministic session debounce/coalescing; consumer tests prove delegation rather than reimplementing those transitions
-- lint/import/dependency rules: consumer layers may project provider definitions but may not introduce authoritative app-local defaults or aliases
-- CI checks: <code>just verify</code> plus frontend-specific contract and projection tests
-- append-only semantic fingerprints: a changed concept revision or surface
-  contract cannot replace an existing <code>(id, version)</code> history entry
-- review trigger: changes to catalog concepts, public bindings, defaults, migrations, persistence behavior, or parameter document format require boundary-contract review
+- tests: catalog completeness, contract invariants (including the homonym
+  review and the refusal of aliases on a surface with no migrations), sparse
+  TOML round trips, migrations, managed-store lifecycle and cross-surface
+  resolution parity in <code>casa-provider-contracts</code> and <code>casa-task-runtime</code>;
+  the Python package's parameter and binding tests
+- lint/import/dependency rules: <code>scripts/check-parameter-surface-catalog.py</code>;
+  consumers may project provider definitions but add no authoritative
+  default or alias
+- CI checks: <code>just arch-check</code>, whose <code>scripts/check-parameter-contract-history.py</code>
+  keeps semantic fingerprints append-only (a changed concept revision or
+  surface contract cannot replace an existing <code>(id, version)</code> entry), and
+  <code>just docs-check</code>, which checks the generated parameter reference
+- review trigger: changes to catalog concepts, public bindings, defaults,
+  migrations, persistence behaviour or the parameter document format
 - none / guidance only:</p>
 <h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
 <p>Suspect drift if:
-- the same canonical parameter name acquires different value semantics on two surfaces
-- a UI or Python wrapper supplies a default not present in the provider definition
+- the same canonical parameter name acquires different value semantics on
+  two surfaces
+- a command-line parser or Python wrapper supplies a default not present in
+  the provider definition, or hand-defines schema that does not round-trip
+  through the bundle
 - a parameter file contains current default values after canonical save
 - task aliases share Last state only because they use the same executable
-- session command arrays, cursor positions, viewports, caches, or playback state enter a human profile
+- a current-only surface publishes an alias or migration, or accepts a stale
+  contract
+- a shipped profile does not name its surface's current contract
+- run state, plans, caches or resource inventory enter a human profile
 - an explicit source profile changes without an explicit save action</p>
 
 

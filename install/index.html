@@ -730,6 +730,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -870,7 +897,7 @@ suite's <code>bin/</code>.</p>
 python3<span class="w"> </span>--version
 </code></pre></div>
 
-<p><code>casa-rs-python</code> currently supports Python 3.10 through 3.12.</p>
+<p>Release wheels are built for Python 3.10, 3.11 and 3.12.</p>
 <h2 id="install-a-stable-release">Install a stable release<a class="headerlink" href="#install-a-stable-release" title="Permanent link">&para;</a></h2>
 <p>Choose the version you want to install:</p>
 <div class="codehilite"><pre><span></span><code><span class="nv">version</span><span class="o">=</span><span class="m">0</span>.15.0
@@ -944,21 +971,23 @@ override) to run tasks; its in-process tools (<code>casars.data.Image</code>,
 in <a href="../python/versioning/">Python Compatibility</a>.</p>
 <h2 id="stable-and-rc-installs">Stable and RC installs<a class="headerlink" href="#stable-and-rc-installs" title="Permanent link">&para;</a></h2>
 <p>Stable releases and release candidates can live on the same machine at the same
-time:</p>
-<div class="codehilite"><pre><span></span><code>~/.local/opt/casa-rs/0.15.0/
-~/.local/opt/casa-rs/0.16.0-rc1/
-~/.local/opt/casa-rs/stable -&gt; ~/.local/opt/casa-rs/0.15.0
-~/.local/opt/casa-rs/rc -&gt; ~/.local/opt/casa-rs/0.16.0-rc1
+time. The installed layout is:</p>
+<div class="codehilite"><pre><span></span><code>~/.local/opt/casa-rs/&lt;version&gt;/
+  bin/                  (every task executable of the catalog)
+  python/               (the suite's virtual environment)
+  wheels/
+  bundle-manifest.json
+~/.local/opt/casa-rs/stable -&gt; ~/.local/opt/casa-rs/&lt;stable-version&gt;
+~/.local/opt/casa-rs/rc -&gt; ~/.local/opt/casa-rs/&lt;rc-version&gt;
+~/.local/opt/casa-rs/current -&gt; ~/.local/opt/casa-rs/&lt;version&gt;
+~/.local/bin/
+  calibrate -&gt; ~/.local/opt/casa-rs/current/bin/calibrate
+  calibrate-stable -&gt; ~/.local/opt/casa-rs/stable/bin/calibrate
+  calibrate-rc -&gt; ~/.local/opt/casa-rs/rc/bin/calibrate
+  ...                   (the same links for each executable in bin/,
+                         except feather, immath and impv)
 </code></pre></div>
 
-<p>The installer also maintains channel-specific commands, one per command and
-channel, such as:</p>
-<ul>
-<li><code>~/.local/bin/calibrate-stable</code></li>
-<li><code>~/.local/bin/calibrate-rc</code></li>
-<li><code>~/.local/bin/casars-imager-stable</code></li>
-<li><code>~/.local/bin/casars-imager-rc</code></li>
-</ul>
 <p>Switch the default suite by repointing <code>~/.local/opt/casa-rs/current</code>,
 re-running the installer with <code>--activate</code>, or keep multiple installs in place
 and choose one explicitly with <code>CASARS_SUITE_ROOT</code> or that suite's Python

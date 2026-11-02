@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -641,8 +668,10 @@
 <p>Status: accepted
 Date: 2026-10-07
 Truth class: normative
-Supersedes: 0010; the "Migration" section and the attestation wording of 0009;
-the joint continuum-plus-line decision of 0011
+Supersedes: the unified imaging resource authority ADR of 2026-08-18 (deleted
+2026-11-02; git history keeps it); the "Migration" section and the
+attestation wording of ADR-0009; the joint continuum-plus-line decision of
+ADR-0011
 Superseded by:</p>
 <p>Amended: 2026-10-25, on owner direction: every imaging crate may depend on the
 definitional crates (decision 10). 2026-10-28, on owner approval: the model
@@ -650,6 +679,10 @@ may also depend on <code>casa-observation</code> (decision 10; imaging port deci
 <h1 id="932">932).<a class="headerlink" href="#932" title="Permanent link">&para;</a></h1>
 <p>Amended: 2026-10-28, on owner direction of 2026-10-27 (#938): single-dish
 image-plane gridding is its own operator family (decision 13).</p>
+<p>Amended: 2026-11-02, on owner approval: the foundation plan this ADR cited
+was deleted; its references now point to <code>ARCHITECTURE.md</code>, <code>TESTING.md</code> or
+git history, and the ticket and review-gate process (decision 12) is reduced
+to what still holds.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
 several parallel routes: four CPU gridding drivers, two Metal drivers, closed
@@ -660,11 +693,15 @@ AW-projection and mosaic could not reach the fast cube path or Metal. The
 programme's own process machinery (a migration matrix, a 3,578-line checker
 hashing Rust function bodies, per-ticket contract revisions) would resist any
 consolidation. The owner reviewed this state on 2026-10-07 and approved the
-plan in <code>docs/imaging-architecture/imaging-foundation-plan-20261007.md</code>.</p>
+imaging foundation plan, which git keeps at
+<code>0b470017:docs/imaging-architecture/imaging-foundation-plan-20261007.md</code>.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <p>CASA-RS imaging is one measurement operator, one major-cycle pass, one
-deconvolution driver and one execution model. The plan document is the
-normative design; this ADR records the decisions that supersede earlier ADRs.</p>
+deconvolution driver and one execution model. This ADR records the binding
+decisions. The plan's review rules (its section 10) are the imaging code
+rules in <code>ARCHITECTURE.md</code>, and its test tiers (section 7) are <code>TESTING.md</code>
+"Imaging tiers and evidence"; the rest of the plan is the design as landed,
+kept in git at the location above as a record, not a binding document.</p>
 <ol>
 <li><strong>One operator.</strong> <code>casa-imaging-operator</code> owns <code>Placement</code>/<code>SampleBlock</code>
    records, a <code>ConvolutionFunctionSet</code> trait with exactly four implementations
@@ -674,7 +711,9 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
    MT-MFS, cube and MFS imaging are parameterisations of these types. Paired
    forward/adjoint choices (kernel set, conjugation, Mueller routing, phase
    gradient, phase-centre phasor, channel and polarisation maps, Taylor
-   factors) live in the kernel contract of plan section 5.3.</li>
+   factors) live in the operator's kernel contract: the <code>Placement</code>,
+   <code>SampleBlock</code> and <code>GridBackend</code> rustdoc (the plan's section 5.3 records
+   the design as landed).</li>
 <li><strong>One pass.</strong> Every major cycle re-traverses the selected MeasurementSet
    through <code>MajorCyclePass</code> and grids residual samples. No replay cache of
    visibility-independent factors is retained; a bounded tap-plan cache may be
@@ -689,15 +728,15 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
    team. There are no execution receipts, execution DAG, lease epochs,
    logical/physical slot ledgers, cost-model profiles, adaptation transitions
    or plan identities. The only runtime record is an O(1)-per-phase run
-   summary. ADR-0010 is superseded in full.</li>
+   summary. The earlier unified resource authority is superseded in full.</li>
 <li><strong>No identity hashing.</strong> Compiled problems, plans, products and selections
    are compared directly or by ownership. No identity is persisted; an AW
    convolution-function cache is reused by its cell layout (decision 7).
-   ADR-0014 and ADR-0015 remain in force
-   and are extended to plans and receipts. Nothing of casa-rs's is persisted
-   in a MeasurementSet: no keywords, generations, identities or marker files.
-   Imaging opens a MeasurementSet as CASA writes it (owner direction
-   2026-10-09, which amends ADR-0008).</li>
+   ADR-0014 (identity is ownership) remains in force and covers plans and
+   run summaries. Nothing of casa-rs's is persisted in a MeasurementSet: no
+   keywords, generations, identities or marker files. Imaging opens a
+   MeasurementSet as CASA writes it (owner direction 2026-10-09, which
+   amends ADR-0008).</li>
 <li><strong>Grid precision.</strong> Metal accumulates in f32; CPU defaults to f64 and
    offers f32 as a user-selectable request field. Acceptance is the 1e-3
    normalised tolerance of the owner's 2026-09-24 direction, not bitwise
@@ -740,10 +779,9 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
     decision is superseded and may be re-proposed as a separate ADR with its
     own scientific contract.</li>
 <li><strong>Process.</strong> The migration matrix, contract revisions, evidence
-    registries and programme-specific closure rules are retired. Tickets
-    IF-0 to IF-11 under issue #648 are the work record; review gates R1 to R4
-    in plan section 9.3 are the only review checkpoints; the anti-slop rules in
-    plan section 10 are review criteria for every ticket.</li>
+    registries and programme-specific closure rules are retired and are not
+    restored. Every imaging change is held to the imaging code rules in
+    <code>ARCHITECTURE.md</code>; reviews follow <code>AGENTS.md</code> "Review".</li>
 <li><strong>Single-dish gridding.</strong> Single-dish (total-power) imaging, CASA's
     <code>SDGrid</code>, places each spectrum at its pointing's pixel and spreads it
     with a radial kernel: no FFT, no uv coordinates and no gridding
@@ -765,10 +803,7 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
 <p>Negative:
 - Later major cycles re-read the MeasurementSet; the performance pass must
   show this is within the measured checkpoints or add a bounded cache.
-- Between tickets some capabilities are temporarily unavailable (Metal between
-  IF-2 and IF-4; W/AW/mosaic between IF-2 and IF-3). They fail typed.
-- Receipts consumed by the manual <code>intermediate_profile_evidence.py</code> tool are
-  replaced by the run summary.</p>
+- Execution receipts are gone; the run summary is the one run record.</p>
 <p>Neutral / tradeoffs:
 - Metal f32 accumulation differs from CPU f64 within tolerance; this is a
   precision choice, not a correctness gap.</p>
@@ -777,7 +812,7 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
 <li>Keep the replay cache as the default residual path. Rejected: it is not
    scientifically required, its scratch footprint exceeds the input, and it
    duplicates the operator in a second record-based implementation.</li>
-<li>Keep ADR-0010's resource authority and trim it. Rejected: its admission
+<li>Keep the earlier resource authority and trim it. Rejected: its admission
    decisions reduce to one arithmetic formula, and every other structure was
    write-only.</li>
 <li>Keep the architecture checker and update its ratchets per commit.
@@ -792,13 +827,16 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
 </ol>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p>This decision is enforced by:
-- tests: T0 operator laws and T1 end-to-end capability tests (plan section 7)
+- tests: T0 operator laws and T1 end-to-end capability tests (<code>TESTING.md</code>
+  "Imaging tiers and evidence")
 - lint/import/dependency rules: <code>scripts/check-imaging-dependencies.py</code>
   (crate edges, definitional crates closed and free of I/O, device APIs only
   in <code>casa-imaging-metal</code>, no <code>std::env</code> or <code>eprintln!</code> in library crates, no
   content hashing in imaging crates)
 - CI checks: <code>just arch-check</code>
-- review trigger: plan section 10 rules at every IF ticket review; gates R1–R4</p>
+- review trigger: the imaging code rules in <code>ARCHITECTURE.md</code> for every
+  imaging change; adding a definitional crate (decision 10) is the owner's
+  decision</p>
 
 
 

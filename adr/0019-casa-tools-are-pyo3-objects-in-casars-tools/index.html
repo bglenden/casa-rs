@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -720,11 +747,12 @@ Superseded by:</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>ADR-0017 makes a Python package that mirrors CASA's Python interfaces the
 product surface. ADR-0018 puts all computation in Rust, but leaves open how
-each surface binds to Rust. Tasks already have a mechanism: the parameter
-contract and <code>casars run</code>. CASA tools do not yet. The simulation programme
-brings the first one, the <code>simulator</code> (<code>sm</code>), and <code>ia</code>, <code>tb</code>, <code>ms</code>, <code>cl</code> and
-others will follow. Every later tool reuses whatever pattern the first one
-sets.</p>
+each surface binds to Rust. Tasks already had a mechanism: the parameter
+contract and the task's own executable (ADR-0017 item 4). CASA tools did
+not. The simulation programme brought the first one, the <code>simulator</code> (<code>sm</code>),
+and every later tool reuses the pattern it set: <code>casars.tools</code> now also has
+<code>measures</code>, <code>quanta</code>, <code>componentlist</code>, <code>image</code>, <code>coordsys</code>, <code>table</code>,
+<code>msmetadata</code> and <code>ms</code>.</p>
 <p>CASA scripts construct tools as objects, for example
 <code>from casatools import simulator; sm = simulator()</code>, and then call methods
 with CASA's parameter names. The defaults those calls see are the installed
@@ -735,8 +763,7 @@ fallbacks.</p>
 <ol>
 <li><strong>Namespace.</strong></li>
 <li>CASA tool classes live in <code>casars.tools</code>, under casatools' class names:
-     <code>simulator</code>, and later <code>image</code>, <code>table</code>, <code>measurementset</code>,
-     <code>componentlist</code> and the rest.</li>
+     <code>simulator</code>, <code>image</code>, <code>table</code>, <code>ms</code>, <code>componentlist</code> and the rest.</li>
 <li>Tasks stay in <code>casars.tasks</code>.</li>
 <li>A CASA script changes only its imports.</li>
 <li>casa-rs ships no <code>casatools</code> or <code>casatasks</code> alias packages, because they
@@ -756,7 +783,7 @@ fallbacks.</p>
    <code>unsendable</code>. Every method that touches the disk, copies array data or
    computes releases the GIL. The existing <code>casars.data</code> <code>Image</code> and <code>Table</code>
    bindings move to this rule under #839.</li>
-<li><strong>Tools are thin over idiomatic Rust APIs</strong> (ADR-0002, ADR-0018 item 5).</li>
+<li><strong>Tools are thin over idiomatic Rust APIs</strong> (ADR-0018 item 5).</li>
 <li>The pyo3 layer maps CASA's argument conventions (quantity strings,
      measures records, scalar-or-list arguments) onto Rust types.</li>
 <li>Those conversions are shared by every tool, not written once per tool.</li>
@@ -774,9 +801,11 @@ fallbacks.</p>
 - Shared state behind a <code>Send</code> boundary makes the tool code more complex than
   thread-pinned objects.</p>
 <p>Neutral / tradeoffs:
-- <code>casars.data.Image</code> and <code>casars.data.Table</code> stay until CASA-shaped <code>image</code>
-  and <code>table</code> tools arrive. Whether <code>casars.data</code> remains after that is
-  decided then.
+- <code>casars.data.Image</code> and <code>casars.data.Table</code> remain beside the <code>image</code> and
+  <code>table</code> tools as the narrower persistent data-access API. They are still
+  <code>unsendable</code> and hold the GIL until #839 moves them to item 4. The tools'
+  methods casa-rs does not implement yet raise <code>NotImplementedError</code> naming
+  the issue that tracks them.
 - Tools bypass the task parameter contract and Last state, as CASA's tools do.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
@@ -790,9 +819,10 @@ fallbacks.</p>
 </ol>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p>This decision is enforced by:
-- tests: each tool's Python tests construct it from <code>casars.tools</code>. With the
-  first tool (simulation Phase 1c), a test compares every method's signature
-  and defaults against the installed CASA binding when CASA is available.
+- tests: each tool's Python tests construct it from <code>casars.tools</code> and
+  compare every method's signature and defaults with CASA's installed
+  binding, as recorded in <code>tests/data/casa_&lt;tool&gt;_signatures.json</code> and live
+  when CASA is importable.
 - lint/import/dependency rules: none automatic
 - CI checks: the existing <code>python_package</code> job
 - review trigger:

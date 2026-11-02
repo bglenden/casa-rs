@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -795,10 +822,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-repo-mapping" class="md-nav__link">
+  <a href="#surface-inventory" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current Repo Mapping
+        Surface inventory
       
     </span>
   </a>
@@ -892,14 +919,10 @@ idiomatic Rust request.</p>
 <h3 id="object-surfaces">Object Surfaces<a class="headerlink" href="#object-surfaces" title="Permanent link">&para;</a></h3>
 <p>Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.</p>
-<p>The object surfaces are:</p>
-<ul>
-<li><code>casars.data.Image</code></li>
-<li><code>casars.data.Table</code></li>
-<li><code>casars.tools.simulator</code>, CASA's <code>sm</code> tool (ADR-0019)</li>
-<li><code>casars.tools.measures</code>, CASA's <code>me</code> tool</li>
-<li><code>casars.tools.quanta</code>, CASA's <code>qa</code> tool</li>
-</ul>
+<p>The object surfaces are <code>casars.data.Image</code> and <code>casars.data.Table</code>, and the
+CASA tool classes of <code>casars.tools</code> (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>),
+<code>measures</code> (<code>me</code>), <code>quanta</code> (<code>qa</code>), <code>componentlist</code> (<code>cl</code>), <code>image</code> (<code>ia</code>),
+<code>coordsys</code> (<code>cs</code>), <code>table</code> (<code>tb</code>), <code>msmetadata</code> (<code>msmd</code>) and <code>ms</code>.</p>
 <p>The <code>casars.data</code> classes are persistent data access APIs; the <code>casars.tools</code>
 classes are CASA tools with CASA's method names, parameter order and
 effective defaults. All are used in-process from Python, are not forced into
@@ -969,15 +992,13 @@ metadata errors, and semantic/flattened schema drift.</p>
 <h2 id="application-catalog-and-launching">Application Catalog and Launching<a class="headerlink" href="#application-catalog-and-launching" title="Permanent link">&para;</a></h2>
 <p><code>casa-provider-contracts</code> also owns the single <code>ApplicationCatalog</code>. Every
 parameter surface has exactly one task-application entry that references the
-surface by stable ID, and every application is a task: the catalog's 26
-entries are its 26 task surfaces. Display name, category, and protocol
+surface by stable ID, and every application is a task: each catalog entry is
+one task surface. Display name, category, and protocol
 family are projected from the referenced surface rather than copied into
 another inventory. Each application adds only executable/package identity
 (<code>launch</code>), its explicit override variable, the kinds of dataset it reads,
-and packaging visibility (<code>include_in_suite</code>). Catalog schema 2 (#972)
-dropped the presentation fields only the retired terminal and Swift
-frontends read (<code>kind</code>, <code>shell_kind</code>, <code>interaction</code>, <code>show_in_tui</code>,
-<code>show_in_swift</code>), and an entry carrying any other field is refused. Several
+and packaging visibility (<code>include_in_suite</code>); an entry carrying any other
+field is refused. Several
 surfaces may share one executable, a family whose first word
 names the surface: <code>imhead</code> and <code>imstat</code> run <code>imexplore</code>; <code>plotms</code> runs
 <code>msexplore</code>; <code>split</code> runs <code>mstransform</code>; and <code>gaincal</code>, <code>bandpass</code>,
@@ -1005,8 +1026,8 @@ through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's 
 (<code>current_exe</code>) is not consulted. Python, packaging scripts, and the suite
 inventory all project from this catalog.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
-<p>ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by simobserve.</p>
+<p>ADR-0006 defines the common parameter model, including the optional
+current-only profile contract used by simobserve and msconvert.</p>
 <p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
 <ul>
 <li>stable semantic ID and canonical CASA-facing name</li>
@@ -1031,8 +1052,7 @@ name on that surface.</p>
 an output merely because both serialize as strings. Runtime-only controls such
 as executable overrides, progress paths, telemetry, and Last controls are
 explicitly non-persistable. There are no run-time confirmations: CASA's own
-parameters, such as <code>overwrite</code>, are the consent to replace or change data
-(#931).</p>
+parameters, such as <code>overwrite</code>, are the consent to replace or change data.</p>
 <p>A task <code>SurfaceDefinition</code> maps the resolved CASA-named parameter set into a
 one-shot provider invocation.</p>
 <p>Every optional parameter has an explicit default. Conditional defaults depend
@@ -1055,10 +1075,10 @@ its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
 changed defaults. An empty migration set declares a current-only surface: only
 the exact current contract and canonical parameter names are accepted. The
-simobserve surface is current-only. A chain may start after contract 1:
-<code>tclean</code>, the imager's surface since contract 29 (#931), migrates profiles
-from contract 28, the <code>imager</code> surface's last, and answers to that former
-id. Future, stale, and otherwise
+simobserve and msconvert surfaces are current-only. A chain may start after
+contract 1: <code>tclean</code>, the imager's surface since contract 29, migrates
+profiles from contract 28, the <code>imager</code> surface's last, and answers to that
+former id. Future, stale, and otherwise
 unmigratable contracts are errors.</p>
 <p>Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
@@ -1077,11 +1097,7 @@ stdin and file ingestion, JSON decoding and encoding, and the typed reply.
 A binary keeps only its typed execution callback.</p>
 <h2 id="the-shared-task-front-end-and-typed-replies">The shared task front end and typed replies<a class="headerlink" href="#the-shared-task-front-end-and-typed-replies" title="Permanent link">&para;</a></h2>
 <p><code>casa-task-runtime::TaskFrontEnd</code> is the one entry every task binary's <code>main</code>
-calls (#931): the image binaries and <code>imexplore</code>; the MeasurementSet binaries
-(<code>msexplore</code> with <code>plotms</code>, <code>mstransform</code> with <code>split</code>, <code>flagdata</code>,
-<code>flagmanager</code> and <code>importvla</code>); <code>calibrate</code>, which hosts <code>calibrate</code>,
-<code>applycal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code> and <code>gencal</code>;
-<code>casars-imager</code>; <code>msconvert</code>; and <code>simobserve</code>. A
+calls, including the family binaries that host several surfaces. A
 surface's choices take their canonical names (<code>--preset amplitude_vs_time</code>),
 and every flag it declares, short ones such as msexplore's <code>-o</code> included,
 reaches its parameter. The front end is generic over the
@@ -1228,21 +1244,10 @@ in-process.</p>
 <p><code>casars.parameters</code> exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
 a second default or migration implementation.</p>
-<h2 id="current-repo-mapping">Current Repo Mapping<a class="headerlink" href="#current-repo-mapping" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>calibrate</code>: task surface</li>
-<li><code>casars-imager</code> (surface <code>tclean</code>): task surface</li>
-<li><code>msexplore</code> and <code>plotms</code>: task surfaces served by <code>msexplore</code></li>
-<li><code>imhead</code> and <code>imstat</code>: task surfaces served by <code>imexplore</code></li>
-<li><code>casars.data.Image</code>: object surface</li>
-<li><code>casars.data.Table</code>: object surface</li>
-<li><code>casars.tools.simulator</code>: object surface</li>
-<li><code>casars.tools.measures</code>: object surface</li>
-<li><code>casars.tools.quanta</code>: object surface</li>
-</ul>
-<p>All 26 catalog surfaces have task definitions; the
-<a href="../reference/task-parameters/">generated parameter reference</a> lists them. The
-five object surfaces are not parameter-profile surfaces.</p>
+<h2 id="surface-inventory">Surface inventory<a class="headerlink" href="#surface-inventory" title="Permanent link">&para;</a></h2>
+<p>Every catalog surface is a task surface; the
+<a href="../reference/task-parameters/">generated parameter reference</a> lists them.
+The object surfaces above are not parameter-profile surfaces.</p>
 <h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define typed Rust structs and enums that serialize exactly to the canonical

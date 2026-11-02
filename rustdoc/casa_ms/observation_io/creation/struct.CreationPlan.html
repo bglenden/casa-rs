@@ -13,7 +13,7 @@ without <code>corrected</code> is written from its <code>base</code>, and one wi
 with CASA’s initial model. Every grid cell of one input becomes one
 row; padding becomes a row whose every <code>FLAG</code> is set, with NaN data,
 weights and <code>UVW</code>, the grid’s interval, no exposure and <code>FLAG_ROW</code> false
-(its flags already exclude it), as D23 decided. With
+(its flags already exclude it). With
 <a href="enum.PaddingRows.html#variant.Omitted" title="variant casa_ms::observation_io::creation::PaddingRows::Omitted"><code>PaddingRows::Omitted</code></a>, which partitions combined from several inputs
 need, padding becomes no row. <code>WEIGHT</code> is the input’s times its
 <a href="struct.CreationInput.html#structfield.weight_scale" title="field casa_ms::observation_io::creation::CreationInput::weight_scale"><code>CreationInput::weight_scale</code></a>, and <code>SIGMA</code> is derived from it: a

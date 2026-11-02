@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -852,10 +879,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#repro-detail-from-the-attached-note" class="md-nav__link">
+  <a href="#repro-detail" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Repro detail from the attached note
+        Repro detail
       
     </span>
   </a>
@@ -863,10 +890,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#wave-3-heavy-benchmark-repro" class="md-nav__link">
+  <a href="#benchmark-repro" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Wave 3 heavy benchmark repro
+        Benchmark repro
       
     </span>
   </a>
@@ -971,6 +998,17 @@
     <span class="md-ellipsis">
       
         Facets of an image size that does not divide
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#an-unflagged-non-finite-sample-turns-the-image-to-nan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An unflagged non-finite sample turns the image to NaN
       
     </span>
   </a>
@@ -2225,6 +2263,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
 <a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
+<a href="#an-unflagged-non-finite-sample-turns-the-image-to-nan">an unflagged non-finite sample</a>,
 <a href="#tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> of an <code>int64</code> column</a>,
 <a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> of an int beyond 32 bits</a>,
 <a href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices that abort the process</a>,
@@ -2372,7 +2411,7 @@ and the phase shift (<code>vbs.uvw_p</code>, <code>dphase_p</code>) together wit
 VisBuffer's unrotated w while placing the sample at the rotated u, v with the
 rotated phasor; <code>DataToGridImpl_p</code> uses the rotated w for both. The two
 differ only where the rotation moves a w across a plane boundary or through
-zero. casa-rs carries the unrotated w per row (<code>RowContext::original_w_m</code>,
+zero. casa-rs carries the unrotated uvw per row (<code>RowContext::original_uvw_m</code>,
 <code>ConvolutionFunctionSet::prediction_w</code>) and keys the AW prediction on it.</p>
 <h2 id="importvla-stale-vlacda-cache-crash-on-old-vla-export-data"><code>importvla</code> stale <code>VLACDA</code> cache crash on old VLA export data<a class="headerlink" href="#importvla-stale-vlacda-cache-crash-on-old-vla-export-data" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2381,8 +2420,7 @@ zero. casa-rs carries the unrotated w per row (<code>RowContext::original_w_m</c
 <li>Affected code:</li>
 <li><code>casatools/src/code/nrao/VLA/VLACDA.cc</code></li>
 <li><code>casatools/src/code/nrao/VLA/VLABaselineRecord.cc</code></li>
-<li>NRAO Archive file: <code>AG189_1_46325.23029_46325.80807.exp</code></li>
-<li>Standalone note: <a href="../casa-importvla-vlacda-offset-zero/">casa-importvla-vlacda-offset-zero.md</a></li>
+<li>NRAO Archive file: <code>AG189_1_46325.23029_46325.80807.exp</code> (archive revision 11)</li>
 </ul>
 <h3 id="summary_2">Summary<a class="headerlink" href="#summary_2" title="Permanent link">&para;</a></h3>
 <p><code>importvla</code> can abort on old VLA export data when a CDA is valid in one logical record
@@ -2436,7 +2474,6 @@ parity work that surfaced this CASA-side issue.</p>
 <li><code>casatools/src/code/synthesis/ImagerObjects/SynthesisDeconvolver.cc</code></li>
 <li><code>casatools/src/code/synthesis/ImagerObjects/SDAlgorithmHogbomClean.cc</code></li>
 <li><code>casatools/casacore/scimath_f/hclean.f</code></li>
-<li>Source note: <code>/Users/brianglendenning/Downloads/casa-hogbom-niter-findings (2).pdf</code></li>
 </ul>
 <h3 id="summary_4">Summary<a class="headerlink" href="#summary_4" title="Permanent link">&para;</a></h3>
 <p>In the current CASA <code>tclean(..., deconvolver='hogbom')</code> path, <code>niter=1</code> appears able to commit
@@ -2446,7 +2483,7 @@ minor-cycle call that enters <code>hclean</code> with a positive <code>cycleNite
 one more component than the reported minor-cycle count. In a Cotton-Schwab run,
 that means the model, residual, restored image, and controller stop/refresh
 decisions can shift by up to one extra component per Hogbom minor-cycle block.</p>
-<p>The concrete repro described in the attached note used:</p>
+<p>The first repro used:</p>
 <ul>
 <li>dataset: <code>.../casatestdata/measurementset/vla/sim_data_VLA_jet.ms</code></li>
 <li>setup: <code>imsize=512</code>, <code>cell='12arcsec'</code>, <code>specmode='mfs'</code>, <code>weighting='natural'</code>,
@@ -2455,7 +2492,7 @@ decisions can shift by up to one extra component per Hogbom minor-cycle block.</
   nonzero clean components</li>
 </ul>
 <h3 id="likely-mechanism_1">Likely mechanism<a class="headerlink" href="#likely-mechanism_1" title="Permanent link">&para;</a></h3>
-<p>The note points to an off-by-one style caller/kernel mismatch:</p>
+<p>An off-by-one caller/kernel mismatch:</p>
 <ol>
 <li><code>SDAlgorithmHogbomClean::takeOneStep</code> seeds <code>starting_iteration = 0</code></li>
 <li>the Fortran <code>hclean</code> kernel iterates over an inclusive <code>do iter = siter, niter</code></li>
@@ -2463,7 +2500,7 @@ decisions can shift by up to one extra component per Hogbom minor-cycle block.</
 </ol>
 <p>With <code>siter = 0</code> and <code>niter = 1</code>, that inclusive loop permits two update opportunities,
 which matches the observed behavior.</p>
-<h3 id="repro-detail-from-the-attached-note">Repro detail from the attached note<a class="headerlink" href="#repro-detail-from-the-attached-note" title="Permanent link">&para;</a></h3>
+<h3 id="repro-detail">Repro detail<a class="headerlink" href="#repro-detail" title="Permanent link">&para;</a></h3>
 <p>The output <code>.model</code> image contained two nonzero pixels:</p>
 <ol>
 <li><code>(264, 331) = 0.6685306429862976</code></li>
@@ -2477,11 +2514,9 @@ CASA reported one minor iteration, but the model flux was <code>0.0569704 Jy</co
 peak was <code>0.299844 Jy/beam</code>, so one strict-gain component at <code>gain=0.1</code> would account for
 only about <code>0.0299844 Jy</code>. The reported model flux is therefore consistent with two committed
 Hogbom components in that minor-cycle call.</p>
-<h3 id="wave-3-heavy-benchmark-repro">Wave 3 heavy benchmark repro<a class="headerlink" href="#wave-3-heavy-benchmark-repro" title="Permanent link">&para;</a></h3>
-<p>The same behavior appeared again during the ImPerformance Wave 3 standard-MFS heavy
-review on the retained Wave 2 medium VLA dataset:</p>
+<h3 id="benchmark-repro">Benchmark repro<a class="headerlink" href="#benchmark-repro" title="Permanent link">&para;</a></h3>
+<p>The same behavior appeared on a medium standard-MFS VLA benchmark dataset:</p>
 <ul>
-<li>dataset: <code>/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms</code></li>
 <li>setup: <code>specmode='mfs'</code>, <code>gridder='standard'</code>, <code>deconvolver='hogbom'</code>,
   <code>imsize=1024</code>, <code>cell='0.25arcsec'</code>, <code>spw='0:0~63'</code>, Briggs <code>robust=0.5</code>,
   <code>gain=0.1</code>, <code>threshold='0Jy'</code>, <code>niter=1</code>, <code>cycleniter=1</code></li>
@@ -2491,9 +2526,10 @@ review on the retained Wave 2 medium VLA dataset:</p>
 <li><code>(508, 507) = 8.556220054626465</code></li>
 </ul>
 <p>In a strict one-component casa-rs comparison this made the one-cycle residual RMS
-difference jump to <code>3.65e-2</code>. Running casa-rs with its explicit CASA-compatible
-Hogbom accounting mode reproduced both components and reduced the residual RMS
-difference to <code>7.64e-5</code>, matching the dirty gridding numerical floor. On the full
+difference jump to <code>3.65e-2</code>. Running casa-rs with its CASA-compatible Hogbom
+accounting (<code>HogbomIterationAccounting::CasaInclusive</code>) reproduced both
+components and reduced the residual RMS difference to <code>7.64e-5</code>, matching the
+dirty gridding numerical floor. On the full
 <code>niter=500</code>, <code>cycleniter=50</code> heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to <code>.model</code> RMS <code>1.71e-7</code>, <code>.residual</code> RMS
 <code>5.68e-5</code>, and <code>.image</code> RMS <code>5.87e-5</code>.</p>
@@ -2656,6 +2692,22 @@ confirms the same mechanism there and in the odd-moment weight images.</p>
 division) from <code>facet · (n / N)</code>, so when <code>N</code> does not divide <code>n</code> the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (<code>NonDivisibleFacetLayout</code>).</p>
+<h2 id="an-unflagged-non-finite-sample-turns-the-image-to-nan">An unflagged non-finite sample turns the image to NaN<a class="headerlink" href="#an-unflagged-non-finite-sample-turns-the-image-to-nan" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-02</li>
+<li>Status: CASA behaviour casa-rs does not follow (a NaN image loses the
+  product, so casa-rs corrects it)</li>
+<li>Affected code: CASA's gridding path, which accumulates unflagged samples
+  without testing them for finiteness</li>
+</ul>
+<p>CASA grids a NaN or infinite visibility, weight or UVW in an unflagged
+sample like any other, and the transform spreads it, so the products come
+out NaN everywhere without naming the sample. casa-rs fails the run instead
+(<code>FiniteValuePolicy::RejectUnflaggedInput</code>, and <code>PrepareError::NonFiniteUvw</code>
+for UVW found while compiling), naming the row, channel and correlation so
+the sample can be flagged. Flagged samples and grid padding are skipped, as
+in CASA. The CASA behaviour is as ARCHITECTURE.md has recorded it since the
+review of #792; it has not been rerun against CASA for this entry.</p>
 <h2 id="tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>tclean</code> images DATA when CORRECTED_DATA is missing, and says nothing<a class="headerlink" href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-29</li>

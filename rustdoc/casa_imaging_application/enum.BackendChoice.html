@@ -3,7 +3,7 @@
     Metal,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The gridding backend every owner of a pass dispatches to.</p>
 <p>With <a href="enum.BackendChoice.html#variant.Metal" title="variant casa_imaging_application::BackendChoice::Metal"><code>BackendChoice::Metal</code></a> each owner grids on the shared Metal
-device into an <code>f32</code> accumulator in device memory (D2), so every
+device into an <code>f32</code> accumulator in device memory (ADR-0016 decision 6), so every
 operator of the pass must be <code>f32</code>. The model is degridded on the device
 too: fused into the residual, or, for the native-channel residual of a
 multi-domain or linearly interpolated pass, in each row chunk’s

@@ -206,7 +206,7 @@
 <a href=#206 id=206 data-nosnippet>206</a></span><span class="attr">#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 <a href=#207 id=207 data-nosnippet>207</a></span><span class="kw">pub enum </span>PaddingRows {
 <a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// A row flagged throughout, its data, weights and UVW NaN, as the MSv2
-<a href=#209 id=209 data-nosnippet>209</a>    /// creator writes padding (revision 2 design, D23); its interval is the
+<a href=#209 id=209 data-nosnippet>209</a>    /// creator writes padding by default; its interval is the
 <a href=#210 id=210 data-nosnippet>210</a>    /// grid's, its exposure 0 and its time centroid its time, so that the
 <a href=#211 id=211 data-nosnippet>211</a>    /// row's keys stay valid. `FLAG_ROW` stays false: every element's flag
 <a href=#212 id=212 data-nosnippet>212</a>    /// already excludes the row, and a reader that folds `FLAG_ROW` into
@@ -214,8 +214,8 @@
 <a href=#214 id=214 data-nosnippet>214</a>    /// is known from the grids.
 <a href=#215 id=215 data-nosnippet>215</a>    </span><span class="attr">#[default]
 <a href=#216 id=216 data-nosnippet>216</a>    </span>Flagged,
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// No row: the declared policy that reproduces an original sparse MSv2
-<a href=#218 id=218 data-nosnippet>218</a>    /// (D23), since a NaN weight is padding's one mark. The row count then
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// No row: the declared policy that reproduces an original sparse
+<a href=#218 id=218 data-nosnippet>218</a>    /// MSv2, since a NaN weight is padding's one mark. The row count then
 <a href=#219 id=219 data-nosnippet>219</a>    /// needs the acquisitions counted first, from the weights.
 <a href=#220 id=220 data-nosnippet>220</a>    </span>Omitted,
 <a href=#221 id=221 data-nosnippet>221</a>}

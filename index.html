@@ -258,10 +258,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#user-surfaces" class="md-nav__link">
+  <a href="#user-documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        User Surfaces
+        User documentation
       
     </span>
   </a>
@@ -269,43 +269,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#published-docs" class="md-nav__link">
+  <a href="#contracts-and-developer-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Published docs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#agent-and-developer-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Agent And Developer Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#program-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Program Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation conventions
+        Contracts and developer reference
       
     </span>
   </a>
@@ -706,6 +673,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -733,10 +727,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#user-surfaces" class="md-nav__link">
+  <a href="#user-documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        User Surfaces
+        User documentation
       
     </span>
   </a>
@@ -744,43 +738,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#published-docs" class="md-nav__link">
+  <a href="#contracts-and-developer-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Published docs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#agent-and-developer-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Agent And Developer Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#program-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Program Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation conventions
+        Contracts and developer reference
       
     </span>
   </a>
@@ -806,63 +767,58 @@
 
 <h1 id="documentation-index">Documentation Index<a class="headerlink" href="#documentation-index" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-10-28
+Last reality check: 2026-11-02
 Verification: just docs-check</p>
-<p>This directory holds stable project documentation.</p>
-<h2 id="user-surfaces">User Surfaces<a class="headerlink" href="#user-surfaces" title="Permanent link">&para;</a></h2>
 <p>casa-rs is used from the Python package <code>casars</code> and from the task
 executables of the application catalog (such as <code>calibrate gaincal ...</code>),
-which Python also starts for its task calls; see
-<a href="adr/0017-python-first-surface/">ADR-0017</a>. All computation is in Rust,
-and the Python package is only its interface; see
-<a href="adr/0018-rust-computes-python-is-the-interface/">ADR-0018</a>.</p>
+which Python also starts for its task calls
+(<a href="adr/0017-python-first-surface/">ADR-0017</a>). All computation is in Rust,
+and the Python package is its interface
+(<a href="adr/0018-rust-computes-python-is-the-interface/">ADR-0018</a>).</p>
+<h2 id="user-documentation">User documentation<a class="headerlink" href="#user-documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="python/"><code>python/index.md</code></a></li>
-<li>the Python package: data access, tasks, parameters, and plotting</li>
-<li><a href="casars-calibrate-user-guide/"><code>casars-calibrate-user-guide.md</code></a></li>
-<li>user guide for the calibration tasks</li>
-<li><a href="task-parameters/"><code>task-parameters.md</code></a></li>
-<li>accepted sparse TOML profile, Last-state, and CLI/Python parameter
-    contract</li>
-<li><a href="reference/task-parameters/"><code>reference/task-parameters.md</code></a></li>
-<li>generated catalog of every task parameter surface</li>
-<li><a href="reference/casa-compatibility/"><code>reference/casa-compatibility.md</code></a></li>
-<li>generated comparison of each casa-rs task with its CASA 6.7.6.14 task</li>
-<li><a href="provider-contracts/"><code>provider-contracts.md</code></a></li>
-<li>canonical provider schema model for task and object surfaces</li>
+<li><a href="install/">Install</a>: the suite installer, release channels, and
+  building from source</li>
+<li><a href="python/">Python</a>: data access, tasks, CASA tools, parameter
+  profiles and plotting, with the <a href="python/data/">data API</a>, the
+  <a href="python/tasks-calibrate/">calibrate tasks</a>,
+  <a href="python/versioning/">compatibility</a> and the
+  <a href="python/api/">API reference</a></li>
+<li><a href="casars-calibrate-user-guide/">Calibration tasks user guide</a></li>
+<li><a href="task-parameters/">Task parameter profiles</a>: sparse TOML profiles, Last
+  state, and the task command line</li>
+<li><a href="reference/task-parameters/">Task parameter reference</a> and
+  <a href="reference/casa-compatibility/">CASA compatibility</a>, both generated</li>
+<li><a href="rust-api/">Rust API</a></li>
 </ul>
-<h2 id="published-docs">Published docs<a class="headerlink" href="#published-docs" title="Permanent link">&para;</a></h2>
+<p>The published site is <code>https://bglenden.github.io/casa-rs/</code>, with the Rust
+API reference at <code>https://bglenden.github.io/casa-rs/rustdoc/</code>; both are
+built from <code>main</code>.</p>
+<h2 id="contracts-and-developer-reference">Contracts and developer reference<a class="headerlink" href="#contracts-and-developer-reference" title="Permanent link">&para;</a></h2>
 <ul>
-<li>MkDocs site root: <code>https://bglenden.github.io/casa-rs/</code></li>
-<li>Rust API reference: <code>https://bglenden.github.io/casa-rs/rustdoc/</code></li>
-<li>install guide: <a href="install/"><code>install.md</code></a></li>
-<li>CASA VLA parity runbook:
-  <a href="casa-vla-importvla-parity/"><code>casa-vla-importvla-parity.md</code></a></li>
+<li><a href="provider-contracts/">Provider contracts</a>: the schema bundles,
+  application catalog and task front end that the executables and Python
+  share</li>
+<li><a href="CASA%20%28C%2B%2B%29%20bugs/">CASA (C++) bugs</a>: every recorded divergence
+  from CASA or casacore, and the CASA behaviours casa-rs follows for parity</li>
+<li><a href="agent-reference/">Agent reference</a>: workstation, CASA/C++ oracle, data
+  and storage locations, and release recipes</li>
+<li><code>adr/</code>: accepted architecture decisions</li>
+<li><a href="measurement-set/contracts/">MeasurementSet boundary</a>: its rules and
+  the obligations for capabilities not yet offered</li>
+<li><a href="simulation/simulation-plan-20261020/">Simulation plan</a>: requirements,
+  decisions and the deferred phases</li>
+<li><a href="tutorial-parity/">Tutorial parity</a>: the First Look runner</li>
 </ul>
-<h2 id="agent-and-developer-reference">Agent And Developer Reference<a class="headerlink" href="#agent-and-developer-reference" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="agent-reference/"><code>agent-reference.md</code></a></li>
-<li>situational workstation, CASA/C++, shared-data, release, and install
-    guidance kept out of the always-loaded root <code>AGENTS.md</code></li>
-<li><a href="CASA%20%28C%2B%2B%29%20bugs/"><code>CASA (C++) bugs.md</code></a></li>
-<li>canonical CASA parity defect notes, including the
-    <a href="CASA%20%28C%2B%2B%29%20bugs/#casa-hogbom-niter-off-by-one-bug">Hogbom <code>niter</code> off-by-one</a></li>
-</ul>
-<h2 id="program-reference">Program Reference<a class="headerlink" href="#program-reference" title="Permanent link">&para;</a></h2>
-<p><code>docs/tutorial-parity/</code> keeps the tutorial-parity reference material that is
-still in use. Retired phase plans and finished-wave evidence were removed on
-2026-10-05; retrieve them from git history at commit <code>08542713b7</code>.</p>
-<p>Canonical active planning and work status live in GitHub issues and pull
-requests. The active simulation programme (#841) follows
-<a href="simulation/simulation-plan-20261020/"><code>simulation/simulation-plan-20261020.md</code></a>.</p>
-<p>The proposed <a href="measurement-set/">MeasurementSet architecture and implementation plan</a>
-covers shared native observation contracts for MSv2 and XRADIO MSv4, with MSv3
-deferred pending a concrete need. It is a design under review, not a statement
-of implemented format support.</p>
-<h2 id="documentation-conventions">Documentation conventions<a class="headerlink" href="#documentation-conventions" title="Permanent link">&para;</a></h2>
-<p>This directory should contain stable reference material, not temporary PR-only
-review notes. Architecture and user-facing guides should be written so they can
-remain useful after the branch that introduced them is merged.</p>
+<p>At the repository root,
+<a href="https://github.com/bglenden/casa-rs/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a>
+describes the crates and their boundaries,
+<a href="https://github.com/bglenden/casa-rs/blob/main/TESTING.md">TESTING.md</a> the
+gates and evidence rules, and
+<a href="https://github.com/bglenden/casa-rs/blob/main/GLOSSARY.md">GLOSSARY.md</a> the
+domain vocabulary.</p>
+<p>This directory holds stable reference material. Open work, status and history
+live in GitHub issues and pull requests.</p>
 
 
 

@@ -602,6 +602,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -715,8 +742,10 @@
 <p>Status: accepted
 Date: 2026-10-20
 Truth class: normative
-Supersedes: 0005; 0007; the stateful-session provider and session-surface
-parts of 0003 and 0006
+Supersedes: the native macOS GUI prototype and the scientific notebooks and
+assistant ADRs (both deleted 2026-11-02; git history keeps them); the
+stateful-session provider and session-surface parts of ADR-0006 and of the
+provider schema bundle ADR, whose surviving rule ADR-0006 now holds
 Superseded by:</p>
 <p>Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
 PyO3 only (item 4, Enforcement and Drift detection). This was the first stage
@@ -728,8 +757,8 @@ Enforcement and Drift detection, in their final wording).</p>
 <p>From May to October 2026 casa-rs carried several interactive surfaces beside
 its Python package and command-line tasks: a ratatui terminal launcher with
 image and table browsers (<code>casars</code>), a native macOS SwiftUI workbench
-(<code>apps/casars-mac</code>, ADR-0005), a scientific-notebook and AI-assistant program
-(<code>casa-notebook</code>, ADR-0007), JSONL browser-session providers (<code>imexplore
+(<code>apps/casars-mac</code>), a scientific-notebook and AI-assistant program
+(<code>casa-notebook</code>), JSONL browser-session providers (<code>imexplore
 --session</code>, <code>tablebrowser</code>) with their own parameter surfaces, and Rust-side
 plot rasterisation (PNG/PDF through <code>plotters</code>, <code>image</code> and <code>printpdf</code>). The
 experiments showed that one computational codebase and one task/parameter
@@ -742,7 +771,8 @@ can replace CASA in existing scripts. Interactive inspection and plotting are
 better served by Python tools (NumPy, Matplotlib, Jupyter) than by
 project-owned GUIs.</p>
 <p>The last state of the interactive surfaces is preserved at the tag
-<code>ui-experiments-2026-10-20</code> (commit <code>42ba2012</code>).</p>
+<code>ui-experiments-2026-10-20</code> (commit <code>42ba2012</code>); the GUI and the notebook
+program each had an ADR, which git history keeps.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <ol>
 <li>The product surfaces are the Python package (<code>casars</code>) and the task
