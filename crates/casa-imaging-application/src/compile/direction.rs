@@ -436,6 +436,10 @@ pub(super) struct ImageSpectralCoordinate {
     /// `restfreq` entries after its first (`buildCoordinateSystemCore`'s
     /// `setRestFrequencies(..., 0, true)`).
     pub(super) additional_rest_frequencies_hz: Vec<f64>,
+    /// Whether the axis declares no frame (`MFrequency::Undefined`), as
+    /// CASA's `buildCoordinateSystemCore` writes a `cubedata` cube's axis
+    /// unless it is in the rest frame: the data's frequencies, uncorrected.
+    pub(super) undefined_frame: bool,
 }
 
 /// The coordinate system of one image domain's products.
@@ -458,20 +462,22 @@ pub(super) fn image_coordinates(
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
-    coordinates.add_coordinate(
-        SpectralCoordinate::new(
-            spectral.frequency_reference,
-            spectral.reference_frequency_hz,
-            spectral.increment_hz,
-            0.0,
-            spectral.rest_frequency_hz,
-        )
-        .with_rest_frequencies(
-            std::iter::once(spectral.rest_frequency_hz)
-                .chain(spectral.additional_rest_frequencies_hz.iter().copied())
-                .collect(),
-        ),
+    let mut axis = SpectralCoordinate::new(
+        spectral.frequency_reference,
+        spectral.reference_frequency_hz,
+        spectral.increment_hz,
+        0.0,
+        spectral.rest_frequency_hz,
+    )
+    .with_rest_frequencies(
+        std::iter::once(spectral.rest_frequency_hz)
+            .chain(spectral.additional_rest_frequencies_hz.iter().copied())
+            .collect(),
     );
+    if spectral.undefined_frame {
+        axis = axis.with_undefined_frame();
+    }
+    coordinates.add_coordinate(axis);
     *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
@@ -624,6 +630,7 @@ mod tests {
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
                 additional_rest_frequencies_hz: Vec::new(),
+                undefined_frame: false,
             },
             &ObsInfo::default(),
         );
