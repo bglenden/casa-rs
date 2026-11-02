@@ -8,10 +8,8 @@
 //! The rows are those of compile's partitions and the run's fields that
 //! the run's per-time scan test keeps, gathered by the store law
 //! ([`store_law::row_pointing`]); the run's own sample packing is checked
-//! by T1's selection tests. Field selection is tclean's provider
-//! contract; scan and observation are the unactivated preview, which the
-//! provider still refuses, so their values are added after the catalog
-//! resolves the rest, as the T1 preview does.
+//! by T1's selection tests. Every selector reaches the request through the
+//! catalog, as tclean's provider passes it.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -68,23 +66,10 @@ fn request(ms: &Path, imagename: PathBuf, selectors: &Value) -> ImagingRequest {
         "niter": 0,
         "datacolumn": "data",
     });
-    if let Some(field) = selectors.get("field") {
-        values["field"] = field.clone();
+    for (name, value) in selectors.as_object().expect("the case's selectors") {
+        values[name] = value.clone();
     }
-    let request = imaging::request(values);
-    let preview = |name: &str, request: ImagingRequest| -> ImagingRequest {
-        let Some(text) = selectors.get(name).and_then(Value::as_str) else {
-            return request;
-        };
-        let mut request = request;
-        match name {
-            "scan" => request.scan = Some(text.to_string()),
-            _ => request.observation = Some(text.to_string()),
-        }
-        request
-    };
-    let request = preview("scan", request);
-    preview("observation", request)
+    imaging::request(values)
 }
 
 #[test]
