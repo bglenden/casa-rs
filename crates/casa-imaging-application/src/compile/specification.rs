@@ -272,8 +272,25 @@ fn weighting(request: &ImagingRequest) -> WeightingContract {
 /// cube's per-channel density spreads each sample over a box of `npixels`
 /// (`BriggsCubeWeightor`'s `superUniformBox`), and a continuum density with
 /// `npixels` is an `npixels`-square grid.
+///
+/// `briggsbwtaper` without a per-channel density is uniform weighting:
+/// `task_tclean.py` only warns that the two are incompatible, and
+/// `VisImagingWeight` knows no `bwtaper` mode, so its robustness factors
+/// stay `f2 = 1, d2 = 0` and `weightUniform` divides each weight by its
+/// cell's density alone (`VisImagingWeight.cc`).
 fn density_weighting(request: &ImagingRequest) -> WeightingContract {
     let robust = request.robust;
+    let per_channel_requested = request.specmode != SpecMode::Mfs && request.perchanweightdensity;
+    if request.weighting == Weighting::Briggsbwtaper && !per_channel_requested {
+        tracing::warn!(
+            "The briggsbwtaper weighting scheme is not compatable with perchanweightdensity=False."
+        );
+        return WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        )
+        .with_density_cells(DensityCells::Image);
+    }
     let scheme = match request.weighting {
         Weighting::Natural => WeightingScheme::Natural,
         Weighting::Radial => WeightingScheme::Radial,
@@ -570,6 +587,27 @@ mod tests {
                 "{overrides} npixels={npixels}"
             );
         }
+    }
+
+    /// `briggsbwtaper` without a per-channel density weighs as CASA's
+    /// `VisImagingWeight` does with an unknown mode: uniformly, over the
+    /// image's cells; with one it is Briggs with the bandwidth taper.
+    #[test]
+    fn a_cube_briggsbwtaper_without_per_channel_density_is_uniform() {
+        let compiled = |perchanweightdensity| {
+            weighting(&crate::request::tests::request(json_cube(
+                "briggsbwtaper",
+                perchanweightdensity,
+            )))
+        };
+        let shared = compiled(false);
+        assert_eq!(shared.scheme(), WeightingScheme::Uniform);
+        assert_eq!(shared.density_scope(), WeightDensityScope::GlobalSelection);
+        assert_eq!(shared.density_cells(), DensityCells::Image);
+        assert!(matches!(
+            compiled(true).scheme(),
+            WeightingScheme::BriggsBandwidthTaper { .. }
+        ));
     }
 
     fn json_cube(weighting: &str, perchanweightdensity: bool) -> serde_json::Value {
