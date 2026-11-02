@@ -188,13 +188,23 @@ pub(crate) fn refuse_unaccepted(
     losses: &[Loss],
     accept: &[LossKind],
 ) -> Result<(), ObservationError> {
-    match losses.iter().find(|loss| !accept.contains(&loss.kind())) {
-        Some(loss) => Err(request_error(format!(
-            "the conversion would lose information: {loss}; accept {:?} to convert anyway",
-            loss.kind()
-        ))),
-        None => Ok(()),
+    let refused: Vec<&Loss> = losses
+        .iter()
+        .filter(|loss| !accept.contains(&loss.kind()))
+        .collect();
+    if refused.is_empty() {
+        return Ok(());
     }
+    let mut kinds: Vec<LossKind> = refused.iter().map(|loss| loss.kind()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let described: Vec<String> = refused.iter().map(ToString::to_string).collect();
+    let named: Vec<&str> = kinds.iter().map(|kind| kind.name()).collect();
+    Err(request_error(format!(
+        "the conversion would lose information: {}; accept {} to convert anyway",
+        described.join("; "),
+        named.join(", ")
+    )))
 }
 
 /// MAIN columns the conversion carries: the keys the partitions and grid
@@ -796,4 +806,45 @@ fn pointing_variables(path: &Path, losses: &mut Vec<Loss>) -> Result<(), Observa
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_loss_kind_parses_back_from_its_name() {
+        for kind in LossKind::ALL {
+            assert_eq!(kind.name().parse::<LossKind>(), Ok(kind));
+            assert_eq!(kind.to_string(), kind.name());
+            assert_eq!(
+                kind.name().to_ascii_uppercase().parse::<LossKind>(),
+                Ok(kind)
+            );
+        }
+        let error = "row-flags".parse::<LossKind>().unwrap_err();
+        assert!(error.contains("rowflags"), "{error}");
+    }
+
+    #[test]
+    fn a_refusal_names_every_unaccepted_loss_and_the_kinds_to_accept() {
+        let losses = [
+            Loss::Sigma,
+            Loss::Table("HISTORY".to_string()),
+            Loss::Table("WEATHER".to_string()),
+            Loss::RowFlags,
+        ];
+        assert!(refuse_unaccepted(&losses, &LossKind::ALL).is_ok());
+        let error = refuse_unaccepted(&losses, &[LossKind::Sigma])
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("SIGMA"), "{error}");
+        for described in ["HISTORY", "WEATHER", "FLAG_ROW"] {
+            assert!(error.contains(described), "{error}");
+        }
+        assert!(
+            error.contains("accept rowflags, tables to convert anyway"),
+            "{error}"
+        );
+    }
 }

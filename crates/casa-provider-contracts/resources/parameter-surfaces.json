@@ -26152,6 +26152,595 @@
           "changed_defaults": []
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "msconvert",
+      "contract_version": 1,
+      "display_name": "MS Convert",
+      "category": "MeasurementSet",
+      "summary": "Convert between MeasurementSet v2 and MSv4, in either direction.",
+      "provider_family": "msconvert",
+      "execution": {
+        "invocation_name": "msconvert",
+        "fixed_args": [],
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outputvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outputvis"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--vis"
+              ],
+              "false_flags": [],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "vis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Input MeasurementSet",
+              "group": "Input",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "outputvis",
+          "concept": {
+            "id": "parameter.outputvis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Named as XRADIO names a processing set: an MSv4 output not ending in ps.zarr gains .ps.zarr. When outputvis is empty, msconvert writes beside vis, naming the output after it, its .ms, .zarr or .ps.zarr replaced by .ps.zarr for an MSv4 or .ms for an MSv2.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outputvis"
+              ],
+              "false_flags": [],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "outputvis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outputvis",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Output MeasurementSet",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "outformat",
+          "concept": {
+            "id": "msconvert.outformat",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outformat"
+              ],
+              "false_flags": [],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "outformat",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outformat",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "datagroups",
+          "concept": {
+            "id": "msconvert.datagroups",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--datagroups"
+              ],
+              "false_flags": [],
+              "metavar": "GROUP"
+            },
+            "provider": {
+              "field": "datagroups",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "datagroups",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Data Groups",
+              "group": "Data",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "partitionscheme",
+          "concept": {
+            "id": "msconvert.partitionscheme",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--partitionscheme"
+              ],
+              "false_flags": [],
+              "metavar": "KEY"
+            },
+            "provider": {
+              "field": "partitionscheme",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "partitionscheme",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Partition Scheme",
+              "group": "MSv4 Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "withpointing",
+          "concept": {
+            "id": "msconvert.withpointing",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--withpointing"
+              ],
+              "false_flags": [
+                "--no-withpointing"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "withpointing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "withpointing",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Convert Pointing",
+              "group": "MSv4 Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "padding",
+          "concept": {
+            "id": "msconvert.padding",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "flagged"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--padding"
+              ],
+              "false_flags": [],
+              "metavar": "POLICY"
+            },
+            "provider": {
+              "field": "padding",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "padding",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Padding Rows",
+              "group": "MSv2 Output",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "chunks",
+          "concept": {
+            "id": "msconvert.chunks",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--chunks"
+              ],
+              "false_flags": [],
+              "metavar": "EXTENTS"
+            },
+            "provider": {
+              "field": "chunks",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "chunks",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Chunk Shape",
+              "group": "MSv4 Output",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "codec",
+          "concept": {
+            "id": "msconvert.codec",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "blosc"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--codec"
+              ],
+              "false_flags": [],
+              "metavar": "CODEC"
+            },
+            "provider": {
+              "field": "codec",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "codec",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Codec",
+              "group": "MSv4 Output",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "nthreads",
+          "concept": {
+            "id": "workers.msconvert",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--nthreads"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "nthreads",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "nthreads",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Threads",
+              "group": "MSv4 Output",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "msconvert's threads convert partitions at once; distinct from uvcontsub's continuum-fit threads."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        }
+      ],
+      "migrations": []
     }
   ]
 }

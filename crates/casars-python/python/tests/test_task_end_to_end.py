@@ -205,3 +205,47 @@ def test_a_missing_input_image_is_a_parameter_error(
     completion = failure.value.completion
     assert completion.parameter == "imagename"
     assert completion.returncode == 2
+
+
+def test_msconvert_converts_both_ways_and_reports_its_losses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("msconvert")
+    fixtures = REPO_ROOT / "crates/casa-ms/tests/fixtures/ms_trial"
+    with tarfile.open(fixtures / "ms_trial.ms.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    monkeypatch.chdir(tmp_path)
+
+    # Without an outputvis, the output is named after vis as XRADIO names
+    # a processing set.
+    converted = tasks.msconvert(vis="ms_trial.ms")
+    assert converted.successful, converted.describe()
+    assert converted.value["informat"] == "msv2"
+    assert converted.value["outformat"] == "msv4"
+    output = Path(converted.value["outputvis"]).resolve()
+    assert output == (tmp_path / "ms_trial.ps.zarr").resolve()
+    assert converted.value["partitions"] == 1
+    # What MSv4 cannot hold is taken and reported.
+    assert "SIGMA is not carried" in converted.value["losses"]
+    assert "HISTORY is not carried" in converted.value["losses"]
+    assert (tmp_path / "ms_trial.ps.zarr" / "ms_trial_0" / "pointing_xds").is_dir()
+
+    # Back to MSv2: its default name is the original's, which is kept.
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.msconvert(vis="ms_trial.ps.zarr")
+    assert failure.value.completion.parameter == "outputvis"
+    back = tasks.msconvert(vis="ms_trial.ps.zarr", outputvis="back.ms")
+    assert back.value["outformat"] == "msv2", back.describe()
+    assert (tmp_path / "back.ms" / "table.dat").is_file()
+
+    # XRADIO's partition_scheme and with_pointing; an existing output
+    # needs overwrite.
+    plain = tasks.msconvert(
+        vis="ms_trial.ms",
+        partitionscheme=["FIELD_ID", "SCAN_NUMBER"],
+        withpointing=False,
+        overwrite=True,
+    )
+    assert plain.successful, plain.describe()
+    assert not (tmp_path / "ms_trial.ps.zarr" / "ms_trial_0" / "pointing_xds").exists()

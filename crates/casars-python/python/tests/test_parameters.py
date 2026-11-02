@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 26
+    assert len(catalog["surfaces"]) == 27
     assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}
 
     imager = parameters.definition("tclean")

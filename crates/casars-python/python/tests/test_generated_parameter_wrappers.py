@@ -18,7 +18,7 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
     surfaces = parameters.catalog()["surfaces"]
     assert {surface["kind"] for surface in surfaces} == {"task"}
     task_ids = tuple(surface["id"] for surface in surfaces)
-    assert len(task_ids) == 26
+    assert len(task_ids) == 27
     assert tasks.TASK_SURFACES == task_ids
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
     assert not hasattr(tasks, "plotcal")

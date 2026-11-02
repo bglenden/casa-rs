@@ -912,6 +912,22 @@ def importfits(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
+def msconvert(
+    *,
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    outputvis: StrPath = ...,
+    outformat: Literal['', 'msv2', 'msv4'] = ...,
+    datagroups: str | list[str] | tuple[str, ...] = ...,
+    partitionscheme: Literal['FIELD_ID', 'SCAN_NUMBER'] | list[Literal['FIELD_ID', 'SCAN_NUMBER']] | tuple[Literal['FIELD_ID', 'SCAN_NUMBER'], ...] = ...,
+    withpointing: bool = ...,
+    padding: Literal['flagged', 'omitted'] = ...,
+    chunks: list[int] | tuple[int, ...] = ...,
+    codec: Literal['blosc', 'none', 'zstd'] = ...,
+    nthreads: int = ...,
+    overwrite: bool = ...,
+) -> TaskCompletion:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert']

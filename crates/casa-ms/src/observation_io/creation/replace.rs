@@ -35,48 +35,93 @@ use casa_tables::TableWriteLock;
 
 use crate::observation_io::update::{request_error, storage};
 
-/// A MeasurementSet a plan replaces: its path and the write lock held on
-/// its MAIN.
-pub(super) struct Replacing {
-    pub(super) destination: PathBuf,
-    lock: TableWriteLock,
+/// A MeasurementSet held for replacement: its path, and for a
+/// MeasurementSet v2 the write lock held on its MAIN until publication.
+///
+/// What replaces it is written beside it, on the same filesystem, and the
+/// two directories are exchanged in one atomic call ([`Replacement::publish`]),
+/// so an opening sees either whole. A plan replaces this way
+/// ([`super::Destination::Replace`]), and so may any other writer of a whole
+/// store, an MSv4 as well.
+#[derive(Debug)]
+pub struct Replacement {
+    destination: PathBuf,
+    lock: Option<TableWriteLock>,
 }
 
-impl Replacing {
-    /// Take casacore's write lock on `destination`'s MAIN, once (a lock
-    /// another process holds refuses it), after checking that it is a table
-    /// and that its filesystem exchanges directories.
-    pub(super) fn hold(destination: &Path) -> Result<Self, ObservationError> {
-        if !destination.join("table.dat").is_file() {
-            return Err(request_error(format!(
-                "{} is not a MeasurementSet to replace",
-                destination.display()
-            )));
-        }
+impl Replacement {
+    /// Hold the MeasurementSet at `destination` for replacement. It must
+    /// be a whole MeasurementSet ([`crate::observation_io::is_measurement_set`]),
+    /// not a link to one, on a filesystem that exchanges directories (two
+    /// empty ones reserved beside it are exchanged to find out); a
+    /// MeasurementSet v2 must not be held for writing elsewhere, and its
+    /// MAIN's casacore write lock is then held until [`publish`](Self::publish).
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::InvalidRequest`] for what is no MeasurementSet, a
+    /// link, or an MSv2 another process writes;
+    /// [`ObservationError::Unsupported`] for a filesystem without the
+    /// exchange.
+    pub fn hold(destination: &Path) -> Result<Self, ObservationError> {
+        refuse_unless_whole(destination)?;
         probe(destination)?;
-        let lock = TableWriteLock::acquire(destination, 1).map_err(|error| {
-            request_error(format!(
-                "{} is held for writing elsewhere and cannot be replaced: {error}",
-                destination.display()
-            ))
-        })?;
+        let lock = if crate::observation_io::is_msv4_store(destination) {
+            None
+        } else {
+            Some(TableWriteLock::acquire(destination, 1).map_err(|error| {
+                request_error(format!(
+                    "{} is held for writing elsewhere and cannot be replaced: {error}",
+                    destination.display()
+                ))
+            })?)
+        };
         Ok(Self {
             destination: destination.to_path_buf(),
             lock,
         })
     }
 
-    /// Publish the MeasurementSet `stage` holds in place of the one replaced
-    /// and delete the old one, then in the stage; the old copy's path when
-    /// it could not be deleted.
-    pub(super) fn publish(self, stage: &Stage) -> Result<Option<PathBuf>, ObservationError> {
-        exchange_directories(&stage.measurement_set, &self.destination).map_err(storage)?;
-        // The lock was taken on the old MAIN, now in the stage.
-        let _ = self.lock.release();
-        Ok(fs::remove_dir_all(&stage.measurement_set)
-            .is_err()
-            .then(|| stage.measurement_set.clone()))
+    /// The MeasurementSet held.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.destination
     }
+
+    /// Exchange the complete store at `replacement`, beside the one held, for
+    /// it in one atomic call, then delete the old store, which `replacement`
+    /// then names; its path when it could not be deleted. What is at the
+    /// held path is checked again just before the exchange.
+    ///
+    /// # Errors
+    ///
+    /// When the held path no longer holds a whole MeasurementSet, or the
+    /// exchange fails; either changes nothing.
+    pub fn publish(self, replacement: &Path) -> Result<Option<PathBuf>, ObservationError> {
+        refuse_unless_whole(&self.destination)?;
+        exchange_directories(replacement, &self.destination).map_err(storage)?;
+        // A lock was taken on the old MAIN, now at `replacement`.
+        if let Some(lock) = self.lock {
+            let _ = lock.release();
+        }
+        Ok(fs::remove_dir_all(replacement)
+            .is_err()
+            .then(|| replacement.to_path_buf()))
+    }
+}
+
+/// Refuse to replace what is at `destination` unless it is a whole
+/// MeasurementSet, and not a link to one.
+fn refuse_unless_whole(destination: &Path) -> Result<(), ObservationError> {
+    let link = fs::symlink_metadata(destination).is_ok_and(|meta| meta.file_type().is_symlink());
+    if link || !crate::observation_io::is_measurement_set(destination) {
+        return Err(request_error(format!(
+            "{} is not a MeasurementSet to replace{}",
+            destination.display(),
+            if link { ": it is a link" } else { "" }
+        )));
+    }
+    Ok(())
 }
 
 /// A directory the plan reserved beside its destination, holding the
@@ -211,6 +256,15 @@ fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::rename(from, to)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is `std::io::ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(target_os = "macos")]
 fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
@@ -225,6 +279,15 @@ fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
         .ok_or_else(std::io::Error::last_os_error)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is `std::io::ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(target_os = "linux")]
 fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
@@ -248,6 +311,15 @@ fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
         .ok_or_else(std::io::Error::last_os_error)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is `std::io::ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
     Err(std::io::Error::new(

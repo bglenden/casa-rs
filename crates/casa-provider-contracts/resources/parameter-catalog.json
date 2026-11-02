@@ -4853,7 +4853,7 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Output MeasurementSet path for corrected-data export or continuum subtraction",
+        "summary": "Output MeasurementSet path.",
         "details": null,
         "examples": []
       },
@@ -10517,6 +10517,238 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Compute the PSF image.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.outformat",
+      "semantic_revision": 1,
+      "casa_name": "outformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "msv2",
+          "msv4"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Format of the converted MeasurementSet: msv2 or msv4.",
+        "details": "Empty converts to the other format than the input: an MSv2 to an MSv4 processing set, an MSv4 to an MSv2. Naming the input's own format rewrites it, as an MSv4 re-chunked.",
+        "examples": [
+          "",
+          "msv4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.datagroups",
+      "semantic_revision": 1,
+      "casa_name": "datagroups",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Data groups to convert; empty converts every one.",
+        "details": "An MSv2's groups are base (DATA), corrected (CORRECTED_DATA) and model (MODEL_DATA). The first group named carries the flags, weights and UVW; a group not converted is reported as a loss.",
+        "examples": [
+          "[]",
+          "[\"corrected\"]",
+          "[\"base\", \"model\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.partitionscheme",
+      "semantic_revision": 1,
+      "casa_name": "partitionscheme",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "choice",
+          "values": [
+            "FIELD_ID",
+            "SCAN_NUMBER"
+          ]
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 into MSv4: further keys the MSv2 is partitioned by, as XRADIO's partition_scheme.",
+        "details": "Every MSv4 dataset holds one spectral window and polarization setup, observing mode, observation and ephemeris; FIELD_ID also splits by field and SCAN_NUMBER by scan. Empty, XRADIO's default, splits no further, as rapidly moving mosaics need. Only an MSv2 converted into an MSv4 is partitioned.",
+        "examples": [
+          "[]",
+          "[\"FIELD_ID\"]",
+          "[\"FIELD_ID\", \"SCAN_NUMBER\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.withpointing",
+      "semantic_revision": 1,
+      "casa_name": "withpointing",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: convert the pointing, as XRADIO's with_pointing.",
+        "details": "Pointing can be most of a large MeasurementSet's conversion time and size. Without it, the MSv4 holds no pointing_xds and the source's pointing is reported lost. An MSv2 output always carries pointing.",
+        "examples": [
+          "true",
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.padding",
+      "semantic_revision": 1,
+      "casa_name": "padding",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 output: what a grid cell no acquisition filled becomes.",
+        "details": "flagged writes a row flagged throughout with NaN data and weights; omitted writes no row, which reproduces an original sparse MSv2.",
+        "examples": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.chunks",
+      "semantic_revision": 1,
+      "casa_name": "chunks",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": 4,
+        "allow_scalar": false
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default.",
+        "details": "0 is a whole axis, and each extent is clipped to a dataset's. The default is XRADIO's converter's: every axis whole but time, with as many times as make a chunk of the largest variable about 128 MiB, each dataset sized by itself.",
+        "examples": [
+          "[]",
+          "[10, 0, 0, 0]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.codec",
+      "semantic_revision": 1,
+      "casa_name": "codec",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "blosc",
+          "none",
+          "zstd"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: compression of the visibilities, flags and weights.",
+        "details": "blosc is Blosc with LZ4, XRADIO's default; zstd is Zstandard; none stores them uncompressed.",
+        "examples": [
+          "blosc",
+          "zstd"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "workers.msconvert",
+      "semantic_revision": 1,
+      "casa_name": "nthreads",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow.",
+        "details": "Each thread converts one partition and may hold about 1 GiB; 0 takes as many as the host's memory budget allows, at most one a core. An MSv2 is written by one thread.",
+        "examples": [
+          "0",
+          "4"
+        ]
+      },
       "persistence_class": "profile"
     }
   ]
