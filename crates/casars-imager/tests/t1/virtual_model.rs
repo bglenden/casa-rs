@@ -136,8 +136,9 @@ fn a_virtual_model_is_replaced_and_cleared_as_casa_does() {
 }
 
 /// The model is written for the rows and channels the run images, as the
-/// run's own grammars resolved them: a window named by its `NAME` with a
-/// channel range, and one baseline (`A&B`). Every combination of the
+/// run's own grammars resolved them: a window named by its quoted `NAME`
+/// (casacore's spw lexer reads no `-` in a bare name) with a channel range,
+/// and one baseline (`A&B`). Every combination of the
 /// baseline's MAIN rows, and only those, is recorded, with the named
 /// channels; casa-ms's older row parser reads neither form.
 #[test]
@@ -174,7 +175,7 @@ fn a_virtual_model_is_written_for_the_selection_the_run_images() {
     drop(ms);
     assert!(!expected.is_empty(), "the baseline has rows");
     let mut values = controls("virtual");
-    values["spw"] = json!("t1-qband:1~2");
+    values["spw"] = json!("\"t1-qband\":1~2");
     values["antenna"] = json!(format!("{}&{}", names[0], names[1]));
     observation.image("virtual-selection", values);
     let entry = entry(&observation);
