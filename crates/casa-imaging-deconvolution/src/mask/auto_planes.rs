@@ -143,9 +143,87 @@ struct ChannelMask {
     positive: bool,
 }
 
+/// What every channel of one block is masked with.
+struct Block<'a, 'b, E> {
+    state: &'a AutoMaskState<'a>,
+    source: &'a AutoMaskSource<'b, E>,
+    domain: usize,
+    shape: [usize; 2],
+    polarizations: usize,
+    beam: Option<AutoMaskBeam>,
+    first_plane_full: bool,
+    /// An empty plane, the mask a plane inherits before the first boundary.
+    nothing: &'a [bool],
+}
+
+impl<E: From<MaskError>> Block<'_, '_, E> {
+    /// The masks of `channel`'s planes and its stop
+    /// (`SDMaskHandler::skipChannels`), which every plane of the channel
+    /// shares.
+    fn channel(&self, channel: usize) -> Result<ChannelMask, E> {
+        let state = self.state;
+        let inherited = |polarization| {
+            state
+                .previous
+                .and_then(|mask| mask.plane(channel, polarization))
+                .unwrap_or(self.nothing)
+        };
+        let cycle = AutoMaskCycle {
+            completed_major_cycles: state.completed_major_cycles,
+            threshold_reached: state.threshold_reached,
+            stopped: state
+                .stopped_channels
+                .get(channel)
+                .copied()
+                .unwrap_or(false),
+        };
+        let cells = self.shape[0] * self.shape[1];
+        let mut masked = ChannelMask {
+            support: Vec::with_capacity(self.polarizations * cells),
+            rows: Vec::with_capacity(self.polarizations),
+            positive: false,
+        };
+        for polarization in 0..self.polarizations {
+            let plane = (self.source.read)(MaskPlaneKey {
+                domain: self.domain,
+                channel,
+                polarization,
+            })?;
+            let made = plane_mask(&PlaneInputs {
+                plane: plane.as_ref(),
+                inherited: inherited(polarization),
+                shape: self.shape,
+                first_plane_full: self.first_plane_full,
+                cycle,
+                controls: state.controls,
+                beam: self.beam,
+            })?;
+            masked.support.extend(made.support);
+            masked.rows.push(made.evidence);
+            masked.positive |= made.positive;
+        }
+        let count = |support: &[bool]| support.iter().filter(|set| **set).count();
+        let before = (0..self.polarizations)
+            .map(|polarization| count(inherited(polarization)))
+            .sum();
+        let stopped = skip_channel(
+            before,
+            count(&masked.support),
+            masked.rows[0].threshold,
+            cycle,
+            state.controls,
+        );
+        for row in &mut masked.rows {
+            row.channel_stopped = stopped;
+        }
+        Ok(masked)
+    }
+}
+
 /// The automatic mask of every plane of `domain`, `shape` pixels by
 /// `planes` channels and polarizations, from the mask it inherits.
-/// Channels are masked side by side on the current rayon pool.
+/// Called inside a rayon pool (a worker team's), a block's channels are
+/// masked side by side on it; otherwise one after another.
 pub(super) fn auto_mask_domain<E>(
     state: &AutoMaskState<'_>,
     domain: usize,
@@ -163,16 +241,15 @@ where
     }) {
         return Err(MaskError::ShapeMismatch.into());
     }
-    let key = |channel, polarization| MaskPlaneKey {
-        domain,
-        channel,
-        polarization,
-    };
     let psfs = (0..planes.channels())
         .flat_map(|channel| {
-            (0..planes.polarizations()).map(move |polarization| (channel, polarization))
+            (0..planes.polarizations()).map(move |polarization| MaskPlaneKey {
+                domain,
+                channel,
+                polarization,
+            })
         })
-        .map(|(channel, polarization)| (source.psf)(key(channel, polarization)))
+        .map(source.psf)
         .collect::<Vec<_>>();
     let sidelobe = psfs
         .iter()
@@ -183,66 +260,35 @@ where
     let mut support = Vec::with_capacity(planes.count() * cells);
     let mut rows = Vec::with_capacity(planes.count());
     for block in channel_blocks(planes.channels(), shape) {
-        let beam = block_beam(
-            &psfs[block.start * planes.polarizations()..block.end * planes.polarizations()],
-            sidelobe,
-            state.coordinate,
-        )?;
-        let first_plane_full = state
-            .previous
-            .and_then(|mask| mask.plane(block.start, 0))
-            .is_some_and(|plane| plane.iter().all(|set| *set));
-        let channels = block
-            .clone()
-            .into_par_iter()
-            .map(|channel| {
-                let inherited = |polarization| {
-                    state
-                        .previous
-                        .and_then(|mask| mask.plane(channel, polarization))
-                        .unwrap_or(&nothing)
-                };
-                let cycle = AutoMaskCycle {
-                    completed_major_cycles: state.completed_major_cycles,
-                    threshold_reached: state.threshold_reached,
-                    stopped: state
-                        .stopped_channels
-                        .get(channel)
-                        .copied()
-                        .unwrap_or(false),
-                };
-                let mut masked = ChannelMask {
-                    support: Vec::with_capacity(planes.polarizations() * cells),
-                    rows: Vec::with_capacity(planes.polarizations()),
-                    positive: false,
-                };
-                for polarization in 0..planes.polarizations() {
-                    let plane = (source.read)(key(channel, polarization))?;
-                    let made = plane_mask(&PlaneInputs {
-                        plane: plane.as_ref(),
-                        inherited: inherited(polarization),
-                        shape,
-                        first_plane_full,
-                        cycle,
-                        controls: state.controls,
-                        beam,
-                    })?;
-                    masked.support.extend(made.support);
-                    masked.rows.push(made.evidence);
-                    masked.positive |= made.positive;
-                }
-                let before = (0..planes.polarizations())
-                    .map(|polarization| inherited(polarization).iter().filter(|set| **set).count())
-                    .sum();
-                let now = masked.support.iter().filter(|set| **set).count();
-                let stopped =
-                    skip_channel(before, now, masked.rows[0].threshold, cycle, state.controls);
-                for row in &mut masked.rows {
-                    row.channel_stopped = stopped;
-                }
-                Ok::<_, E>(masked)
-            })
-            .collect::<Result<Vec<_>, E>>()?;
+        let masking = Block {
+            state,
+            source,
+            domain,
+            shape,
+            polarizations: planes.polarizations(),
+            beam: block_beam(
+                &psfs[block.start * planes.polarizations()..block.end * planes.polarizations()],
+                sidelobe,
+                state.coordinate,
+            )?,
+            first_plane_full: state
+                .previous
+                .and_then(|mask| mask.plane(block.start, 0))
+                .is_some_and(|plane| plane.iter().all(|set| *set)),
+            nothing: &nothing,
+        };
+        let channels = if rayon::current_thread_index().is_some() {
+            block
+                .clone()
+                .into_par_iter()
+                .map(|channel| masking.channel(channel))
+                .collect::<Result<Vec<_>, E>>()?
+        } else {
+            block
+                .clone()
+                .map(|channel| masking.channel(channel))
+                .collect::<Result<Vec<_>, E>>()?
+        };
         report_block(state, &block, &channels, planes.polarizations());
         for channel in channels {
             support.extend(channel.support);
