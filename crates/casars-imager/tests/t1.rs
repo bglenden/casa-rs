@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! T1 end-to-end capability tests (imaging foundation plan, section 7):
+//! T1 end-to-end capability tests (the T1 tier of `TESTING.md`):
 //! analytic skies observed by the synthetic MeasurementSet generator and
 //! imaged through `casars-imager`'s production route, checked against
 //! analytic flux, position, beam, noise, inventory and WCS expectations.

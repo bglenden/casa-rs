@@ -527,8 +527,8 @@ impl Observation {
 
 /// The imager's defaults these laws were written against, where CASA's
 /// tclean defaults differ (#931): 1000-iteration minor cycles, W planes
-/// derived from the data, and the imager's fixed `conjbeams` and
-/// `mosweight`.
+/// derived from the data, and the A-projection's `conjbeams` and the
+/// mosaic's `mosweight` it once fixed.
 fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
     // These component laws predate default PB production and include moving
     // fields and frequencies outside the analytic PB's implemented scope.
@@ -690,7 +690,7 @@ pub enum SpectralAxis {
     NativeChannels,
 }
 
-/// The product contract (plan section 5.7) a T1 run is held to, beyond its
+/// The product contract a T1 run is held to, beyond its
 /// science: what it publishes, their coordinates, and the normalization rows
 /// the fixture can check from the observation alone.
 pub struct ProductContract<'a> {

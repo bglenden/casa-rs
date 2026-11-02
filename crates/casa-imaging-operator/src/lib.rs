@@ -15,8 +15,7 @@
 //! rows into [`Placement`]s, and CASA's visibility-domain continuum fit
 //! ([`fit_and_subtract_continuum`]).
 //!
-//! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
-//! section 5.3 and ADR-0016.
+//! The design is ADR-0016 (decision 1).
 //!
 //! # Conventions
 //!

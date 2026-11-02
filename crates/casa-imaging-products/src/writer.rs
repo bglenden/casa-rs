@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The CASA image writer (plan section 5.7).
+//! The CASA image writer.
 //!
 //! Each member is written to a private staging directory beside its target.
 //! Publishing then replaces each target on its own: the staged image is

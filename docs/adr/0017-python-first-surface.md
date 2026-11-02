@@ -3,8 +3,10 @@
 Status: accepted
 Date: 2026-10-20
 Truth class: normative
-Supersedes: 0005; 0007; the stateful-session provider and session-surface
-parts of 0003 and 0006
+Supersedes: the native macOS GUI prototype and the scientific notebooks and
+assistant ADRs (both deleted 2026-11-02; git history keeps them); the
+stateful-session provider and session-surface parts of ADR-0006 and of the
+provider schema bundle ADR, whose surviving rule ADR-0006 now holds
 Superseded by:
 
 Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
@@ -19,8 +21,8 @@ Enforcement and Drift detection, in their final wording).
 From May to October 2026 casa-rs carried several interactive surfaces beside
 its Python package and command-line tasks: a ratatui terminal launcher with
 image and table browsers (`casars`), a native macOS SwiftUI workbench
-(`apps/casars-mac`, ADR-0005), a scientific-notebook and AI-assistant program
-(`casa-notebook`, ADR-0007), JSONL browser-session providers (`imexplore
+(`apps/casars-mac`), a scientific-notebook and AI-assistant program
+(`casa-notebook`), JSONL browser-session providers (`imexplore
 --session`, `tablebrowser`) with their own parameter surfaces, and Rust-side
 plot rasterisation (PNG/PDF through `plotters`, `image` and `printpdf`). The
 experiments showed that one computational codebase and one task/parameter
@@ -35,7 +37,8 @@ better served by Python tools (NumPy, Matplotlib, Jupyter) than by
 project-owned GUIs.
 
 The last state of the interactive surfaces is preserved at the tag
-`ui-experiments-2026-10-20` (commit `42ba2012`).
+`ui-experiments-2026-10-20` (commit `42ba2012`); the GUI and the notebook
+program each had an ADR, which git history keeps.
 
 ## Decision
 

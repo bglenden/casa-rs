@@ -48,7 +48,7 @@ use crate::{MeasurementSet, OptionalMainColumn};
 /// with CASA's initial model. Every grid cell of one input becomes one
 /// row; padding becomes a row whose every `FLAG` is set, with NaN data,
 /// weights and `UVW`, the grid's interval, no exposure and `FLAG_ROW` false
-/// (its flags already exclude it), as D23 decided. With
+/// (its flags already exclude it). With
 /// [`PaddingRows::Omitted`], which partitions combined from several inputs
 /// need, padding becomes no row. `WEIGHT` is the input's times its
 /// [`CreationInput::weight_scale`], and `SIGMA` is derived from it: a

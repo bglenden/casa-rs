@@ -19,7 +19,8 @@ type BackendId = usize;
 
 /// One plane's residency operations with its element type erased, so one
 /// residency table holds planes of every element type. It erases a type
-/// inside this owner; it is not a polymorphic interface (plan §10 rule 7).
+/// inside this owner; it is not a polymorphic interface (imaging code
+/// rule 7 in `ARCHITECTURE.md`).
 trait BlockIo: Send + Sync {
     /// Return whether an existing backing was read into the live plane.
     fn prepare(&self, write: bool) -> io::Result<bool>;
@@ -30,8 +31,8 @@ trait BlockIo: Send + Sync {
 }
 
 /// One paged array's file operations with its element type erased, for the
-/// same residency table as [`BlockIo`] (plan §10 rule 7: type erasure inside
-/// one owner).
+/// same residency table as [`BlockIo`] (imaging code rule 7 in
+/// `ARCHITECTURE.md`: type erasure inside one owner).
 trait BackendIo: Send + Sync {
     fn reopen(&self) -> io::Result<()>;
     fn close(&self) -> io::Result<()>;

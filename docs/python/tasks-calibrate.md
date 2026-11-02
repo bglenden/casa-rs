@@ -6,7 +6,7 @@ The calibration tasks are generated, CASA-named wrappers in `casars.tasks`:
   `solve_gain`, `solve_bandpass`, `fluxscale`, `gencal`, `summary`, `stats`
   and `export_corrected_data`;
 - `applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`, with CASA
-  6.7.6's signatures (#931): CASA's parameters in CASA's order with CASA's
+  6.7.6's signatures: CASA's parameters in CASA's order with CASA's
   defaults, then casa-rs's keyword-only `output`, `overwrite` and `format`
   (and `array`, `gaincurve_table` where they apply).
 
@@ -23,7 +23,7 @@ does not implement yet is refused; both refusals name #979.
 Each call starts the `calibrate` executable directly, with
 the surface as its first word (`calibrate gaincal`), and sends one
 `TaskRunRequest` on `--json-run -`: the values the call set, resolved inside
-the executable against the same contract as its own command line (#931). Its
+the executable against the same contract as its own command line. Its
 log lines reach `sys.stderr` as they arrive. Python projects no flags and
 builds no Rust request. A refused value names its parameter: the task's
 refusal raises `TaskParameterError`, a `ValueError`, and a run that does not
@@ -42,6 +42,4 @@ calibration-table paths: a list, or one comma-separated string. Its per-table
 controls (`gainfield`, `interp`, `spwmap`, `calwt`) are `;`-separated strings
 aligned to `gaintables`, one value for every table or one per table.
 
-The `calibrate` binary takes the same parameters on its own command line. The
-developer subcommands it once had (`summary`, `plan-apply`, `solve-gain` and
-the rest) are the surfaces and modes above.
+The `calibrate` binary takes the same parameters on its own command line.

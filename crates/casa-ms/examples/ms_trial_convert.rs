@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert a store with the trial converter and report what it did, for
-//! the measurements in `docs/measurement-set/trial/README.md`.
+//! measuring conversions.
 //!
 //! ```text
 //! ms_trial_convert to-msv4|to-msv2 SOURCE DESTINATION [--workers N]

@@ -1063,8 +1063,7 @@ fn write_antennas(
 /// XRADIO's converter (1.3.1, `create_antenna_xds`) takes the letters of
 /// the first product's label alone, which names `R, R` for `RR, LL`,
 /// where its schema describes `polarization_type` as the receptors'
-/// types (`['R', 'L']`): a divergence recorded in
-/// `docs/measurement-set/trial/README.md` ("Fixture findings"). A single
+/// types (`['R', 'L']`), which this writer follows. A single
 /// receptor product (`RR` alone) names one receptor here and two in
 /// XRADIO.
 fn product_receptors(correlations: &[Correlation]) -> Vec<String> {

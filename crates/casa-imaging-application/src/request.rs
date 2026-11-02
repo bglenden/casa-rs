@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The imaging request: the provider-contracts catalog's `tclean` surface,
-//! resolved, as one typed record (plan section 5.8, decision D8).
+//! resolved, as one typed record (ADR-0016 decision 8).
 //!
 //! A request is made only from resolved catalog values (every route, the
 //! command line and `--json-run` alike, resolves through the catalog), by
@@ -295,7 +295,7 @@ pub struct ImagingRequest {
     /// Where the major-cycle passes grid, resolved against the compiled
     /// problem and the host by [`crate::availability::resolve_backend`].
     pub backend: BackendRequest,
-    /// Grid arithmetic; `None` (`auto`) is plan decision D2's rule.
+    /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
     /// The optional diagnostic output: `stage_timing`,
@@ -308,7 +308,7 @@ pub struct ImagingRequest {
 ///
 /// `auto` takes the host's GPU for what it implements and has been checked
 /// on, end to end, against the CPU; everything else grids on the CPU. The
-/// GPU accumulates in `f32` (plan decision D2), so choosing it accepts
+/// GPU accumulates in `f32` (ADR-0016 decision 6), so choosing it accepts
 /// single-precision grids, and an explicit `gridprecision = f64` keeps
 /// `auto` on the CPU.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -473,11 +473,30 @@ pub enum Gridder {
 }
 
 /// The parameters of `gridder = awproject`.
+///
+/// The four terms are tclean's, as `AWProjectFT::makeCFObject` reads them.
+/// They shape the cells a native cache generates
+/// (`AWConvFunc::makeConvFunction2`). An imported CASA cache already holds
+/// the cells its own run made, so with one only `conjbeams` changes the
+/// run: it selects the cell a row grids with (`CFBuffer::nearestFreqNdx`).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AwProjection {
-    /// W planes of the convolution-function cache.
+    /// W planes of the convolution-function cache: one images co-planar,
+    /// without the W term (`createAWPFTMachine`'s `wprojPlane > 1`).
     #[serde(deserialize_with = "optional")]
     pub wprojplanes: Option<NonZeroUsize>,
+    /// The EVLA aperture term (tclean `aterm`).
+    pub aterm: bool,
+    /// The prolate-spheroidal anti-aliasing term (tclean `psterm`).
+    pub psterm: bool,
+    /// Cells at each selected window's frequency rather than at the image
+    /// reference frequency alone (tclean `wbawp`); without the aperture
+    /// CASA's `AWConvFunc` drops it.
+    pub wbawp: bool,
+    /// Grid each sample with the cell at its conjugate frequency
+    /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
+    /// beam there (tclean `conjbeams`).
+    pub conjbeams: bool,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -775,13 +794,27 @@ impl ImagingRequest {
 }
 
 impl AwProjection {
+    /// Whether the cells vary with frequency: `wbawp` with the aperture, as
+    /// `AWConvFunc`'s constructor resets `wbAWP` when the A-term is off.
+    #[must_use]
+    pub const fn wideband(&self) -> bool {
+        self.wbawp && self.aterm
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
-        // The EVLA cache contract CASA's AWProjectFT builds: 32 W planes.
-        if self.wprojplanes.map(NonZeroUsize::get) != Some(32) {
+        let Some(planes) = self.wprojplanes else {
             return invalid(
                 "wprojplanes",
-                "AW projection uses CASA's 32-plane EVLA cache",
+                "AW projection takes a positive W-plane count; deriving it (-1) is not \
+                 implemented by casa-rs yet (#980)",
+            );
+        };
+        // `AWConvFunc`'s constructor: a cell needs one of the two.
+        if !self.aterm && !self.psterm {
+            return invalid(
+                "aterm, psterm",
+                "both psterm and aterm cannot be off, as CASA's AWConvFunc refuses",
             );
         }
         if self
@@ -815,7 +848,7 @@ impl AwProjection {
                      quarter of its side",
                 );
             }
-            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < 32 {
+            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < planes.get() {
                 return invalid(
                     "native_cf_cache_bytes, native_cf_maximum_cells",
                     "the cache must hold every W plane",

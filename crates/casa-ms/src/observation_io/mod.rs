@@ -8,12 +8,9 @@
 //! once per bind and once per batch. Algorithm code takes that interface
 //! and imports neither concrete adapter.
 //!
-//! **Trial status.** These adapters implement the cases the MSv2/MSv4
-//! trial's examples need (`docs/measurement-set/trial/README.md`), at the
-//! trial's second revision (`revision-2-design.md`): the MSv2 adapter grids
-//! rows onto time × baseline at opening and partitions them as XRADIO's
-//! converter does, so both adapters deliver the same batches. The
-//! production readers and writers are unchanged.
+//! The MSv2 adapter grids rows onto time × baseline at opening and
+//! partitions them as XRADIO's converter does, so both adapters deliver
+//! the same batches.
 
 #[cfg(all(feature = "msv4", unix))]
 pub mod convert;

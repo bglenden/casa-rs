@@ -103,39 +103,5 @@ projection entry and falls back to the bundle's. The provider contract
 (`from casars import simutil`, for CASA's `from casatasks.private import
 simutil`). It is not a CASA tool and is not in the bundle.
 
-The installer-managed suite install layout behind steps 4-6 is:
-
-```text
-~/.local/opt/casa-rs/<version>/
-  bin/
-    calibrate
-    casars-imager
-    imexplore
-    mstransform
-    ...                 (every task executable of the catalog)
-  python/
-    ...
-  wheels/
-    ...
-  bundle-manifest.json
-~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
-~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
-~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
-~/.local/bin/
-  calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
-  calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
-  calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
-  ...                   (the same links for each executable in bin/,
-                         except feather, immath and impv)
-```
-
-Each executable in the suite's `bin/` gets `<command>-<channel>` and, for
-the active suite, `<command>` in `~/.local/bin`, except the CASA names that
-are system commands or generic words: `feather`, `immath` and `impv` stay
-off `PATH`, as `split` would (it is a coreutil; `mstransform split` runs
-CASA's split). Python still starts them from the suite's `bin/`. A dangling
-link into the install root, such as one to a command a newer suite no longer
-has, is removed. A file of the user's, or a link elsewhere, at one of these
-names is left in place, with a warning. That lets Python and the task executables behave as one
-installed suite while keeping `~/.local/bin` as the only `PATH` entry users
-generally need.
+The installed suite's layout, channels and command links are described in
+[Install](../install.md#stable-and-rc-installs).

@@ -13,8 +13,7 @@ default = []
 slow-tests = []
 cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 performance-tests = ["casa-test-support/performance-tests"]
-# The trial MSv4 (XRADIO VisibilityXds 4.0.1, local Zarr v3) adapter
-# (docs/measurement-set/trial/README.md).
+# The MSv4 (XRADIO VisibilityXds 4.0.1, local Zarr v3) adapter.
 msv4 = ["dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_slice"]
 
 [dependencies]
@@ -44,8 +43,9 @@ bytemuck = { version = "1.25", optional = true }
 unsafe_cell_slice = { version = "=0.2.2", optional = true }
 zarrs = { version = "=0.23.14", default-features = false, features = ["filesystem", "blosc", "zstd"], optional = true }
 # The store zarrs re-exports as `zarrs::filesystem`, pinned beside it: its
-# per-key lock registry and file handling are what the trial audited
-# (docs/measurement-set/trial/README.md, "Converter").
+# per-key lock registry and file handling were audited at this version (one
+# lock per key touched, never removed, so it grows with the distinct keys a
+# process visits, not with passes).
 zarrs_filesystem = { version = "=0.3.14", optional = true }
 
 [dev-dependencies]

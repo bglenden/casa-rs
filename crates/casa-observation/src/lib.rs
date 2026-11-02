@@ -6,12 +6,9 @@
 //! read, the [`AccessRequest`] consumers estimate and bind, and the
 //! [`Traversal`] of [`VisibilityCursor`]s that delivers batches.
 //!
-//! **Trial status.** This crate is the executable sketch of
-//! `docs/measurement-set/contracts.md` for the MSv2/MSv4 trial
-//! (`docs/measurement-set/trial/README.md`), at its third revision
-//! (`docs/measurement-set/trial/revision-2-design.md`, then the README's
-//! "Revision 3"). Its interfaces are
-//! not frozen.
+//! This rustdoc states the contract. The rules that bind changes to it,
+//! and the capabilities not yet offered, are in
+//! `docs/measurement-set/contracts.md`.
 //!
 //! # The principle
 //!

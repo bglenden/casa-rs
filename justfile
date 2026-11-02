@@ -136,12 +136,13 @@ arch-check:
 docs-check:
     bash scripts/docs-check.sh
 
-# List (or with --apply, remove) worktrees and local branches already merged into origin/main.
+# List (or with --apply, remove) worktrees and local branches already merged or squash-merged into origin/main.
 tidy *args:
     bash scripts/tidy-git.sh {{args}}
 
-graph:
-    bash scripts/generate-graphs.sh
+# Run the daily housekeeping now (merged worktrees and branches, old build output, stale target/ scratch); add --dry-run to preview.
+housekeeping *args:
+    bash scripts/housekeeping-if-due.sh --now {{args}}
 
 install-local *args:
     bash scripts/install-local.sh {{args}}

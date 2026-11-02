@@ -11,7 +11,8 @@ use crate::error::OperatorError;
 /// centre cell `(nx/2, ny/2)` in both domains.
 ///
 /// Per-plane transforms run on the worker team, never inside FFTW's own
-/// thread pool (plan section 5.9). Both directions are unnormalised.
+/// thread pool, so FFTW's threads never nest inside the team's. Both
+/// directions are unnormalised.
 pub(crate) struct PlaneFft<T: FftScalar> {
     fft: Fft2<T>,
     shape: [usize; 2],

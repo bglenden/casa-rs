@@ -85,7 +85,7 @@ pub(crate) struct ApplicationRuntime {
     pub(crate) host: HostResources,
     pub(crate) resource_policy: ResourcePolicy,
     pub(crate) backend: BackendChoice,
-    /// The requested grid precision; `None` is plan decision D2's rule.
+    /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
     pub(crate) cancel: Cancel,
     /// Directory the paged cube state of a channel-local run lives in.
