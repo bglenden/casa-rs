@@ -31,10 +31,12 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use thiserror::Error;
 
+pub mod antenna_expr;
 mod edit;
 pub(crate) mod parser;
 pub mod syntax;
 
+pub use antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
 pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
 

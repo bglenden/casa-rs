@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_ms::{
-    FieldSelectorRow, MeasurementSet, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    parse_numeric_row_id_ranges, resolve_field_selector_rows, tutorial_vla_a_antennas,
+    AntennaRow, FieldSelectorRow, MeasurementSet, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, parse_numeric_row_id_ranges, resolve_antenna_selector,
+    resolve_field_selector_rows, tutorial_vla_a_antennas,
 };
 
 #[global_allocator]
@@ -156,6 +157,48 @@ fn numeric_selector_width_does_not_grow_the_heap() {
                  held {rows_held} B"
             );
             measured[index] = (ms_peak, ms_held, ids.capacity(), rows_peak, rows_held);
+        }
+        assert_eq!(measured[0], measured[1], "range width has no heap cost");
+    }
+
+    // Antenna ranges: CASA's `INT DASH INT` action enumerates the range;
+    // here the antennas that exist bound the work, and the retained heap is
+    // the pair table alone. `0~2147483646` is the widest range CASA's
+    // `Int` length admits.
+    assert_eq!(ms.antenna().unwrap().row_count(), 2);
+    ms.resolve_antenna_selector("0~1")
+        .expect("warm antenna metadata");
+    let antennas = [
+        AntennaRow {
+            name: "W08",
+            station: "W08",
+            position_m: [0.0; 3],
+        },
+        AntennaRow {
+            name: "W16",
+            station: "W16",
+            position_m: [1.0, 0.0, 0.0],
+        },
+    ];
+    for (narrow, wide) in [
+        ("0~1", "0~2147483646"),
+        ("0~1&&", "0~2147483646&&"),
+        ("0~1,0@W08", "0~2147483646,0@W08"),
+    ] {
+        let mut measured = [(0, 0, 0, 0); 2];
+        for (index, text) in [narrow, wide].into_iter().enumerate() {
+            let (selection, ms_peak, ms_held) = measure(|| ms.resolve_antenna_selector(text));
+            let selection = selection.expect("existing antennas");
+            assert_eq!(ms_held, selection.allocated_bytes() as u64, "{text}");
+            assert_eq!(selection.allocated_bytes(), 4 * 4, "(n + 2)² for n = 2");
+            let (catalogue, rows_peak, rows_held) =
+                measure(|| resolve_antenna_selector(&antennas, text));
+            assert_eq!(catalogue.expect("existing antennas"), selection);
+            eprintln!(
+                "antenna {text}: MS peak {ms_peak} B held {ms_held} B; rows peak {rows_peak} B \
+                 held {rows_held} B"
+            );
+            measured[index] = (ms_peak, ms_held, rows_peak, rows_held);
         }
         assert_eq!(measured[0], measured[1], "range width has no heap cost");
     }

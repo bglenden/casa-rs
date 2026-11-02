@@ -32,6 +32,8 @@ libc = "0.2"
 libm = "0.2"
 ndarray.workspace = true
 num-complex = { workspace = true, features = ["bytemuck"] }
+# Antenna selection regexes and patterns (selection/antenna_expr).
+regex = "1"
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -184,6 +186,10 @@ path = "tests/field_selection_oracle.rs"
 [[test]]
 name = "selector_width_memory"
 path = "tests/selector_width_memory.rs"
+
+[[test]]
+name = "antenna_selection_oracle"
+path = "tests/antenna_selection_oracle.rs"
 
 [[test]]
 name = "spectral_frame_parity"
