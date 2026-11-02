@@ -217,7 +217,7 @@ pub fn problem_in(
     let frames = [FrequencyFrame::Topocentric; 2];
     compile(ProblemInput::new(
         specification(polarization),
-        geometry(phase, facets, psf, frames, false),
+        geometry(phase, facets, psf, frames, false).build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
@@ -240,73 +240,140 @@ pub fn problem_framed(
             PsfPhaseCentreLaw::ImageDomainReference,
             [source, output],
             source != output || output.gridded_through_lsrk(),
-        ),
+        )
+        .build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
     .expect("a compiled problem")
 }
 
+/// The Stokes I problem of `phase` gridded as `MosaicFT` grids, each row
+/// pointed at its field's centre, on an image centred on [`REFERENCE`] in
+/// `frame`.
+pub fn problem_mosaic(phase: PhaseCentreLaw, frame: DirectionFrame) -> CompiledProblem {
+    let frames = [FrequencyFrame::Topocentric; 2];
+    let mut geometry = geometry(
+        phase,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+        frames,
+        false,
+    );
+    geometry.frame = frame;
+    geometry.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+    geometry.pointing = PointingCentreLaw::FieldCentre;
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI]),
+        geometry.build(),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("a compiled problem")
+}
+
+/// The fixture's geometry, before it is built.
+struct Geometry {
+    phase: PhaseCentreLaw,
+    facets: FacetLayout,
+    psf: PsfPhaseCentreLaw,
+    frames: [FrequencyFrame; 2],
+    anchored: bool,
+    /// The image's direction frame.
+    frame: DirectionFrame,
+    uvw: UvwCoordinateLaw,
+    pointing: PointingCentreLaw,
+}
+
 fn geometry(
     phase: PhaseCentreLaw,
     facets: FacetLayout,
     psf: PsfPhaseCentreLaw,
-    [source, output]: [FrequencyFrame; 2],
+    frames: [FrequencyFrame; 2],
     anchored: bool,
-) -> GeometryInput {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
-        [255.0, 255.0],
-        [-4.848_136_811_095_36e-5, 4.848_136_811_095_36e-5],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    GeometryInput::new(
-        vec![
-            ImageDomainSpec::new(
-                ImageDomainRole::Main,
-                ImageShape::new(512, 512),
-                direction,
-                facets,
-                AxisOrder::new([
-                    ImageAxis::DirectionLongitude,
-                    ImageAxis::DirectionLatitude,
-                    ImageAxis::Polarization,
-                    ImageAxis::Spectral,
-                ]),
-            )
-            .with_psf_phase_centre(psf),
-        ],
-        CentreLaws::new(phase, PointingCentreLaw::PhaseTrackingCentre),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            source,
-            output,
-            if source == output && !anchored {
-                SpectralFrameAnchor::NotApplicable
-            } else {
-                SpectralFrameAnchor::Conversion {
-                    // The first time's epoch as a row's time reads it.
-                    epoch: Epoch::new(MJD_DAYS * 86_400.0 * (1.0 / 86_400.0), TimeScale::Utc),
-                    direction: SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
-                    observatory_position: ItrfPosition::new(
-                        -1_601_185.4,
-                        -5_041_977.5,
-                        3_554_875.9,
-                    ),
-                }
-            },
-            SpectralWcs::Linear {
-                channels: 1,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    )
+) -> Geometry {
+    Geometry {
+        phase,
+        facets,
+        psf,
+        frames,
+        anchored,
+        frame: DirectionFrame::J2000,
+        uvw: UvwCoordinateLaw::PhaseTrackingCentre,
+        pointing: PointingCentreLaw::PhaseTrackingCentre,
+    }
+}
+
+impl Geometry {
+    fn build(self) -> GeometryInput {
+        let Self {
+            phase,
+            facets,
+            psf,
+            frames: [source, output],
+            anchored,
+            frame,
+            uvw,
+            pointing,
+        } = self;
+        let direction = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(frame, REFERENCE[0], REFERENCE[1]),
+            [255.0, 255.0],
+            [-4.848_136_811_095_36e-5, 4.848_136_811_095_36e-5],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 0.0],
+        );
+        GeometryInput::new(
+            vec![
+                ImageDomainSpec::new(
+                    ImageDomainRole::Main,
+                    ImageShape::new(512, 512),
+                    direction,
+                    facets,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )
+                .with_psf_phase_centre(psf),
+            ],
+            CentreLaws::new(phase, pointing),
+            uvw,
+            SpectralCoordinateSpec::new(
+                source,
+                output,
+                if source == output && !anchored {
+                    SpectralFrameAnchor::NotApplicable
+                } else {
+                    SpectralFrameAnchor::Conversion {
+                        // The first time's epoch as a row's time reads it.
+                        epoch: Epoch::new(MJD_DAYS * 86_400.0 * (1.0 / 86_400.0), TimeScale::Utc),
+                        direction: SkyDirection::new(
+                            DirectionFrame::J2000,
+                            REFERENCE[0],
+                            REFERENCE[1],
+                        ),
+                        observatory_position: ItrfPosition::new(
+                            -1_601_185.4,
+                            -5_041_977.5,
+                            3_554_875.9,
+                        ),
+                    }
+                },
+                SpectralWcs::Linear {
+                    channels: 1,
+                    reference_pixel: 0.0,
+                    reference_frequency_hz: 1.4e9,
+                    increment_hz: 1.0e6,
+                },
+                RestFrequency::NotApplicable,
+                DopplerConvention::NotApplicable,
+            ),
+        )
+    }
 }
 
 fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecification {

@@ -345,7 +345,9 @@ impl Packer<'_> {
                 Some(direction) => pointing_offset(
                     *direction,
                     geometry.aw_pointing_pixel(sample, chart),
-                    geometry.pointing(sample).antenna1,
+                    geometry
+                        .chart_pointing(sample, chart)
+                        .unwrap_or(geometry.pointing(sample).antenna1),
                 )?,
                 None => [0.0; 2],
             };
@@ -466,7 +468,9 @@ fn antenna_types(
 /// when the selection evaluated one, else the antenna-1 pointing direction
 /// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
 /// buffer's first `direction1`; under tclean `usepointing=False` the
-/// selection evaluates it as the field's phase-tracking centre).
+/// selection evaluates it as the field's phase-tracking centre), placed in
+/// the chart's frame and less a moving source's shift when the geometry
+/// placed it ([`BatchGeometry::chart_pointing`]).
 fn pointing_offset(
     direction: DirectionCoordinateSpec,
     aw_pixel: Option<[f64; 2]>,
