@@ -161,7 +161,9 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
         baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
     };
-    let drive = if request.savemodel || request.save_continuum_residual {
+    let drive = if request.savemodel == casa_imaging_application::SaveModel::ModelColumn
+        || request.save_continuum_residual
+    {
         drive_batch_write(request, &context, &mut mark).expect("the write")
     } else {
         drive_batch_source(request, &context, planes_per_wave, &mut mark).expect("the source reads")

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::read;
 use crate::request::tests::{request, resolved};
-use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SpecMode, TcleanRefusal};
+use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, TcleanRefusal};
 
 /// tclean's refusal of `overrides`.
 fn refusal(overrides: Value) -> TcleanRefusal {
@@ -242,6 +242,14 @@ fn casa_values_become_the_request_casa_rs_runs() {
     // nterms is read with mtmfs.
     let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 3 }));
     assert_eq!((terms.deconvolver, terms.nterms), (Deconvolver::Mtmfs, 3));
+    // savemodel names where the model goes, CASA's virtual model among them.
+    for (text, saved) in [
+        ("none", SaveModel::None),
+        ("modelcolumn", SaveModel::ModelColumn),
+        ("virtual", SaveModel::Virtual),
+    ] {
+        assert_eq!(request(json!({ "savemodel": text })).savemodel, saved);
+    }
 }
 
 /// A value casa-rs cannot honour is refused at its parameter, naming the
@@ -253,7 +261,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (json!({ "usemask": "pb" }), "usemask", "#823"),
-        (json!({ "savemodel": "virtual" }), "savemodel", "#823"),
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",

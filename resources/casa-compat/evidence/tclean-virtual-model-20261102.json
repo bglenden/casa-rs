@@ -1,0 +1,3835 @@
+{
+ "issue": 823,
+ "casa_tasks": "6.7.6.14",
+ "casa_tools": "6.7.6-14",
+ "host": "macOS-27.0.1-arm64-arm-64bit",
+ "drivers": [
+  "tools/casa-compat/tclean_case_matrix.py",
+  "tools/casa-compat/tclean_virtual_model_verify.py"
+ ],
+ "test_modelvis_matrix": {
+  "revision": "92aaa05a01e5fa11930601a943dd4c1e907714b4",
+  "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+  "passed": 13,
+  "total": 29,
+  "cases": {
+   "test_modelvis.test_modelvis_1.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_2.1+2": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_3.1+2": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_4.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_5.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: invalid value for startmodel: invalid parameter type: value Array([String(\"tst.model.tt0\"), String(\"tst.model.tt1\")]) does not match Path { resource_kind: Some(",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_6.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: invalid value for startmodel: invalid parameter type: value Array([String(\"tst.model.tt0\"), String(\"tst.model.tt1\")]) does not match Path { resource_kind: Some(",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_7.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: tclean failed: imaging application preparation failed: startmodel tst.model: invalid metadata: regrid: the Spectral axes differ between the input and the templa",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_8.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: tclean refused its parameters (parameter 'nchan'): nchan=-1 with a channel selection in spw, a start or a width, whose extent CASA derives from the selected cha",
+      "passed": false
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: tclean failed: imaging application preparation failed: startmodel tst.model: table error: storage error: table path does not exist: tst.model",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_9.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": null,
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_10.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_11.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_12.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_13.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_14.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_15.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_16.1": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: tclean failed: native imaging run failed: the PSF has no positive finite peak",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_17.1": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: tclean failed: native imaging run failed: the PSF has no positive finite peak",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_18.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_19.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_20.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_21.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_22.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_23.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_24.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "refused: tclean failed: native imaging run failed: the PSF has no positive finite peak",
+      "passed": false
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_25.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "refused: tclean failed: native imaging run failed: the PSF has no positive finite peak",
+      "passed": false
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_26.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_27.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "none",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: parameter \"calcres\" is not implemented by casa-rs yet (#980); only CASA\\'s default True is accepted\\nparameter \"calcpsf\" is n",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_28.1": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: invalid value for vis: parameter constraint failed: length 2 is outside the accepted range'",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_29.1": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "refused: reason='resolve parameter session: invalid value for vis: parameter constraint failed: length 2 is outside the accepted range'",
+      "passed": false
+     }
+    ]
+   }
+  },
+  "virtual_models_read_by_casa": {
+   "test_modelvis.test_modelvis_10.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 2.5940102906207045e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.367401158652868e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_11.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.0695554963514437e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.3620974250628638e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_13.1/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_15.1/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_19.1/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.6129594464354673e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_3.1+2/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_6.1+2/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 6.306463260709429e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.34867900888586084,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "MultiTermFTNew",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true,
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "MultiTermFTNew",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true,
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".subftm_0.spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".subftm_0.spectralcoord.conversion.system",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".subftm_1.spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".reffreq": [
+        1499985146.4200904,
+        1499985146.4200938
+       ],
+       ".subftm_0.freqinterpmethod": [
+        0,
+        1
+       ],
+       ".subftm_0.imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".subftm_0.mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".subftm_0.mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".subftm_0.mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".subftm_0.mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".subftm_0.nantenna": [
+        7972960,
+        0
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".subftm_0.spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".subftm_0.spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".subftm_0.spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ],
+       ".subftm_1.freqinterpmethod": [
+        0,
+        1
+       ],
+       ".subftm_1.imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".subftm_1.mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".subftm_1.mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".subftm_1.mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".subftm_1.mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".subftm_1.nantenna": [
+        7972960,
+        0
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".subftm_1.spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".subftm_1.spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".subftm_1.spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_9.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.8015184653503446e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.3717863101321226e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [
+       [
+        ".spectralcoord.conversion.direction.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.direction.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.direction.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.epoch.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m0.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m1.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.unit",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.m2.value",
+        "float"
+       ],
+       [
+        ".spectralcoord.conversion.position.refer",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.position.type",
+        "str"
+       ],
+       [
+        ".spectralcoord.conversion.system",
+        "str"
+       ]
+      ],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mimage_rec.m0.value": [
+        -1.0494882958398402,
+        -1.04948829583984
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".nantenna": [
+        7930784,
+        0
+       ],
+       ".spectralcoord.conversion.direction.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.direction.m1.value": [
+        1.5707963267948966,
+        null
+       ],
+       ".spectralcoord.conversion.direction.refer": [
+        "J2000",
+        null
+       ],
+       ".spectralcoord.conversion.direction.type": [
+        "direction",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.unit": [
+        "d",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.epoch.refer": [
+        "LAST",
+        null
+       ],
+       ".spectralcoord.conversion.epoch.type": [
+        "epoch",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m0.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.unit": [
+        "rad",
+        null
+       ],
+       ".spectralcoord.conversion.position.m1.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.unit": [
+        "m",
+        null
+       ],
+       ".spectralcoord.conversion.position.m2.value": [
+        0.0,
+        null
+       ],
+       ".spectralcoord.conversion.position.refer": [
+        "ITRF",
+        null
+       ],
+       ".spectralcoord.conversion.position.type": [
+        "position",
+        null
+       ],
+       ".spectralcoord.conversion.system": [
+        "LSRK",
+        null
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "virtual_cases_at_final_revision": {
+  "revision": "e5eb51d73aa761bd98f9f8e4d4c785807523cde6",
+  "passed": 7,
+  "total": 8,
+  "cases": {
+   "test_modelvis.test_modelvis_3.1+2": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_6.1+2": {
+    "passed": false,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "refused: invalid value for startmodel: invalid parameter type: value Array([String(\"tst.model.tt0\"), String(\"tst.model.tt1\")]) does not match Path { resource_kind: Some(",
+      "passed": false
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_9.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": null,
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_10.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_11.1+2+3": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 2,
+      "savemodel": "modelcolumn",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     },
+     {
+      "call": 3,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_13.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_15.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   },
+   "test_modelvis.test_modelvis_19.1": {
+    "passed": true,
+    "steps": [
+     {
+      "call": 1,
+      "savemodel": "virtual",
+      "casa": "ran",
+      "native": "ran",
+      "passed": true
+     }
+    ]
+   }
+  },
+  "virtual_models_read_by_casa": {
+   "test_modelvis.test_modelvis_10.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 2.5940102906207045e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.367401158652868e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".nantenna": [
+        28449376,
+        0
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_11.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.0695554963514437e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.3620974250628638e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_13.1/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_15.1/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".nantenna": [
+        30207616,
+        0
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_19.1/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.6129594464354673e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".nantenna": [
+        30261024,
+        0
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_3.1+2/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 1.7593013160775386e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.4343114820038104,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_6.1+2/refim_twochan.ms": {
+    "nrms_native_vs_casa_virtual": 6.306463260709429e-07,
+    "nrms_native_virtual_vs_native_model_data": 0.34867900888586084,
+    "casa": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "MultiTermFTNew",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true,
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "SOURCE:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "SOURCE:model_0": [
+       {
+        "name": "MultiTermFTNew",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          2,
+          1
+         ]
+        ],
+        "images_exist": [
+         true,
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "SOURCE:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".reffreq": [
+        1499985146.4200904,
+        1499985146.4200938
+       ],
+       ".subftm_0.imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".subftm_0.mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".subftm_0.mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".subftm_0.mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".subftm_0.spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".subftm_0.spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ],
+       ".subftm_1.imagefreq": [
+        [
+         1499985146.4200904
+        ],
+        [
+         1499985146.4200938
+        ]
+       ],
+       ".subftm_1.mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".subftm_1.mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".subftm_1.mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".subftm_1.spectralcoord.wcs.cdelt": [
+        1999981542.4529235,
+        1999981542.4529302
+       ],
+       ".subftm_1.spectralcoord.wcs.crval": [
+        1499985146.4200904,
+        1499985146.4200938
+       ]
+      }
+     }
+    }
+   },
+   "test_modelvis.test_modelvis_9.1+2+3/refim_point.ms": {
+    "nrms_native_vs_casa_virtual": 1.8015184653503446e-07,
+    "nrms_native_virtual_vs_native_model_data": 1.3717863101321226e-07,
+    "casa": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "native": {
+     "pointers": {
+      "MAIN:definedmodel_field_0": "model_0"
+     },
+     "records": {
+      "MAIN:model_0": [
+       {
+        "name": "GridFT",
+        "indexcombination": [
+         [
+          0,
+          0,
+          0,
+          -1
+         ]
+        ],
+        "channelselection": [
+         [
+          0,
+          0,
+          20,
+          1
+         ]
+        ],
+        "images_exist": [
+         true
+        ]
+       }
+      ]
+     }
+    },
+    "container_differences": {
+     "MAIN:model_0": {
+      "fields_or_types_differ": [],
+      "values_differ": {
+       ".imagefreq": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".mlocation_rec.m0.value": [
+        -1.8782942581394362,
+        -1.878294258139436
+       ],
+       ".mlocation_rec.m1.value": [
+        0.5916750987501983,
+        0.5916750987501982
+       ],
+       ".mlocation_rec.m2.value": [
+        6373576.280915651,
+        6373576.280915652
+       ],
+       ".spectralcoord.restfreq": [
+        1474985003.284176,
+        1474985003.2841787
+       ],
+       ".spectralcoord.restfreqs": [
+        [
+         1474985003.284176
+        ],
+        [
+         1474985003.2841787
+        ]
+       ],
+       ".spectralcoord.wcs.cdelt": [
+        999991943.3132004,
+        999991943.3132056
+       ],
+       ".spectralcoord.wcs.crval": [
+        1474985003.284176,
+        1474985003.2841787
+       ]
+      }
+     }
+    }
+   }
+  }
+ }
+}

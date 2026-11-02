@@ -60,7 +60,7 @@ use crate::native::OpenedObservation;
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
     AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, MeasurementSetSelection,
-    NativeAwCachePolicy, RunContext, SpecMode,
+    NativeAwCachePolicy, RunContext, SaveModel, SpecMode,
 };
 use direction::Centre;
 use domains::PreparedImageDomain;
@@ -95,6 +95,9 @@ pub(crate) struct Prepared {
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
+    /// What saving the run's model as CASA's virtual model in each
+    /// MeasurementSet needs, when `savemodel='virtual'`; empty otherwise.
+    pub(crate) virtual_model: Vec<crate::virtual_model::VirtualModelPlan>,
     /// What the native run deploys once the availability check passes.
     pub(crate) deployment: Deployment,
     /// The charge of compile's survey of the observation, held until the
@@ -232,6 +235,15 @@ pub(crate) fn prepare(
         .as_ref()
         .and_then(PhaseCentreEphemeris::external_series)
         .cloned();
+    let virtual_model = match request.savemodel {
+        SaveModel::Virtual => virtual_model_plans(
+            request,
+            (&stores, &channels),
+            &domains[0].coordinates,
+            &measures,
+        )?,
+        SaveModel::None | SaveModel::ModelColumn => Vec::new(),
+    };
     let (snapshot, stores, survey_charge) = snapshot_input(stores, &channels)?;
     Ok(Prepared {
         specification,
@@ -257,11 +269,43 @@ pub(crate) fn prepare(
             measures,
             phase_table,
         },
-        write_model_column: request.savemodel,
+        write_model_column: request.savemodel == SaveModel::ModelColumn,
         write_corrected_data: request.save_continuum_residual,
+        virtual_model,
         deployment,
         survey: survey_charge,
     })
+}
+
+/// The virtual model of `savemodel='virtual'` of each store the run reads
+/// (each with a channel in `channels`): CASA saves the model in each
+/// MeasurementSet of its list, each a MeasurementSet v2.
+fn virtual_model_plans(
+    request: &ImagingRequest,
+    (stores, channels): (&[stores::SurveyedStore], &[WindowChannels]),
+    coordinates: &casa_coordinates::CoordinateSystem,
+    measures: &Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> Result<Vec<crate::virtual_model::VirtualModelPlan>, PrepareError> {
+    stores
+        .iter()
+        .zip(channels)
+        .filter(|(_, channels)| !channels.is_empty())
+        .map(|(store, _)| {
+            if store.msv2().is_none() {
+                return Err(PrepareError::MeasurementSet(
+                    casa_ms::MsError::InvalidInput(
+                        "savemodel='virtual' saves the model in a MeasurementSet v2, as CASA does"
+                            .to_string(),
+                    ),
+                ));
+            }
+            Ok(crate::virtual_model::VirtualModelPlan::new(
+                (request, &store.selection),
+                coordinates.clone(),
+                Arc::clone(measures),
+            ))
+        })
+        .collect()
 }
 
 /// Survey the partitions of `store` that `selection`, one MeasurementSet of
