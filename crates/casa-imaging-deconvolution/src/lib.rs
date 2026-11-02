@@ -69,8 +69,8 @@ pub use normal_state::storage::{
     FinalNormalPlaneReader, NormalArrayStorage, NormalStorageFactory, NormalStoragePlan,
 };
 pub use normal_state::{
-    NormalBasis, NormalStateError, PassImages, SpectralChannelValidity, SpectralSlabPlan,
-    resident_bytes_per_cell,
+    EMPTY_PLANE_SUM_WEIGHT, NormalBasis, NormalStateError, PassImages, SpectralChannelValidity,
+    SpectralSlabPlan, casa_divides_plane, resident_bytes_per_cell,
 };
 pub use normal_values::{NormalValues, SensitivityValues};
 

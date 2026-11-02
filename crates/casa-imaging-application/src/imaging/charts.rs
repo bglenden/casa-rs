@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_imaging_deconvolution::PassImages;
+use casa_imaging_deconvolution::{PassImages, casa_divides_plane};
 use casa_imaging_model::{CompiledImageDomain, CompiledProblem};
 use casa_imaging_operator::ImageExtent;
 
@@ -84,10 +84,6 @@ impl Chart {
     }
 }
 
-/// CASA's empty-plane threshold: a facet store whose `sumwt` is at most this
-/// sets its image to zero rather than divide (`divideImageByWeightVal`).
-const EMPTY_SUM_WEIGHT: f64 = 1e-7;
-
 /// One facet's sums of weights per (term, polarization), from the initial
 /// pass.
 #[derive(Clone, Debug)]
@@ -100,7 +96,7 @@ struct FacetSums {
 
 impl FacetSums {
     fn populated(&self) -> bool {
-        self.published.iter().all(|sum| *sum > EMPTY_SUM_WEIGHT)
+        self.published.iter().all(|sum| casa_divides_plane(*sum))
     }
 }
 
@@ -314,7 +310,7 @@ impl ChartStitch {
             let scales = (0..pols)
                 .map(|pol| {
                     let own = sums.published[pol];
-                    if own > EMPTY_SUM_WEIGHT {
+                    if casa_divides_plane(own) {
                         reference.2.published[pol] / own
                     } else {
                         0.0
