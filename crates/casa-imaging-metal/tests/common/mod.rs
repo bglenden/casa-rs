@@ -10,8 +10,8 @@ use casa_imaging_operator::{
     GridAccumulator, GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection,
     ImageExtent, KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb,
     MosaicRules, MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement,
-    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile,
-    pair_plane,
+    PolarizationRouting, PrimaryBeam, RowContext, SampleBuffer, Spheroidal, TapFootprint,
+    TapLayout, Tile, pair_plane,
 };
 use casa_types::Correlation;
 use ndarray::Array2;
@@ -176,7 +176,8 @@ fn mosaic_set() -> MosaicPb {
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: vec![hz],
     };
-    let dishes = MOSAIC_DISHES_M.map(|diameter_m| AiryDish::casa_alma(diameter_m, &geometry));
+    let dishes = MOSAIC_DISHES_M
+        .map(|diameter_m| PrimaryBeam::from(AiryDish::casa_alma(diameter_m, &geometry)));
     let windows = MOSAIC_FREQUENCIES_HZ
         .iter()
         .enumerate()

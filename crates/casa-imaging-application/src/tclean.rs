@@ -431,10 +431,15 @@ impl<'a> Tclean<'a> {
                 let text = value
                     .as_str()
                     .ok_or_else(|| Self::mismatch(name, "text", value))?;
-                selection.insert(
-                    name.to_string(),
-                    json!(if trim { text.trim() } else { text }),
-                );
+                let text = if trim { text.trim() } else { text };
+                // `MSSpwGram` reads a lone `*` as every spectral window, every
+                // channel: what an empty selector selects.
+                let text = if name == "spw" && text == "*" {
+                    ""
+                } else {
+                    text
+                };
+                selection.insert(name.to_string(), json!(text));
             }
         }
         self.set(
@@ -482,13 +487,13 @@ impl<'a> Tclean<'a> {
         self.ignore(&["projection", "psfphasecenter", "vptable"])
     }
 
-    /// Refuse the cube axes CASA derives from the channels `spw` selects,
+    /// Refuse the cube extents CASA derives from the channels `spw` selects,
     /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
     /// `nchan=-1` and its `start` and `width` to
-    /// `MSTransformRegridder::calcChanFreqs`, which starts the axis at
-    /// `start` or the first selected channel and counts the selected
-    /// channels from there in steps of `width`; casa-rs's axis takes as
-    /// many channels as the window has, wherever it starts.
+    /// `MSTransformRegridder::calcChanFreqs`, which counts the selected
+    /// channels from `start` in steps of `width`; casa-rs's axis takes as
+    /// many channels as the window has, wherever it starts. (Where an
+    /// unset `start` begins, the first selected channel, casa-rs follows.)
     fn refuse_derived_extent(
         &mut self,
         nchan: i64,
@@ -501,25 +506,12 @@ impl<'a> Tclean<'a> {
             .per_measurement_set("spw", None)?
             .iter()
             .any(|spw| spw.as_str().is_some_and(|text| text.contains(':')));
-        let first_given = !start.is_empty()
-            || self
-                .value("channel_start")?
-                .as_str()
-                .is_none_or(|text| text.trim() != "none");
         let wide = !matches!(width, "" | "1");
         if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
             return Err(TcleanRefusal::not_yet(
                 "nchan",
                 "-1 with a channel selection in spw, a start or a width, whose extent CASA \
                  derives from the selected channels; give nchan",
-                980,
-            ));
-        }
-        if channels_selected && !first_given {
-            return Err(TcleanRefusal::not_yet(
-                "start",
-                "'' with a channel selection in spw, where CASA starts the cube at the first \
-                 selected channel; give start",
                 980,
             ));
         }
@@ -673,14 +665,23 @@ impl<'a> Tclean<'a> {
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic
-        // (`task_tclean.py`); casa-rs's mosaic weighs it over all fields,
-        // as CASA does for mosaicft and ftmosaic.
-        if self.flag("mosweight")? && modes.per_field_density && modes.density_weighting {
-            return Err(TcleanRefusal::not_yet(
-                "mosweight",
-                "True with density weighting (casa-rs weighs density over all fields)",
-                818,
-            ));
+        // (`task_tclean.py`), and over all fields for mosaicft and
+        // ftmosaic. A cube's per-channel density by field
+        // (`BriggsCubeWeightor`'s `multiField`) is not yet native.
+        let mosweight = self.flag("mosweight")?;
+        if modes.gridder == "mosaic" {
+            let mosweight = mosweight && modes.per_field_density;
+            let per_channel = modes.cube
+                && self.flag("perchanweightdensity")?
+                && modes.weighting != "superuniform";
+            if mosweight && modes.density_weighting && per_channel {
+                return Err(TcleanRefusal::not_yet(
+                    "mosweight",
+                    "True with a cube's per-channel density (perchanweightdensity=True)",
+                    818,
+                ));
+            }
+            self.set("mosweight", mosweight);
         }
         self.aw_terms(modes)?;
         let cfcache = self.text("cfcache")?;
@@ -719,7 +720,7 @@ impl<'a> Tclean<'a> {
     }
 
     /// casa-rs's AW projection runs as CASA's `aterm=True, psterm=False,
-    /// wbawp=True, conjbeams=True`, and its mosaic as `conjbeams=False`.
+    /// wbawp=True, conjbeams=True`; its mosaic reads `conjbeams`.
     fn aw_terms(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         let fixed: &[(&str, bool)] = match modes.gridder {
             "awproject" => &[
@@ -728,7 +729,11 @@ impl<'a> Tclean<'a> {
                 ("wbawp", true),
                 ("conjbeams", true),
             ],
-            "mosaic" => &[("conjbeams", false)],
+            "mosaic" => {
+                let conjbeams = self.flag("conjbeams")?;
+                self.set("conjbeams", conjbeams);
+                &[]
+            }
             _ => &[],
         };
         for name in ["aterm", "psterm", "wbawp", "conjbeams"] {

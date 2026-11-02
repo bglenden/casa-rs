@@ -27,7 +27,7 @@ use super::direction::ImageSpectralCoordinate;
 use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
 use super::stores::{ContinuumBand, SurveyedStore};
 use super::survey::Survey;
-use crate::{ImagingRequest, SpecMode};
+use crate::{ImagingRequest, SaveModel, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
@@ -132,7 +132,8 @@ pub(super) fn prepare_axis(
                 .selected_source_channels
                 .pop()
                 .expect("a cube law reads its own store's window");
-            law.selected_source_channels = cube_store_channels(stores, (reference, own), &setup)?;
+            law.selected_source_channels =
+                cube_store_channels(request, stores, (reference, own), &setup)?;
             law
         }
         SpecMode::Cubesource => {
@@ -350,6 +351,22 @@ fn continuum_source_line(
     Ok(resolved)
 }
 
+/// Whether CASA reads a `cube`'s data by the image's band rather than by
+/// the channels `spw` names (`SynthesisImagerVi2::tuneSelectData`): for a
+/// window of 30 or more channels, or when the model is saved to
+/// `MODEL_DATA`, `SynthesisImager::tuneSelectData` replaces the channel
+/// selection with the LSRK frequencies from pixel −1.5 to `nchan + 0.5` of
+/// the image axis, so every channel whose samples reach a plane is read;
+/// a `cubedata` or `cubesource` cube keeps the selection. The channels the
+/// axis reaches are those [`cube_setup`]'s support finds. casa-rs's
+/// visibility-domain continuum fit (`fitspw`, which CASA's tclean lacks)
+/// keeps the named channels as its output channels.
+fn tunes_selection(request: &ImagingRequest, window: &SourceSpectralWindow) -> bool {
+    request.specmode == SpecMode::Cube
+        && request.fitspw.is_none()
+        && (window.frequencies_hz.len() >= 30 || request.savemodel == SaveModel::ModelColumn)
+}
+
 /// A cube in its output frame (`cube`) or the data's (`cubedata`), on the
 /// window of `survey`'s store, with the channels it reads of that window
 /// (the law's one store) and the axis that other stores' windows are read
@@ -361,7 +378,7 @@ fn cube_law(
     frame: &FrameContext<'_>,
 ) -> Result<(AxisLaw, CubeSpectralSetup), PrepareError> {
     let window = one_window(&survey.spectral_windows, "native cube imaging")?;
-    let axis = cube_axis(request)?;
+    let axis = cube_axis(request, survey, window)?;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
     let (setup, support) = cube_setup(survey, window, output_channels, &axis, frame)?;
     let mut selected = support.indices;
@@ -369,7 +386,9 @@ fn cube_law(
         .spw_channels
         .get(&window.spw_id)
         .map(|channels| channels.iter().copied().collect::<BTreeSet<_>>());
-    if let Some(explicit) = &explicit {
+    if let Some(explicit) = &explicit
+        && !tunes_selection(request, window)
+    {
         selected.retain(|channel| explicit.contains(channel));
     }
     if selected.is_empty() {
@@ -423,7 +442,8 @@ fn cube_law(
 /// `reference`'s window, reads: the reference store's `own`, and for every
 /// other store the channels of its one window that reach the axis at its
 /// selected times ([`CubeSpectralSetup::source_channel_support`]), within
-/// its `spw` selection, as CASA's cube gridding selects each
+/// its `spw` selection unless CASA reads the image's band
+/// ([`tunes_selection`]), as CASA's cube gridding selects each
 /// MeasurementSet's channels in the image's band. A store none of whose
 /// channels reaches the axis reads its selected channels, which place
 /// nothing, so that a final pass writes the cube model's prediction there,
@@ -434,6 +454,7 @@ fn cube_law(
 /// A store of several windows, or of another source frame than the
 /// reference store's; a frame conversion that fails.
 fn cube_store_channels(
+    request: &ImagingRequest,
     stores: &[SurveyedStore],
     (reference, own): (usize, WindowChannels),
     setup: &CubeSpectralSetup,
@@ -463,7 +484,9 @@ fn cube_store_channels(
                 )?
                 .indices;
             let explicit = survey.spw_channels.get(&window.spw_id);
-            if let Some(explicit) = explicit {
+            if let Some(explicit) = explicit
+                && !tunes_selection(request, window)
+            {
                 selected.retain(|channel| explicit.contains(channel));
             }
             if selected.is_empty() {
@@ -489,7 +512,7 @@ fn source_frame_cube_law(
 ) -> Result<AxisLaw, PrepareError> {
     let window = one_window(&survey.spectral_windows, "source-frame cube imaging")?;
     let source_reference = survey.source_frequency_reference;
-    let mut axis = cube_axis(request)?;
+    let mut axis = cube_axis(request, survey, window)?;
     axis.specmode = CubeSpecMode::Cubedata;
     axis.outframe = source_reference;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
@@ -537,9 +560,14 @@ fn source_frame_cube_law(
     })
 }
 
-/// CASA's cube axis of the request: `start` (else `channel_start`) and
-/// `width` in the request's velocity convention.
-fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
+/// CASA's cube axis of the request over `window` of `survey`: `start`
+/// (else `channel_start`) and `width` in the request's velocity
+/// convention, and the window's channels its `spw` names.
+fn cube_axis(
+    request: &ImagingRequest,
+    survey: &Survey,
+    window: &SourceSpectralWindow,
+) -> Result<CubeAxisConfig, PrepareError> {
     let start = match (&request.start, request.channel_start) {
         (Some(start), _) => Some(CubeAxisValue::parse(start, request.veltype)?),
         (None, Some(channel)) => Some(CubeAxisValue::Channel(
@@ -564,6 +592,7 @@ fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
         rest_frequency_hz: request.restfreq.first().copied(),
         start,
         width,
+        selected_channels: survey.spw_channels.get(&window.spw_id).cloned(),
     })
 }
 
@@ -738,6 +767,32 @@ fn cube_rest_frequency_hz(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::tests::request;
+    use serde_json::json;
+
+    /// `SynthesisImagerVi2::tuneSelectData`: a `cube` over 30 or more
+    /// channels, or saving its model to `MODEL_DATA`, reads the image's
+    /// band; a `cubedata` cube or a narrower window keeps the selection.
+    #[test]
+    fn a_cube_reads_the_image_band_as_casa_tunes_its_selection() {
+        let window = |channels: usize| SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::TOPO,
+            frequencies_hz: (0..channels)
+                .map(|channel| 1.0e9 + channel as f64)
+                .collect(),
+            channel_widths_hz: vec![1.0; channels],
+        };
+        let cube = request(json!({ "specmode": "cube", "nchan": 4 }));
+        assert!(tunes_selection(&cube, &window(30)));
+        assert!(!tunes_selection(&cube, &window(29)));
+        let saved = request(json!({ "specmode": "cube", "nchan": 4, "savemodel": "modelcolumn" }));
+        assert!(tunes_selection(&saved, &window(20)));
+        let cubedata = request(json!({ "specmode": "cubedata", "nchan": 4 }));
+        assert!(!tunes_selection(&cubedata, &window(30)));
+        let fitted = request(json!({ "specmode": "cube", "nchan": 4, "fitspw": "0:0~2" }));
+        assert!(!tunes_selection(&fitted, &window(30)));
+    }
 
     #[test]
     fn cube_rest_frequency_follows_casa_precedence() {

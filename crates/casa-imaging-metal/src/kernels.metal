@@ -17,15 +17,21 @@ using namespace metal;
 #define MAX_TERMS 16
 #define MAX_POLS 4
 
+// Sample::flags bit 2: the support lies wholly on the grid, so a prediction
+// gathers it; a mosaic predicts zero for a support that overruns the grid.
+#define PREDICTS 4u
+
 struct Sample {
-    uint2 origin;      // first tap, relative to the accumulator tile
+    int2 origin;       // first tap, relative to the accumulator tile
     ushort2 fine;      // fine-offset rows ox, oy
     uint plane;        // accumulator-local plane
     uint model_plane;  // model-local plane
     uint table;        // kernel table
     float spectral;    // Taylor variable
-    uint flags;        // bit 0: gridding w > 0; bit 1: prediction w > 0
+    uint flags;        // bit 0: gridding w > 0; bit 1: prediction w > 0; bit 2: PREDICTS
     float2 gradient;   // pointing phase gradient, radians per cell
+    int2 clip_low;     // first tile cell a spread writes
+    int2 clip_high;    // one past the last
 };
 
 struct Table {
@@ -253,7 +259,12 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
     for (uint k = lane; k < taps; k += width) {
         uint ix = k % sx;
         uint iy = k / sx;
-        ulong cell = ulong(s.origin.y + iy) * ulong(p.tile_shape.x) + ulong(s.origin.x + ix);
+        int x = s.origin.x + int(ix);
+        int y = s.origin.y + int(iy);
+        if (x < s.clip_low.x || y < s.clip_low.y || x >= s.clip_high.x || y >= s.clip_high.y) {
+            continue;
+        }
+        ulong cell = ulong(y) * ulong(p.tile_shape.x) + ulong(x);
         for (uint r = 0; r < used; ++r) {
             uint gpol = routes.gpol[r];
             float2 contribution = cmul(carried[r], tap_value(t, rows, dense, s, routes.mueller[r], ix, iy, w_positive != 0u));
@@ -304,12 +315,21 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
                           device const float *rows, device const float2 *dense,
                           device const float2 *model, constant Params &p,
                           uint lane, uint width, thread float2 *predicted) {
+    if ((s.flags & PREDICTS) == 0u) {
+        // A support that overruns the grid predicts nothing (`omos`); every
+        // lane of the sample takes this branch.
+        for (uint vpol = 0; vpol < p.npol; ++vpol) {
+            predicted[vpol] = float2(0.0f);
+        }
+        return;
+    }
     float powers[MAX_TERMS];
     spectral_powers(s.spectral, p.term_count, powers);
     float2 sums[MAX_POLS] = {float2(0.0f), float2(0.0f), float2(0.0f), float2(0.0f)};
     uint sx = t.support.x;
     uint sy = support_y(t);
     uint w_positive = (s.flags >> 1u) & 1u;
+    uint2 origin = uint2(s.origin);
     Routes routes = routes_of(p.forward[w_positive], p.gpols, p.npol);
     ulong grid_cells = ulong(p.grid_shape.x) * ulong(p.grid_shape.y);
     // Each route's first term plane.
@@ -319,8 +339,8 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
     }
     if (width == 1u) {
         for (uint iy = 0; iy < sy; ++iy) {
-            ulong row = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
-                        + ulong(s.origin.x + p.tile_origin.x);
+            ulong row = ulong(origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                        + ulong(origin.x + p.tile_origin.x);
             for (uint ix = 0; ix < sx; ++ix) {
                 gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
                            row + ix, w_positive != 0u, sums);
@@ -330,8 +350,8 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
         for (uint k = lane; k < sx * sy; k += width) {
             uint ix = k % sx;
             uint iy = k / sx;
-            ulong cell = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
-                         + ulong(s.origin.x + p.tile_origin.x + ix);
+            ulong cell = ulong(origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                         + ulong(origin.x + p.tile_origin.x + ix);
             gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
                        cell, w_positive != 0u, sums);
         }

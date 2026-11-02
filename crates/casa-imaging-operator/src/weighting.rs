@@ -78,7 +78,8 @@ pub struct DensityGridShape {
     /// Cells along v (the image height).
     pub height: usize,
     /// Density planes: 1 for a global generation; for a per-channel
-    /// generation the output channel count plus `padding` on each side.
+    /// generation the output channel count plus `padding` on each side; for
+    /// a per-field generation the FIELD_IDs from `first_field` on.
     pub planes: usize,
     /// Per-channel generation: density planes on each side of the output
     /// axis (CASA `BriggsCubeWeightor::estimateSwingChanPad`), so native
@@ -95,6 +96,12 @@ pub struct DensityGridShape {
     pub increment_rad: [f64; 2],
     /// Cell arithmetic.
     pub rule: DensityCellRule,
+    /// A per-field generation (tclean's `mosweight`, `VisImagingWeight`'s
+    /// `multiField`), on [`DensityCellRule::Standard`] cells: plane `p` is
+    /// the density of FIELD_ID `first_field + p`, gridded from that field's
+    /// samples alone, and a sample reads its own field's plane. `None` for a
+    /// global or per-channel generation.
+    pub first_field: Option<u32>,
 }
 
 impl DensityGridShape {
@@ -120,6 +127,20 @@ impl DensityGridShape {
     #[must_use]
     pub fn visimagingweight_increment(cells: usize, increment_rad: f64) -> f64 {
         (cells as f64 * increment_rad) / cells as f64
+    }
+
+    /// The density plane a sample on output plane `plane` from FIELD_ID
+    /// `field` grids into and reads: its field's for a per-field generation
+    /// (`None` outside its span), else `plane`, which `plane_of`
+    /// resolves.
+    #[must_use]
+    pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
+        match self.first_field {
+            Some(first) => field
+                .checked_sub(first)
+                .filter(|plane| (*plane as usize) < self.planes),
+            None => Some(plane),
+        }
     }
 
     /// Density plane of a placement: plane 0 for a global generation.
@@ -565,9 +586,21 @@ impl WeightingGeneration {
         }
     }
 
+    /// The density plane a sample on output plane `plane` from FIELD_ID
+    /// `field` reads ([`DensityGridShape::density_plane`]); `plane` for a
+    /// weighting without a density.
+    #[must_use]
+    pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
+        match self {
+            Self::Density { grid, .. } => grid.shape.density_plane(plane, field),
+            Self::Natural { .. } | Self::Radial { .. } => Some(plane),
+        }
+    }
+
     /// Imaging weight of one placement from its unpolarized input weight;
     /// `density_uv` picks the density cell on the density plane
-    /// `placement.plane` (ignored by a global generation) and gives radial
+    /// `placement.plane` (ignored by a global generation; a field's plane
+    /// for a per-field one, [`Self::density_plane`]) and gives radial
     /// weighting its uv distance. Pure; CASA's cell rules live in
     /// [`DensityGrid::lookup`].
     #[must_use]

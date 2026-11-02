@@ -318,6 +318,7 @@ class Refusals:
             "gridder": gridder,
             "per_field_density": name == "mosaic",
             "deconvolver": deconvolver,
+            "weighting": weighting,
             "density": weighting != "natural",
             "user_mask": usemask == "user",
         }
@@ -393,11 +394,24 @@ class Refusals:
         normtype = self.text("normtype")
         if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
             self.add("normtype='pbsquare'", NOT_YET, 823)
-        if self.flag("mosweight") and modes["per_field_density"] and modes["density"]:
-            self.add("mosweight=True with gridder='mosaic' and density weighting", NOT_YET, 818)
+        per_channel = (
+            modes["cube"]
+            and self.flag("perchanweightdensity") is not False
+            and modes["weighting"] != "superuniform"
+        )
+        if (
+            self.flag("mosweight")
+            and modes["per_field_density"]
+            and modes["density"]
+            and per_channel
+        ):
+            self.add(
+                "mosweight=True with gridder='mosaic' and a cube's per-channel density",
+                NOT_YET,
+                818,
+            )
         fixed = {
             "awproject": {"aterm": True, "psterm": False, "wbawp": True, "conjbeams": True},
-            "mosaic": {"conjbeams": False},
         }.get(gridder, {})
         for name, required in fixed.items():
             value = self.flag(name)

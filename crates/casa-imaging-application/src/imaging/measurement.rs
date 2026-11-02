@@ -9,8 +9,8 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
     DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, SpectralAxis,
-    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, PrimaryBeam,
+    SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -212,10 +212,21 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
 /// (`casa_imaging_metal::kernel_bytes`, #793 review). W-planes and the AW
 /// catalog run on the CPU until #653's rows for them.
 pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
-    matches!(
-        kernel_set_kind(problem),
-        KernelSetKind::Standard | KernelSetKind::Mosaic
-    )
+    match kernel_set_kind(problem) {
+        KernelSetKind::Standard => true,
+        // Metal predicts with the cells it grids with, which a mosaic's
+        // conjugate beams part.
+        KernelSetKind::Mosaic => !mosaic_conjugate_beams(problem),
+        KernelSetKind::WPlanes | KernelSetKind::Aw => false,
+    }
+}
+
+/// Whether the problem's mosaic grids with its conjugate beams.
+fn mosaic_conjugate_beams(problem: &CompiledProblem) -> bool {
+    problem
+        .science()
+        .measurement_equation()
+        .mosaic_conjugate_beams()
 }
 
 /// Whether the problem's kernel set grids several MeasurementSets: the
@@ -251,9 +262,13 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         KernelSetKind::Aw
     } else if equation.w_projection().is_some() {
         KernelSetKind::WPlanes
-    } else if problem.science().instrument_model()
-        == Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
-    {
+    } else if matches!(
+        problem.science().instrument_model(),
+        Some(
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+        )
+    ) {
         KernelSetKind::Mosaic
     } else {
         KernelSetKind::Standard
@@ -396,24 +411,24 @@ fn kernel_set(
         KernelSetKind::Mosaic => {
             if dish_classes.is_empty() {
                 return Err(ImagingError::Unsupported {
-                    reason: "the mosaic set needs ALMA or ACA dishes in the selection",
+                    reason: "the mosaic set needs ALMA, ACA or EVLA dishes in the selection",
                 });
             }
             let dishes = dish_classes
                 .iter()
-                .map(|class| {
-                    AiryDish::casa_alma(
-                        match class {
-                            AntennaResponseClass::CasaAlma12m => 12.0,
-                            AntennaResponseClass::CasaAca7m => 7.0,
-                        },
-                        geometry,
-                    )
+                .map(|class| match class {
+                    AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
+                    AntennaResponseClass::CasaAca7m => AiryDish::casa_alma(7.0, geometry).into(),
+                    AntennaResponseClass::CasaEvla => PrimaryBeam::Evla,
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;
             let windows = mosaic_windows(problem)?;
-            let rules = MosaicRules::Tclean;
+            let rules = if mosaic_conjugate_beams(problem) {
+                MosaicRules::TcleanConjugateBeams
+            } else {
+                MosaicRules::Tclean
+            };
             let screening = admission.admit(
                 "mosaic screens",
                 MosaicPb::screens_bytes(rules, geometry, frequency_hz, &dishes, &windows)?,
@@ -456,7 +471,9 @@ fn kernel_set(
 
 /// The selected spectral windows as the mosaic set keys them: every
 /// channel of the window, its first channel width and the selected
-/// channels' frequencies (`HetArrayConvFunc` beams per window).
+/// channels' frequencies in LSRK at the window's first visibility buffer,
+/// where `HetArrayConvFunc` evaluates the window's beams
+/// (`interpVisFreq_p`, `FTMachine::matchChannel`).
 fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, ImagingError> {
     let mut windows = Vec::new();
     for source in problem.observation_transaction().read_set().sources() {
@@ -472,12 +489,18 @@ fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, Imagin
                 .ok_or(ImagingError::Unsupported {
                     reason: "the mosaic set needs every window's channel frequencies",
                 })?;
+            let factor = window
+                .first_buffer_lsrk_factor()
+                .ok_or(ImagingError::Unsupported {
+                    reason: "the mosaic set needs every window's LSRK factor",
+                })?;
             let selected = window
                 .channel_indices()
                 .iter()
                 .map(|index| {
                     catalog
                         .channel_frequency_hz(*index as usize)
+                        .map(|hz| hz * factor)
                         .ok_or(ImagingError::Unsupported {
                             reason: "a selected channel lies outside its window",
                         })
@@ -578,13 +601,15 @@ pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
 }
 
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
-/// `VisImagingWeight` cells, or one plane per output channel, plus the
-/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
+/// `VisImagingWeight` cells, one such plane per field under `mosweight`, or
+/// one plane per output channel, plus the compiled padding planes on each
+/// side, on `BriggsCubeWeightor` cells.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
 ) -> Result<DensityGridShape, ImagingError> {
     let [width, height] = domain.shape().pixels();
+    let mut first_field = None;
     let (planes, padding, rule) = match problem.weighting().density_scope() {
         WeightDensityScope::PerOutputChannel => {
             // CASA always pads the cube density axis
@@ -611,6 +636,13 @@ pub(crate) fn density_shape(
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
             (1, 0, DensityCellRule::Standard)
         }
+        WeightDensityScope::PerField {
+            first_field: first,
+            fields,
+        } => {
+            first_field = Some(first);
+            (fields.get() as usize, 0, DensityCellRule::Standard)
+        }
     };
     let increment = domain.direction().increment_rad();
     let cells = problem.weighting().density_cells();
@@ -633,6 +665,7 @@ pub(crate) fn density_shape(
         box_half_width,
         increment_rad,
         rule,
+        first_field,
     })
 }
 

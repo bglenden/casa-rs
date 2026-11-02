@@ -286,7 +286,8 @@ const TRACKFIELD: &str = "TRACKFIELD";
 /// The aperture classes the instrument model assigns.
 enum Responses {
     None,
-    Aca7m,
+    /// One class for every antenna.
+    Uniform(AntennaResponseClass),
     Heterogeneous {
         classes: Vec<Option<AntennaResponseClass>>,
         envelope: Option<AntennaResponseClass>,
@@ -433,7 +434,12 @@ impl GeometryPlan {
         let (charts, mosaic) = projection::charts(problem)?;
         let responses = match problem.science().instrument_model() {
             None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
-            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => Responses::Aca7m,
+            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaAca7m)
+            }
+            Some(InstrumentModel::CasaEvlaCommonInterferometricResponseV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaEvla)
+            }
             Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
                 let classes = frames.alma_aca_classes(catalogue);
                 let envelope = AntennaResponseClass::family_envelope(&classes);
@@ -529,17 +535,19 @@ impl GeometryPlan {
         samples * per_sample + times * channels * size_of::<f64>()
     }
 
-    /// CASA's aperture classes of the observation's antennas, sorted and
-    /// without repeats: the dishes a heterogeneous mosaic's kernel set
-    /// keys on (`HetArrayConvFunc::findAntennaSizes`).
+    /// CASA's aperture classes of the observation's antennas under the
+    /// instrument model, sorted and without repeats: the dishes a mosaic's
+    /// kernel set keys on (`HetArrayConvFunc::findAntennaSizes`); none
+    /// without an aperture response.
     #[must_use]
     pub fn aperture_classes(&self) -> Vec<AntennaResponseClass> {
-        let mut classes = self
-            .frames
-            .alma_aca_classes(&self.catalogue)
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut classes = match &self.responses {
+            Responses::None => Vec::new(),
+            Responses::Uniform(class) => vec![*class],
+            Responses::Heterogeneous { classes, .. } => {
+                classes.iter().copied().flatten().collect::<Vec<_>>()
+            }
+        };
         classes.sort_unstable();
         classes.dedup();
         classes
@@ -887,10 +895,10 @@ impl GeometryPlan {
     ) -> Result<Option<SelectedAntennaResponses>, BatchGeometryError> {
         Ok(match &self.responses {
             Responses::None => None,
-            Responses::Aca7m => Some(SelectedAntennaResponses {
-                antenna1: AntennaResponseClass::CasaAca7m,
-                antenna2: AntennaResponseClass::CasaAca7m,
-                family_envelope: AntennaResponseClass::CasaAca7m,
+            Responses::Uniform(class) => Some(SelectedAntennaResponses {
+                antenna1: *class,
+                antenna2: *class,
+                family_envelope: *class,
             }),
             Responses::Heterogeneous { classes, envelope } => {
                 let class = |antenna: AntennaId| {

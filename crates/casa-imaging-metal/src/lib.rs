@@ -64,7 +64,7 @@ const MAX_SUB: usize = 32_768;
 /// Device bytes per sample of a ring slot: the record, its native endpoints
 /// (or a native term), and per visibility polarization a value, a weight,
 /// an inverse norm and an output.
-const SAMPLE_BYTES: usize = 40;
+const SAMPLE_BYTES: usize = 56;
 const SOURCE_BYTES: usize = 24;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 

@@ -105,6 +105,11 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     ] {
         assert_eq!(request(overrides.clone()), plain, "{overrides}");
     }
+    // A mosaic reads conjbeams.
+    assert_ne!(
+        request(json!({ "gridder": "mosaic", "conjbeams": true })),
+        request(json!({ "gridder": "mosaic" }))
+    );
     // A mosaic reads no W planes.
     assert_eq!(
         request(json!({ "gridder": "mosaic", "wprojplanes": 8 })),
@@ -122,6 +127,8 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     unselected["selectdata"] = json!(false);
     assert_eq!(request(unselected), request(selected.clone()));
     assert_ne!(request(selected), plain);
+    // `spw='*'` selects every window, as the empty selector does.
+    assert_eq!(request(json!({ "spw": "*" })), plain);
 }
 
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
@@ -175,11 +182,15 @@ fn casa_values_become_the_request_casa_rs_runs() {
         );
     }
     assert_eq!(request(json!({})).minor_cycle_length, 1);
-    // CASA sets mosweight=False for the mosaicft and ftmosaic gridders, as
-    // casa-rs's mosaic weighs density over all fields.
+    // CASA sets mosweight=False for the mosaicft and ftmosaic gridders; the
+    // gridder named mosaic weighs density by field.
     assert_eq!(
         request(json!({ "gridder": "mosaicft", "weighting": "briggs" })).gridder,
         request(json!({ "gridder": "mosaic", "weighting": "briggs", "mosweight": false })).gridder
+    );
+    assert_ne!(
+        request(json!({ "gridder": "mosaicft", "weighting": "briggs" })).gridder,
+        request(json!({ "gridder": "mosaic", "weighting": "briggs" })).gridder
     );
     // A region file is read as its regions, as CASA reads it.
     let dir = tempfile::tempdir().expect("temporary directory");
@@ -293,14 +304,9 @@ fn values_casa_rs_cannot_honour_are_refused() {
         ),
         (json!({ "gridder": "awp2" }), "gridder", "#980"),
         (
-            json!({ "gridder": "mosaic", "weighting": "briggs" }),
+            json!({ "gridder": "mosaic", "weighting": "briggs", "specmode": "cube", "nchan": 4 }),
             "mosweight",
             "#818",
-        ),
-        (
-            json!({ "gridder": "mosaic", "conjbeams": true }),
-            "conjbeams",
-            "#980",
         ),
         (
             json!({ "gridder": "awproject", "cfcache": "cf" }),
@@ -350,11 +356,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "specmode": "cube", "start": "1.4GHz" }),
             "nchan",
-            "#980",
-        ),
-        (
-            json!({ "specmode": "cube", "spw": "0:2~4", "nchan": 3 }),
-            "start",
             "#980",
         ),
     ] {
@@ -590,17 +591,37 @@ fn briggsabs_reads_noise_as_a_flux_density() {
     );
 }
 
-/// casa-rs's mosaic weighs density over all fields, so `mosweight=True` is
-/// refused with every density weighting, superuniform among them; radial
+/// `mosweight=True` weighs a continuum density by field; a cube's
+/// per-channel density by field is refused, but a cube's superuniform
+/// density and a cube without `perchanweightdensity` grid one continuum
+/// density per field, as `SynthesisImagerVi2::weight` does; radial
 /// weighting grids no density.
 #[test]
-fn per_field_density_is_refused_for_superuniform_and_not_for_radial() {
+fn per_field_density_is_refused_only_per_channel() {
     let mosaic = |weighting: &str| json!({ "gridder": "mosaic", "weighting": weighting });
-    assert_eq!(refusal(mosaic("superuniform")).parameter, "mosweight");
+    let cube = |weighting: &str, perchanweightdensity: bool| {
+        json!({
+            "gridder": "mosaic",
+            "weighting": weighting,
+            "specmode": "cube",
+            "nchan": 4,
+            "perchanweightdensity": perchanweightdensity,
+        })
+    };
+    let mosweight = |overrides: Value| match request(overrides).gridder {
+        crate::Gridder::Mosaic { mosweight, .. } => mosweight,
+        gridder => panic!("{gridder:?} is not the mosaic"),
+    };
+    assert!(mosweight(mosaic("briggs")));
+    assert!(mosweight(mosaic("superuniform")));
+    assert!(mosweight(cube("superuniform", true)));
+    assert!(mosweight(cube("uniform", false)));
+    assert_eq!(refusal(cube("uniform", true)).parameter, "mosweight");
     assert_eq!(
         request(mosaic("radial")).weighting,
         crate::Weighting::Radial
     );
+    assert!(mosweight(cube("natural", true)));
 }
 
 /// `restoringbeam` as `SynthesisParamsDeconv::fromRecord` reads it: one

@@ -21,6 +21,9 @@ use crate::derived::engine::MsCalEngine;
 use crate::error::{MsError, MsResult};
 use crate::selection::syntax::ChannelSelection;
 
+mod default_start;
+mod regrid;
+
 /// Spectral interpolation policy for cube imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CubeInterpolation {
@@ -182,6 +185,11 @@ pub struct CubeAxisConfig {
     pub start: Option<CubeAxisValue>,
     /// Optional cube-axis width value.
     pub width: Option<CubeAxisValue>,
+    /// The window's channels tclean's `spw` selects, when it names
+    /// channels. With `start` unset, CASA lays the grid over the selected
+    /// band rather than the whole window, so that the cube starts at the
+    /// first selected channel (`buildCoordinateSystemCore`).
+    pub selected_channels: Option<Vec<usize>>,
 }
 
 impl Default for CubeAxisConfig {
@@ -194,6 +202,7 @@ impl Default for CubeAxisConfig {
             rest_frequency_hz: None,
             start: None,
             width: None,
+            selected_channels: None,
         }
     }
 }
@@ -515,11 +524,7 @@ fn casa_transformed_channel_mode_output_centers(
 /// `chanFreq` instead, which reproduces the table at integer pixels up to the
 /// rounding of its channel corrector; the table is returned unchanged.
 fn casa_image_spectral_axis_hz(chan_freqs_hz: Vec<f64>, veltype: DopplerRef) -> Vec<f64> {
-    let tabular = matches!(
-        veltype,
-        DopplerRef::Z | DopplerRef::BETA | DopplerRef::GAMMA
-    );
-    if tabular || chan_freqs_hz.len() < 2 {
+    if casa_tabular_convention(veltype) || chan_freqs_hz.len() < 2 {
         return chan_freqs_hz;
     }
     let reference_hz = chan_freqs_hz[0];
@@ -528,6 +533,124 @@ fn casa_image_spectral_axis_hz(chan_freqs_hz: Vec<f64>, veltype: DopplerRef) -> 
         chan_freqs_hz[1] - reference_hz,
         chan_freqs_hz.len(),
     )
+}
+
+/// Whether `buildCoordinateSystemCore` makes a tabular spectral coordinate
+/// for `veltype`: the non-linear conventions `OPTICAL`/`Z`,
+/// `BETA`/`RELATIVISTIC` and `GAMMA`.
+fn casa_tabular_convention(veltype: DopplerRef) -> bool {
+    matches!(
+        veltype,
+        DopplerRef::Z | DopplerRef::BETA | DopplerRef::GAMMA
+    )
+}
+
+/// CASA's frequency- or velocity-mode grid for `axis_config`
+/// (`SynthesisParamsImage::findSpecMode` and
+/// `MSTransformRegridder::convertGridPars`).
+///
+/// A velocity `start` or `width` makes a velocity grid, spaced in optical
+/// velocity for `veltype='optical'` and in radio velocity otherwise, since
+/// `convertGridPars` turns every other convention into radio; a frequency
+/// one makes a frequency grid. Like `SynthesisParamsImage`, this refuses a
+/// `start` and `width` of different kinds. A dimensionless Doppler value is
+/// taken as the velocity it stands for in the grid's convention.
+fn casa_regrid_request(
+    axis_config: &CubeAxisConfig,
+    nchan: usize,
+) -> MsResult<regrid::RegridRequest> {
+    let kind = |value: &Option<CubeAxisValue>| match value {
+        None => None,
+        Some(CubeAxisValue::Channel(_)) => Some("channel"),
+        Some(CubeAxisValue::FrequencyHz { .. }) => Some("frequency"),
+        Some(CubeAxisValue::VelocityMs { .. } | CubeAxisValue::Doppler { .. }) => Some("velocity"),
+    };
+    let quantity = match (kind(&axis_config.start), kind(&axis_config.width)) {
+        (Some(start), Some(width)) if start != width => {
+            return Err(MsError::VersionError(format!(
+                "Cannot mix start and width with different unit types: a {start} start and a \
+                 {width} width"
+            )));
+        }
+        (Some("frequency"), _) | (_, Some("frequency")) => regrid::RegridQuantity::Frequency,
+        (Some("velocity"), _) | (_, Some("velocity")) if axis_config.veltype == DopplerRef::Z => {
+            regrid::RegridQuantity::OpticalVelocity
+        }
+        (Some("velocity"), _) | (_, Some("velocity")) => regrid::RegridQuantity::RadioVelocity,
+        _ => {
+            return Err(MsError::VersionError(
+                "a frequency or velocity cube axis needs a frequency or velocity start or width"
+                    .to_string(),
+            ));
+        }
+    };
+    let convention = match quantity {
+        regrid::RegridQuantity::OpticalVelocity => DopplerRef::Z,
+        _ => DopplerRef::RADIO,
+    };
+    let in_grid_unit = |value: &CubeAxisValue| match value {
+        CubeAxisValue::FrequencyHz { hz, .. } => Ok(*hz),
+        CubeAxisValue::VelocityMs { ms, .. } => Ok(*ms),
+        CubeAxisValue::Doppler {
+            value,
+            convention: from,
+        } => MDoppler::new(*value, *from)
+            .convert_to(convention, &MeasFrame::new())
+            .map(|doppler| doppler.value() * SPEED_OF_LIGHT_M_S)
+            .map_err(|error| {
+                MsError::VersionError(format!(
+                    "convert cube-axis doppler value {value} to {convention}: {error}"
+                ))
+            }),
+        CubeAxisValue::Channel(channel) => Err(MsError::VersionError(format!(
+            "expected a frequency or velocity cube axis value, found channel {channel}"
+        ))),
+    };
+    let rest_frequency_hz = if quantity == regrid::RegridQuantity::Frequency {
+        0.0
+    } else {
+        required_rest_frequency_hz(axis_config.rest_frequency_hz, &axis_config.start)?
+    };
+    Ok(regrid::RegridRequest {
+        quantity,
+        start: axis_config.start.as_ref().map(in_grid_unit).transpose()?,
+        width: axis_config.width.as_ref().map(in_grid_unit).transpose()?,
+        nchan,
+        rest_frequency_hz,
+    })
+}
+
+/// The `nchan` planes of the image spectral axis
+/// `SynthesisParamsImage::buildCoordinateSystemCore` makes from a
+/// frequency- or velocity-mode `chanFreq` vector.
+///
+/// For a linear convention it is a linear coordinate with
+/// `crval = chanFreq[0]` and `cdelt = chanFreq[1] − chanFreq[0]`
+/// (`chanFreqStep[0]` for a single channel), however many channels the
+/// regridder made. For a non-linear convention
+/// ([`casa_tabular_convention`]) CASA makes a tabular coordinate over
+/// `chanFreq`, whose header records `chanFreq[0]` and the table's mean step
+/// `(chanFreq[n−1] − chanFreq[0])/(n − 1)`. The native imager grids on a
+/// linear axis, so it takes that header: the planes agree with CASA's where
+/// the table is uniform in frequency, but an optical-velocity table is not,
+/// and CASA's planes between its ends and beyond them (extrapolated along
+/// the last step) differ.
+fn casa_regridded_image_axis_hz(
+    channels: &regrid::CasaChannelFrequencies,
+    nchan: usize,
+    veltype: DopplerRef,
+) -> Vec<f64> {
+    let centres_hz = &channels.centres_hz;
+    let first_hz = centres_hz[0];
+    let last = centres_hz.len() - 1;
+    let increment_hz = if last == 0 {
+        channels.steps_hz[0]
+    } else if casa_tabular_convention(veltype) {
+        (centres_hz[last] - first_hz) / last as f64
+    } else {
+        centres_hz[1] - first_hz
+    };
+    linear_spectral_axis_hz(first_hz, increment_hz, nchan)
 }
 
 /// Frequencies of `nchan` planes on a linear spectral axis whose reference
@@ -592,6 +715,23 @@ pub fn resolve_channel_selector_selection(
 
 impl CubeSpectralSetup {
     /// Build a CASA-style output cube axis.
+    ///
+    /// A `start` and `width` that are channel numbers (or unset) take
+    /// [`Self::for_casa_cube_channel_axis`]. A frequency or velocity `start`
+    /// or `width` takes CASA's real-number regridding,
+    /// `MSTransformRegridder::calcChanFreqs` as
+    /// `SynthesisParamsImage::getImFreq` calls it: the data channels are
+    /// converted to the output frame, the requested grid is laid over them
+    /// with its band centre kept within their edges, and the image axis
+    /// starts at the first resulting channel centre and steps by the
+    /// difference of the first two (`buildCoordinateSystemCore`). `start`
+    /// is not snapped to a data channel; it moves only when that band
+    /// centre falls outside the data.
+    ///
+    /// With `start` unset, CASA lays either grid over the band
+    /// `axis_config.selected_channels` selects when that band begins above
+    /// the window's lowest channel, so the cube starts at the first
+    /// selected channel.
     #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_axis(
         source_freq_ref: FrequencyRef,
@@ -615,7 +755,31 @@ impl CubeSpectralSetup {
                     Some(CubeAxisValue::Channel(_)) | None
                 )
             );
+        // For an unset start CASA lays the grid over the selected band.
+        let cut = match (&axis_config.start, &axis_config.selected_channels) {
+            (None, Some(selected)) => default_start::casa_default_start_channels(
+                all_source_frequencies_hz,
+                all_source_channel_widths_hz,
+                selected,
+            ),
+            _ => None,
+        };
         if channel_mode {
+            // Channel mode starts at the cut's first channel.
+            let started;
+            let axis_config = match &cut {
+                Some(cut) => {
+                    let channel = i32::try_from(*cut.start()).map_err(|_| {
+                        MsError::VersionError("spectral window channel exceeds i32".to_string())
+                    })?;
+                    started = CubeAxisConfig {
+                        start: Some(CubeAxisValue::Channel(channel)),
+                        ..axis_config.clone()
+                    };
+                    &started
+                }
+                None => axis_config,
+            };
             return Self::for_casa_cube_channel_axis(
                 source_freq_ref,
                 all_source_frequencies_hz,
@@ -647,7 +811,7 @@ impl CubeSpectralSetup {
                     derived_engine,
                     reference_row_time_mjd_sec,
                     field_id,
-                    phase_center_direction.clone(),
+                    phase_center_direction,
                 )
                 .map_err(|error| {
                     MsError::VersionError(format!(
@@ -656,117 +820,48 @@ impl CubeSpectralSetup {
                 })?,
             )
         };
-        let source_frequencies_in_output_frame =
-            if matches!(axis_config.specmode, CubeSpecMode::Cubedata) {
-                all_source_frequencies_hz.to_vec()
-            } else {
-                all_source_frequencies_hz
+        // `calcChanFreqs` regrids the data channels converted to the output
+        // frame (`transNewXin`) with widths measured there
+        // (`transCHAN_WIDTH`); cubedata and an unchanged frame keep them.
+        let (band_frequencies_hz, band_widths_hz) = match cut {
+            Some(cut) => (
+                &all_source_frequencies_hz[cut.clone()],
+                &all_source_channel_widths_hz[cut],
+            ),
+            None => (all_source_frequencies_hz, all_source_channel_widths_hz),
+        };
+        let regridding_widths_hz =
+            casa_regridding_input_widths(band_frequencies_hz, band_widths_hz)?;
+        let (source_frequencies_hz, source_widths_hz) = match frame.as_ref() {
+            None => (band_frequencies_hz.to_vec(), regridding_widths_hz),
+            Some(frame) => (
+                band_frequencies_hz
                     .iter()
-                    .copied()
-                    .map(|frequency_hz| {
+                    .map(|&frequency_hz| {
                         convert_frequency_to_frame_with_frame(
                             source_freq_ref,
                             output_freq_ref,
                             frequency_hz,
-                            frame.as_ref(),
+                            Some(frame),
                         )
                     })
-                    .collect::<MsResult<Vec<_>>>()?
-            };
-        if uses_optical_velocity_axis(axis_config) {
-            let output_channel_frequencies_hz = optical_velocity_output_centers(
-                &source_frequencies_in_output_frame,
-                all_source_channel_widths_hz,
-                nchan,
-                axis_config,
-            )?;
-            let setup = Self {
-                source_freq_ref,
-                output_freq_ref,
-                interpolation: axis_config.interpolation,
-                interpolation_uses_native_source_frequencies: uses_native_source_interpolation(
-                    axis_config,
-                ),
-                output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
-                output_frame_field_id: field_id,
-                output_channel_widths_hz: channel_widths_from_centers(
-                    &output_channel_frequencies_hz,
+                    .collect::<MsResult<Vec<_>>>()?,
+                convert_channel_widths_to_frame_with_frame(
+                    source_freq_ref,
+                    output_freq_ref,
+                    band_frequencies_hz,
+                    &regridding_widths_hz,
+                    frame,
                 )?,
-                output_channel_frequencies_hz,
-            };
-            let support = cube_source_channel_support(
-                all_source_frequencies_hz,
-                all_source_channel_widths_hz,
-                &setup,
-                time_bounds_mjd_sec,
-                field_id,
-                derived_engine,
-            )?;
-            return Ok((setup, support));
-        }
-        let native_spacing_hz = infer_native_spacing_hz(&source_frequencies_in_output_frame)?;
-
-        let delta_hz = match axis_config.width.as_ref() {
-            Some(value) => cube_axis_delta_hz_from_value(
-                value,
-                axis_config.rest_frequency_hz,
-                axis_config.veltype,
-            )?,
-            None => match axis_config.start.as_ref() {
-                Some(CubeAxisValue::FrequencyHz { .. }) => native_spacing_hz.abs(),
-                Some(CubeAxisValue::VelocityMs { .. }) | Some(CubeAxisValue::Doppler { .. }) => {
-                    -native_spacing_hz.abs()
-                }
-                _ => native_spacing_hz,
-            },
-        };
-        if delta_hz == 0.0 {
-            return Err(MsError::VersionError(
-                "cube output frequency increment must not be zero".to_string(),
-            ));
-        }
-
-        let start_frequency_hz = match axis_config.start.as_ref() {
-            Some(value) => cube_axis_frequency_hz_from_value(
-                value,
-                output_freq_ref,
-                axis_config.rest_frequency_hz,
-                axis_config.veltype,
-                reference_row_time_mjd_sec,
-                field_id,
-                derived_engine,
-            )?,
-            None => {
-                default_generic_axis_start_hz(&source_frequencies_in_output_frame, delta_hz, nchan)?
-            }
-        };
-
-        let source_widths_in_output_frame = match frame.as_ref() {
-            Some(frame) => convert_channel_widths_to_frame_with_frames(
-                source_freq_ref,
-                output_freq_ref,
-                all_source_frequencies_hz,
-                all_source_channel_widths_hz,
-                frame,
-                frame,
-            )?,
-            None => all_source_channel_widths_hz
-                .iter()
-                .map(|width_hz| width_hz.abs())
-                .collect(),
-        };
-        let start_frequency_hz = casa_default_width_start_hz(
-            axis_config,
-            (
-                &source_frequencies_in_output_frame,
-                &source_widths_in_output_frame,
             ),
-            start_frequency_hz,
-            nchan,
-        );
-
+        };
+        let channels = regrid::casa_channel_frequencies(
+            &casa_regrid_request(axis_config, nchan)?,
+            &source_frequencies_hz,
+            &source_widths_hz,
+        )?;
         let output_channel_frequencies_hz =
-            linear_spectral_axis_hz(start_frequency_hz, delta_hz, nchan);
+            casa_regridded_image_axis_hz(&channels, nchan, axis_config.veltype);
         let setup = Self {
             source_freq_ref,
             output_freq_ref,
@@ -777,7 +872,7 @@ impl CubeSpectralSetup {
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
             output_channel_widths_hz: if nchan == 1 {
-                vec![delta_hz.abs()]
+                vec![channels.steps_hz[0].abs()]
             } else {
                 channel_widths_from_centers(&output_channel_frequencies_hz)?
             },
@@ -1285,18 +1380,6 @@ impl CubeSpectralSetup {
     }
 }
 
-fn uses_optical_velocity_axis(axis_config: &CubeAxisConfig) -> bool {
-    axis_config.veltype == DopplerRef::Z
-        && matches!(
-            axis_config.start,
-            Some(CubeAxisValue::VelocityMs { .. }) | Some(CubeAxisValue::Doppler { .. })
-        )
-        && matches!(
-            axis_config.width,
-            None | Some(CubeAxisValue::VelocityMs { .. }) | Some(CubeAxisValue::Doppler { .. })
-        )
-}
-
 fn uses_native_source_interpolation(axis_config: &CubeAxisConfig) -> bool {
     axis_config.start.is_none()
         && matches!(
@@ -1349,408 +1432,6 @@ fn cube_axis_explicit_frame(axis_value: Option<&CubeAxisValue>) -> Option<Freque
     }
 }
 
-fn infer_native_spacing_hz(channel_frequencies_hz: &[f64]) -> MsResult<f64> {
-    channel_frequencies_hz
-        .windows(2)
-        .next()
-        .map(|pair| pair[1] - pair[0])
-        .ok_or_else(|| {
-            MsError::VersionError(
-                "cannot infer native spectral spacing from fewer than two channels".to_string(),
-            )
-        })
-}
-
-fn cube_axis_frequency_hz_from_value(
-    axis_value: &CubeAxisValue,
-    output_freq_ref: FrequencyRef,
-    rest_frequency_hz: Option<f64>,
-    veltype: DopplerRef,
-    row_time_mjd_sec: f64,
-    field_id: usize,
-    derived_engine: &MsCalEngine,
-) -> MsResult<f64> {
-    match axis_value {
-        CubeAxisValue::Channel(channel) => Err(MsError::VersionError(format!(
-            "expected frequency-like cube axis value, found channel {channel}"
-        ))),
-        CubeAxisValue::FrequencyHz { hz, frame } => {
-            let source_freq_ref = frame.unwrap_or(output_freq_ref);
-            convert_frequency_to_frame(
-                source_freq_ref,
-                output_freq_ref,
-                *hz,
-                row_time_mjd_sec,
-                field_id,
-                derived_engine,
-            )
-        }
-        CubeAxisValue::VelocityMs { ms, frame } => {
-            let rest_frequency_hz = required_rest_frequency_hz(rest_frequency_hz, axis_value)?;
-            let doppler = MDoppler::new(ms / SPEED_OF_LIGHT_M_S, veltype)
-                .convert_to(DopplerRef::RATIO, &MeasFrame::new())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "convert cube-axis velocity {ms} m/s to frequency ratio: {error}"
-                    ))
-                })?;
-            let frequency_hz = rest_frequency_hz * doppler.value();
-            let source_freq_ref = frame.unwrap_or(output_freq_ref);
-            convert_frequency_to_frame(
-                source_freq_ref,
-                output_freq_ref,
-                frequency_hz,
-                row_time_mjd_sec,
-                field_id,
-                derived_engine,
-            )
-        }
-        CubeAxisValue::Doppler { value, convention } => {
-            let rest_frequency_hz = required_rest_frequency_hz(rest_frequency_hz, axis_value)?;
-            let doppler = MDoppler::new(*value, *convention)
-                .convert_to(DopplerRef::RATIO, &MeasFrame::new())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "convert cube-axis doppler value {value} to frequency ratio: {error}"
-                    ))
-                })?;
-            Ok(rest_frequency_hz * doppler.value())
-        }
-    }
-}
-
-fn cube_axis_delta_hz_from_value(
-    axis_value: &CubeAxisValue,
-    rest_frequency_hz: Option<f64>,
-    veltype: DopplerRef,
-) -> MsResult<f64> {
-    match axis_value {
-        CubeAxisValue::Channel(channel_width) => Err(MsError::VersionError(format!(
-            "expected frequency-like cube increment, found channel width {channel_width}"
-        ))),
-        CubeAxisValue::FrequencyHz { hz, .. } => Ok(*hz),
-        CubeAxisValue::VelocityMs { ms, .. } => {
-            let rest_frequency_hz = required_rest_frequency_hz(rest_frequency_hz, axis_value)?;
-            let doppler = MDoppler::new(ms / SPEED_OF_LIGHT_M_S, veltype)
-                .convert_to(DopplerRef::RATIO, &MeasFrame::new())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "convert cube-axis velocity width {ms} m/s to frequency ratio: {error}"
-                    ))
-                })?;
-            Ok(rest_frequency_hz * (doppler.value() - 1.0))
-        }
-        CubeAxisValue::Doppler { value, convention } => {
-            let rest_frequency_hz = required_rest_frequency_hz(rest_frequency_hz, axis_value)?;
-            let doppler = MDoppler::new(*value, *convention)
-                .convert_to(DopplerRef::RATIO, &MeasFrame::new())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "convert cube-axis doppler width {value} to frequency ratio: {error}"
-                    ))
-                })?;
-            Ok(rest_frequency_hz * (doppler.value() - 1.0))
-        }
-    }
-}
-
-fn frequency_hz_from_vopt_ms(optical_velocity_ms: f64, rest_frequency_hz: f64) -> f64 {
-    rest_frequency_hz / (1.0 + optical_velocity_ms / SPEED_OF_LIGHT_M_S)
-}
-
-fn optical_velocity_ms_from_frequency_hz(frequency_hz: f64, rest_frequency_hz: f64) -> f64 {
-    SPEED_OF_LIGHT_M_S * (rest_frequency_hz / frequency_hz - 1.0)
-}
-
-fn optical_velocity_ms_from_axis_value(
-    axis_value: &CubeAxisValue,
-    rest_frequency_hz: f64,
-) -> MsResult<f64> {
-    match axis_value {
-        CubeAxisValue::VelocityMs { ms, .. } => Ok(*ms),
-        CubeAxisValue::Doppler { value, convention } => {
-            let doppler = MDoppler::new(*value, *convention)
-                .convert_to(DopplerRef::RATIO, &MeasFrame::new())
-                .map_err(|error| {
-                    MsError::VersionError(format!(
-                        "convert cube-axis optical doppler {value} to ratio: {error}"
-                    ))
-                })?;
-            Ok(optical_velocity_ms_from_frequency_hz(
-                rest_frequency_hz * doppler.value(),
-                rest_frequency_hz,
-            ))
-        }
-        other => Err(MsError::VersionError(format!(
-            "expected optical velocity-like cube axis value, found {other:?}"
-        ))),
-    }
-}
-
-fn optical_velocity_output_centers(
-    source_frequencies_in_output_frame_hz: &[f64],
-    source_channel_widths_hz: &[f64],
-    nchan: usize,
-    axis_config: &CubeAxisConfig,
-) -> MsResult<Vec<f64>> {
-    if nchan == 0 {
-        return Err(MsError::VersionError(
-            "cube output channel count must be positive".to_string(),
-        ));
-    }
-    if source_frequencies_in_output_frame_hz.is_empty()
-        || source_channel_widths_hz.len() != source_frequencies_in_output_frame_hz.len()
-    {
-        return Err(MsError::VersionError(
-            "optical velocity axis requires non-empty source frequencies and matching widths"
-                .to_string(),
-        ));
-    }
-    let rest_frequency_hz =
-        required_rest_frequency_hz(axis_config.rest_frequency_hz, &axis_config.start)?;
-    let mut source_frequencies_hz = source_frequencies_in_output_frame_hz.to_vec();
-    let mut source_widths_hz = source_channel_widths_hz.to_vec();
-    let mut reverse_output = false;
-    if source_frequencies_hz.len() > 1 && source_frequencies_hz[1] < source_frequencies_hz[0] {
-        source_frequencies_hz.reverse();
-        source_widths_hz.reverse();
-        reverse_output = true;
-    }
-
-    let width_ms = match axis_config.width.as_ref() {
-        Some(value @ (CubeAxisValue::VelocityMs { .. } | CubeAxisValue::Doppler { .. })) => {
-            optical_velocity_ms_from_axis_value(value, rest_frequency_hz)?.abs()
-        }
-        Some(other) => {
-            return Err(MsError::VersionError(format!(
-                "optical velocity cube width expects a velocity-like value, found {other:?}"
-            )));
-        }
-        None => {
-            let first_center_hz = source_frequencies_hz[0];
-            let first_width_hz = source_widths_hz[0];
-            let upper_edge = optical_velocity_ms_from_frequency_hz(
-                first_center_hz - first_width_hz,
-                rest_frequency_hz,
-            );
-            let lower_edge = optical_velocity_ms_from_frequency_hz(
-                first_center_hz + first_width_hz,
-                rest_frequency_hz,
-            );
-            (upper_edge - lower_edge).abs()
-        }
-    };
-    if !(width_ms.is_finite() && width_ms > 0.0) {
-        return Err(MsError::VersionError(
-            "optical velocity cube width must be positive".to_string(),
-        ));
-    }
-
-    let start_is_end = match axis_config.width.as_ref() {
-        Some(CubeAxisValue::VelocityMs { ms, .. }) => *ms >= 0.0,
-        Some(CubeAxisValue::Doppler { value, .. }) => *value >= 0.0,
-        None => true,
-        Some(other) => {
-            return Err(MsError::VersionError(format!(
-                "optical velocity cube width expects a velocity-like value, found {other:?}"
-            )));
-        }
-    };
-
-    let center_is_start = axis_config.start.is_some();
-    let mut regrid_center_hz;
-    let regrid_center_velocity_ms;
-    if let Some(start_value) = axis_config.start.as_ref() {
-        let mut start_velocity_ms =
-            optical_velocity_ms_from_axis_value(start_value, rest_frequency_hz)?;
-        if center_is_start {
-            if start_is_end {
-                start_velocity_ms -= width_ms / 2.0;
-            } else {
-                start_velocity_ms += width_ms / 2.0;
-            }
-        }
-        regrid_center_hz = frequency_hz_from_vopt_ms(start_velocity_ms, rest_frequency_hz);
-        regrid_center_velocity_ms = start_velocity_ms;
-    } else {
-        regrid_center_hz = (source_frequencies_hz[0] - source_widths_hz[0]
-            + source_frequencies_hz[source_frequencies_hz.len() - 1]
-            + source_widths_hz[source_widths_hz.len() - 1])
-            / 2.0;
-        regrid_center_velocity_ms =
-            optical_velocity_ms_from_frequency_hz(regrid_center_hz, rest_frequency_hz);
-    }
-
-    let regrid_bandwidth_hz = {
-        let div_by_two = if center_is_start { 1.0 } else { 0.5 };
-        let bw_edge_hz = if center_is_start && !start_is_end {
-            frequency_hz_from_vopt_ms(
-                regrid_center_velocity_ms - nchan as f64 * width_ms * div_by_two,
-                rest_frequency_hz,
-            )
-        } else {
-            frequency_hz_from_vopt_ms(
-                regrid_center_velocity_ms + nchan as f64 * width_ms * div_by_two,
-                rest_frequency_hz,
-            )
-        };
-        (bw_edge_hz - regrid_center_hz).abs() / div_by_two
-    };
-    if center_is_start {
-        let center_velocity_ms = if start_is_end {
-            regrid_center_velocity_ms + nchan as f64 * width_ms / 2.0
-        } else {
-            regrid_center_velocity_ms - nchan as f64 * width_ms / 2.0
-        };
-        regrid_center_hz = frequency_hz_from_vopt_ms(center_velocity_ms, rest_frequency_hz);
-    }
-
-    let channel_upper_edge_hz = frequency_hz_from_vopt_ms(
-        regrid_center_velocity_ms - width_ms / 2.0,
-        rest_frequency_hz,
-    );
-    let regrid_channel_width_hz = 2.0
-        * (channel_upper_edge_hz
-            - frequency_hz_from_vopt_ms(regrid_center_velocity_ms, rest_frequency_hz));
-
-    let lower_source_edge_hz = source_frequencies_hz[0] - source_widths_hz[0] / 2.0;
-    let upper_source_edge_hz = source_frequencies_hz[source_frequencies_hz.len() - 1]
-        + source_widths_hz[source_widths_hz.len() - 1] / 2.0;
-
-    let mut the_regrid_center_hz = regrid_center_hz;
-    if (the_regrid_center_hz - upper_source_edge_hz) > 1.0 {
-        the_regrid_center_hz = upper_source_edge_hz;
-    } else if the_regrid_center_hz < lower_source_edge_hz {
-        the_regrid_center_hz = lower_source_edge_hz;
-    }
-
-    let mut the_regrid_bandwidth_hz = regrid_bandwidth_hz;
-    let range_tolerance_hz = source_widths_hz[0];
-    if (the_regrid_center_hz + the_regrid_bandwidth_hz / 2.0) - upper_source_edge_hz
-        > range_tolerance_hz
-    {
-        the_regrid_bandwidth_hz = (upper_source_edge_hz - the_regrid_center_hz)
-            .abs()
-            .min((the_regrid_center_hz - lower_source_edge_hz).abs())
-            * 2.0;
-    }
-    if (the_regrid_center_hz - the_regrid_bandwidth_hz / 2.0) - lower_source_edge_hz
-        < -range_tolerance_hz
-    {
-        the_regrid_bandwidth_hz = (upper_source_edge_hz - the_regrid_center_hz)
-            .abs()
-            .min((the_regrid_center_hz - lower_source_edge_hz).abs())
-            * 2.0;
-    }
-
-    let mut centers = optical_velocity_channel_centers(
-        the_regrid_center_hz,
-        the_regrid_bandwidth_hz,
-        regrid_channel_width_hz,
-        rest_frequency_hz,
-    );
-    if reverse_output {
-        centers.reverse();
-    }
-    Ok(centers)
-}
-
-/// Step channel bounds outward from `the_regrid_center_hz` in channels of
-/// equal optical-velocity width until they span `the_regrid_bandwidth_hz`,
-/// and return the channel centers in ascending frequency.
-///
-/// `central_channel_width_hz` is the frequency width of the channel at the
-/// center; an odd channel count centers that channel on the center
-/// frequency, an even one starts it there.
-fn optical_velocity_channel_centers(
-    the_regrid_center_hz: f64,
-    the_regrid_bandwidth_hz: f64,
-    central_channel_width_hz: f64,
-    rest_frequency_hz: f64,
-) -> Vec<f64> {
-    let mut lo_fb_up = Vec::new();
-    let mut hi_fb_up = Vec::new();
-    let mut lo_fb_down = Vec::new();
-    let mut hi_fb_down = Vec::new();
-    let edge_tolerance_hz = central_channel_width_hz.abs() * 0.01;
-    let upper_end_hz = the_regrid_center_hz + the_regrid_bandwidth_hz / 2.0;
-    let lower_end_hz = the_regrid_center_hz - the_regrid_bandwidth_hz / 2.0;
-    let upper_end_velocity_ms =
-        optical_velocity_ms_from_frequency_hz(upper_end_hz, rest_frequency_hz);
-    let lower_end_velocity_ms =
-        optical_velocity_ms_from_frequency_hz(lower_end_hz, rest_frequency_hz);
-    let tnum_chan =
-        ((the_regrid_bandwidth_hz + edge_tolerance_hz) / central_channel_width_hz).floor();
-    if (tnum_chan as i64) % 2 != 0 {
-        lo_fb_up.push(the_regrid_center_hz - central_channel_width_hz / 2.0);
-        hi_fb_up.push(the_regrid_center_hz + central_channel_width_hz / 2.0);
-        lo_fb_down.push(the_regrid_center_hz - central_channel_width_hz / 2.0);
-        hi_fb_down.push(the_regrid_center_hz + central_channel_width_hz / 2.0);
-    } else {
-        lo_fb_up.push(the_regrid_center_hz);
-        hi_fb_up.push(the_regrid_center_hz + central_channel_width_hz);
-        lo_fb_down.push(the_regrid_center_hz);
-        hi_fb_down.push(the_regrid_center_hz + central_channel_width_hz);
-    }
-
-    let velocity_channel_width_ms =
-        optical_velocity_ms_from_frequency_hz(lo_fb_up[0], rest_frequency_hz)
-            - optical_velocity_ms_from_frequency_hz(hi_fb_up[0], rest_frequency_hz);
-    let mut lower_velocity_ms =
-        optical_velocity_ms_from_frequency_hz(*hi_fb_up.last().unwrap(), rest_frequency_hz);
-    let mut upper_velocity_ms = lower_velocity_ms - velocity_channel_width_ms;
-    while upper_end_velocity_ms - upper_velocity_ms < velocity_channel_width_ms / 10.0 {
-        let upper_frequency_hz = frequency_hz_from_vopt_ms(upper_velocity_ms, rest_frequency_hz);
-        if upper_frequency_hz <= upper_end_hz + edge_tolerance_hz {
-            lo_fb_up.push(*hi_fb_up.last().unwrap());
-            hi_fb_up.push(upper_frequency_hz);
-        } else if upper_frequency_hz < upper_end_hz + edge_tolerance_hz {
-            lo_fb_up.push(*hi_fb_up.last().unwrap());
-            hi_fb_up.push(upper_end_hz);
-            break;
-        } else {
-            break;
-        }
-        lower_velocity_ms =
-            optical_velocity_ms_from_frequency_hz(*hi_fb_up.last().unwrap(), rest_frequency_hz);
-        upper_velocity_ms = lower_velocity_ms - velocity_channel_width_ms;
-    }
-
-    let mut upper_velocity_ms =
-        optical_velocity_ms_from_frequency_hz(*lo_fb_down.last().unwrap(), rest_frequency_hz);
-    let mut lower_velocity_ms = upper_velocity_ms + velocity_channel_width_ms;
-    while lower_velocity_ms - lower_end_velocity_ms < velocity_channel_width_ms / 10.0 {
-        let lower_frequency_hz = frequency_hz_from_vopt_ms(lower_velocity_ms, rest_frequency_hz);
-        if lower_frequency_hz >= lower_end_hz - edge_tolerance_hz {
-            hi_fb_down.push(*lo_fb_down.last().unwrap());
-            lo_fb_down.push(lower_frequency_hz);
-        } else if lower_frequency_hz > lower_end_hz - edge_tolerance_hz {
-            hi_fb_down.push(*lo_fb_down.last().unwrap());
-            lo_fb_down.push(lower_end_hz);
-            break;
-        } else {
-            break;
-        }
-        upper_velocity_ms =
-            optical_velocity_ms_from_frequency_hz(*lo_fb_down.last().unwrap(), rest_frequency_hz);
-        lower_velocity_ms = upper_velocity_ms + velocity_channel_width_ms;
-    }
-
-    let mut centers = Vec::with_capacity(lo_fb_down.len() + lo_fb_up.len());
-    for index in (0..lo_fb_down.len()).rev() {
-        centers.push((lo_fb_down[index] + hi_fb_down[index]) / 2.0);
-    }
-    centers.extend(
-        lo_fb_up
-            .iter()
-            .zip(hi_fb_up.iter())
-            .enumerate()
-            .filter(|(index, _)| *index > 0)
-            .map(|(_, (low_hz, high_hz))| (low_hz + high_hz) / 2.0),
-    );
-    centers
-}
-
 fn required_rest_frequency_hz(
     rest_frequency_hz: Option<f64>,
     value: &impl std::fmt::Debug,
@@ -1760,82 +1441,6 @@ fn required_rest_frequency_hz(
             "cube axis value {value:?} requires a rest frequency"
         ))
     })
-}
-
-fn default_generic_axis_start_hz(
-    source_frequencies_in_output_frame: &[f64],
-    delta_hz: f64,
-    nchan: usize,
-) -> MsResult<f64> {
-    let edges = channel_edges_from_centers(source_frequencies_in_output_frame)?;
-    let low_edge_hz = edges.iter().copied().reduce(f64::min).ok_or_else(|| {
-        MsError::VersionError(
-            "cannot choose a cube-axis start from an empty spectral window".to_string(),
-        )
-    })?;
-    if nchan == 0 {
-        return Err(MsError::VersionError(
-            "cube output channel count must be positive".to_string(),
-        ));
-    }
-    let first_center_hz = if delta_hz >= 0.0 {
-        low_edge_hz + 0.5 * delta_hz
-    } else {
-        low_edge_hz - (nchan as f64 - 0.5) * delta_hz
-    };
-    Ok(first_center_hz)
-}
-
-/// The first channel of a default-width cube whose `start` is a frequency
-/// or a velocity, as CASA's `MSTransformRegridder::regridChanBounds` places
-/// it: channels as wide as the lowest native channel `w`, on a band that
-/// `regridChanBounds` keeps within the native band `[low, high]` (in the
-/// output frame, every native channel of the window). A velocity start is
-/// the band's highest channel, and the band's centre, `w/2 − n·w/2` from
-/// it, moves up to `low` when it lies below it, or down to `high` when it
-/// lies more than 1 Hz above it. A frequency start is the band's lowest
-/// channel, whose lower edge is held so. A start that leaves its band
-/// inside the native band is kept as given.
-fn casa_default_width_start_hz(
-    axis_config: &CubeAxisConfig,
-    native: (&[f64], &[f64]),
-    start_frequency_hz: f64,
-    nchan: usize,
-) -> f64 {
-    let (frequencies_hz, widths_hz) = native;
-    if axis_config.width.is_some() || frequencies_hz.is_empty() {
-        return start_frequency_hz;
-    }
-    let velocity = match axis_config.start {
-        Some(CubeAxisValue::VelocityMs { .. } | CubeAxisValue::Doppler { .. }) => true,
-        Some(CubeAxisValue::FrequencyHz { .. }) => false,
-        Some(CubeAxisValue::Channel(_)) | None => return start_frequency_hz,
-    };
-    let last = frequencies_hz.len() - 1;
-    let (lowest, highest) = if frequencies_hz[0] <= frequencies_hz[last] {
-        (0, last)
-    } else {
-        (last, 0)
-    };
-    let width_hz = widths_hz[lowest].abs();
-    let low_hz = frequencies_hz[lowest] - width_hz / 2.0;
-    let high_hz = frequencies_hz[highest] + widths_hz[highest].abs() / 2.0;
-    let within = |frequency_hz: f64| {
-        if frequency_hz - high_hz > 1.0 {
-            high_hz
-        } else if frequency_hz < low_hz {
-            low_hz
-        } else {
-            frequency_hz
-        }
-    };
-    let channels = nchan as f64;
-    if velocity {
-        within(start_frequency_hz + width_hz / 2.0 - channels * width_hz / 2.0)
-            + (channels - 1.0) * width_hz / 2.0
-    } else {
-        within(start_frequency_hz - width_hz / 2.0) + width_hz / 2.0
-    }
 }
 
 /// Convert one scalar frequency between spectral frames using the MeasurementSet
@@ -2641,15 +2246,13 @@ mod tests {
     }
 
     #[test]
-    fn channel_edges_and_inferred_spacing_cover_boundary_cases() {
+    fn channel_edges_cover_boundary_cases() {
         assert!(channel_edges_from_centers(&[]).is_err());
         assert_eq!(channel_edges_from_centers(&[5.0]).unwrap(), vec![4.5, 5.5]);
         assert_eq!(
             channel_edges_from_centers(&[10.0, 20.0, 30.0]).unwrap(),
             vec![5.0, 15.0, 25.0, 35.0]
         );
-        assert_eq!(infer_native_spacing_hz(&[10.0, 15.0, 25.0]).unwrap(), 5.0);
-        assert!(infer_native_spacing_hz(&[10.0]).is_err());
     }
 
     #[test]
@@ -2668,8 +2271,8 @@ mod tests {
                 ms: -2.0,
                 frame: Some(FrequencyRef::BARY),
             }),
+            selected_channels: None,
         };
-        assert!(uses_optical_velocity_axis(&axis_config));
         let native_axis_config = CubeAxisConfig {
             start: None,
             width: Some(CubeAxisValue::VelocityMs {
@@ -2698,43 +2301,6 @@ mod tests {
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
             FrequencyRef::TOPO
         );
-    }
-
-    #[test]
-    fn frequency_and_velocity_helpers_cover_error_and_identity_paths() {
-        assert!(matches!(
-            cube_axis_delta_hz_from_value(&CubeAxisValue::Channel(1), Some(1.25e9), DopplerRef::RADIO),
-            Err(MsError::VersionError(message)) if message.contains("channel width")
-        ));
-        assert_eq!(
-            cube_axis_delta_hz_from_value(
-                &CubeAxisValue::FrequencyHz {
-                    hz: 25.0,
-                    frame: None,
-                },
-                None,
-                DopplerRef::RADIO
-            )
-            .unwrap(),
-            25.0
-        );
-        assert_eq!(
-            optical_velocity_ms_from_axis_value(
-                &CubeAxisValue::VelocityMs {
-                    ms: 12.5,
-                    frame: None,
-                },
-                1.25e9
-            )
-            .unwrap(),
-            12.5
-        );
-        assert!(matches!(
-            optical_velocity_ms_from_axis_value(&CubeAxisValue::Channel(2), 1.25e9),
-            Err(MsError::VersionError(message)) if message.contains("optical velocity-like")
-        ));
-        assert!(frequency_hz_from_vopt_ms(0.0, 1.25e9) - 1.25e9 < 1e-6);
-        assert!((optical_velocity_ms_from_frequency_hz(1.25e9, 1.25e9)).abs() < 1e-6);
     }
 
     #[test]
@@ -3253,117 +2819,6 @@ mod tests {
     }
 
     #[test]
-    fn default_generic_axis_start_uses_first_output_bin_center_for_positive_width() {
-        let start_hz = default_generic_axis_start_hz(&[1.0e9, 1.05e9, 1.10e9], 0.1e9, 2).unwrap();
-        assert!((start_hz - 1.025e9).abs() < 1.0);
-    }
-
-    #[test]
-    fn default_generic_axis_start_uses_first_output_bin_center_for_negative_width() {
-        let start_hz = default_generic_axis_start_hz(&[1.0e9, 1.05e9, 1.10e9], -0.1e9, 2).unwrap();
-        assert!((start_hz - 1.125e9).abs() < 1.0);
-    }
-
-    #[test]
-    fn default_generic_axis_start_anchors_descending_axes_to_low_frequency_edge() {
-        let source_hz = (0..20)
-            .map(|index| 1.0e9 + index as f64 * 50.0e6)
-            .collect::<Vec<_>>();
-        let start_hz = default_generic_axis_start_hz(&source_hz, -50.0e6, 10).unwrap();
-        assert!((start_hz - 1.45e9).abs() < 1.0);
-    }
-
-    /// CASA's `test_cube_11` and `test_cube_12`: ten default-width channels
-    /// down from a radio velocity. In TOPO the band's centre falls 7 Hz
-    /// below the native band, so `regridChanBounds` moves it up to the
-    /// band's edge and the channels land on the native ones (1200 MHz, as
-    /// CASA's image); in BARY the centre lies inside the band and the start
-    /// stays where the velocity puts it (CASA's 1200.058784 MHz).
-    #[test]
-    fn default_width_velocity_start_keeps_its_band_within_the_native_band() {
-        let axis_config = CubeAxisConfig {
-            specmode: CubeSpecMode::Cube,
-            outframe: FrequencyRef::TOPO,
-            veltype: DopplerRef::RADIO,
-            interpolation: CubeInterpolation::Linear,
-            rest_frequency_hz: Some(1.25e9),
-            start: Some(CubeAxisValue::VelocityMs {
-                ms: 11_991_700.0,
-                frame: None,
-            }),
-            width: None,
-        };
-        let native_hz = (0..20)
-            .map(|index| 1.0e9 + index as f64 * 50.0e6)
-            .collect::<Vec<_>>();
-        let start = |native_hz: &[f64], width_hz: f64, start_hz: f64| {
-            casa_default_width_start_hz(
-                &axis_config,
-                (native_hz, &vec![width_hz; native_hz.len()]),
-                start_hz,
-                10,
-            )
-        };
-        assert_eq!(start(&native_hz, 50.0e6, 1_199_999_992.995_154), 1.20e9);
-        let factor = 1.000_048_8;
-        let bary_hz = native_hz.iter().map(|hz| hz * factor).collect::<Vec<_>>();
-        let requested_hz = 1_200_058_783.666_932_6;
-        assert_eq!(start(&bary_hz, 50.0e6 * factor, requested_hz), requested_hz);
-    }
-
-    /// A default-width frequency start is the band's lowest channel; its
-    /// lower edge is held within the native band.
-    #[test]
-    fn default_width_frequency_start_holds_its_lower_edge_in_the_native_band() {
-        let axis_config = CubeAxisConfig {
-            specmode: CubeSpecMode::Cube,
-            outframe: FrequencyRef::LSRK,
-            veltype: DopplerRef::RADIO,
-            interpolation: CubeInterpolation::Linear,
-            rest_frequency_hz: None,
-            start: Some(CubeAxisValue::FrequencyHz {
-                hz: 1.1e9,
-                frame: None,
-            }),
-            width: None,
-        };
-        let native_hz = [1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9];
-        let start = |start_hz: f64| {
-            casa_default_width_start_hz(&axis_config, (&native_hz, &[50.0e6; 5]), start_hz, 3)
-        };
-        assert_eq!(start(1.123e9), 1.123e9);
-        assert_eq!(start(0.9e9), 1.0e9);
-        assert_eq!(start(1.3e9), 1.25e9);
-    }
-
-    #[test]
-    fn explicit_width_frequency_like_start_does_not_snap_to_source_grid() {
-        let axis_config = CubeAxisConfig {
-            specmode: CubeSpecMode::Cube,
-            outframe: FrequencyRef::TOPO,
-            veltype: DopplerRef::RADIO,
-            interpolation: CubeInterpolation::Linear,
-            rest_frequency_hz: Some(1.25e9),
-            start: Some(CubeAxisValue::VelocityMs {
-                ms: 11_991_700.0,
-                frame: None,
-            }),
-            width: Some(CubeAxisValue::FrequencyHz {
-                hz: -5.0e7,
-                frame: None,
-            }),
-        };
-        let raw_hz = 1_199_999_992.995_154;
-        let start_hz = casa_default_width_start_hz(
-            &axis_config,
-            (&[1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9], &[5.0e7; 5]),
-            raw_hz,
-            10,
-        );
-        assert_eq!(start_hz, raw_hz);
-    }
-
-    #[test]
     fn explicit_measure_frame_overrides_outframe() {
         let axis_config = CubeAxisConfig {
             specmode: CubeSpecMode::Cube,
@@ -3376,6 +2831,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
+            selected_channels: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -3399,6 +2855,7 @@ mod tests {
                 ms: 11_991_700.0,
                 frame: Some(FrequencyRef::TOPO),
             }),
+            selected_channels: None,
         };
         let error = effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap_err();
         assert!(error.to_string().contains("disagree"));
@@ -3417,6 +2874,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
+            selected_channels: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -3611,6 +3069,174 @@ mod tests {
     }
 
     #[test]
+    fn regrid_request_follows_casa_spec_mode_and_veltype() {
+        let config = |start, width, veltype| CubeAxisConfig {
+            veltype,
+            rest_frequency_hz: Some(1.25e9),
+            start,
+            width,
+            ..CubeAxisConfig::default()
+        };
+        let velocity = Some(CubeAxisValue::VelocityMs {
+            ms: 1.0e6,
+            frame: None,
+        });
+        let frequency = Some(CubeAxisValue::FrequencyHz {
+            hz: 1.1e9,
+            frame: None,
+        });
+        let quantity = |start, width, veltype| {
+            casa_regrid_request(&config(start, width, veltype), 3)
+                .unwrap()
+                .quantity
+        };
+        assert_eq!(
+            quantity(velocity.clone(), None, DopplerRef::RADIO),
+            regrid::RegridQuantity::RadioVelocity
+        );
+        assert_eq!(
+            quantity(None, velocity.clone(), DopplerRef::Z),
+            regrid::RegridQuantity::OpticalVelocity
+        );
+        // `convertGridPars` regrids every other convention in radio velocity.
+        assert_eq!(
+            quantity(velocity.clone(), None, DopplerRef::BETA),
+            regrid::RegridQuantity::RadioVelocity
+        );
+        assert_eq!(
+            quantity(frequency.clone(), None, DopplerRef::Z),
+            regrid::RegridQuantity::Frequency
+        );
+        for (start, width) in [
+            (frequency.clone(), velocity.clone()),
+            (Some(CubeAxisValue::Channel(2)), frequency.clone()),
+        ] {
+            let error =
+                casa_regrid_request(&config(start, width, DopplerRef::RADIO), 3).unwrap_err();
+            assert!(error.to_string().contains("Cannot mix start and width"));
+        }
+        let doppler = Some(CubeAxisValue::Doppler {
+            value: 0.1,
+            convention: DopplerRef::RADIO,
+        });
+        let request = casa_regrid_request(&config(doppler, None, DopplerRef::Z), 3).unwrap();
+        let start = request.start.unwrap();
+        assert!((start - SPEED_OF_LIGHT_M_S * (1.0 / 0.9 - 1.0)).abs() < 1e-6);
+        let missing_rest = CubeAxisConfig {
+            rest_frequency_hz: None,
+            ..config(velocity, None, DopplerRef::RADIO)
+        };
+        let error = casa_regrid_request(&missing_rest, 3).unwrap_err();
+        assert!(error.to_string().contains("requires a rest frequency"));
+    }
+
+    #[test]
+    fn for_casa_cube_velocity_axis_starts_where_casa_does() {
+        // test_cube_11 and, at test_cube_12's start, its TOPO counterpart:
+        // CASA wrote 1.2 GHz (the band centre clamped into the data) and
+        // 1200058783.6669328 Hz (the start kept exactly).
+        let engine = test_engine();
+        let mut source_hz = (0..20)
+            .map(|channel| 1.0e9 + f64::from(channel) * 5.0e7)
+            .collect::<Vec<_>>();
+        source_hz[0] = 999_999_999.999_999_9;
+        source_hz[1] = 1_049_999_999.999_999_9;
+        for (start_ms, first_hz) in [
+            (11_991_700.0, 1.2e9),
+            (11_977_600.0, 1_200_058_783.666_932_8),
+        ] {
+            let axis_config = CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                rest_frequency_hz: Some(1.25e9),
+                start: Some(CubeAxisValue::VelocityMs {
+                    ms: start_ms,
+                    frame: None,
+                }),
+                ..CubeAxisConfig::default()
+            };
+            let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+                FrequencyRef::TOPO,
+                &source_hz,
+                &[5.0e7; 20],
+                10,
+                &axis_config,
+                59_000.0 * 86_400.0,
+                0,
+                None,
+                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+                &engine,
+            )
+            .unwrap();
+            assert_eq!(
+                setup.output_channel_frequencies_hz,
+                linear_spectral_axis_hz(first_hz, -5.0e7, 10)
+            );
+        }
+    }
+
+    #[test]
+    fn for_casa_cube_axis_with_unset_start_begins_at_the_selected_band() {
+        // test_cube_23: spw='0:4~13', start=''; CASA's cube starts at 1.2 GHz.
+        let engine = test_engine();
+        let source_hz = (0..20)
+            .map(|channel| 1.0e9 + f64::from(channel) * 5.0e7)
+            .collect::<Vec<_>>();
+        let selected = (4..=13).collect::<Vec<_>>();
+        for width in [None, Some(CubeAxisValue::Channel(1))] {
+            let axis_config = CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                width,
+                selected_channels: Some(selected.clone()),
+                ..CubeAxisConfig::default()
+            };
+            let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+                FrequencyRef::TOPO,
+                &source_hz,
+                &[5.0e7; 20],
+                10,
+                &axis_config,
+                59_000.0 * 86_400.0,
+                0,
+                None,
+                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+                &engine,
+            )
+            .unwrap();
+            assert_eq!(
+                setup.output_channel_frequencies_hz,
+                linear_spectral_axis_hz(1.2e9, 5.0e7, 10)
+            );
+        }
+        // A frequency width with no start starts from the band's lower edge.
+        let axis_config = CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            width: Some(CubeAxisValue::FrequencyHz {
+                hz: 1.0e8,
+                frame: None,
+            }),
+            selected_channels: Some(selected),
+            ..CubeAxisConfig::default()
+        };
+        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            FrequencyRef::TOPO,
+            &source_hz,
+            &[5.0e7; 20],
+            3,
+            &axis_config,
+            59_000.0 * 86_400.0,
+            0,
+            None,
+            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+            &engine,
+        )
+        .unwrap();
+        assert_eq!(
+            setup.output_channel_frequencies_hz,
+            linear_spectral_axis_hz(1.225e9, 1.0e8, 3)
+        );
+    }
+
+    #[test]
     fn for_casa_cube_frequency_axis_keeps_single_output_channel_width() {
         let engine = test_engine();
         let axis_config = CubeAxisConfig {
@@ -3784,63 +3410,5 @@ mod tests {
 
         let invalid = linear_channel_contributions(&[42.0], &[42.0, 43.0], &[4.0, 4.0], 42.0);
         assert!(invalid.is_empty());
-    }
-
-    #[test]
-    fn optical_velocity_output_centers_require_velocity_width_and_rest_frequency() {
-        let axis_config = CubeAxisConfig {
-            veltype: DopplerRef::Z,
-            start: Some(CubeAxisValue::VelocityMs {
-                ms: 10_000.0,
-                frame: None,
-            }),
-            width: Some(CubeAxisValue::FrequencyHz {
-                hz: 1.0e6,
-                frame: None,
-            }),
-            rest_frequency_hz: Some(1.42e9),
-            ..CubeAxisConfig::default()
-        };
-        let error = optical_velocity_output_centers(
-            &[1.42e9, 1.41e9, 1.40e9],
-            &[1.0e6, 1.0e6, 1.0e6],
-            3,
-            &axis_config,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("velocity-like value"));
-
-        let missing_rest = required_rest_frequency_hz(None, &axis_config.start).unwrap_err();
-        assert!(
-            missing_rest
-                .to_string()
-                .contains("requires a rest frequency")
-        );
-    }
-
-    #[test]
-    fn optical_velocity_output_centers_support_descending_axes() {
-        let axis_config = CubeAxisConfig {
-            veltype: DopplerRef::Z,
-            start: Some(CubeAxisValue::VelocityMs {
-                ms: 15_000.0,
-                frame: None,
-            }),
-            width: Some(CubeAxisValue::VelocityMs {
-                ms: -5_000.0,
-                frame: None,
-            }),
-            rest_frequency_hz: Some(1.42e9),
-            ..CubeAxisConfig::default()
-        };
-        let centers = optical_velocity_output_centers(
-            &[1.42e9, 1.419e9, 1.418e9, 1.417e9],
-            &[1.0e6, 1.0e6, 1.0e6, 1.0e6],
-            3,
-            &axis_config,
-        )
-        .unwrap();
-        assert_eq!(centers.len(), 3);
-        assert!(centers.windows(2).all(|pair| pair[0] > pair[1]));
     }
 }

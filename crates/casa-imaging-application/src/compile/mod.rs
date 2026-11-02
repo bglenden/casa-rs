@@ -482,6 +482,19 @@ fn specification_inputs(
             Gridder::Awproject(aw) => Some(specification::aw_projection(aw, &windows, w)?),
             _ => None,
         },
+        mosaic_conjugate_beams: matches!(
+            request.gridder,
+            Gridder::Mosaic {
+                conjbeams: true,
+                ..
+            }
+        ) && surveyed.spectral.output_channels == 1,
+        density_fields: match request.gridder {
+            Gridder::Mosaic {
+                mosweight: true, ..
+            } => specification::density_fields(&surveyed.survey.fields),
+            _ => None,
+        },
         cube_density_padding: cube_density_padding(request, surveyed)?,
         continuum_transform,
     })
@@ -519,7 +532,10 @@ fn snapshot_input(
                 .map(PartitionSelection::partition),
             visibility,
         );
-        let selection = selection::observation_selection(store.survey, channels)?;
+        // Each MeasurementSet's first buffers are its own.
+        let lsrk_factors =
+            envelope::first_buffer_lsrk_factors((store.catalogue(), &store.engine), &store.survey)?;
+        let selection = selection::observation_selection(store.survey, channels, &lsrk_factors)?;
         sources.push(ObservationSourceInput::new(
             ObservationSourceProvenance::new(store.selection.vis.display().to_string()),
             selection,

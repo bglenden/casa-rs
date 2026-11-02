@@ -11,7 +11,7 @@
 //! and Briggs's two robustness modes choose `f²` and `d²`. What CASA's
 //! `npixels` changes is the grid `D` lives on ([`DensityCells`]).
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 /// Visibility-weighting formula.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +62,28 @@ pub enum WeightDensityScope {
     GlobalSelection,
     /// An explicit global density generation per output channel.
     PerOutputChannel,
+    /// One density per field over all its selected data, each with its own
+    /// Briggs factors: tclean's `mosweight` (`VisImagingWeight`'s
+    /// `multiField`, which keys a density by MeasurementSet and FIELD_ID).
+    /// The densities are those of FIELD_IDs `first_field` to
+    /// `first_field + fields − 1`; a field in the span with no data keeps an
+    /// empty density.
+    PerField {
+        /// The first FIELD_ID with a density.
+        first_field: u32,
+        /// The FIELD_IDs the densities span.
+        fields: NonZeroU32,
+    },
+}
+
+impl WeightDensityScope {
+    /// Whether one density covers all the data of what it weighs, a field or
+    /// the whole selection, rather than one output channel: the continuum
+    /// density of CASA's `VisImagingWeight`.
+    #[must_use]
+    pub const fn is_continuum(self) -> bool {
+        matches!(self, Self::GlobalSelection | Self::PerField { .. })
+    }
 }
 
 /// The cells a visibility density is gridded on: CASA's `npixels`, whose
@@ -216,9 +238,7 @@ impl WeightingContract {
         match self.density_cells {
             DensityCells::Image => {}
             _ if !density => return Err("a weighting without a density has no density cells"),
-            DensityCells::Square(_)
-                if self.density_scope != WeightDensityScope::GlobalSelection =>
-            {
+            DensityCells::Square(_) if !self.density_scope.is_continuum() => {
                 return Err("a square density grid is CASA's continuum density");
             }
             _ if matches!(self.scheme, WeightingScheme::BriggsBandwidthTaper { .. }) => {
@@ -275,8 +295,16 @@ mod tests {
             robust: 1.0,
             noise_jy: 0.1,
         };
+        let per_field = WeightDensityScope::PerField {
+            first_field: 2,
+            fields: NonZeroU32::new(3).expect("non-zero"),
+        };
         for valid in [
             contract(WeightingScheme::Radial, NotApplicable),
+            // `mosweight`'s densities are continuum densities.
+            contract(briggs, per_field).with_density_cells(DensityCells::Square(cells(7))),
+            contract(WeightingScheme::Uniform, per_field)
+                .with_density_cells(DensityCells::Box(cells(3))),
             contract(WeightingScheme::Uniform, GlobalSelection)
                 .with_density_cells(DensityCells::Square(cells(32))),
             contract(briggs, GlobalSelection).with_density_cells(DensityCells::Square(cells(7))),
@@ -292,6 +320,8 @@ mod tests {
         }
         for invalid in [
             contract(WeightingScheme::Radial, GlobalSelection),
+            contract(WeightingScheme::Natural, per_field),
+            contract(briggs, per_field).with_casa_cube_density_padding(1),
             contract(WeightingScheme::Natural, NotApplicable)
                 .with_density_cells(DensityCells::Box(cells(3))),
             contract(briggs, PerOutputChannel).with_density_cells(DensityCells::Square(cells(8))),

@@ -15,6 +15,7 @@ use num_complex::{Complex, Complex32, Complex64};
 
 use crate::accumulator::{GridScalar, Tile};
 use crate::convolution::TapLayout;
+use crate::edge::CellBox;
 use crate::geometry::CellLocation;
 
 /// Add `value · tap'` over the support into `grid` through Mueller plane
@@ -105,6 +106,73 @@ pub(super) fn spread<T: GridScalar, const COMPENSATED: bool>(
                     PointingRamp::NONE,
                     value,
                 ),
+            }
+        }
+    }
+}
+
+/// [`spread`] of a sample of which only the taps on `cells` (grid
+/// coordinates) are gridded ([`Reach::Clipped`](crate::Reach::Clipped)):
+/// the taps are spread into `scratch`, a block of the support alone, and
+/// its cells that fall on both `cells` and `tile` are added to the tile as
+/// [`spread`] adds each tap, so they take the values a whole support would
+/// give them.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spread_clipped<T: GridScalar, const COMPENSATED: bool>(
+    grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
+    (tile, cells): (Tile, CellBox),
+    location: CellLocation,
+    taps: &TapLayout<'_>,
+    (mueller, conjugate, gradient): (u8, bool, [f32; 2]),
+    value: Complex<T>,
+    scratch: &mut Vec<Complex<T>>,
+) {
+    let [hx, hy] = taps.half_support().map(usize::from);
+    let block = Tile::full([2 * hx + 1, 2 * hy + 1]);
+    scratch.clear();
+    scratch.resize(block.cells(), Complex::default());
+    let centred = CellLocation {
+        x: hx as i64,
+        y: hy as i64,
+        ..location
+    };
+    spread::<T, false>(
+        scratch,
+        &mut [],
+        block,
+        centred,
+        taps,
+        mueller,
+        conjugate,
+        gradient,
+        value,
+    );
+    // The cells taps may land on, tile-relative.
+    let [[x0, x1], [y0, y1]] = [0, 1].map(|axis| {
+        let origin = tile.origin[axis] as i64;
+        [
+            (cells[axis][0] - origin).max(0),
+            (cells[axis][1] - origin).min(tile.shape[axis] as i64),
+        ]
+    });
+    let first_x = location.x - hx as i64 - tile.origin[0] as i64;
+    let first_y = location.y - hy as i64 - tile.origin[1] as i64;
+    for (iy, row) in scratch.chunks_exact(block.shape[0]).enumerate() {
+        let y = first_y + iy as i64;
+        if !(y0..y1).contains(&y) {
+            continue;
+        }
+        for (ix, added) in row.iter().enumerate() {
+            let x = first_x + ix as i64;
+            if (x0..x1).contains(&x) {
+                let index = y as usize * tile.shape[0] + x as usize;
+                crate::compensation::add::<T, COMPENSATED>(
+                    &mut grid[index],
+                    correction,
+                    index,
+                    *added,
+                );
             }
         }
     }
