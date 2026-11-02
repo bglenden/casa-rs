@@ -14,7 +14,11 @@ mod trace;
 mod visibility_write;
 
 pub(crate) use cycle::{ImagingInputs, plane_bounds, run};
-pub(crate) use measurement::{metal_kernel_set, row_samples, standard_kernel_set};
+pub(crate) use images::prepare_model;
+pub(crate) use measurement::{
+    KernelAdmission, domain_operator, image_extent, metal_kernel_set, reference_frequency_hz,
+    row_samples, selected_correlations, standard_kernel_set,
+};
 pub(crate) use observation_source::{
     BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, WriteBack,
     admit_batches, pointing_direction,

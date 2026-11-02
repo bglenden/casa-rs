@@ -327,7 +327,7 @@ fn string(keywords: &RecordValue, name: &str) -> Option<String> {
 
 /// How a changed table is written.
 #[derive(Clone, Copy)]
-enum Write {
+pub(crate) enum Write {
     /// In full, with the storage managers [`MeasurementSet::save`] uses.
     Full,
     /// Its keywords and description alone, its storage left as it is.
@@ -355,7 +355,7 @@ fn holds_write_lock(table: &Table) -> bool {
 /// taken here has the table reloaded as it is on disk and is released, and
 /// under `held` the table is reloaded and the lock left to the caller; a
 /// lock the handle holds is left to it.
-fn change_in_place(
+pub(crate) fn change_in_place(
     table: &mut Table,
     attempts: u32,
     write: Write,
@@ -418,7 +418,7 @@ fn lock_refused(path: &Path) -> MsError {
 /// Where the table at `path` is held open, as `TableUtil::canDeleteTable`
 /// asks, read from its lock file without opening the table or waiting for
 /// a lock.
-fn held_open(path: &Path) -> std::io::Result<Option<casa_tables::TableHolder>> {
+pub(crate) fn held_open(path: &Path) -> std::io::Result<Option<casa_tables::TableHolder>> {
     #[cfg(unix)]
     {
         casa_tables::table_holder(path)

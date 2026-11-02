@@ -76,6 +76,7 @@ pub mod task_contract;
 mod task_front_end;
 pub mod transform;
 pub mod validate;
+pub mod virtual_model;
 pub mod visibility_buffer;
 pub mod write_session;
 
@@ -197,6 +198,11 @@ pub use task_contract::{
 pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+};
+pub use virtual_model::{
+    VirtualModelEntry, VirtualModelKind, VirtualModelRecord, VirtualModelSelection,
+    clear_virtual_model, put_virtual_model, virtual_model, virtual_model_clear_ids,
+    virtual_model_image_path, virtual_model_index_combination,
 };
 pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,

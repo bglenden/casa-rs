@@ -110,8 +110,8 @@ impl Default for MsSelection {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompiledMsSelection {
-    field_ids: Option<Vec<i32>>,
-    spw_ids: Vec<i32>,
+    pub(crate) field_ids: Option<Vec<i32>>,
+    pub(crate) spw_ids: Vec<i32>,
     spw_channel_selections: BTreeMap<i32, ChannelSelection>,
     data_desc_ids: Vec<i32>,
     antenna_ids: Vec<i32>,
@@ -448,7 +448,7 @@ impl MsSelection {
         }
     }
 
-    fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
+    pub(crate) fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
         if !self.selectdata && !self.has_text_selection() {
             return Ok(CompiledMsSelection::default());
         }

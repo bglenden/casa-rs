@@ -28,7 +28,7 @@ use super::PrepareError;
 use super::selection::SourceSpectralWindow;
 use super::spectral::PreparedSpectralAxis;
 use super::survey::WRange;
-use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SpecMode, Weighting};
+use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, Weighting};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
@@ -214,7 +214,7 @@ fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationCont
 /// The writes to the observation: the model column and continuum-subtracted
 /// corrected data, when asked for.
 fn transaction(request: &ImagingRequest) -> ObservationTransactionRequirements {
-    ObservationTransactionRequirements::new(if request.savemodel {
+    ObservationTransactionRequirements::new(if request.savemodel == SaveModel::ModelColumn {
         ModelColumnWrite::SelectedSamples
     } else {
         ModelColumnWrite::Disabled

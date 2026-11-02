@@ -816,9 +816,6 @@ impl<'a> Tclean<'a> {
             "calcres",
             "calcpsf",
         ])?;
-        if self.values.get("savemodel").and_then(Value::as_str) == Some("virtual") {
-            return Err(TcleanRefusal::not_yet("savemodel", "'virtual'", 823));
-        }
         let niter = self
             .values
             .get("niter")

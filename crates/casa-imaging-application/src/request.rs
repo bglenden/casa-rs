@@ -59,9 +59,10 @@ pub struct ImagingRequest {
     /// casa-rs also logs a warning.
     #[serde(deserialize_with = "optional")]
     pub datacolumn: Option<DataColumn>,
-    /// Whether the final model's prediction is written to `MODEL_DATA`.
+    /// Where the final model is saved in the MeasurementSet: nowhere, its
+    /// prediction in `MODEL_DATA`, or as CASA's virtual model.
     #[serde(deserialize_with = "save_model")]
-    pub savemodel: bool,
+    pub savemodel: SaveModel,
     /// A CASA outlier file naming further image domains.
     #[serde(deserialize_with = "optional")]
     pub outlierfile: Option<PathBuf>,
@@ -283,6 +284,20 @@ pub enum BackendRequest {
     Cpu,
     /// The host's GPU (Metal on macOS); a problem it cannot run is refused.
     Gpu,
+}
+
+/// Where tclean's `savemodel` saves the final model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SaveModel {
+    /// Nowhere (`'none'`).
+    #[default]
+    None,
+    /// Its prediction, written to `MODEL_DATA` (`'modelcolumn'`).
+    ModelColumn,
+    /// CASA's virtual model, the gridded model and the record of the
+    /// machine that predicts from it, in the MeasurementSet's keywords or
+    /// SOURCE (`'virtual'`, [`casa_ms::virtual_model`]).
+    Virtual,
 }
 
 /// Visibility column imaged.
@@ -588,11 +603,14 @@ impl ImagingRequest {
                 "a solving run needs minor-cycle iterations",
             );
         }
-        if self.savemodel && !self.solves() && self.startmodel.is_none() {
+        if self.savemodel != SaveModel::None && !self.solves() && self.startmodel.is_none() {
             return invalid(
                 "savemodel, niter",
                 "MODEL_DATA needs a solved model or a start model",
             );
+        }
+        if self.savemodel == SaveModel::Virtual {
+            self.validate_virtual_model()?;
         }
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
         if (self.mask_image.is_some() && has_boxes)
@@ -627,6 +645,36 @@ impl ImagingRequest {
         }
         if let Gridder::Awproject(aw) = &self.gridder {
             aw.validate()?;
+        }
+        Ok(())
+    }
+
+    /// What `savemodel='virtual'` saves: the standard gridder's model
+    /// (CASA's `GridFT`, or `MultiTermFTNew` over it) of one Stokes I
+    /// image. CASA also saves W-projection and mosaic machines, other
+    /// polarizations, facets and outlier fields, which wait for #823.
+    fn validate_virtual_model(&self) -> Result<(), InvalidRequest> {
+        let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
+        if !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1) {
+            return invalid(
+                "savemodel, gridder",
+                "savemodel='virtual' saves the standard gridder's model of one facet; other \
+                 gridders and facets are not implemented by casa-rs yet (#823)",
+            );
+        }
+        if self.stokes != [PolarizationCoordinate::StokesI] {
+            return invalid(
+                "savemodel, stokes",
+                "savemodel='virtual' saves a Stokes I model; other polarizations are not \
+                 implemented by casa-rs yet (#823)",
+            );
+        }
+        if self.outlierfile.is_some() {
+            return invalid(
+                "savemodel, outlierfile",
+                "savemodel='virtual' saves the main image's model; outlier fields are not \
+                 implemented by casa-rs yet (#823)",
+            );
         }
         Ok(())
     }
@@ -982,10 +1030,11 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
     }
 }
 
-fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SaveModel, D::Error> {
     match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(false),
-        "modelcolumn" => Ok(true),
+        text if unset(text) => Ok(SaveModel::None),
+        "modelcolumn" => Ok(SaveModel::ModelColumn),
+        "virtual" => Ok(SaveModel::Virtual),
         other => Err(D::Error::custom(format!("savemodel {other:?}"))),
     }
 }
@@ -1224,9 +1273,10 @@ pub(crate) mod tests {
     }
 
     fn refusal(overrides: Value) -> &'static str {
-        request(overrides)
+        request(overrides.clone())
             .validate()
-            .expect_err("an invalid request")
+            .err()
+            .unwrap_or_else(|| panic!("{overrides} is a valid request"))
             .parameters
     }
 
@@ -1334,6 +1384,19 @@ pub(crate) mod tests {
                 "deconvolver, specmode",
             ),
             (json!({ "savemodel": "modelcolumn" }), "savemodel, niter"),
+            (json!({ "savemodel": "virtual" }), "savemodel, niter"),
+            (
+                json!({ "savemodel": "virtual", "niter": 1, "gridder": "wproject", "wprojplanes": 8 }),
+                "savemodel, gridder",
+            ),
+            (
+                json!({ "savemodel": "virtual", "niter": 1, "stokes": "IV" }),
+                "savemodel, stokes",
+            ),
+            (
+                json!({ "savemodel": "virtual", "niter": 1, "outlierfile": "outliers.txt" }),
+                "savemodel, outlierfile",
+            ),
             (
                 json!({ "save_continuum_residual": true }),
                 "save_continuum_residual, fitspw",

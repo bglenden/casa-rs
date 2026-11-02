@@ -25,6 +25,7 @@ pub mod start_model_law;
 #[doc(hidden)]
 pub mod store_law;
 mod tclean;
+mod virtual_model;
 
 pub use casa_imaging_deconvolution::{CleanStop, ResidualStatistics};
 pub use casa_imaging_model::{
@@ -39,7 +40,7 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
+    InvalidRequest, NativeAwCachePolicy, SaveModel, SpecMode, UseMask, Weighting,
 };
 pub use tclean::TcleanRefusal;
 
@@ -455,6 +456,7 @@ fn compile_run(
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
         write_corrected_data: prepared.write_corrected_data,
+        virtual_model: prepared.virtual_model,
         masks: prepared.masks,
         start_model: prepared.start_model,
         minor_cycle_image_response: prepared.minor_cycle_image_response,
