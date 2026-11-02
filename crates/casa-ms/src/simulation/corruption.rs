@@ -13,7 +13,7 @@
 //! hand, the parallel hands are kept, and it applies before the gains, as
 //! CASA's `corrupt` applies D before G. With two correlations, which have
 //! no cross hands, it stays this generator's approximation on the parallel
-//! hands.
+//! hands, applied last, after the gains and the noise.
 
 use num_complex::Complex32;
 
@@ -228,10 +228,10 @@ fn build_fbm_gain_terms(
     let series_by_antenna = (0..antenna_count)
         .map(|antenna| {
             (0..2)
-                .map(|correlation| {
+                .map(|receptor| {
                     let casa_seed = seed
                         .wrapping_add(antenna as u64)
-                        .wrapping_add(correlation as u64);
+                        .wrapping_add(receptor as u64);
                     (
                         fbm_like_series(casa_seed, slot_count, 1.1),
                         fbm_like_series(casa_seed.wrapping_mul(100), slot_count, 1.1),
@@ -241,9 +241,9 @@ fn build_fbm_gain_terms(
         })
         .collect::<Vec<_>>();
     for (sample, row) in by_sample.iter_mut().enumerate() {
-        for (antenna_terms, correlation_series) in row.iter_mut().zip(series_by_antenna.iter()) {
+        for (antenna_terms, receptor_series) in row.iter_mut().zip(series_by_antenna.iter()) {
             for (term, (amplitude_series, phase_series)) in
-                antenna_terms.iter_mut().zip(correlation_series.iter())
+                antenna_terms.iter_mut().zip(receptor_series.iter())
             {
                 let amplitude = 1.0 + amplitude_series[sample] * scale;
                 let phase = phase_series[sample] * scale * std::f32::consts::PI;

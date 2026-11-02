@@ -612,6 +612,8 @@ fn every_corruption_applies_to_all_four_correlations() {
     let mut corrupted = request(&corrupted_root);
     corrupted.polarization_setup =
         SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Circular, 4).unwrap();
+    // Three channels, so that no channel is mistaken for a correlation.
+    corrupted.spectral_windows[0].channel_count = 3;
     let mut uncorrupted = corrupted.clone();
     corrupted.corruption = Some(SyntheticCorruptionConfig {
         seed: 7,
@@ -649,11 +651,39 @@ fn every_corruption_applies_to_all_four_correlations() {
     generate_synthetic_observation_ms(&uncorrupted).unwrap();
     // Every correlation of every channel is corrupted, the cross hands
     // included.
-    let corrupted = first_row_data(&corrupted.output_ms);
-    let uncorrupted = first_row_data(&uncorrupted.output_ms);
-    assert_eq!(corrupted.len(), 16, "four channels of four correlations");
-    for (index, (corrupted, uncorrupted)) in corrupted.iter().zip(&uncorrupted).enumerate() {
+    let corrupted_data = first_row_data(&corrupted.output_ms);
+    let uncorrupted_data = first_row_data(&uncorrupted.output_ms);
+    assert_eq!(
+        corrupted_data.len(),
+        12,
+        "three channels of four correlations"
+    );
+    for (index, (corrupted, uncorrupted)) in
+        corrupted_data.iter().zip(&uncorrupted_data).enumerate()
+    {
         assert_ne!(corrupted, uncorrupted, "value {index}");
+    }
+
+    // Leakage alone moves the cross hands (RL, LR) and keeps the parallel
+    // hands (RR, LL) of every channel. A cell reads as [correlation,
+    // channel], so value `index` is of correlation `index / 3`.
+    let leaked_root = temp.path().join("leaked");
+    std::fs::create_dir_all(&leaked_root).unwrap();
+    let mut leaked = corrupted.clone();
+    leaked.output_ms = leaked_root.join("ppdisk.synthetic.ms");
+    if let Some(corruption) = leaked.corruption.as_mut() {
+        corruption.noise = None;
+        corruption.gain = None;
+        corruption.bandpass = None;
+    }
+    let report = generate_synthetic_observation_ms(&leaked).unwrap();
+    assert_eq!(report.applied_corruptions, ["leakage".to_string()]);
+    let leaked_data = first_row_data(&leaked.output_ms);
+    for (index, (leaked, uncorrupted)) in leaked_data.iter().zip(&uncorrupted_data).enumerate() {
+        match index / 3 {
+            0 | 3 => assert_eq!(leaked, uncorrupted, "parallel hand, value {index}"),
+            _ => assert_ne!(leaked, uncorrupted, "cross hand, value {index}"),
+        }
     }
 }
 

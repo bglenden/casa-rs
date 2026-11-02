@@ -834,8 +834,9 @@ pub struct SyntheticCorruptionConfig {
     #[serde(default)]
     pub bandpass: Option<SyntheticBandpassCorruption>,
     /// Polarization leakage, parameterized like CASA `setleakage`: CASA's
-    /// linearised leakage of the cross hands with four correlations, an
-    /// approximation on the parallel hands with two.
+    /// linearised leakage of the cross hands with four correlations, applied
+    /// before the gains; with two, an approximation on the parallel hands,
+    /// applied after the gains and the noise.
     #[serde(default)]
     pub leakage: Option<SyntheticPolarizationLeakageCorruption>,
     /// Global primary-beam pointing offset applied during model prediction, using CASA `setpointingerror` names where CASA has them.
