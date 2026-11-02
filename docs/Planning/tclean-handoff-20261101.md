@@ -5,6 +5,40 @@ Work issues: #980, #54, #944, #823 and #991. The owner wants `tclean`
 completed and verified first; other existing conversions follow. Do not expand
 simulation tasks except for a dependency needed to finish an existing conversion.
 
+## 2026-11-02 cloud continuation (supersedes the items it names below)
+
+Draft PR #1043 carries the branch. The cloud container builds and runs Linux
+gates. CASA comparisons, the macOS full gate and Metal gates run on the Mac
+mini through `scripts/mac-run.sh` and detached scripts. The NAS is mounted
+there, but not in the container. The receipt is
+[`tclean-cloud-continuation-20261102.json`](../../resources/casa-compat/evidence/tclean-cloud-continuation-20261102.json).
+Its verified archive is `casa-rs/tclean/20261102/tclean-cloud-continuation-20261102.tar`,
+SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
+
+- **main integrated (`3016f1b`).** main's imaging cutover deleted the MAIN-row
+  layer this branch extended. FIELD selection now resolves over catalogue
+  FIELD rows, so MSv2 and MSv4 share one resolver. The scan/observation
+  preview, the MFS rest-frequency first field, the moving-field MFS envelope
+  and ACA selection are re-expressed on the catalogue/partition path. A new
+  production-traversal oracle (`selection_casa_oracle`) matches CASA's
+  physical MAIN rows for the FIELD cases and refusals, and for scan 1, scan 3
+  and observation 0. **Known gap:** the first visibility field ignores
+  ARRAY_ID, which CASA sorts first and neither store's partitions carry.
+- **Full gate after the FIELD repair (item 2).** `just quick` at `3016f1b` on
+  the mini passes: 4,684 tests passed, 42 skipped, doctests, CLI hosts,
+  clippy and arch-check. The Metal gates pass on Apple M2.
+- **VLA cube PB (item 1).** Both T1.5 VLA cube rows give `.pb` NRMS 0.0 at
+  `9768bb1`, `3016f1b` and `2628d8b`. The independent review is still
+  required.
+- **`maxpsfsidelobe` (item 1).** This was a cube Briggs weighting defect, now
+  fixed in `2628d8b`. Instrumenting CASA's `IMAGING_WEIGHT` scratch table
+  against a native dump found 7 of 3,056,967 sample weights at exact `Float`
+  cell ties, where native's mirrored-`u` lookup read the neighbouring cell.
+  All six handoff cases now pass products, counts and both selected scalars.
+- **Pending owner decisions:** the provider 32→33 scan/observation activation
+  (its candidate patch no longer applies and its 39-pair engine evidence
+  predates the merge) and the summary sidecar.
+
 ## Resume here
 
 Use an ordinary checkout of [casa-rs](https://github.com/bglenden/casa-rs) on
