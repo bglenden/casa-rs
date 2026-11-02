@@ -33,7 +33,7 @@ use super::Msv4Codec;
 
 /// The data groups a conversion into an MSv4 of the observation
 /// `catalogue` describes selects from `requested`, or every group of it,
-/// `base` first, for `None`; refused as [`to_msv4`] refuses them: no group,
+/// `base` first, for `None`; refused as [`to_msv4()`] refuses them: no group,
 /// a group selected twice, or one a partition lacks. A caller can check a
 /// request with it before converting.
 ///
