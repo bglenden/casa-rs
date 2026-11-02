@@ -30,6 +30,11 @@ stored order, where XRADIO writes every window in ascending frequency. A
 dataset whose frequencies are XRADIO's reversed (a window whose channels
 descend in the MSv2) is compared with its frequency axis reversed, and the
 report lists it under "frequency_reversed".
+
+The frequency coordinate's reference_frequency, which MSv4 requires (the
+window's MSv2 REF_FREQUENCY, as XRADIO writes it), must equal XRADIO's in
+value, units and observer, and its channel_width in magnitude and units
+(its sign follows the channel order).
 """
 
 import argparse
@@ -86,6 +91,20 @@ def reversed_frequency(ds, expected):
     frequencies are `expected`'s reversed and not the same."""
     a, b = ds.frequency.values, expected.frequency.values
     return a.size > 1 and a.shape == b.shape and np.array_equal(a[::-1], b) and not np.array_equal(a, b)
+
+
+def frequency_attributes(ds):
+    """The frequency coordinate's reference frequency (value, units,
+    observer) and channel width (magnitude, units)."""
+    attrs = ds.frequency.attrs
+    reference, width = attrs.get("reference_frequency") or {}, attrs.get("channel_width") or {}
+    reference_attrs, width_attrs = reference.get("attrs") or {}, width.get("attrs") or {}
+    return {
+        "reference_frequency": (reference.get("data"), reference_attrs.get("units"),
+                                reference_attrs.get("observer")),
+        "channel_width": (abs(width["data"]) if width.get("data") is not None else None,
+                          width_attrs.get("units")),
+    }
 
 
 def names(node):
@@ -169,6 +188,11 @@ def compare(ours, theirs, chunks=False):
         if reversed_frequency(ds, expected):
             ds = ds.isel(frequency=slice(None, None, -1))
             reversed_windows.append(name)
+        attributes, expected_attributes = frequency_attributes(ds), frequency_attributes(expected)
+        for attribute, value in attributes.items():
+            if value != expected_attributes[attribute]:
+                mismatches.append({"dataset": name, "attribute": f"frequency.{attribute}",
+                                   "ours": str(value), "theirs": str(expected_attributes[attribute])})
         for coord in COORDINATES:
             if not np.array_equal(ds[coord].values, expected[coord].values):
                 mismatches.append({"dataset": name, "coordinate": coord})
