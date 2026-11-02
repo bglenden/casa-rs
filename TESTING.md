@@ -160,7 +160,9 @@ or performance acceptance. Current results and restart authority live in the
 ## Required discipline
 
 - Every approved work item defines falsifiable acceptance checks and ships verification evidence.
-- Bug fixes need regression tests.
+- Bug fixes need a regression test that fails before the fix; new features
+  need a demonstration test that runs them end to end against an
+  independent reference (`AGENTS.md`, "Review").
 - Cross-crate and boundary changes need integration or contract coverage.
 - On-disk metadata or byte changes need the applicable 2x2 interop matrix: RR, RC, CR, CC.
 - Observation-transaction coverage must prove exact per-MS read/write sets,
@@ -545,8 +547,9 @@ For each piece of work:
 
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
-- changes that `AGENTS.md` ("Review") names get one independent review,
-  which also looks for shallow or tautological tests
+- changes that are not isolated (`AGENTS.md`, "Review") get one independent
+  review, which also looks for shallow or tautological tests; the rest
+  carry demonstration tests instead
 - docs, interfaces, and boundary descriptions are reconciled with implementation
   before review
 - acceptance checks are not weakened; work that cannot be finished stays open

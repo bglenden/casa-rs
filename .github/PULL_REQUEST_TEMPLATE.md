@@ -8,8 +8,9 @@ Work issue: #___
 
 ## Review
 
-`not required` (docs, tests, tooling, or results checked unchanged), or the
-reviewer, the revision it reviewed, and how each finding was resolved.
+`not required` (an isolated fix or feature with its demonstration test, docs,
+tests, tooling, or results checked unchanged), or the reviewer, the revision
+it reviewed, and how each finding was resolved.
 
 ## Decisions
 

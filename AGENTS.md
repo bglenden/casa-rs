@@ -188,11 +188,20 @@ casa-rs's, and why), decided by its class:
 
 ## Review
 
-- A PR that changes science results, on-disk bytes, or a contract outside
-  the workspace (a persisted format, a task's parameters or provider
-  contract) gets one independent review before it is marked ready. Docs,
-  tests, tooling, and changes whose results are checked unchanged
-  (refactors, performance work) need only green CI.
+- Most changes need no review; a demonstration test shows they work. A bug
+  fix carries a test that fails before the fix and passes after. A new
+  feature carries a test that runs it end to end against an independent
+  reference: CASA or casacore where they have the behaviour, otherwise an
+  analytic result, never the code's own output. A change to on-disk bytes
+  adds the casacore interop cases `TESTING.md` requires. The PR's Evidence
+  section names the test and what it showed.
+- Docs, tests, tooling, and refactors or performance work whose results
+  are checked unchanged need only green CI.
+- One independent review is kept for changes that are not isolated, where a
+  mistake would spread past the code changed: shared machinery that other
+  tasks rely on (table storage managers, the MeasurementSet layer, the
+  imaging operator and runtime, the task front end), or a change spanning
+  several of them.
 - The reviewer is a fresh agent without this conversation's context, which
   the working agent starts itself and whose findings it reads directly: Astra
   (`gpt-6-astra`) at `xhigh` in Codex; `CLAUDE.md` names Claude Code's.
