@@ -216,17 +216,13 @@ fn mtmfs_restores_every_term_with_a_given_beam() {
 
 /// CASA's `restoration=False` neither restores nor PB-corrects: no `.image`
 /// and, with `pbcor`, no `.image.pbcor`; the PB `pbcor` asks for is made.
-/// The catalog holds `restoration` at its default until its contract
-/// activates it, so the resolved request is given it.
 #[test]
 fn without_restoration_no_image_is_written() {
     let observation = Observation::synthesise(&[("point", POINT)]);
     let mut clean = controls(json!([]));
     clean["pbcor"] = json!(true);
-    let (_, products) = observation.image_edited("without-restoration", clean, |request| {
-        assert!(request.restoration);
-        request.restoration = false;
-    });
+    clean["restoration"] = json!(false);
+    let (_, products) = observation.image("without-restoration", clean);
     observation.assert_product_contract(
         &products,
         &ProductContract {

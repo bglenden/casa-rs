@@ -8889,8 +8889,7 @@
             "provider": {"field": "restoration"},
             "python": {"name": "restoration"},
             "presentation": {"label": "Restoration", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "restoringbeam",
@@ -8974,8 +8973,7 @@
             "provider": {"field": "noise"},
             "python": {"name": "noise"},
             "presentation": {"label": "Briggs-abs Noise", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "weighting", "value": {"kind": "string", "value": "briggsabs"}}}
+          }
         },
         {
           "name": "npixels",
@@ -8989,8 +8987,7 @@
             "provider": {"field": "npixels"},
             "python": {"name": "npixels"},
             "presentation": {"label": "Weighting Pixels", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "weighting", "value": {"kind": "string", "value": "natural"}}}}
+          }
         },
         {
           "name": "uvtaper",

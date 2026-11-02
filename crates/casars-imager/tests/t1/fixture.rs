@@ -354,44 +354,6 @@ impl Observation {
         self.try_image_store(&self.measurement_set, name, controls)
     }
 
-    /// [`Observation::image`] with `resolved` set over the catalog's
-    /// resolution of `controls`: values the catalog still holds at their
-    /// defaults (`npixels` and `noise` until its contract activates them,
-    /// #980) reach the request's reader as they would once it does.
-    pub fn image_after_resolution(
-        &self,
-        name: &str,
-        controls: Value,
-        resolved: Value,
-    ) -> (ImagerRunReport, Products) {
-        let image_name = self.root.path().join(name);
-        let mut parameters = json!({
-            "vis": self.measurement_set,
-            "imagename": image_name,
-            "backend": "cpu",
-        });
-        let fields = parameters.as_object_mut().expect("parameters object");
-        for (key, value) in self.geometry.parameters() {
-            fields.insert(key.to_string(), value);
-        }
-        for (key, value) in controls.as_object().expect("controls object") {
-            fields.insert(key.clone(), value.clone());
-        }
-        imager_defaults(fields);
-        let Value::Object(parameters) = parameters else {
-            unreachable!("parameters are an object");
-        };
-        let (mut parameters, _) =
-            resolve_request(&ImagingParameters(parameters)).expect("catalog resolution");
-        for (key, value) in resolved.as_object().expect("resolved object") {
-            parameters.0.insert(key.clone(), value.clone());
-        }
-        let request = ImagingRequest::from_tclean(&parameters.0).expect("imaging request");
-        let result = run(parameters, &request).expect("production imaging route");
-        let products = Products::read(&image_name, &result.artifacts);
-        (result.run, products)
-    }
-
     /// [`Observation::try_image`] of `store`, another store of this
     /// observation (an MSv4 conversion).
     pub fn try_image_store(
@@ -399,29 +361,6 @@ impl Observation {
         store: &Path,
         name: &str,
         controls: Value,
-    ) -> Result<(ImagerRunReport, Products), String> {
-        self.try_image_edited(store, name, controls, |_| {})
-    }
-
-    /// [`Observation::image`] of the request `edit` changes once the
-    /// catalog has resolved it: a value the catalog still holds at its
-    /// default, which the request already reads (`restoration`).
-    pub fn image_edited(
-        &self,
-        name: &str,
-        controls: Value,
-        edit: impl FnOnce(&mut ImagingRequest),
-    ) -> (ImagerRunReport, Products) {
-        self.try_image_edited(&self.measurement_set, name, controls, edit)
-            .expect("production imaging route")
-    }
-
-    fn try_image_edited(
-        &self,
-        store: &Path,
-        name: &str,
-        controls: Value,
-        edit: impl FnOnce(&mut ImagingRequest),
     ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
@@ -442,8 +381,7 @@ impl Observation {
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
-        let (parameters, mut request) = resolve_request(&ImagingParameters(parameters))?;
-        edit(&mut request);
+        let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
         let result = run(parameters, &request)?;
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))

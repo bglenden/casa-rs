@@ -22,18 +22,13 @@ const POINT: Component = Component {
     spectral_index: 0.0,
 };
 
-/// The dirty products of `controls`, with `resolved` set after the
-/// catalog's resolution (`npixels` and `noise`, which it still holds at
-/// their defaults).
-fn dirty(observation: &Observation, name: &str, controls: Value, resolved: Value) -> Products {
+/// The dirty products of `controls` with `weighting` (`npixels`, `noise`).
+fn dirty(observation: &Observation, name: &str, controls: Value, weighting: Value) -> Products {
     let mut parameters = json!({ "niter": 0 });
-    parameters
-        .as_object_mut()
-        .expect("parameters")
-        .extend(controls.as_object().expect("controls").clone());
-    observation
-        .image_after_resolution(name, parameters, resolved)
-        .1
+    let fields = parameters.as_object_mut().expect("parameters");
+    fields.extend(controls.as_object().expect("controls").clone());
+    fields.extend(weighting.as_object().expect("weighting").clone());
+    observation.image(name, parameters).1
 }
 
 /// The PSF's main-lobe area in cells², `major · minor` of its fitted FWHM.

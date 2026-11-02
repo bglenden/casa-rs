@@ -133,8 +133,8 @@ fn the_catalog_refuses_what_casa_reads_in_every_mode() {
         // CASA parses reffreq in every mode ("Error in converting garbage
         // to a Quantity" in a cube).
         json!({ "specmode": "cube", "nchan": 4, "reffreq": "1.4GHz" }),
-        // CASA weighs with npixels for uniform weighting too.
-        json!({ "weighting": "uniform", "npixels": 4 }),
+        // CASA estimates noise from every residual when fastnoise=False.
+        json!({ "fastnoise": false }),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
         json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
     ] {
@@ -450,9 +450,8 @@ fn scan_and_observation_selectors_keep_their_exact_text_with_either_selectdata()
 }
 
 /// The request tclean's `overrides` make with `resolved` set over the
-/// catalog's resolution: the catalog holds `npixels` and `noise` at their
-/// defaults until its contract activates them (#980), and the reader reads
-/// whatever values it is given.
+/// catalog's resolution, so the reader's own refusals are tested for values
+/// whatever the catalog's domain admits.
 fn after_resolution(
     overrides: Value,
     resolved_values: Value,

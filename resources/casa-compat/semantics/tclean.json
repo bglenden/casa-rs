@@ -574,14 +574,15 @@
       ]
     },
     "restoration": {
-      "scope": "Read by the request: False writes no .image, .image.pbcor or spectral index (the PB pbcor asks for is still written), as task_tclean.py skips restoreImages and pbcorImages; the catalog still accepts only the default until its contract activates it (issue 980).",
+      "scope": "Read by the request: False writes no .image, .image.pbcor or spectral index (the PB pbcor asks for is still written), as task_tclean.py skips restoreImages and pbcorImages. Active from tclean contract 34.",
       "evidence": [
         "signature",
         "reader"
       ],
       "behaviors": [
         "restart"
-      ]
+      ],
+      "status": "Implemented"
     },
     "restoringbeam": {
       "status": "Implemented",
@@ -640,24 +641,26 @@
       ]
     },
     "noise": {
-      "scope": "Read for weighting=briggsabs only, as a flux density in Jy; robust 0 with noise 0 refused in every mode (CASA refuses it for cubes and weighs continuum visibilities infinite). Ignored by the other weightings. The catalog still refuses a non-default value when weighting=briggsabs until its contract activates it (issue 980).",
+      "scope": "Read for weighting=briggsabs only, as a flux density in Jy; robust 0 with noise 0 refused in every mode (CASA refuses it for cubes and weighs continuum visibilities infinite). Ignored by the other weightings. Active from tclean contract 34.",
       "evidence": [
         "signature",
         "reader"
       ],
       "behaviors": [
         "gridders"
-      ]
+      ],
+      "status": "Implemented"
     },
     "npixels": {
-      "scope": "Read as SynthesisImagerVi2::weight reads it: superuniform's box half-width (3 when zero or less), a continuum uniform/Briggs density grid of npixels x npixels cells over the image's uv extent, and a cube per-channel density's box (BriggsCubeWeightor superUniformBox); ignored by natural and radial. Negative values for uniform/Briggs and any non-zero value with briggsbwtaper are refused, as CASA fails or images nothing. The catalog still refuses a non-default value for non-natural weighting until its contract activates it (issue 980).",
+      "scope": "Read as SynthesisImagerVi2::weight reads it: superuniform's box half-width (3 when zero or less), a continuum uniform/Briggs density grid of npixels x npixels cells over the image's uv extent, and a cube per-channel density's box (BriggsCubeWeightor superUniformBox); ignored by natural and radial. Negative values for uniform/Briggs and any non-zero value with briggsbwtaper are refused, as CASA fails or images nothing. Active from tclean contract 34.",
       "evidence": [
         "signature",
         "reader"
       ],
       "behaviors": [
         "gridders"
-      ]
+      ],
+      "status": "Implemented"
     },
     "uvtaper": {
       "status": "Partial",
