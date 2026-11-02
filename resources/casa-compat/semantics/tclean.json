@@ -805,7 +805,7 @@
     },
     "usemask": {
       "status": "Partial",
-      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold on one plane: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube or more than one Stokes plane, which CASA masks plane by plane, is refused when cleaning (issue 980).",
+      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask.",
       "evidence": [
         "signature",
         "reader"
@@ -816,7 +816,7 @@
     },
     "mask": {
       "status": "Partial",
-      "scope": "One mask image or signed integer CRTF pixel boxes, inline or in a region file. Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support.38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. Fractional/world/general CRTF, multiple images, new masks on occupied default-restart outputs and broader mask/mode combinations remain unfinished.",
+      "scope": "One mask image or signed integer CRTF pixel boxes, inline or in a region file. Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support.38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. A mask image is expanded to the image's planes as SDMaskHandler::expandMask does (a continuum Stokes I mask to every plane, a continuum mask of the image's Stokes planes to every channel, a cube Stokes I mask to every Stokes plane) and refused where CASA refuses; regridding a mask along frequency or Stokes (copyMask) is refused (issue 980). Fractional/world/general CRTF, multiple images, new masks on occupied default-restart outputs and broader mask/mode combinations remain unfinished.",
       "evidence": [
         "signature",
         "reader",

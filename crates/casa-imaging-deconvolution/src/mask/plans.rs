@@ -8,7 +8,9 @@
 
 use casa_imaging_model::{DirectionCoordinateSpec, ModelSample};
 
-use super::auto_multithresh::{AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMultithreshControls};
+use super::auto_multithresh::{
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMultithreshControls, AutoMultithreshEvidence,
+};
 use super::auto_planes::{
     AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, channel_blocks,
 };
@@ -362,7 +364,8 @@ impl ImageDomainReconstructionMaskPlans {
     /// Heap bytes the masks materialized from these plans hold against
     /// domains of the shapes `domain_shape` gives by ordinal, with
     /// `channels` by `polarizations` planes: each domain's support, one
-    /// per plane its plan holds ([`ReconstructionMaskPlan::mask_planes`]).
+    /// per plane its plan holds ([`ReconstructionMaskPlan::mask_planes`]),
+    /// and an automatic mask's summary row per plane.
     #[must_use]
     pub fn mask_bytes_for(
         &self,
@@ -375,9 +378,14 @@ impl ImageDomainReconstructionMaskPlans {
             .map(|(ordinal, plan)| {
                 let cells =
                     domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
-                cells
-                    * plan.mask_planes(channels, polarizations).count() as u64
-                    * size_of::<bool>() as u64
+                let planes = plan.mask_planes(channels, polarizations).count() as u64;
+                let rows = match plan {
+                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                        planes * size_of::<AutoMultithreshEvidence>() as u64
+                    }
+                    _ => 0,
+                };
+                cells * planes * size_of::<bool>() as u64 + rows
             })
             .sum()
     }
