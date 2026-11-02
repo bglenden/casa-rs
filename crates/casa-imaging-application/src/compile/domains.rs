@@ -10,8 +10,8 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
 };
 use casa_imaging_deconvolution::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes, NoiseEstimate,
-    ReconstructionMaskPlan,
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
+    NoiseEstimate, ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,

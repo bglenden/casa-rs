@@ -156,9 +156,7 @@ impl<'a> ContinuumProductInputs<'a> {
         };
         mask.shape() == domain.shape().pixels()
             && mask.coordinate() == domain.direction()
-            && mask
-                .planes()
-                .covers(channels, normal.polarization_count())
+            && mask.planes().covers(channels, normal.polarization_count())
     }
 
     /// Bind the exact reconstruction mask used by the final bounded solve.

@@ -294,7 +294,10 @@ pub(crate) fn run(
         // drops the plane, and the charge goes with the minor cycle.
         let (prepared, kept) = run_phase(name, &cancel, diagnostics, summary, || {
             if ordinal == 1 {
-                held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific, &mask_plans))?;
+                held = run.admit(
+                    "reconstruction masks",
+                    2 * mask_bytes(&outcome.scientific, &mask_plans),
+                )?;
             }
             let mut preparing = run.admit(
                 "minor-cycle preparation",

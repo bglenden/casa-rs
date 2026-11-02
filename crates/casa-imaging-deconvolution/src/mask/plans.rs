@@ -293,19 +293,19 @@ impl ImageDomainReconstructionMaskPlans {
         if self.plans.len() != current.len() || self.plans.len() != evidence.len() {
             return Err(MaskError::DomainCardinalityMismatch);
         }
-        let plans = self
-            .plans
-            .iter()
-            .zip(current.iter())
-            .zip(evidence)
-            .map(|((plan, mask), evidence)| {
-                plan.next_cycle(
-                    mask,
-                    evidence.as_ref(),
-                    completed_major_cycles,
-                    cycle_threshold_reached,
-                )
-            });
+        let plans =
+            self.plans
+                .iter()
+                .zip(current.iter())
+                .zip(evidence)
+                .map(|((plan, mask), evidence)| {
+                    plan.next_cycle(
+                        mask,
+                        evidence.as_ref(),
+                        completed_major_cycles,
+                        cycle_threshold_reached,
+                    )
+                });
         let mut next = Self::new(plans)?;
         next.completed_major_cycles = completed_major_cycles;
         Ok(next)

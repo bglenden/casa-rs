@@ -178,9 +178,7 @@ where
                 .map(|cell| {
                     let index = axes.index([cell / ny, cell % ny], channel, stokes);
                     let value: f64 = values[&index].into();
-                    value.is_finite()
-                        && value != 0.0
-                        && mask.is_none_or(|mask| mask[&index])
+                    value.is_finite() && value != 0.0 && mask.is_none_or(|mask| mask[&index])
                 })
                 .collect();
             planes.push(plane);
@@ -211,7 +209,8 @@ fn expansion(
             target.polarizations
         ))
     };
-    let expands = (channels == 1 && target.channels > 1) || (stokes == 1 && target.polarizations > 1);
+    let expands =
+        (channels == 1 && target.channels > 1) || (stokes == 1 && target.polarizations > 1);
     if expands {
         // `expandMask`.
         return if channels == 1 {
@@ -276,10 +275,12 @@ fn same_channels(
         .to_string());
     }
     if !near {
-        return Err("Cannot extend the input mask. Spectral coordiante of Input mask does not \
+        return Err(
+            "Cannot extend the input mask. Spectral coordiante of Input mask does not \
                     match with that of the output mask. Use a single channel mask or a mask \
                     that matches the spectral coordiante of the output."
-            .to_string());
+                .to_string(),
+        );
     }
     Ok(())
 }

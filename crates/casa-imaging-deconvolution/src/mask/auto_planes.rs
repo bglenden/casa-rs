@@ -66,8 +66,7 @@ pub struct AutoMaskPlane {
 }
 
 /// A plane's residual and valid pixels; `None` for a plane with no data.
-pub type AutoMaskRead<'a, E> =
-    dyn Fn(MaskPlaneKey) -> Result<Option<AutoMaskPlane>, E> + Sync + 'a;
+pub type AutoMaskRead<'a, E> = dyn Fn(MaskPlaneKey) -> Result<Option<AutoMaskPlane>, E> + Sync + 'a;
 
 /// A plane's PSF measurements; `None` for a plane with no data.
 pub type AutoMaskPsf<'a> = dyn Fn(MaskPlaneKey) -> Option<PsfSummary> + Sync + 'a;
@@ -236,13 +235,8 @@ where
                     .map(|polarization| inherited(polarization).iter().filter(|set| **set).count())
                     .sum();
                 let now = masked.support.iter().filter(|set| **set).count();
-                let stopped = skip_channel(
-                    before,
-                    now,
-                    masked.rows[0].threshold,
-                    cycle,
-                    state.controls,
-                );
+                let stopped =
+                    skip_channel(before, now, masked.rows[0].threshold, cycle, state.controls);
                 for row in &mut masked.rows {
                     row.channel_stopped = stopped;
                 }
@@ -407,9 +401,8 @@ fn log_summary(first_channel: usize, channels: &[ChannelMask], polarizations: us
     );
     for (offset, channel) in channels.iter().enumerate() {
         let rows = &channel.rows;
-        let column = |value: fn(&AutoMultithreshEvidence) -> String| {
-            list(rows.iter().map(value).collect())
-        };
+        let column =
+            |value: fn(&AutoMultithreshEvidence) -> String| list(rows.iter().map(value).collect());
         // A stopped channel was skipped before this boundary: CASA prints
         // its median, RMS and threshold as `--`.
         let masked = rows[0].masked;

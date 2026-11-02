@@ -343,7 +343,10 @@ pub fn prepare_minor_cycle(
             setup.automask,
         );
         if robust && setup.nsigma > 0.0 {
-            let local = (key.channel - normal.slab().core_range().start, key.polarization);
+            let local = (
+                key.channel - normal.slab().core_range().start,
+                key.polarization,
+            );
             let exclusion = mask_plans.noise_exclusion(key.domain, local, &masks);
             statistics.noise = robust_plane_noise(&plane.residual[0], &plane.valid, exclusion);
         }
@@ -602,13 +605,9 @@ fn robust_plane_noise(
         NoiseMaskExclusion::Unmasked => {
             plane_noise(residual, valid, NoiseEstimate::Robust, None, false)
         }
-        NoiseMaskExclusion::Mask { support, full } => plane_noise(
-            residual,
-            valid,
-            NoiseEstimate::Robust,
-            Some(support),
-            full,
-        ),
+        NoiseMaskExclusion::Mask { support, full } => {
+            plane_noise(residual, valid, NoiseEstimate::Robust, Some(support), full)
+        }
     }
 }
 

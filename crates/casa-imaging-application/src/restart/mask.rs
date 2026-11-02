@@ -103,11 +103,15 @@ impl MaskInput {
             }
         }
         let cells = nx * ny;
-        if support.chunks(cells).all(|plane| plane == &support[..cells]) {
+        if support
+            .chunks(cells)
+            .all(|plane| plane == &support[..cells])
+        {
             support.truncate(cells);
             return Ok((MaskPlanes::SHARED, support.into_boxed_slice()));
         }
-        let planes = MaskPlanes::new(channels, stokes).map_err(|error| refuse(error.to_string()))?;
+        let planes =
+            MaskPlanes::new(channels, stokes).map_err(|error| refuse(error.to_string()))?;
         Ok((planes, support.into_boxed_slice()))
     }
 }
