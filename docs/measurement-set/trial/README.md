@@ -364,6 +364,14 @@ the MSv2's order.
   per-channel values between the stores maps channel `c` through
   `ChannelOrder::channel`. `check_convert.py compare` compares such a dataset
   with its channels reversed and lists it.
+- XRADIO's schema requires the frequency coordinate's `reference_frequency`
+  and XRADIO writes the window's MSv2 `REF_FREQUENCY` there; its schema
+  check validates only that the attribute is present and well formed.
+  casa-rs's MSv4 writer wrote the middle channel's frequency, which the
+  trial fixture's `REF_FREQUENCY` happens to equal; it now writes the
+  window's stated reference frequency in its frame (the middle channel only
+  where the source states none), and `check_convert.py compare` checks the
+  value, units and observer, and the channel width's magnitude and units.
 - XRADIO relabels MSv2's `UVW` ITRF as the phase centre's frame (`fk5`),
   following CASA `fixvis`'s note that the label is usually wrong; names
   antennas `NAME_STATION` and fields `NAME_FIELDID`; and declares the

@@ -223,6 +223,58 @@ fn two_windows(root: &Path) -> PathBuf {
     path
 }
 
+/// MSv4 requires each window's reference frequency (XRADIO's schema): the
+/// converter writes the one the MSv2 states (`REF_FREQUENCY`, in its frame),
+/// as XRADIO's converter does, not a channel's. Each window's is set to a
+/// frequency no channel has, and reads back from the MSv4 bit for bit.
+#[test]
+fn the_reference_frequency_is_the_windows() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_windows(root.path());
+    let stated = |row: usize| 600.0e9 + 1.0e6 * row as f64 + 0.25;
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let windows = ms
+        .subtable_mut(casa_ms::SubtableId::SpectralWindow)
+        .expect("SPECTRAL_WINDOW");
+    for row in 0..windows.row_count() {
+        windows
+            .cell_accessor_mut(row, "REF_FREQUENCY")
+            .and_then(|mut cell| {
+                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(
+                    stated(row),
+                )))
+            })
+            .expect("REF_FREQUENCY");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("two_windows.ps.zarr");
+    let accept = [LossKind::Sigma, LossKind::Tables];
+    to_msv4(&v2, &out, &options(&accept)).expect("convert");
+    let source = open(&v2, &OpenOptions::default()).expect("v2");
+    let converted = open(&out, &OpenOptions::default()).expect("v4");
+    let (ours, theirs) = (source.catalogue(), converted.catalogue());
+    assert_eq!(theirs.partitions.len(), 2);
+    for (a, b) in ours.partitions.iter().zip(&theirs.partitions) {
+        let row = a.window.0 as usize;
+        let reference = theirs
+            .window(b.window)
+            .reference_frequency
+            .as_ref()
+            .expect("reference_frequency");
+        assert_eq!(
+            reference.hz().to_bits(),
+            stated(row).to_bits(),
+            "window {row}"
+        );
+        assert_eq!(reference.refer(), a.frequency_frame, "window {row}");
+        assert!(
+            !b.frequencies_hz.contains(&reference.hz()),
+            "not a channel's"
+        );
+    }
+}
+
 /// Two partitions of different shapes and two data groups convert into
 /// two datasets, each holding `VISIBILITY` and `VISIBILITY_MODEL` beside
 /// one `FLAG`, `WEIGHT` and `UVW`: every group of every partition reads

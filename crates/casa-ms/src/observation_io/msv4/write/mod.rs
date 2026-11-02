@@ -608,7 +608,25 @@ impl Msv4Writer {
             )?;
         }
         let observer = super::metadata::frequency_observer(entry.frequency_frame);
-        let reference = entry.frequencies_hz[entry.frequencies_hz.len() / 2];
+        // MSv4 requires a reference frequency (XRADIO's schema): the
+        // window's own as its source states it (MSv2 `REF_FREQUENCY`, an
+        // MSv4's `reference_frequency`), in its frame, as XRADIO's
+        // converter writes it; the middle channel only where the source
+        // states none.
+        let (reference, reference_observer) = match catalogue
+            .windows
+            .get(entry.window.0 as usize)
+            .and_then(|window| window.reference_frequency.as_ref())
+        {
+            Some(frequency) => (
+                frequency.hz(),
+                super::metadata::frequency_observer(frequency.refer()),
+            ),
+            None => (
+                entry.frequencies_hz[entry.frequencies_hz.len() / 2],
+                observer,
+            ),
+        };
         coordinate(
             store,
             &format!("{root}/frequency"),
@@ -622,7 +640,7 @@ impl Msv4Writer {
                 "observer": observer,
                 "spectral_window_name": entry.spectral_window,
                 "spectral_window_intents": ["UNSPECIFIED"],
-                "reference_frequency": {"data": reference, "dims": [], "attrs": {"units": "Hz", "observer": observer, "type": "spectral_coord"}},
+                "reference_frequency": {"data": reference, "dims": [], "attrs": {"units": "Hz", "observer": reference_observer, "type": "spectral_coord"}},
                 "channel_width": quantity(entry.channel_widths_hz[0], "Hz"),
             }),
         )?;
