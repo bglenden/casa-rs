@@ -81,7 +81,7 @@ pub use native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTa
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
-pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
+pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting, SumwtSource};
 pub use resample::{
     NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
     SpectralResampler, WeightSlots,

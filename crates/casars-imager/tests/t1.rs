@@ -55,6 +55,8 @@ mod standard_mfs;
 mod standard_mfs_masks;
 #[path = "t1/start_model.rs"]
 mod start_model;
+#[path = "t1/stokes.rs"]
+mod stokes;
 #[path = "t1/uv_taper.rs"]
 mod uv_taper;
 #[path = "t1/w_projection.rs"]

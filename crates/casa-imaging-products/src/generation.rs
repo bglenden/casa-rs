@@ -5,20 +5,21 @@
 
 use std::ops::Range;
 
-use casa_imaging_deconvolution::{NormalBasis, SpectralChannelValidity};
+use casa_imaging_deconvolution::NormalBasis;
 use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
 use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
 use crate::error::ProductsError;
+use crate::normalization::psf_peak;
 use crate::plan::{
     AnalyticPrimaryBeamModel, PlannedContinuumGeneration, PlannedMember,
     PublishedContinuumGeneration,
 };
 use crate::plane::{
     PlaneMemberRequest, apparent_model, model_real_plane, produce_plane_member,
-    product_plane_validity, psf_real_plane, reconstruction_support_plane,
+    product_plane_validity, psf_normalizes, psf_real_plane, reconstruction_support_plane,
     scatter_image_polarization_plane, scatter_polarization_plane_state, zero_invalid_plane_values,
 };
 use crate::source::ContinuumProductInputs;
@@ -122,11 +123,14 @@ fn fit_beams(
                 (ordinal / polarizations) % channels,
                 ordinal % polarizations,
             )?;
-            if plane.validity() != SpectralChannelValidity::Valid {
+            // A plane with a PSF (`normPSF`'s rule) has a beam, its `sumwt`
+            // aside: CASA fits every Stokes plane's.
+            let psf = psf_real_plane(&plane)?;
+            if !psf_normalizes(psf_peak(psf.iter().copied())?) {
                 return Ok(None);
             }
             fit_restoring_beam(
-                &psf_real_plane(&plane)?,
+                &psf,
                 plane.shape(),
                 inputs.cell_size_rad_for_domain(domain.role()),
                 planned.psf_cutoff(),
