@@ -19,6 +19,7 @@ nav:
       - Calibrate Tasks: python/tasks-calibrate.md
       - Compatibility: python/versioning.md
       - API Reference: python/api.md
+  - Calibration Guide: casars-calibrate-user-guide.md
 
 plugins:
   - search

@@ -30,7 +30,6 @@ casa-imaging-application	casa-imaging-model	normal	crates/casa-imaging-model
 casa-imaging-application	casa-imaging-operator	normal	crates/casa-imaging-operator
 casa-imaging-application	casa-imaging-products	normal	crates/casa-imaging-products
 casa-imaging-application	casa-imaging-runtime	normal	crates/casa-imaging-runtime
-casa-imaging-application	casa-ms	dev	crates/casa-ms
 casa-imaging-application	casa-ms	normal	crates/casa-ms
 casa-imaging-application	casa-observation	normal	crates/casa-observation
 casa-imaging-application	casa-provider-contracts	dev	crates/casa-provider-contracts
@@ -83,7 +82,6 @@ casa-measures-data	casa-tables	normal	crates/casa-tables
 casa-measures-data	casa-types	normal	crates/casa-types
 casa-measures-tools	casa-measures-data	normal	crates/casa-measures-data
 casa-ms	casa-coordinates	normal	crates/casa-coordinates
-casa-ms	casa-imaging-model	normal	crates/casa-imaging-model
 casa-ms	casa-logging	normal	crates/casa-logging
 casa-ms	casa-measures-data	normal	crates/casa-measures-data
 casa-ms	casa-numerics	normal	crates/casa-numerics
@@ -147,12 +145,20 @@ casars-imager	casa-ms	normal	crates/casa-ms
 casars-imager	casa-numerics	dev	crates/casa-numerics
 casars-imager	casa-provider-contracts	normal	crates/casa-provider-contracts
 casars-imager	casa-simulation-synthesis	dev	crates/casa-simulation-synthesis
+casars-imager	casa-tables	dev	crates/casa-tables
 casars-imager	casa-task-runtime	normal	crates/casa-task-runtime
 casars-imager	casa-test-support	dev	crates/casa-test-support
 casars-imager	casa-types	dev	crates/casa-types
 casars-imexplore	casa-coordinates	dev	crates/casa-coordinates
 casars-imexplore	casa-images	normal	crates/casa-images
+casars-imexplore	casa-provider-contracts	dev	crates/casa-provider-contracts
 casars-imexplore	casa-task-runtime	normal	crates/casa-task-runtime
+casars-imexplore	casa-types	dev	crates/casa-types
+casars-msconvert	casa-ms	normal	crates/casa-ms
+casars-msconvert	casa-observation	normal	crates/casa-observation
+casars-msconvert	casa-provider-contracts	normal	crates/casa-provider-contracts
+casars-msconvert	casa-task-runtime	normal	crates/casa-task-runtime
+casars-msconvert	casa-types	normal	crates/casa-types
 casars-python	casa-calibration	dev	crates/casa-calibration
 casars-python	casa-components	normal	crates/casa-components
 casars-python	casa-coordinates	normal	crates/casa-coordinates
@@ -165,6 +171,7 @@ casars-python	casa-task-runtime	normal	crates/casa-task-runtime
 casars-python	casa-types	normal	crates/casa-types
 casars-python	casa-vla	dev	crates/casa-vla
 casars-python	casars-imager	normal	crates/casars-imager
+casars-python	casars-msconvert	dev	crates/casars-msconvert
 casars-python	casars-simulation	normal	crates/casars-simulation
 casars-simulation	casa-measures-data	normal	crates/casa-measures-data
 casars-simulation	casa-ms	normal	crates/casa-ms

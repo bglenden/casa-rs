@@ -31,5 +31,6 @@ casa-values	crates/casa-values/Cargo.toml
 casa-vla	crates/casa-vla/Cargo.toml
 casars-imager	crates/casars-imager/Cargo.toml
 casars-imexplore	crates/casars-imexplore/Cargo.toml
+casars-msconvert	crates/casars-msconvert/Cargo.toml
 casars-python	crates/casars-python/Cargo.toml
 casars-simulation	crates/casars-simulation/Cargo.toml

@@ -12,8 +12,8 @@
   `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`), `coordsys`
   (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`. Each has every
   method of CASA 6.7.6.14's binding; a method casa-rs does not implement yet
-  raises `NotImplementedError` naming the issue that records it (#1027 to
-  #1030 for the last five). A tool's constructor takes only casa-rs's controls,
+  raises `NotImplementedError` naming the issue that records it. A tool's
+  constructor takes only casa-rs's controls,
   keyword-only: `simulator(*, memory_budget=None, backend='auto',
   workers=None)` caps the memory `close` holds (bytes), names the device to
   predict on (`'auto'`, `'cpu'` or `'metal'`) and the threads to keep busy;
@@ -34,10 +34,9 @@ CASA-named function that takes CASA's parameters. These functions share the
 Rust-owned parameter and result contracts. A call resolves its parameters in
 Rust, starts the task's executable as a child process with `--json-run -`,
 passes the task's log lines to `sys.stderr` as they arrive. A task whose
-surface names its CASA task (the image tasks, the MeasurementSet and
-flagging tasks, the calibration tasks and `simobserve` so far) has CASA's
-exact signature and returns CASA's value; the others return a
-`TaskCompletion` until their families are converted (#931). A task that
+surface names its CASA task (every task but the casa-rs tasks `calibrate`,
+`msexplore` and `msconvert`, and `plotms`) has CASA's exact signature and
+returns CASA's value; the others return a `TaskCompletion`. A task that
 refuses its parameters raises `casars.tasks.TaskParameterError`, a
 `ValueError`, and one that does not succeed
 `casars.tasks.TaskExecutionError`. The executable is the task's
@@ -77,11 +76,11 @@ the other common source types. The resulting `TaskParameters` supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
-`casars.tasks` is generated from the 26 task definitions and supplies one
-CASA-named wrapper and typing stub per task. A task that mimics CASA's has
-CASA 6.7.6.14's signature, defaults and return value (#931); the casa-rs
-tasks (`calibrate`, `msexplore`) and `plotms` take keywords with an unset
-sentinel instead of copying catalog defaults into Python.
+`casars.tasks` is generated from the catalog's task definitions and supplies
+one CASA-named wrapper and typing stub per task. A task that mimics CASA's
+has CASA 6.7.6.14's signature, defaults and return value; the casa-rs tasks
+(`calibrate`, `msexplore`, `msconvert`) and `plotms` take keywords with an
+unset sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
 It carries task parameters, task results and MeasurementSet plot documents as

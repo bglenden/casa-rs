@@ -1,68 +1,59 @@
 # Documentation Index
 
 Truth class: current descriptive
-Last reality check: 2026-10-28
+Last reality check: 2026-11-02
 Verification: just docs-check
-
-This directory holds stable project documentation.
-
-## User Surfaces
 
 casa-rs is used from the Python package `casars` and from the task
 executables of the application catalog (such as `calibrate gaincal ...`),
-which Python also starts for its task calls; see
-[ADR-0017](adr/0017-python-first-surface.md). All computation is in Rust,
-and the Python package is only its interface; see
-[ADR-0018](adr/0018-rust-computes-python-is-the-interface.md).
+which Python also starts for its task calls
+([ADR-0017](adr/0017-python-first-surface.md)). All computation is in Rust,
+and the Python package is its interface
+([ADR-0018](adr/0018-rust-computes-python-is-the-interface.md)).
 
-- [`python/index.md`](python/index.md)
-  - the Python package: data access, tasks, parameters, and plotting
-- [`casars-calibrate-user-guide.md`](casars-calibrate-user-guide.md)
-  - user guide for the calibration tasks
-- [`task-parameters.md`](task-parameters.md)
-  - accepted sparse TOML profile, Last-state, and CLI/Python parameter
-    contract
-- [`reference/task-parameters.md`](reference/task-parameters.md)
-  - generated catalog of every task parameter surface
-- [`reference/casa-compatibility.md`](reference/casa-compatibility.md)
-  - generated comparison of each casa-rs task with its CASA 6.7.6.14 task
-- [`provider-contracts.md`](provider-contracts.md)
-  - canonical provider schema model for task and object surfaces
+## User documentation
 
-## Published docs
+- [Install](install.md): the suite installer, release channels, and
+  building from source
+- [Python](python/index.md): data access, tasks, CASA tools, parameter
+  profiles and plotting, with the [data API](python/data.md), the
+  [calibrate tasks](python/tasks-calibrate.md),
+  [compatibility](python/versioning.md) and the
+  [API reference](python/api.md)
+- [Calibration tasks user guide](casars-calibrate-user-guide.md)
+- [Task parameter profiles](task-parameters.md): sparse TOML profiles, Last
+  state, and the task command line
+- [Task parameter reference](reference/task-parameters.md) and
+  [CASA compatibility](reference/casa-compatibility.md), both generated
+- [Rust API](rust-api.md)
 
-- MkDocs site root: `https://bglenden.github.io/casa-rs/`
-- Rust API reference: `https://bglenden.github.io/casa-rs/rustdoc/`
-- install guide: [`install.md`](install.md)
-- CASA VLA parity runbook:
-  [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
+The published site is `https://bglenden.github.io/casa-rs/`, with the Rust
+API reference at `https://bglenden.github.io/casa-rs/rustdoc/`; both are
+built from `main`.
 
-## Agent And Developer Reference
+## Contracts and developer reference
 
-- [`agent-reference.md`](agent-reference.md)
-  - situational workstation, CASA/C++, shared-data, release, and install
-    guidance kept out of the always-loaded root `AGENTS.md`
-- [`CASA (C++) bugs.md`](CASA%20(C%2B%2B)%20bugs.md)
-  - canonical CASA parity defect notes, including the
-    [Hogbom `niter` off-by-one](CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
+- [Provider contracts](provider-contracts.md): the schema bundles,
+  application catalog and task front end that the executables and Python
+  share
+- [CASA (C++) bugs](CASA%20(C%2B%2B)%20bugs.md): every recorded divergence
+  from CASA or casacore, and the CASA behaviours casa-rs follows for parity
+- [Agent reference](agent-reference.md): workstation, CASA/C++ oracle, data
+  and storage locations, and release recipes
+- `adr/`: accepted architecture decisions
+- [MeasurementSet boundary](measurement-set/contracts.md): its rules and
+  the remaining migration
+- [Simulation plan](simulation/simulation-plan-20261020.md): requirements,
+  decisions and the deferred phases
+- [Tutorial parity](tutorial-parity/README.md): the First Look runner
 
-## Program Reference
+At the repository root,
+[ARCHITECTURE.md](https://github.com/bglenden/casa-rs/blob/main/ARCHITECTURE.md)
+describes the crates and their boundaries,
+[TESTING.md](https://github.com/bglenden/casa-rs/blob/main/TESTING.md) the
+gates and evidence rules, and
+[GLOSSARY.md](https://github.com/bglenden/casa-rs/blob/main/GLOSSARY.md) the
+domain vocabulary.
 
-`docs/tutorial-parity/` keeps the tutorial-parity reference material that is
-still in use. Retired phase plans and finished-wave evidence were removed on
-2026-10-05; retrieve them from git history at commit `08542713b7`.
-
-Canonical active planning and work status live in GitHub issues and pull
-requests. The active simulation programme (#841) follows
-[`simulation/simulation-plan-20261020.md`](simulation/simulation-plan-20261020.md).
-
-The proposed [MeasurementSet architecture and implementation plan](measurement-set/README.md)
-covers shared native observation contracts for MSv2 and XRADIO MSv4, with MSv3
-deferred pending a concrete need. It is a design under review, not a statement
-of implemented format support.
-
-## Documentation conventions
-
-This directory should contain stable reference material, not temporary PR-only
-review notes. Architecture and user-facing guides should be written so they can
-remain useful after the branch that introduced them is merged.
+This directory holds stable reference material. Open work, status and history
+live in GitHub issues and pull requests.
