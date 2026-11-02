@@ -402,6 +402,12 @@ pub enum MissingPointingPolicy {
     Reject,
     /// Explicitly substitute the phase-tracking centre.
     UsePhaseTrackingCentre,
+    /// Point every row at its field's direction when the store holds no
+    /// pointing sample at all (no POINTING table, or an empty one), as
+    /// CASA's mosaic does (`SimplePBConvFunc::pointingDirAnt1` takes the
+    /// phase centre unless the table is readable and has rows); reject an
+    /// antenna without samples in a store that has some.
+    FieldCentreWithoutPointingTable,
 }
 
 /// MeasurementSet POINTING column selected as the direction source.
