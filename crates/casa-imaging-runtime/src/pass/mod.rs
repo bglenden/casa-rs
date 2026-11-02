@@ -548,8 +548,9 @@ fn chunk_ranges(
 /// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
 /// its row chunks, which it frees: each chunk's row range and sample buffer
 /// and the team's result for it on each call
-/// ([`WorkerTeam::for_each_mut`]). The stream's native blocks are the
-/// source's ([`source_block_bytes`]).
+/// ([`WorkerTeam::for_each_mut`]); and, on a team of several workers, one
+/// block of its scheduler's job queue ([`WorkerTeam::SCHEDULER_BLOCK_BYTES`]).
+/// The stream's native blocks are the source's ([`source_block_bytes`]).
 #[must_use]
 pub fn density_pass_bytes(
     resampler: &SpectralResampler,
@@ -562,7 +563,14 @@ pub fn density_pass_bytes(
     let placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
     let containers =
         size_of::<(std::ops::Range<usize>, SampleBuffer)>() + size_of::<Result<(), PassError>>();
-    shape.bytes() + chunks as u64 * (SampleBuffer::bytes(1, placements) + containers as u64)
+    let scheduler = if workers > 1 {
+        WorkerTeam::SCHEDULER_BLOCK_BYTES
+    } else {
+        0
+    };
+    shape.bytes()
+        + chunks as u64 * (SampleBuffer::bytes(1, placements) + containers as u64)
+        + scheduler
 }
 
 /// Accumulate the weight-density grid of `shape` over one traversal of the
