@@ -31,9 +31,10 @@ use crate::{
 
 /// The observation compile opened, and what its geometry evaluates with.
 pub(crate) struct OpenedObservation {
-    /// The observation, in its store, with the charge of what its opening
-    /// holds while it is open ([`crate::compile::open_observation`]).
-    pub(crate) store: Admitted<OpenedStore>,
+    /// The observation's stores, one per MeasurementSet in the snapshot's
+    /// order, each with the charge of what its opening holds while it is
+    /// open (`compile::opening::open_observation`).
+    pub(crate) stores: Vec<Admitted<OpenedStore>>,
     /// The run's one Measures provider: compile's geometry and the batches'
     /// evaluate with it.
     pub(crate) measures: Arc<dyn MeasuresProvider>,
@@ -137,62 +138,92 @@ pub(crate) struct NativeRun {
 }
 
 /// The batch route of `problem` on `observation`, the observation compile
-/// opened: the selection resolved to its partitions, the geometry compiled
-/// and its batches admitted ([`imaging::admit_batches`]). A run that writes
-/// the model (`model_data`) or the corrected data (`corrected_data`) reads
-/// the observation through the update session that writes them
-/// ([`imaging::WriteBack`]).
+/// opened: each store's selection resolved to its partitions and its
+/// geometry compiled, and the batches of every store admitted
+/// ([`imaging::admit_batches`]). A run that writes the model (`model_data`)
+/// or the corrected data (`corrected_data`) reads each store through the
+/// update session that writes them ([`imaging::WriteBack`]).
 pub(crate) fn batch_route(
     problem: &CompiledProblem,
     observation: OpenedObservation,
     (model_data, corrected_data): (bool, bool),
     runtime: &ApplicationRuntime,
 ) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
+    let other = |error: Box<dyn std::error::Error + Send + Sync>| NativeError::Other(error);
     let OpenedObservation {
-        store: Admitted {
-            value: opened,
-            reservation: mut opening,
-        },
+        stores,
         measures,
         phase_table,
     } = observation;
-    let selection = resolve_partitions(problem, opened.observation())
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
-    let plan = GeometryPlan::compile(problem, opened.catalogue(), measures, phase_table)
-        .map_err(|error| NativeError::Other(Box::new(error)))?;
-    let pointing_budget = if plan.reads_pointing() {
-        opened
-            .observation()
-            .pointing_bytes()
-            .map_err(|error| NativeError::Other(Box::new(error)))?
-    } else {
-        0
-    };
+    let mut opening = Reservation::none();
+    let mut routes = Vec::with_capacity(stores.len());
+    for (source, Admitted { value, reservation }) in stores.into_iter().enumerate() {
+        opening.join(reservation);
+        let selection = resolve_partitions(problem, source, value.observation())
+            .map_err(|error| other(Box::new(error)))?;
+        let plan = GeometryPlan::compile(
+            problem,
+            value.catalogue(),
+            Arc::clone(&measures),
+            phase_table.clone(),
+        )
+        .map_err(|error| other(Box::new(error)))?;
+        let pointing_budget = if plan.reads_pointing() {
+            value
+                .observation()
+                .pointing_bytes()
+                .map_err(|error| other(Box::new(error)))?
+        } else {
+            0
+        };
+        routes.push((value, selection, plan, pointing_budget));
+    }
     let Admitted {
         value: batching,
         reservation,
     } = imaging::admit_batches(
-        (problem, opened.observation(), &selection, &plan),
+        problem,
+        &routes
+            .iter()
+            .map(
+                |(store, selection, plan, pointing_budget)| imaging::StoreBatches {
+                    observation: store.observation(),
+                    selection,
+                    plan,
+                    pointing_budget: *pointing_budget,
+                },
+            )
+            .collect::<Vec<_>>(),
         imaging::row_samples(problem)?,
-        pointing_budget,
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
-    let store = if model_data || corrected_data {
-        imaging::RouteStore::Write(Box::new(
-            imaging::WriteBack::open(opened, model_data, corrected_data)
-                .map_err(|error| NativeError::Other(Box::new(error)))?,
-        ))
-    } else {
-        imaging::RouteStore::Read(opened.into_observation())
-    };
+    let write_back =
+        (model_data || corrected_data).then(|| imaging::WriteBack::new(model_data, corrected_data));
+    let stores = routes
+        .into_iter()
+        .map(|(opened, selection, plan, pointing_budget)| {
+            let store = match &write_back {
+                Some(write_back) => imaging::RouteStore::Write(Box::new(
+                    write_back
+                        .session(opened)
+                        .map_err(|error| other(Box::new(error)))?,
+                )),
+                None => imaging::RouteStore::Read(opened.into_observation()),
+            };
+            Ok(imaging::StoreRoute {
+                store,
+                selection,
+                plan,
+                pointing_budget,
+            })
+        })
+        .collect::<Result<Vec<_>, NativeError>>()?;
     Ok(Admitted {
         value: imaging::BatchRoute {
-            store,
-            selection,
-            plan,
+            stores,
             batching,
-            pointing_budget,
+            write_back,
         },
         reservation: opening,
     })

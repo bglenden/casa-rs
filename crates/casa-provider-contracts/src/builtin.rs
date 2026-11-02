@@ -194,9 +194,10 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                // A revision-2 numeric selector (tclean's scan and
-                // observation) keeps its exact text, so `none` is a value
-                // the native parser refuses: the provider passes it as is.
+                // A later revision (tclean's selectors, one per
+                // MeasurementSet; its scan and observation keep their exact
+                // text, so `none` is a value the native parser refuses)
+                // passes its value as it is.
                 if binding.concept.semantic_revision.0 > 1 {
                     assert_eq!(
                         adapter,
@@ -359,7 +360,7 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 35);
+        assert_eq!(surface.contract_version(), 36);
         assert_eq!(surface.bindings().len(), 114);
         for name in ["scan", "observation", "antenna", "timerange"] {
             let binding = surface
@@ -368,7 +369,9 @@ mod tests {
                 .find(|binding| binding.name == name)
                 .unwrap();
             assert!(binding.unimplemented.is_none(), "{name}");
-            assert_eq!(binding.concept.semantic_revision.0, 2);
+            // Revision 3 keeps revision 2's exact text, one per
+            // MeasurementSet of the vis list or one for all.
+            assert_eq!(binding.concept.semantic_revision.0, 3);
             assert_eq!(
                 binding.default,
                 crate::DefaultSpec::Literal {
@@ -503,7 +506,8 @@ mod tests {
                 (31, 32),
                 (32, 33),
                 (33, 34),
-                (34, 35)
+                (34, 35),
+                (35, 36)
             ]
         );
     }

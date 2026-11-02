@@ -362,11 +362,44 @@ impl Observation {
         name: &str,
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_vis(json!(store), name, controls)
+    }
+
+    /// [`Observation::image`] of `stores`, tclean's `vis` list: several
+    /// MeasurementSets imaged as one, the products named in this
+    /// observation's directory.
+    pub fn image_stores(
+        &self,
+        stores: &[&Path],
+        name: &str,
+        controls: Value,
+    ) -> (ImagerRunReport, Products) {
+        self.try_image_stores(stores, name, controls)
+            .expect("production imaging route")
+    }
+
+    /// [`Observation::image_stores`], or the route's refusal.
+    pub fn try_image_stores(
+        &self,
+        stores: &[&Path],
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_vis(json!(stores), name, controls)
+    }
+
+    /// [`Observation::try_image`] of `vis`, tclean's `vis`: a path or a list.
+    fn try_image_vis(
+        &self,
+        vis: Value,
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
         // would move a law onto the GPU wherever the host has one.
         let mut parameters = json!({
-            "vis": store,
+            "vis": vis,
             "imagename": image_name,
             "backend": "cpu",
         });

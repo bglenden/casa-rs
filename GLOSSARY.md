@@ -10,7 +10,7 @@ execution concepts used by the imaging architecture.
 The one typed request for an imaging run, deserialized from the imager
 parameters the provider catalog resolves and validated once. Every frontend
 reaches it through the same catalog resolution; compiling it against its
-MeasurementSet yields the Compiled Problem.
+MeasurementSets yields the Compiled Problem.
 _Avoid_: CLI configuration, task request mirror
 
 **Compiled Problem**:
@@ -33,8 +33,10 @@ sample predicates, partitions, SPW/channel, and correlation semantics plus
 the selected data, flag, and weight columns and whether MAIN has
 `CORRECTED_DATA`. Selected samples are retained only as their count and the
 observation partitions that hold them.
-Sources keep request order and their locations. Nothing of it is stored in
-the MeasurementSet, and nothing of it is hashed.
+Sources, one per MeasurementSet of tclean's `vis` list, keep their locations
+and the order CASA's tclean images them in: by each MeasurementSet's
+earliest `TIME`, a MeasurementSet whose selection holds no sample left out.
+Nothing of it is stored in the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
 
 **Observation Transaction**:

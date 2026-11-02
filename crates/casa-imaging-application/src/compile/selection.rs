@@ -21,9 +21,10 @@ use casa_types::measures::frequency::FrequencyRef;
 use super::opening::OpenedStore;
 use super::survey::Survey;
 use super::{PrepareError, intents};
-use crate::{DataColumn, ImagingRequest};
+use crate::{DataColumn, ImagingRequest, MeasurementSetSelection};
 
 /// One selected spectral window's frequency axis.
+#[derive(Clone)]
 pub(super) struct SourceSpectralWindow {
     pub(super) spw_id: usize,
     pub(super) frequency_reference: FrequencyRef,
@@ -34,7 +35,7 @@ pub(super) struct SourceSpectralWindow {
 /// Selected source channels per spectral window id.
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
-/// The request's per-sample predicates: its fields, UV-distance intervals,
+/// A MeasurementSet's per-sample predicates: its fields, UV-distance intervals,
 /// scan numbers, observation identifiers, baselines and the observing modes
 /// its `intent` selector names ([`intents::resolve`]), with the states a
 /// state number named.
@@ -44,16 +45,16 @@ pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 /// numeric grammar, kept as inclusive intervals so a wide range holds no
 /// more than its terms.
 pub(super) fn row_selection(
-    request: &ImagingRequest,
+    selection: &MeasurementSetSelection,
     catalogue: &Catalogue,
 ) -> Result<(RowSelection, BTreeSet<StateId>), PrepareError> {
-    let fields = match request.field.as_deref() {
+    let fields = match selection.field.as_deref() {
         Some(selector) => resolve_fields(selector, catalogue)?,
         None => IdSelection::All,
     };
-    let scans = numeric_row_ids(request.scan.as_deref(), "scan")?;
-    let observations = numeric_row_ids(request.observation.as_deref(), "observation")?;
-    let uv_distances = match request.uvrange.as_deref() {
+    let scans = numeric_row_ids(selection.scan.as_deref(), "scan")?;
+    let observations = numeric_row_ids(selection.observation.as_deref(), "observation")?;
+    let uv_distances = match selection.uvrange.as_deref() {
         Some(text) => UvSelection::Ranges(
             parse_uv_distance_intervals(text)?
                 .into_iter()
@@ -62,14 +63,14 @@ pub(super) fn row_selection(
         ),
         None => UvSelection::All,
     };
-    let (intents, states) = match request.intent.as_deref() {
+    let (intents, states) = match selection.intent.as_deref() {
         Some(text) => {
             let resolved = intents::resolve(text, catalogue)?;
             (resolved.selection, resolved.states)
         }
         None => (IntentSelection::All, BTreeSet::new()),
     };
-    let baselines = match request.antenna.as_deref() {
+    let baselines = match selection.antenna.as_deref() {
         Some(text) => resolve_baselines(text, catalogue)?,
         None => BaselineSelection::All,
     };
@@ -273,9 +274,10 @@ pub(super) struct SpwChoice {
     pub(super) channels: WindowChannels,
 }
 
-/// The windows and channels `request` selects in `store` ([`SpwChoice`]):
-/// those its `spw` selects, except that a `ddid` (casa-rs's own parameter)
-/// names the partitions instead while `spw` still names their channels.
+/// The windows and channels `selection` selects in its `store`
+/// ([`SpwChoice`]): those its `spw` selects, except that `request`'s `ddid`
+/// (casa-rs's own parameter) names the partitions instead while `spw` still
+/// names their channels.
 ///
 /// # Errors
 ///
@@ -284,10 +286,11 @@ pub(super) struct SpwChoice {
 /// selection CASA refuses or this one does not image ([`spw_choice`]).
 pub(super) fn window_choice(
     request: &ImagingRequest,
+    selection: &MeasurementSetSelection,
     store: &OpenedStore,
 ) -> Result<SpwChoice, PrepareError> {
     let data_description = data_description_choice(request, store)?;
-    let mut choice = match request.spw.as_deref().filter(|text| !text.is_empty()) {
+    let mut choice = match selection.spw.as_deref().filter(|text| !text.is_empty()) {
         Some(text) => spw_choice(text, store)?,
         None => SpwChoice {
             windows: WindowChoice::All,

@@ -432,18 +432,65 @@ fn scan_and_observation_selectors_keep_their_exact_text_with_either_selectdata()
         let request = request(json!({
             "selectdata": selectdata, "scan": "1,3~5", "observation": "0",
         }));
-        assert_eq!(request.scan.as_deref(), Some("1,3~5"));
-        assert_eq!(request.observation.as_deref(), Some("0"));
+        assert_eq!(request.vis[0].scan.as_deref(), Some("1,3~5"));
+        assert_eq!(request.vis[0].observation.as_deref(), Some("0"));
     }
     // Only exact empty is unset: CASA's tclean refuses blanks and `none`
     // and accepts padded IDs, so their text reaches the selector's parser.
     for text in ["  ", "none", "None", " none ", " 1 ", ">1"] {
         let request = request(json!({"scan": text, "observation": text}));
-        assert_eq!(request.scan.as_deref(), Some(text));
-        assert_eq!(request.observation.as_deref(), Some(text));
+        assert_eq!(request.vis[0].scan.as_deref(), Some(text));
+        assert_eq!(request.vis[0].observation.as_deref(), Some(text));
     }
     let request = request(json!({"scan": "", "observation": ""}));
-    assert_eq!((request.scan, request.observation), (None, None));
+    assert_eq!(
+        (&request.vis[0].scan, &request.vis[0].observation),
+        (&None, &None)
+    );
+}
+
+/// A list of MeasurementSets pairs each with its own selectors, or with
+/// the one a selector gives all, as CASA's `checkAndFixSelectionPars`
+/// pairs them; a list of another length is refused with CASA's message.
+#[test]
+fn each_measurement_set_takes_its_own_selectors_or_one_for_all() {
+    let request = request(json!({
+        "vis": ["a.ms", "b.ms"],
+        "spw": ["0", "1:2~5"],
+        "field": "0",
+        "scan": ["", " 3"],
+        "timerange": [""],
+    }));
+    let selections = request
+        .vis
+        .iter()
+        .map(|selection| {
+            (
+                selection.vis.to_str().expect("a path"),
+                selection.spw.as_deref(),
+                selection.field.as_deref(),
+                selection.scan.as_deref(),
+                selection.timerange.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selections,
+        [
+            ("a.ms", Some("0"), Some("0"), None, None),
+            ("b.ms", Some("1:2~5"), Some("0"), Some(" 3"), None),
+        ]
+    );
+    let refused = crate::request::tests::read(json!({
+        "vis": ["a.ms", "b.ms", "c.ms"],
+        "field": ["0", "1"],
+    }))
+    .expect_err("two fields for three MeasurementSets");
+    assert_eq!(refused.parameter, "field");
+    assert_eq!(
+        refused.message,
+        "field must have a single entry, or 3 entries to match vis list"
+    );
 }
 
 /// The request tclean's `overrides` make with `resolved` set over the

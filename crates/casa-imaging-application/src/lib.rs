@@ -39,7 +39,7 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
+    InvalidRequest, MeasurementSetSelection, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
 };
 pub use tclean::TcleanRefusal;
 

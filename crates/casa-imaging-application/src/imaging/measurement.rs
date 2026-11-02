@@ -218,6 +218,19 @@ pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
     )
 }
 
+/// Whether the problem's kernel set grids several MeasurementSets: the
+/// standard set and the W planes, which key no row on its MeasurementSet.
+/// The mosaic set keys its beams on each row's spectral window and dish
+/// classes, and the AW catalog its cells on the first MeasurementSet's
+/// frequencies and first cross-correlation sample, all numbered within one
+/// MeasurementSet.
+pub(crate) fn multi_store_kernel_set(problem: &CompiledProblem) -> bool {
+    matches!(
+        kernel_set_kind(problem),
+        KernelSetKind::Standard | KernelSetKind::WPlanes
+    )
+}
+
 /// Which kernel set the compiled problem's measurement equation names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum KernelSetKind {

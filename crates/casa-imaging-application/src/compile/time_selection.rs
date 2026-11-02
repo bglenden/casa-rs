@@ -24,12 +24,12 @@ use casa_observation::{ObservationError, StateId};
 use super::PrepareError;
 use super::opening::OpenedStore;
 use super::selection::WindowChoice;
-use crate::ImagingRequest;
+use crate::MeasurementSetSelection;
 
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
-/// The times `request`'s `timerange` selects in `store`, with the other
-/// selections already resolved (`windows`, `rows`, `states`).
+/// The times `selection`'s `timerange` selects in its `store`, with the
+/// other selections already resolved (`windows`, `rows`, `states`).
 ///
 /// # Errors
 ///
@@ -37,12 +37,12 @@ const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 /// ([`PrepareError::TimeRangeWithoutMainRows`]); an empty MAIN table, which
 /// has no logical row zero; a MAIN column that cannot be read.
 pub(super) fn resolve_times(
-    request: &ImagingRequest,
+    selection: &MeasurementSetSelection,
     store: &OpenedStore,
     windows: &WindowChoice,
     (rows, states): (&RowSelection, &BTreeSet<StateId>),
 ) -> Result<TimeSelection, PrepareError> {
-    let Some(text) = request.timerange.as_deref() else {
+    let Some(text) = selection.timerange.as_deref() else {
         return Ok(TimeSelection::All);
     };
     let selector = TimeSelector::parse(text)?;

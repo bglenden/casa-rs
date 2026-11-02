@@ -430,7 +430,17 @@ Every installed request runs through one major-cycle pass
 weights, an initial pass that forms the dirty image and PSF, the minor cycle,
 residual passes, and a final pass that writes `MODEL_DATA` or `CORRECTED_DATA`
 when requested. Standard MFS, MT-MFS, channel-local cubes, dirty-only runs and
-outlier domains share this path; there is no per-mode driver. A pass reads
+outlier domains share this path; there is no per-mode driver. A request may
+name a list of MeasurementSets, as tclean's `vis` does: compile opens and
+surveys each with its own selection, orders them as CASA does (by each one's
+earliest `TIME`), takes the image's coordinates from one of them (CASA's
+`msobj`: the first, or for a cube the one holding its start) and a continuum
+band from all, and the snapshot holds one source per MeasurementSet. The
+source then reads each store's partitions in turn, each with its own
+selection and geometry plan, and a final pass writes each one's
+`MODEL_DATA`; weighting density and every pass span them all. The mosaic and
+AW kernel sets, which key cells on per-MeasurementSet window and dish
+numbers, are refused with several. A pass reads
 native row blocks, each row projected on every image domain, from the bounded
 source through a two-slot stream (one block filled by a producer thread while
 the caller consumes the other), places each row on every domain with that

@@ -70,9 +70,20 @@ impl ImagingRequest {
         let (request, _) = read(values)?;
         serde_path_to_error::deserialize(Value::Object(request)).map_err(
             |error: serde_path_to_error::Error<serde_json::Error>| {
-                let parameter = match error.path().iter().next() {
-                    Some(serde_path_to_error::Segment::Map { key }) => tclean_parameter(key),
-                    _ => "",
+                // A MeasurementSet's selector is its own parameter.
+                let parameter = match error
+                    .path()
+                    .iter()
+                    .filter_map(|segment| match segment {
+                        serde_path_to_error::Segment::Map { key } => Some(key.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    ["vis", selector, ..] => *selector,
+                    [key, ..] => tclean_parameter(key),
+                    [] => "",
                 };
                 TcleanRefusal::new(
                     parameter,
@@ -190,6 +201,31 @@ impl<'a> Tclean<'a> {
             })
             .filter(|item| !matches!(item, Ok("")))
             .collect()
+    }
+
+    /// The items of `name`, one per MeasurementSet: a list's items, or a
+    /// lone value; with `count` MeasurementSets, a list of one or a lone
+    /// value is each MeasurementSet's, and any length but one or `count` is
+    /// refused with CASA's message.
+    fn per_measurement_set(
+        &mut self,
+        name: &str,
+        count: Option<usize>,
+    ) -> Result<Vec<&'a Value>, TcleanRefusal> {
+        let value = self.value(name)?;
+        let items: Vec<&Value> = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        match (count, items.as_slice()) {
+            (None, _) => Ok(items),
+            (Some(count), [item]) => Ok(vec![*item; count]),
+            (Some(count), _) if items.len() == count => Ok(items),
+            (Some(count), _) => Err(TcleanRefusal::new(
+                name,
+                format!("{name} must have a single entry, or {count} entries to match vis list"),
+            )),
+        }
     }
 
     /// A list of numbers, or one number, as casa-rs's comma-separated text.
@@ -339,27 +375,59 @@ impl<'a> Tclean<'a> {
         })
     }
 
+    /// The MeasurementSets of `vis`, each with its selection, as CASA's
+    /// `ImagerParameters::checkAndFixSelectionPars` pairs them: a selector
+    /// given as one text, or a list of one, applies to every MeasurementSet,
+    /// and a longer list gives each MeasurementSet its own, in `vis`'s order;
+    /// any other length is refused. Compile images the MeasurementSets in
+    /// CASA's order, each with its own selection.
     fn selection(&mut self) -> Result<(), TcleanRefusal> {
-        self.copy(&["vis", "imagename"])?;
+        self.copy(&["imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
         self.ignore(&["selectdata"])?;
-        let field = self.text("field")?;
-        self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
-            let value = self.text(name)?;
-            self.set(name, value);
+        let vis = self.per_measurement_set("vis", None)?;
+        if vis.is_empty() {
+            return Err(TcleanRefusal::new("vis", "Input MS list is empty"));
         }
-        // Scan, observation, antenna and time selectors keep their exact text:
-        // CASA's tclean refuses whitespace-only text and `none`, and its
-        // grammars give padding and case their own meanings.
-        for name in ["scan", "observation", "antenna", "timerange"] {
-            let value = self.value(name)?;
-            let text = value
-                .as_str()
-                .ok_or_else(|| Self::mismatch(name, "text", value))?;
-            self.set(name, text);
+        let mut selections = vis
+            .into_iter()
+            .map(|path| {
+                path.as_str()
+                    .map(|path| Map::from_iter([("vis".to_string(), json!(path))]))
+                    .ok_or_else(|| Self::mismatch("vis", "a path", path))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = selections.len();
+        // Field, spw, uvrange and intent are trimmed; scan, observation,
+        // antenna and time selectors keep their exact text: CASA's tclean
+        // refuses whitespace-only text and `none`, and its grammars give
+        // padding and case their own meanings.
+        for (name, trim) in [
+            ("field", true),
+            ("spw", true),
+            ("uvrange", true),
+            ("intent", true),
+            ("scan", false),
+            ("observation", false),
+            ("antenna", false),
+            ("timerange", false),
+        ] {
+            let values = self.per_measurement_set(name, Some(count))?;
+            for (selection, value) in selections.iter_mut().zip(values) {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| Self::mismatch(name, "text", value))?;
+                selection.insert(
+                    name.to_string(),
+                    json!(if trim { text.trim() } else { text }),
+                );
+            }
         }
+        self.set(
+            "vis",
+            Value::Array(selections.into_iter().map(Value::Object).collect()),
+        );
         let column = match self.text("datacolumn")?.to_ascii_lowercase().as_str() {
             // CASA images DATA when CORRECTED_DATA is absent.
             "corrected" => "none",

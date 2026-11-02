@@ -38,9 +38,11 @@ pub struct ImagingRequest {
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
     pub(crate) explicit_empty_mask: bool,
-    /// The MeasurementSet.
-    #[serde(deserialize_with = "single")]
-    pub vis: PathBuf,
+    /// The MeasurementSets of tclean's `vis`, in the order it names them,
+    /// each with the selection tclean applies to it: its own selectors, or
+    /// the one each selector gives every MeasurementSet. Compile images them
+    /// in CASA's order ([`crate::compile`]): by the earliest `TIME` of each.
+    pub vis: Vec<MeasurementSetSelection>,
     /// Prefix of every image product; a relative name is resolved against
     /// the working directory, as CASA's is.
     #[serde(deserialize_with = "absolute")]
@@ -65,53 +67,23 @@ pub struct ImagingRequest {
     /// A CASA outlier file naming further image domains.
     #[serde(deserialize_with = "optional")]
     pub outlierfile: Option<PathBuf>,
-    /// Field selector: IDs/ranges, exact names and simple `*` name patterns.
-    /// Resolved once against FIELD metadata during compilation; `None`
-    /// selects every field.
-    #[serde(deserialize_with = "optional")]
-    pub field: Option<String>,
-    /// The `FIELD_ID` whose phase centre is the image centre.
+    /// The `FIELD_ID` whose phase centre is the image centre, a field of the
+    /// first MeasurementSet imaged, as CASA's `defineImage` reads it.
     #[serde(deserialize_with = "optional")]
     pub phasecenter_field: Option<i32>,
-    /// The selected `DATA_DESC_ID`.
+    /// The selected `DATA_DESC_ID` of every MeasurementSet.
     #[serde(deserialize_with = "optional")]
     pub ddid: Option<i32>,
     /// The image centre: `J2000 <lon> <lat>`, `TRACKFIELD`, or an
     /// ephemeris name or table.
     #[serde(deserialize_with = "optional")]
     pub phasecenter: Option<String>,
-    /// CASA spectral-window selection, for example `0:1~30`.
-    #[serde(deserialize_with = "optional")]
-    pub spw: Option<String>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,
     /// Number of selected channels when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_count: Option<usize>,
-    /// CASA baseline-length selection.
-    #[serde(deserialize_with = "optional")]
-    pub uvrange: Option<String>,
-    /// CASA numeric scan-number selection, as given; resolved against the
-    /// observation during compilation. Only an exactly empty selector is
-    /// unset, so whitespace-only text and `none` reach the selector's
-    /// refusal, as CASA's tclean refuses them.
-    #[serde(deserialize_with = "exact_selector")]
-    pub scan: Option<String>,
-    /// CASA numeric observation-ID selection, read as `scan` is.
-    #[serde(deserialize_with = "exact_selector")]
-    pub observation: Option<String>,
-    /// CASA baseline selection by antenna (`antenna`), read as `scan` is;
-    /// resolved against the observation's antennas during compilation.
-    #[serde(deserialize_with = "exact_selector")]
-    pub antenna: Option<String>,
-    /// CASA time selection (`timerange`), read as `scan` is; resolved
-    /// against the observation's times during compilation.
-    #[serde(deserialize_with = "exact_selector")]
-    pub timerange: Option<String>,
-    /// CASA observing-intent selection.
-    #[serde(deserialize_with = "optional")]
-    pub intent: Option<String>,
     /// The imaged Stokes parameters (`I`, `IQUV`, …) or correlations
     /// (`RR`, `XXYY`, …), in canonical order.
     #[serde(deserialize_with = "stokes")]
@@ -270,6 +242,46 @@ pub struct ImagingRequest {
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
     pub diagnostics: Diagnostics,
+}
+
+/// One MeasurementSet of a request and the selection tclean applies to it
+/// (CASA's `SynthesisParamsSelect`, one per MeasurementSet).
+///
+/// Each selector is resolved against this MeasurementSet's own tables
+/// during compilation. `field`, `spw`, `uvrange` and `intent` are unset
+/// when blank or `none`; `scan`, `observation`, `antenna` and `timerange`
+/// keep their exact text and are unset only when exactly empty, so
+/// whitespace-only text and `none` reach the selector's refusal, as CASA's
+/// tclean refuses them.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MeasurementSetSelection {
+    /// The MeasurementSet.
+    pub vis: PathBuf,
+    /// Field selector: IDs/ranges, exact names and simple `*` name
+    /// patterns; `None` selects every field.
+    #[serde(deserialize_with = "optional")]
+    pub field: Option<String>,
+    /// CASA spectral-window selection, for example `0:1~30`.
+    #[serde(deserialize_with = "optional")]
+    pub spw: Option<String>,
+    /// CASA baseline-length selection.
+    #[serde(deserialize_with = "optional")]
+    pub uvrange: Option<String>,
+    /// CASA numeric scan-number selection, as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub scan: Option<String>,
+    /// CASA numeric observation-ID selection, as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub observation: Option<String>,
+    /// CASA baseline selection by antenna (`antenna`), as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub antenna: Option<String>,
+    /// CASA time selection (`timerange`), as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub timerange: Option<String>,
+    /// CASA observing-intent selection.
+    #[serde(deserialize_with = "optional")]
+    pub intent: Option<String>,
 }
 
 /// The device a request asks to grid on (`backend`).
@@ -780,23 +792,6 @@ where
 
 /// The catalog's spelling of a value the run chooses itself.
 const AUTO: &str = "auto";
-
-/// The one element of a one-element array, or the element itself.
-fn single<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    T::Err: fmt::Display,
-{
-    match Value::deserialize(deserializer)? {
-        Value::Array(mut items) if items.len() == 1 => match items.remove(0) {
-            Value::String(text) => text.parse().map_err(D::Error::custom),
-            value => Err(unexpected(&value, "text")),
-        },
-        Value::String(text) => text.parse().map_err(D::Error::custom),
-        value => Err(unexpected(&value, "one value")),
-    }
-}
 
 /// A path, resolved against the working directory when relative.
 fn absolute<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {

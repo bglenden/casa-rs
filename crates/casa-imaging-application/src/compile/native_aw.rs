@@ -35,7 +35,7 @@ pub(super) fn resolve(
         unreachable!("native AW resolves only a native cache");
     };
     let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface)?;
-    let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
+    let frequencies = frequency_groups((surveyed.reference, surveyed.survey), surveyed.spectral);
     // AW projection images square grids of square cells (the availability
     // gate refuses others), so x stands for both axes.
     let sky_cell = request.cell[0].to_radians() / 3600.0;
@@ -121,9 +121,10 @@ fn evla_dish(
     Ok(EvlaDishSurface::from_surface_text(text)?)
 }
 
-/// One frequency group per selected SPW, in increasing CF frequency.
+/// One frequency group per selected SPW of the store `store` surveyed
+/// (`survey`), in increasing CF frequency.
 fn frequency_groups(
-    survey: &Survey,
+    (store, survey): (usize, &Survey),
     spectral: &PreparedSpectralAxis,
 ) -> Vec<NativeAwFrequencyGroup> {
     let mut frequencies = survey
@@ -131,7 +132,7 @@ fn frequency_groups(
         .iter()
         .map(|window| {
             let channel_frequencies_hz = spectral
-                .window_channels(window.spw_id)
+                .window_channels(store, window.spw_id)
                 .iter()
                 .map(|index| {
                     *window

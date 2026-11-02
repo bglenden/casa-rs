@@ -25,12 +25,15 @@ use casa_types::measures::{
 use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
 use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
+use super::stores::{ContinuumBand, SurveyedStore};
 use super::survey::Survey;
 use crate::{ImagingRequest, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
-    pub(super) selected_source_channels: WindowChannels,
+    /// Each store's source channels the axis reads, in store order; empty
+    /// for a store none of whose channels reaches the axis.
+    pub(super) selected_source_channels: Vec<WindowChannels>,
     pub(super) source_frame: FrequencyFrame,
     pub(super) output_frequency_reference: FrequencyRef,
     pub(super) output_frame: FrequencyFrame,
@@ -63,9 +66,10 @@ impl PreparedSpectralAxis {
         )
     }
 
-    /// The source channels the axis reads from surveyed window `spw_id`.
-    pub(super) fn window_channels(&self, spw_id: usize) -> &[usize] {
-        self.selected_source_channels
+    /// The source channels the axis reads from surveyed window `spw_id` of
+    /// store `store`.
+    pub(super) fn window_channels(&self, store: usize, spw_id: usize) -> &[usize] {
+        self.selected_source_channels[store]
             .get(&spw_id)
             .expect("the spectral axis selects channels of every surveyed window")
     }
@@ -83,7 +87,7 @@ pub(super) struct FrameContext<'a> {
 
 /// The output axis of one spectral mode, before its frame anchor.
 struct AxisLaw {
-    selected_source_channels: WindowChannels,
+    selected_source_channels: Vec<WindowChannels>,
     output_frequency_reference: FrequencyRef,
     reference_frequency_hz: f64,
     increment_hz: f64,
@@ -95,19 +99,45 @@ struct AxisLaw {
     basis: ReconstructionBasis,
 }
 
-/// The request's spectral axis over the surveyed selection.
+/// The request's spectral axis over the surveyed selection of `stores`,
+/// laid on store `reference`'s metadata (CASA's `msobj`): a continuum
+/// plane over `continuum`, the band of every store, or a cube on the
+/// reference store's window that reads each store's window where it reaches
+/// the cube.
 pub(super) fn prepare_axis(
     request: &ImagingRequest,
-    (msv2, catalogue): (Option<&MeasurementSet>, &Catalogue),
-    survey: &Survey,
+    (stores, reference): (&[SurveyedStore], usize),
+    continuum: Option<&ContinuumBand>,
     frame: &FrameContext<'_>,
     moving_rest_frame: Option<&MeasFrame>,
 ) -> Result<PreparedSpectralAxis, PrepareError> {
+    let store = &stores[reference];
+    let (msv2, catalogue) = (
+        store
+            .msv2()
+            .map(|observation| observation.measurement_set()),
+        store.catalogue(),
+    );
+    let survey = &store.survey;
     let source_reference = survey.source_frequency_reference;
     let law = match request.specmode {
-        SpecMode::Mfs => continuum_law(request, (msv2, catalogue), survey)?,
-        SpecMode::Cube | SpecMode::Cubedata => cube_law(request, catalogue, survey, frame)?,
+        SpecMode::Mfs => continuum_law(
+            request,
+            (msv2, catalogue),
+            survey,
+            continuum.expect("prepare spans the band of every continuum run"),
+        )?,
+        SpecMode::Cube | SpecMode::Cubedata => {
+            let (mut law, setup) = cube_law(request, catalogue, survey, frame)?;
+            let own = law
+                .selected_source_channels
+                .pop()
+                .expect("a cube law reads its own store's window");
+            law.selected_source_channels = cube_store_channels(stores, (reference, own), &setup)?;
+            law
+        }
         SpecMode::Cubesource => {
+            super::stores::one_store(stores, "a source-frame cube (specmode cubesource)")?;
             let frame_with_velocity = moving_rest_frame
                 .expect("prepare resolves the moving rest frame of every source-frame cube");
             source_frame_cube_law(request, catalogue, survey, frame, frame_with_velocity)?
@@ -142,23 +172,21 @@ pub(super) fn prepare_axis(
     })
 }
 
-/// One plane over the selected band's envelope, gridded in LSRK as CASA's
-/// `FTMachine::matchChannel` grids it whatever the image's `outframe`.
-/// Its header records the envelope in `outframe`
+/// One plane over the selected band's envelope over every store (`band`),
+/// gridded in LSRK as CASA's `FTMachine::matchChannel` grids it whatever
+/// the image's `outframe`. Its header records the envelope in `outframe`
 /// (`buildCoordinateSystem`'s `MSUtil::getFreqRangeInSpw`) and `restfreq`'s
-/// first rest frequency, else the first visibility buffer's source line
-/// ([`continuum_rest_frequency_hz`] on an MSv2, whose `SOURCE` and
-/// `DOPPLER` tables CASA reads; the catalogue's first line on an MSv4),
-/// else the recorded band's midpoint (`getImFreq`).
+/// first rest frequency, else the reference store's (`survey`'s) first
+/// visibility buffer's source line ([`continuum_rest_frequency_hz`] on an
+/// MSv2, whose `SOURCE` and `DOPPLER` tables CASA reads; the catalogue's
+/// first line on an MSv4), else the recorded band's midpoint (`getImFreq`).
 fn continuum_law(
     request: &ImagingRequest,
     (msv2, catalogue): (Option<&MeasurementSet>, &Catalogue),
     survey: &Survey,
+    band: &ContinuumBand,
 ) -> Result<AxisLaw, PrepareError> {
-    let (channels, envelope, recorded) = survey
-        .continuum
-        .as_ref()
-        .expect("the survey reduces the spectral envelope of every continuum run");
+    let (channels, envelope, recorded) = (&band.channels, &band.gridded, &band.recorded);
     let [lower_hz, upper_hz] = envelope.edges_hz();
     let [recorded_lower_hz, recorded_upper_hz] = recorded.edges_hz();
     // `getImFreq`: a given reffreq is the reference at pixel 0, with the
@@ -323,13 +351,16 @@ fn continuum_source_line(
     Ok(resolved)
 }
 
-/// A cube in its output frame (`cube`) or the data's (`cubedata`).
+/// A cube in its output frame (`cube`) or the data's (`cubedata`), on the
+/// window of `survey`'s store, with the channels it reads of that window
+/// (the law's one store) and the axis that other stores' windows are read
+/// onto ([`cube_store_channels`]).
 fn cube_law(
     request: &ImagingRequest,
     catalogue: &Catalogue,
     survey: &Survey,
     frame: &FrameContext<'_>,
-) -> Result<AxisLaw, PrepareError> {
+) -> Result<(AxisLaw, CubeSpectralSetup), PrepareError> {
     let window = one_window(&survey.spectral_windows, "native cube imaging")?;
     let axis = cube_axis(request)?;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
@@ -364,8 +395,8 @@ fn cube_law(
             doppler_convention(request.veltype)?,
         ),
     };
-    Ok(AxisLaw {
-        selected_source_channels: BTreeMap::from([(window.spw_id, selected)]),
+    let law = AxisLaw {
+        selected_source_channels: vec![BTreeMap::from([(window.spw_id, selected)])],
         output_frequency_reference: setup.output_freq_ref,
         reference_frequency_hz,
         increment_hz,
@@ -385,7 +416,61 @@ fn cube_law(
         basis: ReconstructionBasis::ChannelLocal {
             channels: output_channels,
         },
-    })
+    };
+    Ok((law, setup))
+}
+
+/// Each store's channels a cube on `setup`, the axis laid on store
+/// `reference`'s window, reads: the reference store's `own`, and for every
+/// other store the channels of its one window that reach the axis at its
+/// selected times ([`CubeSpectralSetup::source_channel_support`]), within
+/// its `spw` selection, as CASA's cube gridding selects each
+/// MeasurementSet's channels in the image's band. A store none of whose
+/// channels reaches the axis reads nothing.
+///
+/// # Errors
+///
+/// A store of several windows, or of another source frame than the
+/// reference store's; a frame conversion that fails.
+fn cube_store_channels(
+    stores: &[SurveyedStore],
+    (reference, own): (usize, WindowChannels),
+    setup: &CubeSpectralSetup,
+) -> Result<Vec<WindowChannels>, PrepareError> {
+    let mut own = Some(own);
+    stores
+        .iter()
+        .enumerate()
+        .map(|(index, store)| {
+            if index == reference {
+                return Ok(own.take().expect("the reference store is one store"));
+            }
+            let survey = &store.survey;
+            let window = one_window(&survey.spectral_windows, "native cube imaging")?;
+            if survey.source_frequency_reference != setup.source_freq_ref {
+                return Err(PrepareError::MixedSourceFrames);
+            }
+            let field = usize::try_from(*survey.fields.first().expect("a surveyed store's field"))
+                .expect("a surveyed field is a FIELD row");
+            let mut selected = setup
+                .source_channel_support(
+                    &window.frequencies_hz,
+                    &window.channel_widths_hz,
+                    survey.time_bounds_mjd_seconds,
+                    field,
+                    &store.engine,
+                )?
+                .indices;
+            if let Some(explicit) = survey.spw_channels.get(&window.spw_id) {
+                selected.retain(|channel| explicit.contains(channel));
+            }
+            Ok(if selected.is_empty() {
+                WindowChannels::new()
+            } else {
+                BTreeMap::from([(window.spw_id, selected)])
+            })
+        })
+        .collect()
 }
 
 /// A cube in the rest frame of a moving source: the data-frame axis
@@ -423,7 +508,7 @@ fn source_frame_cube_law(
         )?)
         .ok_or(PrepareError::RestFrequencyMissing)?;
     Ok(AxisLaw {
-        selected_source_channels: BTreeMap::from([(window.spw_id, support.indices)]),
+        selected_source_channels: vec![BTreeMap::from([(window.spw_id, support.indices)])],
         output_frequency_reference: FrequencyRef::REST,
         reference_frequency_hz,
         increment_hz,

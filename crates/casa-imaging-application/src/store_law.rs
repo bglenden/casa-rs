@@ -29,6 +29,8 @@ use casa_observation::{
 };
 use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
+use casa_imaging_runtime::Admitted;
+
 use crate::compile::OpenedStore;
 use crate::native::OpenedObservation;
 use crate::{ApplicationError, ImagingRequest, RunContext, compile_run};
@@ -144,11 +146,11 @@ pub fn compare_stores(
     let resolved = std::cell::Cell::new(None);
     let (problem, input, _native, _resident) = compile_run(request, context, &resolved)?;
     let OpenedObservation {
-        store,
+        stores,
         measures,
         phase_table,
     } = input.observation;
-    let observation = measurement_set(&store.value)?;
+    let observation = measurement_set(&stores)?;
     let inputs = PlanInputs {
         measures,
         phase_table,
@@ -217,12 +219,12 @@ pub fn row_pointing(
     let resolved = std::cell::Cell::new(None);
     let (problem, input, _native, _resident) = compile_run(request, context, &resolved)?;
     let OpenedObservation {
-        store,
+        stores,
         measures,
         phase_table,
     } = input.observation;
-    let observation = measurement_set(&store.value)?;
-    let selection = crate::compile::resolve_partitions(&problem, observation)?;
+    let observation = measurement_set(&stores)?;
+    let selection = crate::compile::resolve_partitions(&problem, 0, observation)?;
     let partitions: Vec<PartitionId> = selection
         .partitions
         .iter()
@@ -254,10 +256,14 @@ pub fn row_pointing(
         .collect())
 }
 
-/// The MeasurementSet `store` holds: the law's reference, whose samples are
-/// MAIN rows.
-fn measurement_set(store: &OpenedStore) -> Result<&Msv2Observation, ApplicationError> {
+/// The one MeasurementSet `stores` holds: the law's reference, whose
+/// samples are MAIN rows.
+fn measurement_set(stores: &[Admitted<OpenedStore>]) -> Result<&Msv2Observation, ApplicationError> {
+    let [store] = stores else {
+        return Err("the store law's reference is one MeasurementSet".into());
+    };
     store
+        .value
         .msv2()
         .ok_or_else(|| "the store law's reference must be a MeasurementSet".into())
 }

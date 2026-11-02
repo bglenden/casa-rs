@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Revision-2 selector values (scan, observation, antenna, timerange)
-//! survive each normalized transport boundary.
+//! Exact-text selector values (scan, observation, antenna, timerange; one
+//! per MeasurementSet since contract 36) survive each normalized transport
+//! boundary.
 
 use casa_imaging_application::ImagingRequest;
 use casa_provider_contracts::{ParameterValue, TaskRunRequest, builtin_surface_bundle};
@@ -11,7 +12,7 @@ use casa_task_runtime::{
 use casars_imager::{ImagingParameters, resolve_request, task_request};
 use serde_json::{Map, Value, json};
 
-/// The selectors whose concepts keep exact text (revision 2).
+/// The selectors whose concepts keep exact text (revision 2 and later).
 const SELECTORS: [&str; 4] = ["scan", "observation", "antenna", "timerange"];
 
 const TEXTS: &[&str] = &[
@@ -41,10 +42,10 @@ fn profile_session(
 
 fn assert_request(request: &ImagingRequest, name: &str, expected: &str) {
     let actual = match name {
-        "scan" => &request.scan,
-        "observation" => &request.observation,
-        "antenna" => &request.antenna,
-        "timerange" => &request.timerange,
+        "scan" => &request.vis[0].scan,
+        "observation" => &request.vis[0].observation,
+        "antenna" => &request.vis[0].antenna,
+        "timerange" => &request.vis[0].timerange,
         other => panic!("no exact-text selector {other}"),
     };
     assert_eq!(
@@ -54,7 +55,7 @@ fn assert_request(request: &ImagingRequest, name: &str, expected: &str) {
 }
 
 fn assert_plain(values: &Map<String, Value>, name: &str, expected: &str) {
-    assert_eq!(values[name], json!(expected));
+    assert_eq!(values[name], json!([expected]));
     // Deliberately use the plain resolved values: no given() restoration helper.
     assert_request(
         &ImagingRequest::from_tclean(values).unwrap(),
@@ -66,7 +67,7 @@ fn assert_plain(values: &Map<String, Value>, name: &str, expected: &str) {
 fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
     assert_eq!(
         session.values()[name],
-        ParameterValue::String(expected.into()),
+        ParameterValue::Array(vec![ParameterValue::String(expected.into())]),
         "{name}"
     );
     let workspace = std::env::current_dir().unwrap();
@@ -102,9 +103,9 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(35, "tclean", name, None), name, "");
+        assert_transports(&profile_session(36, "tclean", name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(35, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(36, "tclean", name, Some(text)), name, text);
         }
     }
 }
@@ -125,7 +126,7 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
 
 #[test]
 fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
-    for version in 28..=34 {
+    for version in 28..=35 {
         for surface in ["tclean", "imager"] {
             for name in SELECTORS {
                 assert_transports(&profile_session(version, surface, name, None), name, "");
