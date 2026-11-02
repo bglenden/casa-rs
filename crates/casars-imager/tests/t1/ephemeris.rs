@@ -112,6 +112,22 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
+/// CASA centres a moving field's primary beam on its phase centre shifted by
+/// the body's motion to the image epoch (`SynthesisImagerVi2::makePrimaryBeam`):
+/// tracking the body, the beam stays on the field's offset from the image
+/// centre, here a small fraction of a pixel (#980).
+#[test]
+fn a_tracked_bodys_primary_beam_is_centred_on_its_field() {
+    let observation = moving_track();
+    let (_, products) = observation.image(
+        "trackfield-pb",
+        json!({ "phasecenter": "TRACKFIELD", "niter": 0, "write_pb": true }),
+    );
+    let (peak, pixel, _) = super::fixture::peak(&products.get(".pb").pixels);
+    assert!((f64::from(peak) - 1.0).abs() < 1.0e-6, "PB peak {peak}");
+    assert_eq!(pixel, observation.geometry().centre(), "PB peak pixel");
+}
+
 /// A fixed phase centre over the moving field: rows reproject, and
 /// frequencies convert, from the field's direction at each time; and
 /// Stokes IV under `TRACKFIELD`, whose parallactic angles follow the moving
