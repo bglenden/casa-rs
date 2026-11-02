@@ -226,6 +226,32 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     assert_eq!(rust_manifest, cpp_manifest);
 }
 
+/// UVW2's keywords, `{type: uvw, Ref: ITRF}` and three metre units, read
+/// back by casacore exactly as casa-rs reads them: the manifest digests
+/// every table and column keyword and every cell.
+#[test]
+fn ms_full_manifest_matches_cpp_with_uvw2() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping ms_full_manifest_matches_cpp_with_uvw2: C++ casacore not available");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("full_manifest_uvw2.ms");
+    let builder = MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::Uvw2);
+    let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
+    populate_subtables(&mut ms);
+    populate_main_rows(&mut ms, 6);
+    ms.save().unwrap();
+
+    let rust_manifest = ms_digest::measurement_set_manifest(&ms_path);
+    assert!(rust_manifest.contains("UVW2"), "{rust_manifest}");
+    let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
+    assert_eq!(rust_manifest, cpp_manifest);
+}
+
 #[test]
 fn model_data_write_read_interoperability_matrix() {
     if !casacore_oracle_available() {
