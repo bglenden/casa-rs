@@ -50,7 +50,9 @@ imager.
   - compares Rust CLI wall-clock timings against CASA `tclean` stage medians
     on the same MeasurementSet selection, and can preserve final-run products
     for harness-level comparison; each Rust run's phase timings are in its
-    `<imagename>.summary.json`
+    `<imagename>.summary.json`, which the script asks for with
+    `CASA_RS_IMAGER_RUN_SUMMARY=1` (a tclean run otherwise writes none, as
+    CASA's does)
 
 ## Harness architecture
 
@@ -383,8 +385,11 @@ name on `--json-run`, or as command-line flags). The execution controls are:
   to repeat one.
 
 Memory is not a parameter: each phase is admitted against the host's free
-memory, and a cube whose planes do not fit runs in waves. Each run writes
-`<imagename>.summary.json` however it ends: its status (`completed`,
+memory, and a cube whose planes do not fit runs in waves. With
+`CASA_RS_IMAGER_RUN_SUMMARY=1` in its environment (the benchmark scripts set
+it; CASA's tclean writes nothing beside its products, so by default neither
+does `casars-imager`), each run writes `<imagename>.summary.json` however it
+ends: its status (`completed`,
 `failed` with the error, or `cancelled`), the policy's memory capacity, the
 worker count, the backend and resolved grid precision, the CASA stop reason,
 the minor-cycle totals and the product images published (on a failure while

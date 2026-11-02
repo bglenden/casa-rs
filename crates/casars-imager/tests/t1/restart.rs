@@ -9,7 +9,7 @@ use casa_provider_contracts::TaskReply;
 use serde_json::json;
 
 use super::{
-    casa_return::json_run,
+    casa_return::{json_run, json_run_with},
     fixture::{Component, Observation},
 };
 
@@ -60,7 +60,7 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
         "backend": "cpu", "niter": 10,
     });
     assert!(matches!(
-        json_run(&directory, values.clone()),
+        json_run_with(&directory, values.clone(), true),
         TaskReply::Succeeded { .. }
     ));
     let model_path = directory.join("image.model");
@@ -69,18 +69,20 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
     assert!(first.sum() > 0.0);
     // No minor cycle means exact reuse, with no interpolation of model pixels.
     values["niter"] = json!(0);
-    let reply = json_run(&directory, values.clone());
+    let reply = json_run_with(&directory, values.clone(), true);
     assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
     assert_eq!(first, samples());
     values["niter"] = json!(10);
     assert!(matches!(
-        json_run(&directory, values.clone()),
+        json_run_with(&directory, values.clone(), true),
         TaskReply::Succeeded { .. }
     ));
     assert!(
         samples().sum() > first.sum() + 0.1,
         "second run must continue the previous model"
     );
+    // The run summary, asked for here, is part of what a rejected
+    // continuation must leave as it was.
     let before = snapshot(&directory);
     assert!(before.keys().any(|p| p.ends_with("image.summary.json")));
     for overrides in [
@@ -96,7 +98,7 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
             .as_object_mut()
             .unwrap()
             .extend(overrides.as_object().unwrap().clone());
-        match json_run(&directory, rejected) {
+        match json_run_with(&directory, rejected, true) {
             TaskReply::Failed { message, .. } => assert!(message.contains("#944"), "{message}"),
             reply => panic!("incompatible restart must fail: {reply:?}"),
         }
@@ -114,7 +116,7 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
     explicit["startmodel"] = json!(model_path);
     explicit["niter"] = json!(0);
     assert!(matches!(
-        json_run(&directory, explicit),
+        json_run_with(&directory, explicit, true),
         TaskReply::Succeeded { .. }
     ));
     let explicit_model = PagedImage::<f32>::open(directory.join("explicit.model"))
@@ -123,7 +125,7 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
         .unwrap();
     assert!(explicit_model.iter().all(|&v| v == 0.0));
     let before = snapshot(&directory);
-    match json_run(&directory, values) {
+    match json_run_with(&directory, values, true) {
         TaskReply::Failed { message, .. } => {
             assert!(message.contains("model pixel mask"), "{message}")
         }
@@ -345,7 +347,8 @@ fn restart_false_public_run_selects_fresh_numbered_namespaces() {
             );
             assert!(artifact.exists && Path::new(&artifact.path).exists());
         }
-        assert!(directory.join(format!("{name}.summary.json")).is_file());
+        // As CASA's tclean, a run writes nothing beside its products.
+        assert!(!directory.join(format!("{name}.summary.json")).exists());
         let after = snapshot(&directory);
         for (path, bytes) in before {
             assert_eq!(

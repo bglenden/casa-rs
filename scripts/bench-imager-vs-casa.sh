@@ -555,6 +555,10 @@ if [[ "$skip_rust_enabled" == "0" ]]; then
   fi
 fi
 
+# A tclean run writes no run summary unless asked, as CASA writes none; the
+# harness reads each Rust run's phase timings from <imagename>.summary.json.
+export CASA_RS_IMAGER_RUN_SUMMARY=1
+
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 source_ms_path="$ms_path"

@@ -48,7 +48,9 @@ fn clean_logging(
     } else {
         &["--backend", "cpu"]
     };
+    // The run summary, asked for, records the phases these laws count.
     let output = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
+        .env(casars_imager::RUN_SUMMARY_VARIABLE, "1")
         .args([
             "--ms",
             observation.measurement_set().to_str().expect("UTF-8 path"),

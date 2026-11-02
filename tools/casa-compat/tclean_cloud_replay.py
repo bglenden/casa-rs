@@ -4,8 +4,9 @@
 
 This is an evidence driver, not a runtime dependency. It uses the existing
 T1.5 product comparator from the separately archived harness and records
-additional finite-pixel, metadata and selected-return checks. The native extra
-summary sidecar remains a separately reported, undecided file difference.
+additional finite-pixel, metadata and selected-return checks. casa-rs, as
+CASA, writes only image products, so the product inventory must match
+exactly.
 """
 
 import argparse
@@ -13,6 +14,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -169,11 +171,9 @@ def compare_products(harness, native, reference, casatools, numpy):
             "beam_axes_passed": entry.get("beam_relative", 0.0) <= 1e-3,
             "metadata": metadata,
         }
-    image_inventory = all(
-        entry["status"] == "ok"
-        for suffix, entry in products.items()
-        if suffix != ".summary.json"
-    )
+    # CASA's tclean writes only its image products, and so does casa-rs's
+    # (#980, owner decision of 2026-11-02): every entry must pair.
+    image_inventory = all(entry["status"] == "ok" for entry in products.values())
     required = {".image", ".mask", ".model", ".pb", ".psf", ".residual", ".sumwt"}
     scoped_pass = (
         image_inventory
@@ -192,7 +192,6 @@ def compare_products(harness, native, reference, casatools, numpy):
         "additional_checks": product_checks,
         "sumwt_metric": sumwt_metric,
         "image_directory_inventory_matches": image_inventory,
-        "extra_sidecar": products.get(".summary.json"),
         "beam_position_angle_checked": False,
         "scoped_products_passed": scoped_pass,
     }
@@ -220,9 +219,16 @@ def run_case(args, name, harness, casatools, numpy):
     request.write_text(
         json.dumps({"surface": "tclean", "values": values}, indent=2) + "\n"
     )
+    # The task as a user runs it: no run-summary request.
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "CASA_RS_IMAGER_RUN_SUMMARY"
+    }
     run = subprocess.run(
         [str(args.binary), "--json-run", str(request)],
         cwd=folder,
+        env=environment,
         capture_output=True,
         text=True,
         timeout=120,
@@ -258,8 +264,7 @@ def run_case(args, name, harness, casatools, numpy):
         }
         for key in ("maxpsfsidelobe", "cyclethreshold")
     }
-    summary = folder / "image.summary.json"
-    row["execution"] = json.loads(summary.read_text()) if summary.is_file() else None
+    row["execution"] = json.loads(run.stdout).get("result")
     return row
 
 

@@ -3451,7 +3451,7 @@
       "semantic_role": "presentation",
       "documentation": {
         "summary": "Log one timing event per imaging phase",
-        "details": "Each phase (preparation, setup, every major and minor cycle, products) logs at INFO, under target casa_imaging::stage_timing, its wall time, the process's peak resident memory and the memory admission held: the phase record of <imagename>.summary.json. The events reach stderr when its priority admits INFO (--log-stderr-priority INFO), and the log table at its own priority. They change nothing the run computes.",
+        "details": "Each phase (preparation, setup, every major and minor cycle, products) logs at INFO, under target casa_imaging::stage_timing, its wall time, the process's peak resident memory and the memory admission held: the phase record of the run summary casars-imager writes as <imagename>.summary.json when CASA_RS_IMAGER_RUN_SUMMARY=1. The events reach stderr when its priority admits INFO (--log-stderr-priority INFO), and the log table at its own priority. They change nothing the run computes.",
         "examples": [
           "true"
         ]

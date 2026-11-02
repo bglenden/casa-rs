@@ -26,7 +26,20 @@ const POINT: Component = Component {
 
 /// `casars-imager --json-run -` with tclean `values`, in `directory`.
 pub(super) fn json_run(directory: &Path, values: Value) -> TaskReply {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
+    json_run_with(directory, values, false)
+}
+
+/// [`json_run`], asking the binary for its run summary when `summary` is
+/// set ([`casars_imager::RUN_SUMMARY_VARIABLE`]); otherwise it writes none,
+/// whatever the environment the tests run in says.
+pub(super) fn json_run_with(directory: &Path, values: Value, summary: bool) -> TaskReply {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_casars-imager"));
+    if summary {
+        command.env(casars_imager::RUN_SUMMARY_VARIABLE, "1");
+    } else {
+        command.env_remove(casars_imager::RUN_SUMMARY_VARIABLE);
+    }
+    let mut child = command
         .args(["--json-run", "-"])
         .current_dir(directory)
         .stdin(Stdio::piped())
@@ -189,6 +202,10 @@ fn tclean_returns_casas_summary_record() {
     };
 
     let dirty = run("dirty", json!({}));
+    // CASA's tclean writes its image products and nothing else beside them
+    // (#980, owner decision of 2026-11-02).
+    assert!(directory.join("dirty.psf").is_dir());
+    assert!(!directory.join("dirty.summary.json").exists());
     assert_eq!(describe(&dirty), casa("tclean niter0"));
     assert_eq!(entry(&dirty, "stopcode"), &CasaValue::Int { value: 3 });
     assert_eq!(entry(&dirty, "nmajordone"), &CasaValue::Int { value: 1 });

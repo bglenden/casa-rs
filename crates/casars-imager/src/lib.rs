@@ -69,21 +69,37 @@ pub fn resolve_request(
     request_from(resolved).map_err(|failure| failure.message)
 }
 
-/// Run `request`, resolved as `parameters`: the run summary, with the
-/// parameters as its echo, is written beside the products
-/// (`<imagename>.summary.json`); SIGINT cancels the run.
+/// The environment variable that asks the `casars-imager` binary for its
+/// run summary. CASA's `tclean` writes nothing beside its image products, so
+/// neither does a tclean run here (owner decision of 2026-11-02, #980); set
+/// to `1`, the binary also writes `<imagename>.summary.json`, the run's
+/// status, resolved parameters, backend and each phase's time and memory,
+/// for performance tooling ([`casa_imaging_application::RunSummary`]).
+pub const RUN_SUMMARY_VARIABLE: &str = "CASA_RS_IMAGER_RUN_SUMMARY";
+
+/// Whether this process was asked for run summaries
+/// ([`RUN_SUMMARY_VARIABLE`]).
+fn run_summary_requested() -> bool {
+    std::env::var_os(RUN_SUMMARY_VARIABLE).is_some_and(|value| value == "1")
+}
+
+/// Run `request`, resolved as `parameters`, as CASA's tclean does: it
+/// writes the image products and nothing else beside them. SIGINT cancels
+/// the run.
 pub fn run(
     parameters: ImagingParameters,
     request: &ImagingRequest,
 ) -> Result<ImagerRunTaskResult, String> {
-    run_with_statistics(parameters, request).map(|(result, _)| result)
+    run_with_statistics(parameters, request, false).map(|(result, _)| result)
 }
 
 /// Keep final controller statistics in memory for the CASA return without
-/// adding fields to the serialized task report or persisted run summary.
+/// adding fields to the serialized task report or the run summary, which is
+/// written beside the products only when `summary` asks for it.
 fn run_with_statistics(
     parameters: ImagingParameters,
     request: &ImagingRequest,
+    summary: bool,
 ) -> Result<(ImagerRunTaskResult, Option<ResidualStatistics>), String> {
     // Task continuation is distinct from internal atomic output replacement.
     let restart = parameters
@@ -96,16 +112,19 @@ fn run_with_statistics(
         .map_err(|error| error.to_string())?;
     let request = &request;
     let started = Instant::now();
-    let mut summary = request.imagename.clone().into_os_string();
-    summary.push(".summary.json");
+    let summary = summary.then(|| {
+        let mut path = request.imagename.clone().into_os_string();
+        path.push(".summary.json");
+        SummaryTarget {
+            path: path.into(),
+            request: Value::Object(parameters.0.clone()),
+        }
+    });
     let context = RunContext {
         host: HostResources::detect().map_err(|error| error.to_string())?,
         policy: request.resource_policy(),
         cancel: interrupt::token().clone(),
-        summary: Some(SummaryTarget {
-            path: summary.into(),
-            request: Value::Object(parameters.0.clone()),
-        }),
+        summary,
     };
     let outcome = execute(request, context).map_err(|error| error.to_string())?;
     let result =
@@ -152,7 +171,8 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
-    let (result, statistics) = run_with_statistics(parameters, &request).map_err(|error| {
+    let (result, statistics) = run_with_statistics(parameters, &request, run_summary_requested())
+        .map_err(|error| {
         if interrupt::token().is_cancelled() {
             TaskFailure::interrupted(format!("{error}; nothing was published"))
         } else {

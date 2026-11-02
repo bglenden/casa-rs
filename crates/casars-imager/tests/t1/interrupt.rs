@@ -2,9 +2,9 @@
 
 //! SIGINT during a run (IF-6): `casars-imager` stops at the next block
 //! boundary of a pass or before its next phase, exits with status 130 and
-//! leaves only its run summary, which records the cancellation and the
-//! phases before it (IF-9): no product, no staged member and no paged cube
-//! state.
+//! leaves only its run summary, asked for here, which records the
+//! cancellation and the phases before it (IF-9): no product, no staged
+//! member and no paged cube state.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -77,6 +77,7 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     let request_path = observation.scratch("request.json");
     std::fs::write(&request_path, request.to_string()).expect("request file");
     let mut child = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
+        .env(casars_imager::RUN_SUMMARY_VARIABLE, "1")
         .arg("--json-run")
         .arg(&request_path)
         .current_dir(&directory)
