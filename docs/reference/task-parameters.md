@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 35 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 37 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -218,7 +218,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `35`
+- Contract version: `37`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.

@@ -20,6 +20,7 @@ CASA behaviours casa-rs does not follow:
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
+[`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
@@ -2580,6 +2581,28 @@ correctly produce `_2` and `_3`. The exact build, parameters and failure
 are recorded on #944 and in the lifecycle receipt linked from the generated
 compatibility reference. The approved casa-rs target keeps the requested
 absolute directory; this decision is not evidence that restart is complete.
+
+## `tclean` cleans nothing with `nsigma`, `fastnoise=False` and no mask
+
+- Date noted: 2026-11-02
+- Status: CASA bug; casa-rs cleans the whole image, as CASA does with
+  `fastnoise=True` (#980)
+- Affected build/code: CASA 6.7.6.14, casatools
+  `synthesis/ImagerObjects/SIImageStore.cc` (`calcRobustRMS`) and
+  `SynthesisDeconvolver.cc` (`initMinorCycle`, `setupMask`)
+
+With `usemask='user'`, no `mask`, `nsigma>0` and `fastnoise=False`, the
+first `initMinorCycle` estimates the noise with
+`calcRobustImageStatistics(*residual(), *mask(), ...)`. `mask()` creates the
+`.mask` image there, filled with zeros. `setupMask` then finds an existing
+mask and keeps it ("Initializing to existing mask") instead of setting the
+whole image to 1, as it does when no mask exists. The run stops at once with
+the zero-mask stop code 7, an empty `.mask` and an empty model (CASA 6.7.6.14
+on `refim_twochan.ms`, `imsize=100`, `cell='8.0arcsec'`, `niter=300`,
+`nsigma=3`). With `fastnoise=True` the noise estimate never touches `mask()`
+and the whole image is cleaned. casa-rs cleans the whole image in both cases:
+without a mask its noise estimate is Chauvenet's over every valid pixel, as
+CASA's would be once the full mask existed.
 
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 

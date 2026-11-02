@@ -804,7 +804,7 @@
     },
     "usemask": {
       "status": "Partial",
-      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read.",
+      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold on one plane: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube or more than one Stokes plane, which CASA masks plane by plane, is refused when cleaning (issue 980).",
       "evidence": [
         "signature",
         "reader"
@@ -829,7 +829,7 @@
       "mapping": "mask_box or mask_image"
     },
     "pbmask": {
-      "scope": "Read and ignored; non-default catalog-refused (issue 980).",
+      "scope": "Read and ignored; non-default catalog-refused (issue 980): a primary-beam limit of user and automatic masks, and usemask='pb' (issue 823), needs the primary beam at every mask boundary.",
       "evidence": [
         "signature",
         "reader"
@@ -883,7 +883,8 @@
       ]
     },
     "smoothfactor": {
-      "scope": "Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: auto-multithresh smooths each new, grown and negative mask by smoothfactor PSF beams before its cut (SDMaskHandler::convolveMask). With usemask=auto-multithresh and niter>0 a value of zero or less is refused, as CASA's GaussianBeam refuses it; elsewhere it is read and unused, as in CASA.",
       "evidence": [
         "signature",
         "reader"
@@ -904,7 +905,8 @@
       ]
     },
     "cutthreshold": {
-      "scope": "Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: each smoothed auto-multithresh mask keeps the pixels above cutthreshold times its peak; a negative value keeps none, as makeMaskByPerChanThreshold cuts below a negative level; 0.2 or more warns at the first update, as CASA does.",
       "evidence": [
         "signature",
         "reader"
@@ -925,7 +927,8 @@
       ]
     },
     "dogrowprune": {
-      "scope": "Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: after the first cycle auto-multithresh grows the inherited mask by binary dilation through the low-noise threshold (growiterations); with dogrowprune and minbeamfrac>0 the grown mask is pruned before its smoothing and cut (SDMaskHandler::autoMaskByMultiThreshold).",
       "evidence": [
         "signature",
         "reader"
@@ -935,7 +938,8 @@
       ]
     },
     "minpercentchange": {
-      "scope": "Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: a noise-thresholded auto-multithresh plane stops evolving once its mask is empty, or once the cycle threshold is the global threshold and its mask changed by nothing or by less than minpercentchange percent; a negative value disables the change rule (SDMaskHandler::skipChannels).",
       "evidence": [
         "signature",
         "reader"
@@ -945,7 +949,8 @@
       ]
     },
     "verbose": {
-      "scope": "Read and ignored; non-default catalog-refused only with usemask=auto-multithresh (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: each auto-multithresh update logs CASA's automask summary row (printAutomaskSummary) through tracing; it changes no product.",
       "evidence": [
         "signature",
         "reader"
@@ -955,7 +960,8 @@
       ]
     },
     "fastnoise": {
-      "scope": "Read and ignored; non-default catalog-refused (issue 980).",
+      "status": "Implemented",
+      "scope": "Contract 37: False estimates the noise of nsigma and auto-multithresh as calcRobustImageStatistics does: casacore's Chauvenet statistics (z from the sample count, five iterations) of the valid pixels when the plane has no mask or its mask fills the plane, else the classical median and MAD outside the mask. The first estimate sees no mask; a stopped auto-multithresh plane records zero noise, so nsigma no longer stops it, as in CASA. True takes the classical statistics of every valid pixel. With usemask=user, no mask and nsigma, CASA 6.7.6.14 leaves an empty mask and cleans nothing; casa-rs cleans the whole image (docs/CASA (C++) bugs.md).",
       "evidence": [
         "signature",
         "reader"

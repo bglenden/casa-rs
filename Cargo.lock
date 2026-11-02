@@ -342,6 +342,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-numerics",
  "casa-types",
+ "libm",
  "ndarray",
  "num-complex",
  "rayon",

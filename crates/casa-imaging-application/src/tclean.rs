@@ -68,7 +68,7 @@ impl ImagingRequest {
     /// request cannot read (`imsize = [0]`), refused at its tclean parameter.
     pub fn from_tclean(values: &Map<String, Value>) -> Result<Self, TcleanRefusal> {
         let (request, _) = read(values)?;
-        serde_path_to_error::deserialize(Value::Object(request)).map_err(
+        let request: Self = serde_path_to_error::deserialize(Value::Object(request)).map_err(
             |error: serde_path_to_error::Error<serde_json::Error>| {
                 let parameter = match error.path().iter().next() {
                     Some(serde_path_to_error::Segment::Map { key }) => tclean_parameter(key),
@@ -79,7 +79,20 @@ impl ImagingRequest {
                     format!("tclean parameter {parameter:?}: {}", error.inner()),
                 )
             },
-        )
+        )?;
+        // casa-rs's automatic mask is one plane per image; CASA masks each
+        // Stokes plane and channel of its own (`autoMaskByMultiThreshold`).
+        if request.usemask == crate::UseMask::AutoMultithresh
+            && request.niter > 0
+            && (request.stokes.len() > 1 || request.specmode != crate::SpecMode::Mfs)
+        {
+            return Err(TcleanRefusal::not_yet(
+                "usemask",
+                "'auto-multithresh' with a cube or more than one Stokes plane",
+                980,
+            ));
+        }
+        Ok(request)
     }
 }
 
@@ -843,16 +856,30 @@ impl<'a> Tclean<'a> {
             "negativethreshold",
             "minbeamfrac",
             "growiterations",
-        ])?;
-        self.ignore(&[
-            "pbmask",
-            "smoothfactor",
             "cutthreshold",
             "dogrowprune",
             "minpercentchange",
             "verbose",
             "fastnoise",
         ])?;
+        // CASA's automatic mask smooths by smoothfactor beams and fails on a
+        // beam of no positive width (`GaussianBeam::setMajorMinor`).
+        let smoothfactor = self.value("smoothfactor")?.clone();
+        let cleans = self
+            .values
+            .get("niter")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            > 0;
+        if !modes.user_mask && cleans && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0) {
+            return Err(TcleanRefusal::new(
+                "smoothfactor",
+                "CASA's auto-multithresh smooths its mask by a beam of positive width: \
+                 smoothfactor must be positive, as CASA's tclean requires",
+            ));
+        }
+        self.set("smoothfactor", smoothfactor);
+        self.ignore(&["pbmask"])?;
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
         let (boxes, image) = if modes.user_mask {

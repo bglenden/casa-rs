@@ -327,6 +327,7 @@ mod tests {
             accounting: HogbomIterationAccounting::Strict,
             response: None,
             nsigma: 0.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
             automask: false,
         }
     }
