@@ -195,14 +195,23 @@ impl EvlaPowerPattern {
     }
 
     /// The power at `radius_arcmin_ghz`, the radius in arcmin times the
-    /// frequency in GHz. As CASA tabulates the pattern
-    /// (`PBMath1DPoly::fillPBArray`, `PBMath1D::apply`): 10,000 samples to
-    /// [`Self::MAXIMUM_RADIUS_ARCMIN_GHZ`], the lower sample taken, the
-    /// voltage stored as `Float` (the square root of the power) and
-    /// squared. Zero beyond the table and where the polynomial is not
-    /// positive.
+    /// frequency in GHz: the square of [`Self::voltage`], in `Float`, as
+    /// `PBMath1D::apply` squares the voltage it looks up.
     #[must_use]
     pub fn power(&self, radius_arcmin_ghz: f64) -> f32 {
+        let voltage = self.voltage(radius_arcmin_ghz);
+        voltage * voltage
+    }
+
+    /// The voltage at `radius_arcmin_ghz`, the radius in arcmin times the
+    /// frequency in GHz. As CASA tabulates the pattern
+    /// (`PBMath1DPoly::fillPBArray` for a power pattern, `PBMath1D::apply`):
+    /// 10,000 samples to [`Self::MAXIMUM_RADIUS_ARCMIN_GHZ`], the lower
+    /// sample taken, and the square root of the fit's power stored as
+    /// `Float`. Zero beyond the table and where the polynomial is not
+    /// positive (CASA stores a NaN there, which its lookup skips).
+    #[must_use]
+    pub fn voltage(&self, radius_arcmin_ghz: f64) -> f32 {
         if !(radius_arcmin_ghz.is_finite()
             && (0.0..=Self::MAXIMUM_RADIUS_ARCMIN_GHZ).contains(&radius_arcmin_ghz))
         {
@@ -220,8 +229,7 @@ impl EvlaPowerPattern {
         if response <= 0.0 {
             0.0
         } else {
-            let voltage = response.sqrt() as f32;
-            voltage * voltage
+            response.sqrt() as f32
         }
     }
 }

@@ -17,7 +17,7 @@ use num_complex::{Complex32, Complex64};
 
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use crate::accumulator::PlaneRange;
-use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
+use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
 use crate::native::{NO_CELL, NativeSource};
@@ -546,7 +546,11 @@ fn locate_sample(
     }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
     let location = geometry.locate(u, v, placing.oversampling);
-    if !geometry.fits(location, placing.half_support) {
+    let gridded = match cf.grid_edge() {
+        GridEdge::Whole => geometry.fits(location, placing.half_support),
+        GridEdge::Clipped => geometry.reaches(location, placing.half_support),
+    };
+    if !gridded {
         return None;
     }
     let gradient = placing.gradient;

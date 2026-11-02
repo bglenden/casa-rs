@@ -40,6 +40,10 @@ pub(super) struct SpecificationInputs {
     pub(super) primary_beam: bool,
     pub(super) w_projection: Option<WProjectionContract>,
     pub(super) aw_projection: Option<AwProjectionContract>,
+    /// Whether a mosaic grids with its conjugate beams: `conjbeams` on an
+    /// image of one plane (`HetArrayConvFunc` takes the conjugate only
+    /// when `nchan_p == 1`).
+    pub(super) mosaic_conjugate_beams: bool,
     pub(super) cube_density_padding: Option<usize>,
     pub(super) continuum_transform: Option<SequentialContinuumTransform>,
 }
@@ -207,6 +211,9 @@ fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationCont
     }
     if let Some(contract) = inputs.aw_projection {
         equation = equation.with_aw_projection(contract);
+    }
+    if inputs.mosaic_conjugate_beams {
+        equation = equation.with_mosaic_conjugate_beams();
     }
     equation
 }

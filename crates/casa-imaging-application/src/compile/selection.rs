@@ -362,10 +362,12 @@ pub(super) fn explicit_spw_channels(
 /// The observation selection: the surveyed partitions and samples, and
 /// `channels` per window with the window's whole frequency axis (CASA's
 /// mosaic kernels select by the complete `CHAN_FREQ` and
-/// `|CHAN_WIDTH[0]|`).
+/// `|CHAN_WIDTH[0]|`) and its factor to LSRK at its first visibility
+/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]).
 pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
+    lsrk_factors: &BTreeMap<usize, f64>,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
         .iter()
@@ -382,14 +384,20 @@ pub(super) fn observation_selection(
                     SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
                 })
                 .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
-            Ok(SpectralWindowSelection::new(
+            let factor = lsrk_factors
+                .get(spw_id)
+                .copied()
+                .expect("every selected window has its first-buffer factor");
+            SpectralWindowSelection::new(
                 u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
                     .iter()
                     .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
                     .collect(),
             )
-            .with_coordinate_catalog(catalog))
+            .with_coordinate_catalog(catalog)
+            .with_first_buffer_lsrk_factor(factor)
+            .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(

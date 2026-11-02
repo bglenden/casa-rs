@@ -20,11 +20,14 @@ use casa_imaging_model::{
     PolarizationCoordinate,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
-    GridPadding, ImageExtent, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
-    PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend,
+    GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, Mode,
+    ModeSet, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, Placement, PlaneRange,
+    PolarizationRouting, SampleBuffer, Spheroidal, WPlaneCount, WPlanes, Work,
 };
+use casa_numerics::PrimaryBeam;
 use casa_types::Correlation;
+use num_complex::Complex32;
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -251,14 +254,16 @@ fn mosaic_stages_hold_at_most_what_they_state() {
     }
     let routing = routing();
     let geometry = geometry(64, 2.0e-5, GridPadding::None);
-    let tclean = [
-        AiryDish::casa_alma(12.0, &geometry),
-        AiryDish::casa_alma(7.0, &geometry),
+    let tclean: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma(12.0, &geometry).into(),
+        AiryDish::casa_alma(7.0, &geometry).into(),
     ];
-    let simulator = [
-        AiryDish::casa_alma_simulator(12.0),
-        AiryDish::casa_alma_simulator(7.0),
+    let simulator: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma_simulator(12.0).into(),
+        AiryDish::casa_alma_simulator(7.0).into(),
     ];
+    // CASA's common EVLA beam holds no table.
+    let evla = [PrimaryBeam::Evla];
     let window = |spectral_window, selected: Vec<f64>, top: f64| MosaicWindow {
         spectral_window,
         window_frequencies_hz: vec![top - 2.0e9, top],
@@ -269,17 +274,32 @@ fn mosaic_stages_hold_at_most_what_they_state() {
         .map(|channel| 98.0e9 + 0.25e9 * f64::from(channel))
         .collect::<Vec<_>>();
     let windows = [window(0, vec![1.0e11], 1.0e11), window(1, eight, 101.0e9)];
+    // The EVLA at S band, whose 15′ beam fills the screen.
+    let s_band = [window(0, vec![2.9e9, 3.0e9, 3.1e9], 3.1e9)];
     let cases = [
-        (MosaicRules::Tclean, &tclean[..1]),
-        (MosaicRules::Tclean, &tclean[..]),
-        (MosaicRules::Simulator, &simulator[..]),
+        (MosaicRules::Tclean, &tclean[..1], 1.0e11, &windows[..]),
+        (MosaicRules::Tclean, &tclean[..], 1.0e11, &windows[..]),
+        (MosaicRules::Simulator, &simulator[..], 1.0e11, &windows[..]),
+        (MosaicRules::Tclean, &evla[..], 3.0e9, &s_band[..]),
+        (
+            MosaicRules::TcleanConjugateBeams,
+            &tclean[..],
+            1.0e11,
+            &windows[..],
+        ),
+        (
+            MosaicRules::TcleanConjugateBeams,
+            &evla[..],
+            3.0e9,
+            &s_band[..],
+        ),
     ];
-    for (rules, dishes) in cases {
+    for (rules, dishes, frequency_hz, windows) in cases {
         let label = format!("{rules:?}, {} dish classes", dishes.len());
-        let stated = MosaicPb::screens_bytes(rules, &geometry, 1.0e11, dishes, &windows)
+        let stated = MosaicPb::screens_bytes(rules, &geometry, frequency_hz, dishes, windows)
             .expect("screens bytes");
         let screens = || {
-            MosaicPb::screens(rules, &geometry, &routing, 1.0e11, dishes, &windows)
+            MosaicPb::screens(rules, &geometry, &routing, frequency_hz, dishes, windows)
                 .expect("screens")
         };
         // FFTW's plan for the screen joins the process's plan cache, which
@@ -307,6 +327,89 @@ fn mosaic_stages_hold_at_most_what_they_state() {
             set.resident_bytes() as i64,
             "{label}: the set holds what it says once its screens are freed"
         );
+    }
+}
+
+/// A CPU gridding call that clips a mosaic sample's support to the grid
+/// (`GridEdge::Clipped`) holds one block of the set's widest support beside
+/// its accumulator, in either precision: what `CpuBackend::clip_bytes`
+/// states, which the wave charges each CPU owner.
+#[test]
+fn clipped_spreads_hold_at_most_their_charge() {
+    if !alone("clipped_spreads_hold_at_most_their_charge") {
+        return;
+    }
+    let routing = routing();
+    let geometry = geometry(64, 2.0e-5, GridPadding::None);
+    let dishes = [PrimaryBeam::from(AiryDish::casa_alma(12.0, &geometry))];
+    let window = MosaicWindow {
+        spectral_window: 0,
+        window_frequencies_hz: vec![0.98e11, 1.0e11],
+        channel_width_hz: 1.0e6,
+        selected_frequencies_hz: vec![1.0e11],
+    };
+    for precision in [GridPrecision::F32, GridPrecision::F64] {
+        let set = MosaicPb::new(
+            MosaicRules::Tclean,
+            &geometry,
+            &routing,
+            1.0e11,
+            &dishes,
+            std::slice::from_ref(&window),
+        )
+        .expect("mosaic set");
+        let stated = CpuBackend::clip_bytes(&set, precision);
+        assert!(stated > 0, "a mosaic set clips");
+        let operator = MeasurementOperator::new(
+            geometry.clone(),
+            Basis::Constant,
+            routing.clone(),
+            Box::new(set),
+            precision,
+        );
+        let key = CfKey { group: 0, cube: 0 };
+        // A sample anchored on the grid's last column, whose support
+        // overruns it.
+        let cell = 1.0 / geometry.scale()[0];
+        let mut block = SampleBuffer::new(2);
+        block.push(
+            Placement {
+                u: 31.0 * cell,
+                v: 0.0,
+                w: 0.0,
+                prediction_w_positive: false,
+                phase: 0.0,
+                plane: 0,
+                spectral: 0.0,
+                cf: key,
+                gradient: [0.0, 0.0],
+            },
+            &[Complex32::new(1.0, 0.0); 2],
+            &[1.0; 2],
+        );
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::ALL);
+        let mut backend = CpuBackend::new();
+        let mut grid = |acc: &mut _| {
+            backend.apply(
+                &block.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Data,
+                    acc,
+                },
+            )
+        };
+        // The first call grows what the accumulator and the backend keep
+        // (an f32 grid's rounding-loss cells, a power per term); the law
+        // measures a second.
+        grid(&mut acc).expect("grid");
+        let (peak, left, result) = measure(|| grid(&mut acc));
+        result.expect("grid");
+        assert!(
+            peak <= stated,
+            "{precision:?}: the clipped spread held {peak}, stated {stated}"
+        );
+        assert_eq!(left, 0, "{precision:?}: the call keeps nothing");
     }
 }
 

@@ -112,31 +112,41 @@ fn analytic_primary_beam_model_for_telescopes(
 
 /// The instrument response of a direction-dependent gridder; `None` for the
 /// others.
+///
+/// The mosaic's is the one `SynthesisImagerVi2::createMosFTMachine` gives
+/// `HetArrayConvFunc`: for ALMA and ACA, an Airy aperture per class of
+/// dish; for the EVLA, CASA's common EVLA beam for every antenna, whatever
+/// its dish (`PBMathInterface::COMMONPB`).
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
     catalogue: &Catalogue,
 ) -> Result<Option<InstrumentModel>, PrepareError> {
+    let telescopes = telescopes(catalogue);
+    let all = |known: fn(&str) -> bool| {
+        !telescopes.is_empty() && telescopes.iter().all(|name| known(name))
+    };
     let (model, dishes): (_, fn(f64) -> bool) = match gridder {
-        Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
-            (diameter - 25.0).abs() < 1.0
-        }),
-        Gridder::Mosaic { .. } => (
+        Gridder::Awproject(_) if all(|name| matches!(name, "VLA" | "EVLA")) => {
+            (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
+                (diameter - 25.0).abs() < 1.0
+            })
+        }
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
             |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
         ),
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_evla_telescope) => {
+            return Ok(Some(
+                InstrumentModel::CasaEvlaCommonInterferometricResponseV1,
+            ));
+        }
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } => {
+            return Err(PrepareError::UnsupportedInstrument {
+                telescopes: telescopes.into_iter().collect(),
+            });
+        }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
-    let telescopes = telescopes(catalogue);
-    let supported = !telescopes.is_empty()
-        && telescopes.iter().all(|name| match gridder {
-            Gridder::Awproject(_) => matches!(name.as_str(), "VLA" | "EVLA"),
-            _ => AntennaResponseClass::casa_alma_aca_telescope(name),
-        });
-    if !supported {
-        return Err(PrepareError::UnsupportedInstrument {
-            telescopes: telescopes.into_iter().collect(),
-        });
-    }
     let diameters = dish_diameters(catalogue);
     if diameters.is_empty() {
         return Err(PrepareError::NoAntennaDishes);
@@ -230,6 +240,7 @@ mod tests {
         let mosaic = |usepointing| Gridder::Mosaic {
             usepointing,
             normtype: ProductNormalization::FlatNoise,
+            conjbeams: false,
         };
         assert!(matches!(
             pointing_centre_law(&Gridder::Standard {

@@ -132,3 +132,33 @@ fn the_evla_power_is_casas_sampled_table() {
     assert_eq!(pattern.power(-1.0), 0.0);
     assert_eq!(pattern.power(f64::NAN), 0.0);
 }
+
+#[test]
+fn the_evla_voltage_squares_to_casas_primary_beam_on_an_image() {
+    // CASA 6.7.6.14 `imager.pb` (`PBMath1DEVLA` through `PBMath1D::apply`)
+    // on an EVLA image row of 1″ pixels centred on the pointing, at the
+    // three L-band frequencies of `refim_oneshiftpoint.mosaic.ms` (fits
+    // 1232, 1488 and 1808 MHz): (GHz, offset in pixels, CASA's power).
+    for (ghz, offset, casa) in [
+        (1.2, 1, 0.999_999_523_162_841_8),
+        (1.2, 60, 0.997_931_241_989_135_7),
+        (1.2, 600, 0.807_162_761_688_232_4),
+        (1.2, 1200, 0.394_859_552_383_422_85),
+        (1.2, 2000, 0.027_145_378_291_606_903),
+        (1.2, 2100, 0.0),
+        (1.5, 900, 0.445_425_957_441_329_96),
+        (1.5, 1500, 0.066_901_847_720_146_18),
+        (1.5, 1800, 0.0),
+        (1.8, 600, 0.599_662_482_738_494_9),
+        (1.8, 1200, 0.080_746_456_980_705_26),
+    ] {
+        // `PBMath1D::apply`: the squared offset in degrees held as `Float`,
+        // its root times 60 · ν/GHz held as `Float`.
+        let r2 = (f64::from(offset) / 3600.0).powi(2) as f32;
+        let radius = (f64::from(r2).sqrt() * 60.0 * ghz) as f32;
+        let pattern = EvlaPowerPattern::at(ghz * 1.0e9);
+        let voltage = pattern.voltage(f64::from(radius));
+        assert_eq!(voltage * voltage, casa as f32, "{ghz} GHz, {offset} px");
+        assert_eq!(pattern.power(f64::from(radius)), casa as f32);
+    }
+}

@@ -105,6 +105,11 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     ] {
         assert_eq!(request(overrides.clone()), plain, "{overrides}");
     }
+    // A mosaic reads conjbeams.
+    assert_ne!(
+        request(json!({ "gridder": "mosaic", "conjbeams": true })),
+        request(json!({ "gridder": "mosaic" }))
+    );
     // A mosaic reads no W planes.
     assert_eq!(
         request(json!({ "gridder": "mosaic", "wprojplanes": 8 })),
@@ -122,6 +127,8 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     unselected["selectdata"] = json!(false);
     assert_eq!(request(unselected), request(selected.clone()));
     assert_ne!(request(selected), plain);
+    // `spw='*'` selects every window, as the empty selector does.
+    assert_eq!(request(json!({ "spw": "*" })), plain);
 }
 
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
@@ -279,11 +286,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "gridder": "mosaic", "weighting": "briggs" }),
             "mosweight",
             "#818",
-        ),
-        (
-            json!({ "gridder": "mosaic", "conjbeams": true }),
-            "conjbeams",
-            "#980",
         ),
         (
             json!({ "gridder": "awproject", "cfcache": "cf" }),

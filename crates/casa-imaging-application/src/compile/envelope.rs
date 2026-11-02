@@ -186,6 +186,52 @@ pub(super) fn continuum_envelope(
     Ok(SpectralEnvelope { edges_hz })
 }
 
+/// Each selected window's factor from its frame to LSRK at the first
+/// visibility buffer CASA's tclean iterates of it, by window number.
+///
+/// `SynthesisImagerVi2::createVisSet` iterates by `ARRAY_ID`,
+/// `DATA_DESC_ID`, `FIELD_ID` and `TIME`, so a window's first buffer is
+/// its least selected field at that field's earliest selected time
+/// ([`Epoch`]; one array). `FTMachine::matchChannel` converts the buffer's
+/// frequencies to LSRK there, towards the field, whatever frame the image
+/// records, and `HetArrayConvFunc::findConvFunction` evaluates a mosaic's
+/// beams at them once for the window. A window in `REST`, or already in
+/// LSRK, keeps its frequencies (factor 1), as `matchChannel` keeps a rest
+/// frame's.
+pub(super) fn first_buffer_lsrk_factors(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+) -> Result<BTreeMap<usize, f64>, PrepareError> {
+    let mut factors = BTreeMap::new();
+    for window in &survey.spectral_windows {
+        let source = window.frequency_reference;
+        let first = survey
+            .window_epochs(window.spw_id)
+            .iter()
+            .copied()
+            .min_by(|a, b| {
+                a.field_id
+                    .cmp(&b.field_id)
+                    .then(a.time_mjd_seconds.total_cmp(&b.time_mjd_seconds))
+            });
+        let factor = match first {
+            Some(epoch) if !matches!(source, FrequencyRef::REST | FrequencyRef::LSRK) => {
+                let frame = epoch_frame((catalogue, engine), epoch)?;
+                PreparedFrequencyConversion::new(
+                    source,
+                    FrequencyRef::LSRK,
+                    Some(&frame),
+                    Some(&frame),
+                )?
+                .convert_hz(1.0)
+            }
+            _ => 1.0,
+        };
+        factors.insert(window.spw_id, factor);
+    }
+    Ok(factors)
+}
+
 /// A cube's output axis: its frame and the centres of its first and last
 /// channels.
 pub(super) struct OutputAxis {

@@ -414,6 +414,9 @@ pub enum Gridder {
         /// Flat-noise or flat-sky products.
         #[serde(deserialize_with = "normalization")]
         normtype: ProductNormalization,
+        /// Grid with each beam at its conjugate frequency about the image
+        /// frequency, on an image of one plane (tclean `conjbeams`).
+        conjbeams: bool,
     },
     /// EVLA A-projection with W-projection.
     Awproject(AwProjection),

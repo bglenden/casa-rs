@@ -278,7 +278,13 @@ pub(crate) fn prepare(
         }
     }
     let geometry = geometry(request, &domains, &centre, &spectral);
-    let snapshot = snapshot_input(request, (store, columns), survey, &channels)?;
+    let lsrk_factors = envelope::first_buffer_lsrk_factors((catalogue, &engine), &survey)?;
+    let snapshot = snapshot_input(
+        request,
+        (store, columns),
+        survey,
+        (&channels, &lsrk_factors),
+    )?;
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
     let phase_table = centre
@@ -457,6 +463,13 @@ fn specification_inputs(
             )?),
             _ => None,
         },
+        mosaic_conjugate_beams: matches!(
+            request.gridder,
+            Gridder::Mosaic {
+                conjbeams: true,
+                ..
+            }
+        ) && surveyed.spectral.output_channels == 1,
         cube_density_padding: cube_density_padding(request, surveyed)?,
         continuum_transform,
     })
@@ -470,7 +483,7 @@ fn snapshot_input(
     request: &ImagingRequest,
     (store, columns): (&OpenedStore, Columns),
     survey: Survey,
-    channels: &WindowChannels,
+    (channels, lsrk_factors): (&WindowChannels, &BTreeMap<usize, f64>),
 ) -> Result<ObservationSnapshotInput, PrepareError> {
     let visibility = columns.visibility;
     let weights = partitions::stored_weights(
@@ -478,7 +491,7 @@ fn snapshot_input(
         survey.partitions.iter().map(PartitionSelection::partition),
         visibility,
     );
-    let selection = selection::observation_selection(survey, channels)?;
+    let selection = selection::observation_selection(survey, channels, lsrk_factors)?;
     Ok(ObservationSnapshotInput::new(vec![
         ObservationSourceInput::new(
             ObservationSourceProvenance::new(request.vis.display().to_string()),

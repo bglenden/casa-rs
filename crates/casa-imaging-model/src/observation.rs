@@ -518,12 +518,17 @@ impl SpectralWindowCoordinateCatalog {
 }
 
 /// Exact channels selected from one spectral window.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowSelection {
     spectral_window_id: u32,
     channel_indices: Vec<u32>,
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
+    first_buffer_lsrk_factor: Option<f64>,
 }
+
+// Construction rejects every non-finite factor, so IEEE equality is
+// reflexive for all values this type can contain.
+impl Eq for SpectralWindowSelection {}
 
 impl SpectralWindowSelection {
     /// Construct a resolved spectral-window/channel selection.
@@ -533,7 +538,27 @@ impl SpectralWindowSelection {
             spectral_window_id,
             channel_indices,
             coordinate_catalog: None,
+            first_buffer_lsrk_factor: None,
         }
+    }
+
+    /// Bind the factor that takes the window's frequencies to LSRK at the
+    /// first visibility buffer CASA's tclean iterates of it, where
+    /// `FTMachine::matchChannel` converts them and a mosaic evaluates its
+    /// beams (`HetArrayConvFunc::findConvFunction`); `None` unless the
+    /// factor is finite and positive.
+    #[must_use]
+    pub fn with_first_buffer_lsrk_factor(mut self, factor: f64) -> Option<Self> {
+        (factor.is_finite() && factor > 0.0).then(|| {
+            self.first_buffer_lsrk_factor = Some(factor);
+            self
+        })
+    }
+
+    /// The factor [`Self::with_first_buffer_lsrk_factor`] bound, if any.
+    #[must_use]
+    pub const fn first_buffer_lsrk_factor(&self) -> Option<f64> {
+        self.first_buffer_lsrk_factor
     }
 
     /// Bind the storage owner's complete physical spectral coordinate catalog.

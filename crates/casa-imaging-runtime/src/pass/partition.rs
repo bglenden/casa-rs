@@ -709,7 +709,8 @@ impl Router {
     /// Owner of one placement and, with region owners, its anchor row and
     /// gridding work ([`placement_work`]), which
     /// [`Partition::regions_balanced`] balances;
-    /// the placement lies on the wave and fits the grid. The kernel's
+    /// the placement lies on the wave and fits or reaches the grid, as the
+    /// set's `GridEdge` asks. The kernel's
     /// support and oversampling come from the set's metadata, so routing
     /// lends no taps and takes no lock (#744).
     pub(super) fn owner_and_work(
@@ -734,7 +735,10 @@ impl Router {
                     placement.v,
                     cf.gridding_oversampling(placement.cf),
                 );
-                let row = anchor.y as usize;
+                // A clipped support's anchor can lie off the grid
+                // (`GridEdge::Clipped`); the owner of the nearest row holds
+                // every row of it that is on the grid.
+                let row = anchor.y.clamp(0, owner_of_row.len() as i64 - 1) as usize;
                 (
                     usize::from(owner_of_row[row]),
                     Some((row, placement_work([hx, hy]))),

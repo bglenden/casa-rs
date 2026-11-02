@@ -346,10 +346,14 @@ impl<'a> Tclean<'a> {
         self.ignore(&["selectdata"])?;
         let field = self.text("field")?;
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
+        for name in ["uvrange", "intent"] {
             let value = self.text(name)?;
             self.set(name, value);
         }
+        // `MSSpwGram` reads a lone `*` as every spectral window, every
+        // channel: what an empty selector selects.
+        let spw = self.text("spw")?;
+        self.set("spw", if spw == "*" { "" } else { spw });
         // Scan, observation, antenna and time selectors keep their exact text:
         // CASA's tclean refuses whitespace-only text and `none`, and its
         // grammars give padding and case their own meanings.
@@ -634,7 +638,7 @@ impl<'a> Tclean<'a> {
     }
 
     /// casa-rs's AW projection runs as CASA's `aterm=True, psterm=False,
-    /// wbawp=True, conjbeams=True`, and its mosaic as `conjbeams=False`.
+    /// wbawp=True, conjbeams=True`; its mosaic reads `conjbeams`.
     fn aw_terms(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         let fixed: &[(&str, bool)] = match modes.gridder {
             "awproject" => &[
@@ -643,7 +647,11 @@ impl<'a> Tclean<'a> {
                 ("wbawp", true),
                 ("conjbeams", true),
             ],
-            "mosaic" => &[("conjbeams", false)],
+            "mosaic" => {
+                let conjbeams = self.flag("conjbeams")?;
+                self.set("conjbeams", conjbeams);
+                &[]
+            }
             _ => &[],
         };
         for name in ["aterm", "psterm", "wbawp", "conjbeams"] {
