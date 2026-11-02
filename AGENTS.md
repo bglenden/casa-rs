@@ -123,11 +123,24 @@ decided, afterwards, not by approving it first.
   the alternative not taken) and add the `owner-review` label. Nothing waits
   for that review; a decision the owner overturns becomes ordinary follow-up
   work.
+- Do not end a turn with an offer ("Shall I…", "tell me if you want…") or a
+  question whose answer you would act on anyway. If you have a
+  recommendation, act on it and record it.
+- A defect you find on the way is fixed in the PR when small, or filed as an
+  issue; it is not just mentioned.
 - When one item is blocked (an unreachable host, missing data, a failing
   oracle), say why on its issue and go on to the next item. A session ends
-  only when no authorized work it can do remains.
+  only when no authorized work it can do remains, or at the end point its
+  issue or plan names; there, report rather than start unnamed work.
+- Before ending a turn that waits on CI, a merge, a review or a run, arrange
+  to be woken: the host's PR monitor, or one background wait (such as
+  `gh pr checks N --watch`), which is not polling. Never leave the owner to
+  ask for status.
 - Keep long work's state in one status comment on its issue, edited in place,
-  not in handoff documents in the tree.
+  not in handoff documents in the tree. On resuming a branch, follow
+  `AGENTS.md` as it is on `origin/main`, not the branch's copy.
+- Remove your own leftovers (worktrees, branches, scratch, remote copies) as
+  the last step, without asking.
 - Acceptance checks are not weakened to finish. Work that cannot be finished
   stays open on its issue, stated there; the PR does not claim it. A
   relaxation `TESTING.md` reserves for the owner (a matrix-row exception, a
@@ -170,14 +183,17 @@ casa-rs's, and why), decided by its class:
   contract) gets one independent review before it is marked ready. Docs,
   tests, tooling, and changes whose results are checked unchanged
   (refactors, performance work) need only green CI.
-- The reviewer is a fresh agent without this conversation's context: Astra
+- The reviewer is a fresh agent without this conversation's context, which
+  the working agent starts itself and whose findings it reads directly: Astra
   (`gpt-6-astra`) at `xhigh` in Codex; `CLAUDE.md` names Claude Code's.
-  Brief it with the revision, the diff, the contracts it touches and the
-  evidence, and ask it to look for shallow or tautological tests too.
+  Never ask the owner to run, relay or announce a review. Brief the reviewer
+  with the revision, the diff, the contracts it touches and the evidence,
+  and ask it to look for shallow or tautological tests too.
 - One round. Fix blocking and should-fix findings or answer them on the PR;
   decline optional ones with a reason. A fix needs no second review unless it
   adds a mechanism the reviewer did not see.
-- Start the review once the diff is stable, and keep working while it runs.
+- Start the review once the diff is stable, and keep working while it runs,
+  on this PR's remaining checks or the issue's next item.
 
 ## Checks And Merging
 
@@ -190,8 +206,10 @@ casa-rs's, and why), decided by its class:
   required CI checks pass. Report that it is merging and move on.
 - The agent that opens or takes over a PR watches it to merge: the host's PR
   monitor (`CLAUDE.md` names the Claude app's), or bounded CLI checks. Rerun
-  a job that failed on a known flaky test, fix real failures on the branch,
-  and convert the PR back to a draft, saying why, if the fix is not quick.
+  a job that failed on a known flaky test (and note it on the flake's
+  issue), fix real failures on the branch, and convert the PR back to a
+  draft, saying why, if the fix is not quick. A timing gate that misses by
+  about its noise is rerun before anyone is asked about it.
 - "Merge as-is" from the owner waives the review and check gates for that
   PR: merge with `gh pr merge --admin --merge` and record the waiver on it.
 - Missing test data or disk space is an environment problem, not a code
