@@ -26,7 +26,7 @@
   sky-model helpers `modifymodel` and `flatimage`. `from casars import
   simutil` is its public import.
 - `casars.parameters` is the accepted common API for typed task profiles
-  described by ADR-0006 and the current-only option in ADR-0012.
+  described by ADR-0006, including its current-only option.
 
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated

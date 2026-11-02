@@ -188,8 +188,8 @@ inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
-ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by simobserve.
+ADR-0006 defines the common parameter model, including the optional
+current-only profile contract used by simobserve and msconvert.
 
 `ParameterCatalog` entries describe reusable concepts:
 

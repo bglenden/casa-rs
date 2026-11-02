@@ -10,8 +10,8 @@ loaded by a task executable's command line or manipulated from Python without
 changing the parameter names or their meaning. Every parameter surface is a
 task (ADR-0017).
 
-This guide describes the implemented interface from ADR-0006, with current-only
-surface evolution defined by ADR-0012. Provider JSON requests, results, and
+This guide describes the implemented interface from ADR-0006, including
+current-only surface evolution. Provider JSON requests, results, and
 progress remain machine transports; TOML is the sole human-authored
 parameter-profile format.
 

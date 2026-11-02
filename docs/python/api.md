@@ -2,7 +2,7 @@
 
 ## Common parameter API
 
-ADR-0006 defines this common surface for task profiles; ADR-0012 defines
+ADR-0006 defines this common surface for task profiles, including
 current-only surface evolution:
 
 ```python

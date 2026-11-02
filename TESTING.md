@@ -105,7 +105,7 @@ Verification: just verify
   built twice, public and with `--document-private-items`, with broken and
   private intra-doc links denied in both, then MkDocs). The required checks
   are `lint_test`, `python_package` and `docs`; the suite install is
-  informational and does not block merge (ADR-0004)
+  informational and does not block merge (#975)
 - GitHub tag CI: lint/test, Python package and performance-tool checks plus
   smoke, suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow

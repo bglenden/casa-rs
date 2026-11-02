@@ -152,7 +152,7 @@ accept a row.
 
 ## Acceptance and reporting
 
-Do not recreate, or optimise, what ADR-0014 and ADR-0015 retired: content
+Do not recreate, or optimise, what ADR-0014 retired: content
 hashes of scientific arrays, plans, models or same-run spill, product
 attestation, verification-only full-array rereads, resumable per-member
 recovery and whole-set rollback. Validate scientific values where they are

@@ -10,11 +10,12 @@ Superseded by:
 
 ADR-0017 makes a Python package that mirrors CASA's Python interfaces the
 product surface. ADR-0018 puts all computation in Rust, but leaves open how
-each surface binds to Rust. Tasks already have a mechanism: the parameter
-contract and `casars run`. CASA tools do not yet. The simulation programme
-brings the first one, the `simulator` (`sm`), and `ia`, `tb`, `ms`, `cl` and
-others will follow. Every later tool reuses whatever pattern the first one
-sets.
+each surface binds to Rust. Tasks already had a mechanism: the parameter
+contract and the task's own executable (ADR-0017 item 4). CASA tools did
+not. The simulation programme brought the first one, the `simulator` (`sm`),
+and every later tool reuses the pattern it set: `casars.tools` now also has
+`measures`, `quanta`, `componentlist`, `image`, `coordsys`, `table`,
+`msmetadata` and `ms`.
 
 CASA scripts construct tools as objects, for example
 `from casatools import simulator; sm = simulator()`, and then call methods
@@ -27,8 +28,7 @@ fallbacks.
 
 1. **Namespace.**
    - CASA tool classes live in `casars.tools`, under casatools' class names:
-     `simulator`, and later `image`, `table`, `measurementset`,
-     `componentlist` and the rest.
+     `simulator`, `image`, `table`, `ms`, `componentlist` and the rest.
    - Tasks stay in `casars.tasks`.
    - A CASA script changes only its imports.
    - casa-rs ships no `casatools` or `casatasks` alias packages, because they
@@ -48,7 +48,7 @@ fallbacks.
    `unsendable`. Every method that touches the disk, copies array data or
    computes releases the GIL. The existing `casars.data` `Image` and `Table`
    bindings move to this rule under #839.
-5. **Tools are thin over idiomatic Rust APIs** (ADR-0002, ADR-0018 item 5).
+5. **Tools are thin over idiomatic Rust APIs** (ADR-0018 item 5).
    - The pyo3 layer maps CASA's argument conventions (quantity strings,
      measures records, scalar-or-list arguments) onto Rust types.
    - Those conversions are shared by every tool, not written once per tool.
@@ -69,9 +69,11 @@ Negative:
   thread-pinned objects.
 
 Neutral / tradeoffs:
-- `casars.data.Image` and `casars.data.Table` stay until CASA-shaped `image`
-  and `table` tools arrive. Whether `casars.data` remains after that is
-  decided then.
+- `casars.data.Image` and `casars.data.Table` remain beside the `image` and
+  `table` tools as the narrower persistent data-access API. They are still
+  `unsendable` and hold the GIL until #839 moves them to item 4. The tools'
+  methods casa-rs does not implement yet raise `NotImplementedError` naming
+  the issue that tracks them.
 - Tools bypass the task parameter contract and Last state, as CASA's tools do.
 
 ## Alternatives considered
@@ -87,9 +89,10 @@ Neutral / tradeoffs:
 ## Enforcement
 
 This decision is enforced by:
-- tests: each tool's Python tests construct it from `casars.tools`. With the
-  first tool (simulation Phase 1c), a test compares every method's signature
-  and defaults against the installed CASA binding when CASA is available.
+- tests: each tool's Python tests construct it from `casars.tools` and
+  compare every method's signature and defaults with CASA's installed
+  binding, as recorded in `tests/data/casa_<tool>_signatures.json` and live
+  when CASA is importable.
 - lint/import/dependency rules: none automatic
 - CI checks: the existing `python_package` job
 - review trigger:

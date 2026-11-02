@@ -89,7 +89,7 @@ decision 10). Adding a crate to that set is the owner's decision.
   supplies defaults, activation, narrowing, migrations and presentation, but
   cannot redefine a concept's meaning, normalization, units, role or
   persistence, and neither can a frontend. An empty migration set declares a
-  surface current-only (ADR-0012).
+  surface current-only (ADR-0006).
 - `casa-task-runtime` owns profile mechanics, managed state, the task
   lifecycle from parsing through Last/Last Successful to completion,
   provider discovery, diagnostics, exit classification and the common help
@@ -216,7 +216,7 @@ the dependency checker. They are numbered so that code can cite them.
 3. **No silent fallbacks on required data.** `unwrap_or_default`,
    `unwrap_or(0)`, `.ok()?` and an `if let Some` that skips work are only for
    data whose type says it is optional.
-4. **No content hashing for trust** (ADR-0014, ADR-0015). No SHA-256 or CRC
+4. **No content hashing for trust** (ADR-0014). No SHA-256 or CRC
    over scientific arrays, plans, summaries or same-run spill; identity is
    ownership. Checksums an external format defines are the only exception.
 5. **One owner per invariant.** Each fact (worker count, memory budget, grid
@@ -341,21 +341,11 @@ the dependency checker. They are numbered so that code can cite them.
 
 | ADR | Title | Status |
 |---|---|---|
-| 0001 | Public surface and workspace layering | accepted |
-| 0002 | Native Rust implementation with casacore-compatible persistence | accepted |
-| 0003 | Provider schema bundle as boundary contract | accepted |
-| 0004 | Tiered verification and heavy parity gates | accepted |
-| 0005 | Native macOS GUI prototype boundary | retired |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
-| 0007 | Scientific notebooks and assistant boundary | retired |
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
-| 0010 | Unified imaging resource authority | superseded |
-| 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |
-| 0012 | Current-only sparse profile contracts | accepted |
-| 0013 | Non-cryptographic integrity for private run-scoped spill artifacts | accepted |
-| 0014 | Trusted product generation without content attestation | accepted |
-| 0015 | Run-local imaging ownership without content attestation | accepted |
+| 0011 | Continuum-line coupling | retired |
+| 0014 | Identity is ownership, without content attestation | accepted |
 | 0016 | Imaging foundation | accepted |
 | 0017 | Python and headless task providers are the product surface | accepted |
 | 0018 | Rust computes; Python is the interface | accepted |
