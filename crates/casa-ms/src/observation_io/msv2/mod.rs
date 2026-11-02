@@ -380,8 +380,7 @@ impl Msv2Observation {
                 spectral_weights,
             });
         }
-        let read_windows = entries.iter().map(|entry| entry.window.0 as i32).collect();
-        if let Some((antenna, feed, window)) = feeds.varying(&read_windows) {
+        if let Some((antenna, feed, window)) = feeds.varying(&catalogue::feed_reads(&entries)) {
             tracing::warn!(
                 "FEED states receptors that vary in time (first for antenna {antenna}, feed \
                  {feed}, window {window}); the last row of each antenna, feed and window is \

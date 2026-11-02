@@ -2805,7 +2805,8 @@ feed (a -1 row beside rows for other windows, or no row at all, as for
 ALMA's WVR window) leaves that cache entry untouched: `receptorAngles_p`
 is resized to the same shape, which casacore's `Array::resize` does not
 reinitialise, so `receptorAngles()` gives the previous window's angles (or,
-for the first window iterated, the newly allocated array's contents). XRADIO 1.3.1's converter makes the
+for the first window iterated, zeros: the new array's elements are
+value-initialised). XRADIO 1.3.1's converter makes the
 same per-dataset choice and writes such a dataset with no receptor angles.
 casa-rs reads an antenna and feed's rows in the window, else its rows for
 every window, and states no receptors where it has neither. Where `FEED`'s

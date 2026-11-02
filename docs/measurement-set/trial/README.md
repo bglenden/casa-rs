@@ -1512,9 +1512,10 @@ ways:
   has no `FEED` row for it (ALMA's WVR window; the simulator writes window
   0's rows only, #943) as XRADIO's converter does: `receptor_label` and
   `polarization_type`, which XRADIO's schema requires, named by the
-  correlation products, and no `ANTENNA_RECEPTOR_ANGLE` ("Fixture
-  findings"). Writing no receptor variables at all, as before, failed
-  XRADIO's schema check.
+  correlation products, and no `ANTENNA_RECEPTOR_ANGLE`, the group's
+  `coordinates` attribute naming `polarization_type` a coordinate as
+  XRADIO's does, since no variable names it ("Fixture findings"). Writing
+  no receptor variables at all, as before, failed XRADIO's schema check.
 
 What a conversion carries of the pointing is planned before anything is
 written (`creation/pointing_plan.rs`):
@@ -1577,7 +1578,7 @@ MSv4", below).
 | `msv4_pointing_finds_each_antennas_own_nearest_samples` | With one antenna sampled a second after the others (NaN between on MSv4's grid) and one with no pointing, a request between samples gives each antenna its own nearest sample either side, as the MSv2 does, and the antenna without pointing none. |
 | `pointing_the_destination_cannot_hold_is_reported_before_writing` | `AZELGEO` directions keep their frame both ways; `GALACTIC` ones are lost whole into an MSv4 (no `pointing_xds`) and kept into an MSv2; a repeated row and rows beyond the observation are counted losses into an MSv4 and kept into an MSv2; two partitions sharing rows write them once. |
 | `pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4` | Rows with a rate term (`NUM_POLY` 1) evaluate at the query time on the MSv2; the MSv4 conversion reports the terms as a loss and holds each row's direction at its own time, which converting back keeps. |
-| `receptors_are_each_partitions_own` | Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside an antenna's window-1 row still serve the other antennas there and every antenna in window 0 (casacore and XRADIO ignore them), which a conversion carries both ways as a row per window; of a row and one appended that changes an antenna's angles, the appended one is read whether it is 10 s later or earlier (table order, as casacore's `MSIter`); a conversion refuses the change until columns are accepted, then carries that row and reports the loss; an antenna's rows for every window that change are never read where it has a row in every window, and are no loss. |
+| `receptors_are_each_partitions_own` | Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside an antenna's window-1 row still serve the other antennas there and every antenna in window 0 (casacore and XRADIO ignore them), which a conversion carries both ways as a row per window; of a row and one appended that changes an antenna's angles, the appended one is read whether it is 10 s later or earlier (table order, as casacore's `MSIter`); a conversion refuses the change until columns are accepted, then carries that row and reports the loss; an antenna's rows for every window that change are never read where it has a row in every window, and are no loss; where they serve a window without rows of its own, the last is read and their change is a loss. |
 | `a_window_without_feed_rows_has_xradios_receptor_labels_and_no_angles` | `ms_trial_lines.ms`'s `FEED` has no row for window 1: its dataset's `antenna_xds` has XRADIO's `receptor_label` and no receptor angles, its `polarization_type` `R, L` where XRADIO's is `R, R`; window 0's equals XRADIO's; both MSv4 stores read back as the MSv2's receptors, and the conversion back writes its `FEED` rows. |
 
 Unit laws: (casa-observation) `brackets_name_the_samples_around_a_time` and

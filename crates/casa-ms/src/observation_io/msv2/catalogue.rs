@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_observation::{
-    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, Receptors,
-    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, PartitionEntry,
+    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -511,26 +511,45 @@ impl Feeds {
     }
 
     /// The first (antenna, feed, window) whose rows differ, among the rows
-    /// [`Self::receptors`] reads for `windows` (the partitions' windows):
-    /// `FEED` states receptors that vary in time, of which it keeps the
-    /// last. An antenna and feed's rows for every window (-1) are read only
-    /// for a window of `windows` it has no row of its own in; otherwise
-    /// they do not count.
-    pub(crate) fn varying(&self, windows: &BTreeSet<i32>) -> Option<(i32, i32, i32)> {
-        self.rows
+    /// [`Self::receptors`] reads for `reads` (what partitions read:
+    /// [`feed_reads`]): `FEED` states receptors that vary in time, of which
+    /// it keeps the last. Rows no read takes (another feed's, a window's
+    /// no partition is in, or rows for every window where the window has
+    /// its own) do not count.
+    pub(crate) fn varying(&self, reads: &BTreeSet<(i32, i32, i32)>) -> Option<(i32, i32, i32)> {
+        reads
             .iter()
-            .filter(|((antenna, feed, window), _)| {
-                if *window == -1 {
-                    windows
-                        .iter()
-                        .any(|own| !self.rows.contains_key(&(*antenna, *feed, *own)))
-                } else {
-                    windows.contains(window)
-                }
+            .filter_map(|&(antenna, feed, window)| {
+                [(antenna, feed, window), (antenna, feed, -1)]
+                    .into_iter()
+                    .find(|key| self.rows.contains_key(key))
             })
-            .find(|(_, rows)| rows.iter().any(|row| row != &rows[0]))
-            .map(|(key, _)| *key)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .find(|key| {
+                let rows = &self.rows[key];
+                rows.iter().any(|row| row != &rows[0])
+            })
     }
+}
+
+/// Each (antenna, feed, window) whose receptors the partitions `entries`
+/// read: every antenna their baselines name, through its side of the
+/// partition's feed pair, in the partition's window. A partition without a
+/// feed pair (an MSv4's) reads none.
+pub(crate) fn feed_reads(entries: &[PartitionEntry]) -> BTreeSet<(i32, i32, i32)> {
+    let mut reads = BTreeSet::new();
+    for entry in entries {
+        let Some([feed1, feed2]) = entry.feeds else {
+            continue;
+        };
+        let window = entry.window.0 as i32;
+        for baseline in &entry.baselines {
+            reads.insert((baseline.antenna1.0 as i32, feed1 as i32, window));
+            reads.insert((baseline.antenna2.0 as i32, feed2 as i32, window));
+        }
+    }
+    reads
 }
 
 pub(crate) fn metres(value: f64) -> Quantity {

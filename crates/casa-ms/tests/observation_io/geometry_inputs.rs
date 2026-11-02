@@ -861,6 +861,32 @@ fn receptors_are_each_partitions_own() {
     let v4 = root.path().join("unread.ps.zarr");
     casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion())
         .expect("no FEED loss to accept");
+
+    // Where they serve a window without rows of its own they are read, the
+    // last taken, and their changing in time is a loss.
+    let v2 = variant("read");
+    edit_feed(
+        &v2,
+        None,
+        &[
+            (0, -1, 0.0, 0.0),
+            (1, -1, 0.0, 0.0),
+            (2, -1, 0.0, 0.0),
+            (0, -1, 0.75, 10.0),
+        ],
+    );
+    let read = open(&v2, &OpenOptions::default()).expect("read");
+    let served = [vec![0.0; 6], vec![0.75, 0.75, 0.0, 0.0, 0.0, 0.0]];
+    assert_eq!(angles(read.as_ref()), served);
+    let v4 = root.path().join("read.ps.zarr");
+    let refused = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion());
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("FEED")),
+        "{refused:?}"
+    );
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &accepting).expect("to msv4");
+    let converted = open(&v4, &OpenOptions::default()).expect("msv4");
+    assert_eq!(angles(converted.as_ref()), served);
 }
 
 /// #937: a store says whether it holds any pointing at all, whatever the
