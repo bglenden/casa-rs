@@ -171,7 +171,6 @@ fn a_virtual_model_is_written_for_the_selection_the_run_images() {
             ]
         })
         .collect::<BTreeSet<_>>();
-    drop(antennas);
     drop(ms);
     assert!(!expected.is_empty(), "the baseline has rows");
     let mut values = controls("virtual");
