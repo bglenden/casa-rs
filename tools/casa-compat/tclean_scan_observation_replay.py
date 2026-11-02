@@ -14,7 +14,7 @@ product with CASA's: exact product inventory, masks, finite support, NRMS at
 most 1e-3 (`.sumwt` within 5e-5 of CASA's peak), WCS, rest frequency, units,
 Stokes and frames, beam axes within 1e-3 and position angle within 0.01 deg,
 exact iterdone, nmajordone and stopcode, and maxpsfsidelobe and cyclethreshold
-within 1e-6 relative plus 1e-8 absolute. Grammar cases check that each selector
+within 1e-4 relative plus 1e-8 absolute (`SCALAR_RTOL`). Grammar cases check that each selector
 CASA's tclean refused raises in casa-rs too and writes no image, and that each
 one CASA accepted writes CASA's product inventory.
 """
@@ -24,6 +24,12 @@ import json
 import platform
 import sys
 from pathlib import Path
+
+# The owner's 1e-4 (2026-11-02): each scalar is one pixel of a PSF or
+# residual image, whose rounding follows summation order (CASA grids in
+# single precision); rounding moved them by up to 5e-5 relative, and every
+# real difference seen was 1e-3 or more.
+SCALAR_RTOL = 1e-4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tclean_compare import compare_product, load_reader, members, run_native, sha256  # noqa: E402
@@ -85,7 +91,8 @@ def science_case(args, name, common, reference, tools):
         key: {
             "native": row["result"][key],
             "casa": expected[key],
-            "passed": abs(row["result"][key] - expected[key]) <= 1e-8 + 1e-6 * abs(expected[key]),
+            "passed": abs(row["result"][key] - expected[key])
+            <= 1e-8 + SCALAR_RTOL * abs(expected[key]),
         }
         for key in ("maxpsfsidelobe", "cyclethreshold")
     }

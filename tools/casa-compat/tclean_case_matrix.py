@@ -30,9 +30,10 @@ A step CASA refuses must be one its test expects to fail (`expect_error`,
 casa-rs too, and an image name only refused steps wrote is not compared;
 every other step must
 succeed with exact iterdone, nmajordone and stopcode, and, for the return
-values CASA reports, maxpsfsidelobe and cyclethreshold within 1e-6 relative
-plus 1e-8 absolute. Each image name's products must match CASA's inventory
-and each product the T1.5 limits (`tclean_compare.compare_product`).
+values CASA reports, maxpsfsidelobe and cyclethreshold within 1e-4 relative
+plus 1e-8 absolute (`SCALAR_RTOL`). Each image name's products must match
+CASA's inventory and each product the T1.5 limits
+(`tclean_compare.compare_product`).
 """
 
 import argparse
@@ -50,6 +51,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tclean_compare import compare_product, load_reader, members, run_native, sha256  # noqa: E402
 
 SCALARS = ("maxpsfsidelobe", "cyclethreshold")
+# The owner's 1e-4 (2026-11-02): each scalar is one pixel of a PSF or
+# residual image, whose rounding follows summation order (CASA grids in
+# single precision); rounding moved them by up to 5e-5 relative, and every
+# real difference seen was 1e-3 or more.
+SCALAR_RTOL = 1e-4
 COUNTS = ("iterdone", "nmajordone", "stopcode")
 
 
@@ -168,7 +174,7 @@ def compare_step(casa, native, case):
             "native": actual.get(key),
             "casa": expected[key],
             "passed": actual.get(key) is not None
-            and abs(actual[key] - expected[key]) <= 1e-8 + 1e-6 * abs(expected[key]),
+            and abs(actual[key] - expected[key]) <= 1e-8 + SCALAR_RTOL * abs(expected[key]),
         }
         for key in SCALARS
         if expected.get(key) is not None
