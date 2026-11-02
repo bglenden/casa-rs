@@ -56,7 +56,13 @@ SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
   writes the summary only under `CASA_RS_IMAGER_RUN_SUMMARY=1` (set by the
   benchmark scripts). `tools/casa-compat/tclean_scan_observation_replay.py`
   replays the archived scan/observation science and grammar oracle through
-  the public Python `casars.tasks.tclean`.
+  the public Python `casars.tasks.tclean`. At `719b105` it passes 108/108
+  rows on the mini (13 science and 23 grammar cases on each of CPU64, CPU32
+  and Metal32, worst NRMS 1.4e-6, both selected scalars), and the six-case
+  replay passes with an exact image-product inventory. Receipt
+  [`tclean-decisions-20261102.json`](../../resources/casa-compat/evidence/tclean-decisions-20261102.json);
+  archive `casa-rs/tclean/20261102/tclean-decisions-20261102.tar`, SHA256
+  `d4eb14106391e0f27e0f34633638b7f7f411d0b4579df11c9674bcb76361e9b0`.
 
 ## Resume here
 

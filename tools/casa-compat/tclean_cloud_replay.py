@@ -307,8 +307,9 @@ def main():
             "casatasks": casatasks.version_string(),
             "casatools": casatools.version_string(),
         },
-        "scope": "CPU/f64 saved CASA requests; scoped products/selected returns only. "
-        "Whole-task, full file inventory and beam position angle are not established.",
+        "scope": "CPU/f64 saved CASA requests; scoped products/selected returns and "
+        "the exact image-product inventory. Whole-task equivalence and beam position "
+        "angle are not established.",
         "cases": {},
     }
     for name in args.case or CASES:
