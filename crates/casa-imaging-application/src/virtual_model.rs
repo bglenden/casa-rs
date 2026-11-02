@@ -25,6 +25,7 @@
 
 mod record;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -37,9 +38,8 @@ use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
-    CubeInterpolation, MeasurementSet, MsSelection, VirtualModelEntry, VirtualModelKind,
-    clear_virtual_model, put_virtual_model, virtual_model_clear_ids, virtual_model_image_path,
-    virtual_model_index_combination,
+    CubeInterpolation, MeasurementSet, VirtualModelEntry, VirtualModelKind, VirtualModelSelection,
+    clear_virtual_model, put_virtual_model, virtual_model_image_path,
 };
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::frequency::FrequencyRef;
@@ -51,42 +51,47 @@ use crate::native::NativeError;
 use crate::{ApplicationRuntime, ImagingRequest};
 use record::{FirstBuffer, GridFt};
 
+/// The selection a virtual model is written for, as the run resolved it
+/// (`compile`'s `virtual_selection`): no expression is parsed again.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct CompiledSelection {
+    /// The `FIELD_ID`s the `field` expression names; none when it is unset,
+    /// which clears every field's model (`VisModelData::clearModel`).
+    pub(crate) clear_fields: Vec<i32>,
+    /// The windows the `spw` expression names; none when it is unset.
+    pub(crate) clear_spws: Vec<i32>,
+    /// `(spw, first, channels, increment)` per selected range, as the
+    /// iterator reports them (`VisibilityIteratorImpl2::getChannelInformation`).
+    pub(crate) channel_selection: Vec<[i32; 4]>,
+    /// The channels `spw` names per window; a window it names whole is
+    /// absent.
+    pub(crate) channels: BTreeMap<usize, Vec<usize>>,
+    /// The selected rows' combinations and first buffer.
+    pub(crate) rows: VirtualModelSelection,
+}
+
 /// What saving a run's virtual model needs beyond the run: its
-/// MeasurementSet and selection, the main image's coordinates, the cube's
-/// interpolation and the run's Measures.
+/// MeasurementSet and resolved selection, the main image's coordinates,
+/// the cube's interpolation and the run's Measures.
 pub(crate) struct VirtualModelPlan {
     ms: PathBuf,
-    field: Option<String>,
-    spw: Option<String>,
-    selection: MsSelection,
+    selection: CompiledSelection,
     coordinates: CoordinateSystem,
     interpolation: i32,
     measures: Arc<dyn MeasuresProvider>,
 }
 
 impl VirtualModelPlan {
-    /// The plan of `request`, whose main image has `coordinates`.
+    /// The plan of `request`, whose main image has `coordinates`, for the
+    /// rows and channels of `selection`.
     pub(crate) fn new(
         request: &ImagingRequest,
+        selection: CompiledSelection,
         coordinates: CoordinateSystem,
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
-        let selection = MsSelection {
-            field: request.field.clone(),
-            spw: request.spw.clone(),
-            timerange: request.timerange.clone(),
-            uvrange: request.uvrange.clone(),
-            antenna: request.antenna.clone(),
-            scan: request.scan.clone(),
-            observation: request.observation.clone(),
-            intent: request.intent.clone(),
-            data_description: request.ddid.map(|ddid| ddid.to_string()),
-            ..MsSelection::default()
-        };
         Self {
             ms: request.vis.clone(),
-            field: request.field.clone(),
-            spw: request.spw.clone(),
             selection,
             coordinates,
             interpolation: match request.interpolation {
@@ -123,23 +128,16 @@ pub(crate) fn save(
             &Demand { phase, memory },
         )
     };
-    let mut held = charge("virtual model", demand_bytes(problem))?;
+    let _held = charge("virtual model", demand_bytes(problem))?;
     let mut ms = MeasurementSet::open(&plan.ms).map_err(|error| other(error.into()))?;
-    // The selection's row list, one index per row at most.
-    held.join(charge(
-        "virtual model selection",
-        ms.row_count() as u64 * 8,
-    )?);
-    let (fields, spws) = virtual_model_clear_ids(&ms, plan.field.as_deref(), plan.spw.as_deref())
+    let selection = &plan.selection;
+    clear_virtual_model(&mut ms, &selection.clear_fields, &selection.clear_spws)
         .map_err(|error| other(error.into()))?;
-    clear_virtual_model(&mut ms, &fields, &spws).map_err(|error| other(error.into()))?;
     if model_is_empty(problem, model).map_err(|error| other(error.into()))? {
         tracing::info!("the model is empty: no virtual model is saved");
         return Ok(());
     }
-    let selected = virtual_model_index_combination(&ms, &plan.selection)
-        .map_err(|error| other(error.into()))?;
-    let Some(first_row) = selected.first_row else {
+    let Some(first_row) = selection.rows.first_row else {
         tracing::info!("no row is selected: no virtual model is saved");
         return Ok(());
     };
@@ -154,8 +152,8 @@ pub(crate) fn save(
     )?;
     let entry = VirtualModelEntry {
         kind: VirtualModelKind::FtMachine,
-        index_combination: selected.index_combination,
-        channel_selection: channel_selection(&ms, plan.spw.as_deref()).map_err(other)?,
+        index_combination: selection.rows.index_combination.clone(),
+        channel_selection: selection.channel_selection.clone(),
         container,
     };
     if let Err(error) = put_virtual_model(&mut ms, &entry, true) {
@@ -195,14 +193,12 @@ fn model_is_empty(
     Ok(flux.abs() < 1e-8)
 }
 
-/// The memory the phase holds at most besides the selection's row list:
-/// the MeasurementSet's tables as opened (their metadata and subtables),
-/// one plane's grids and their transform at f64, its model images, the
-/// grid image's tile cache (one plane) and its f32 plane, and a chunk of
-/// the selection's columns.
+/// The memory the phase holds at most: the MeasurementSet's tables as
+/// opened (their metadata and subtables), one plane's grids and their
+/// transform at f64, its model images, and the grid image's tile cache
+/// (one plane) and its f32 plane. The selection was resolved at compile.
 fn demand_bytes(problem: &CompiledProblem) -> u64 {
     const TABLES_BYTES: u64 = 32 << 20;
-    const COLUMN_CHUNK_BYTES: u64 = 65_536 * 5 * 32;
     let domain = &problem.geometry().domains()[0];
     let [width, height] = domain.shape().pixels();
     let padded = |n: usize| (n as u64 * 6).div_ceil(5) + 16;
@@ -214,7 +210,7 @@ fn demand_bytes(problem: &CompiledProblem) -> u64 {
     let grids = cells * terms * 16 * 2;
     let images = (width * height) as u64 * terms * (4 + 16);
     let plane = cells * 8 * 2;
-    TABLES_BYTES + grids + images + plane + COLUMN_CHUNK_BYTES
+    TABLES_BYTES + grids + images + plane
 }
 
 /// The image's channel frequencies, its linear spectral axis at each
@@ -264,12 +260,8 @@ fn first_buffer(
     let frequencies = windows.chan_freq(spw)?;
     let frame = FrequencyRef::from_casacore_code(windows.meas_freq_ref(spw)?)
         .ok_or("SPECTRAL_WINDOW names an unknown frequency frame")?;
-    let selection = MsSelection {
-        spw: plan.spw.clone(),
-        ..MsSelection::default()
-    };
-    let channels = match selection.channel_selection_for_spw(spw as i32) {
-        Some(selection) => selection.indices(frequencies.len())?,
+    let channels = match plan.selection.channels.get(&spw) {
+        Some(channels) => channels.clone(),
         None => (0..frequencies.len()).collect(),
     };
     let engine = MsCalEngine::with_measures(ms, Arc::clone(&plan.measures))?;
@@ -321,37 +313,6 @@ fn image_channel(image_hz: &[f64], frequency_hz: f64) -> i32 {
 /// RR, LL, XX and YY (`Stokes::StokesTypes` 5, 8, 9, 12).
 const fn parallel_hand(code: i32) -> bool {
     matches!(code, 5 | 8 | 9 | 12)
-}
-
-/// The writer's channel selection, `(spw, first, channels, increment)` per
-/// selected range (`VisibilityIteratorImpl2::getChannelInformation`):
-/// each range the `spw` expression names, or every window whole.
-fn channel_selection(
-    ms: &MeasurementSet,
-    spw: Option<&str>,
-) -> Result<Vec<[i32; 4]>, Box<dyn std::error::Error + Send + Sync>> {
-    let windows = ms.spectral_window()?;
-    let whole = |id: usize| -> Result<[i32; 4], Box<dyn std::error::Error + Send + Sync>> {
-        Ok([id as i32, 0, windows.num_chan(id)?, 1])
-    };
-    let Some(spw) = spw.filter(|text| !text.trim().is_empty()) else {
-        return (0..windows.row_count()).map(whole).collect();
-    };
-    let mut rows = Vec::new();
-    for selector in casa_ms::parse_spw_selector(spw)? {
-        let id = usize::try_from(selector.spw_id)?;
-        match selector.channels {
-            None => rows.push(whole(id)?),
-            Some(channels) => {
-                for segment in channels.segments {
-                    let stride = segment.stride.max(1) as i32;
-                    let count = (segment.end - segment.start) / stride + 1;
-                    rows.push([selector.spw_id, segment.start, count, stride]);
-                }
-            }
-        }
-    }
-    Ok(rows)
 }
 
 /// Write the main image's grids, a plane at a time, into the machine's
