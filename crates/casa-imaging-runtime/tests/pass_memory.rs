@@ -786,13 +786,17 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
         rule: DensityCellRule::Standard,
         first_field: None,
     };
-    for ((side, box_half_width), workers) in [(64, 0), (8, 0), (300, 0), (64, 3)]
+    // The teams live for the whole law: a team dropped between cases ends
+    // its threads while the next case is measured, and on macOS a thread
+    // ending allocates (a few to a few hundred bytes the pass never holds).
+    let teams = [1, 3].map(|workers| WorkerTeam::new(workers).expect("team"));
+    for ((side, box_half_width), team) in [(64, 0), (8, 0), (300, 0), (64, 3)]
         .into_iter()
-        .flat_map(|case| [1, 3].map(|workers| (case, workers)))
+        .flat_map(|case| teams.iter().map(move |team| (case, team)))
     {
+        let workers = team.workers();
         let shape = shape(side, box_half_width);
         let mut rows = Rows::random(300, 23, operator.geometry());
-        let team = WorkerTeam::new(workers).expect("team");
         let admitted = density_pass_bytes(&resampler, &shape, rows.maximum_block(), workers)
             + source_block_bytes(rows.maximum_block());
         let baseline = LIVE.load(Ordering::Relaxed);
@@ -803,7 +807,7 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
             &resampler,
             shape,
             &mut rows,
-            &team,
+            team,
             &Cancel::new(),
         );
         MEASURING.store(false, Ordering::Relaxed);
