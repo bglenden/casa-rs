@@ -22,15 +22,6 @@ pub struct WorkerTeam {
 }
 
 impl WorkerTeam {
-    /// Bytes one call onto the team from outside it may make its scheduler
-    /// allocate: a block of rayon's job injector (crossbeam-deque's
-    /// `Injector`, 63 slots of a two-word job and its state, and the link to
-    /// the next block). The call that fills the block before it allocates
-    /// one, so which call does depends on the calls the team ran before,
-    /// and a phase on the team holds one.
-    pub const SCHEDULER_BLOCK_BYTES: u64 =
-        (size_of::<usize>() + 63 * (2 * size_of::<usize>() + size_of::<usize>())) as u64;
-
     /// A team of `workers` threads; `workers` must be positive.
     ///
     /// The team runs a job on every thread, and one [`Self::for_each_mut`]

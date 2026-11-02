@@ -203,7 +203,7 @@ pub(super) fn weight_plane_support(
 }
 
 /// The simulator's `HetArrayConvFunc::supportAndNormalizeLatt`
-/// (`TransformMachines/`, [`MosaicRules::Simulator`]) at screen sampling 1:
+/// (`TransformMachines/`, [`MosaicRules::Simulator`](super::MosaicRules::Simulator)) at screen sampling 1:
 /// walking in from `side/2 − 2` towards the centre, the first offset `t`
 /// where the weight plane exceeds the cut level at `(c − t − 1, c − 1)` or
 /// `(c − 1, c − t − 1)`, with `c = side/2`, is widened to `⌊√(2t²)⌋`; no
