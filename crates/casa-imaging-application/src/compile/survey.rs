@@ -984,6 +984,114 @@ mod tests {
         );
     }
 
+    /// The samples and epoch times `observation`'s survey selects under
+    /// `row_selection`, over every partition.
+    fn surveyed_under(
+        observation: &Msv2Observation,
+        row_selection: RowSelection,
+    ) -> (u64, Vec<f64>) {
+        let plan = SurveyPlan {
+            observation,
+            msv2: Some(observation),
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection,
+            w_range: false,
+            first_cross: false,
+        };
+        let catalogue = observation.catalogue();
+        let (mut total, mut times) = (0, Vec::new());
+        for id in catalogue.partition_ids() {
+            let entry = catalogue.partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                first_visibility: None,
+                observation_ids: BTreeSet::new(),
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, entry, false, 1 << 20);
+            total += survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            )
+            .expect("the survey reads");
+            times.extend(
+                facts
+                    .epochs
+                    .into_values()
+                    .flatten()
+                    .map(|epoch| epoch.time_mjd_seconds),
+            );
+        }
+        (total, times)
+    }
+
+    /// A scan selection counts only the selected scan's samples, and every
+    /// epoch the survey keeps lies within that scan: the counts are CASA
+    /// 6.7.6.14's rows for `scan='1'` and `scan='3'` on `mssel_test_small.ms`
+    /// (`tclean-selection-casa-20261031.json`), out of 1,058.
+    #[test]
+    fn a_scan_selection_surveys_only_its_scans_times() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("mssel_test_small.ms");
+        let ms = MeasurementSet::open(&path).expect("the MeasurementSet");
+        let main = ms.main_table();
+        let scan_times = |scan: i32| {
+            let times = (0..main.row_count())
+                .filter(|row| {
+                    matches!(
+                        main.cell_accessor(*row, "SCAN_NUMBER").unwrap().scalar().unwrap(),
+                        casa_types::ScalarValue::Int32(number) if *number == scan
+                    )
+                })
+                .map(
+                    |row| match main.cell_accessor(row, "TIME").unwrap().scalar().unwrap() {
+                        casa_types::ScalarValue::Float64(time) => *time,
+                        other => panic!("TIME is {other:?}"),
+                    },
+                )
+                .collect::<Vec<_>>();
+            let lower = times.iter().copied().fold(f64::INFINITY, f64::min);
+            let upper = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            [lower, upper]
+        };
+        let observation = Msv2Observation::open(&path).expect("the MeasurementSet opens");
+        let all = RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All);
+        assert_eq!(surveyed_under(&observation, all.clone()).0, 1_058);
+        for (scan, rows) in [(1, 322), (3, 736)] {
+            let selection = all
+                .clone()
+                .with_scan_observation(IdSelection::Only(vec![scan]), IdSelection::All);
+            let (samples, times) = surveyed_under(&observation, selection);
+            assert_eq!(samples, rows, "scan {scan}");
+            let [lower, upper] = scan_times(scan as i32);
+            assert!(!times.is_empty());
+            assert!(
+                times.iter().all(|time| (lower..=upper).contains(time)),
+                "scan {scan}: an epoch outside {lower}..={upper}"
+            );
+        }
+    }
+
     #[test]
     fn a_row_not_row_flagged_counts_however_its_cells_are_flagged() {
         assert_eq!(first_cross_time([(false, true), (false, false)]), Some(T0));

@@ -155,9 +155,18 @@ pub(super) fn continuum_envelope(
             let direction = match directions.get(&epoch.field_id) {
                 Some(direction) => direction.clone(),
                 None => {
-                    let first = survey
-                        .first_time_of(epoch.field_id)
-                        .unwrap_or(epoch.time_mjd_seconds);
+                    // Only a moving field without its own reference epoch
+                    // (an MSv4's) reads its first selected time; finding it
+                    // scans every window's epochs, so fixed fields skip it.
+                    let field =
+                        usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+                    let first = if engine.field_moves(field) {
+                        survey
+                            .first_time_of(epoch.field_id)
+                            .unwrap_or(epoch.time_mjd_seconds)
+                    } else {
+                        epoch.time_mjd_seconds
+                    };
                     let direction =
                         continuum_direction((catalogue, engine), epoch.field_id, first)?;
                     directions.insert(epoch.field_id, direction.clone());

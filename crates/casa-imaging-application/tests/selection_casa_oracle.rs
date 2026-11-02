@@ -5,9 +5,10 @@
 //! names on the same MeasurementSet
 //! (`resources/casa-compat/evidence/tclean-selection-casa-20261031.json`).
 //!
-//! The rows are those the production traversal reads: compile's
-//! partitions, the run's fields and the run's per-time scan test
-//! ([`store_law::row_pointing`]). Field selection is tclean's provider
+//! The rows are those of compile's partitions and the run's fields that
+//! the run's per-time scan test keeps, gathered by the store law
+//! ([`store_law::row_pointing`]); the run's own sample packing is checked
+//! by T1's selection tests. Field selection is tclean's provider
 //! contract; scan and observation are the unactivated preview, which the
 //! provider still refuses, so their values are added after the catalog
 //! resolves the rest, as the T1 preview does.

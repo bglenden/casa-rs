@@ -79,8 +79,10 @@ pub(super) fn row_selection(
 /// The fields `selector` names among `catalogue`'s, through the shared
 /// FIELD selector ([`casa_ms::resolve_field_selector_rows`]): IDs and
 /// ranges bounded by the fields that exist, exact names and simple `*`
-/// patterns over unflagged fields. A catalogue's field `i` is `FIELD_ID`
-/// `i`. Empty text selects every field; a nonempty selector that matches
+/// patterns over unflagged fields. An MSv2 catalogue's field `i` is
+/// `FIELD_ID` `i`; an MSv4's fields are numbered in its catalogue's order
+/// and named as stored (XRADIO appends the MSv2 field number), with no row
+/// flags. Empty text selects every field; a nonempty selector that matches
 /// none is refused, as imaging never reads an empty selection.
 fn resolve_fields(selector: &str, catalogue: &Catalogue) -> Result<IdSelection, PrepareError> {
     let rows = catalogue

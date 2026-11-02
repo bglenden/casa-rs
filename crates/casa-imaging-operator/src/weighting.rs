@@ -15,8 +15,8 @@ pub enum DensityCellRule {
     /// `VisImagingWeight`: single-precision coordinates truncated toward
     /// zero, `v` not mirrored.
     Standard,
-    /// `BriggsCubeWeightor`: rounded coordinates with `v` mirrored, built in
-    /// double and looked up in single precision.
+    /// `BriggsCubeWeightor`: rounded coordinates of the negated `u` and `v`,
+    /// built in double and looked up in single precision.
     Cube,
 }
 
