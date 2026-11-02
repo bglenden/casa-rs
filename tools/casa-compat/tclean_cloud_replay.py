@@ -20,6 +20,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The owner's 1e-4 (2026-11-02): each scalar is one pixel of a PSF or
+# residual image, whose rounding follows summation order (CASA grids in
+# single precision); rounding moved them by up to 5e-5 relative, and every
+# real difference seen was 1e-3 or more.
+SCALAR_RTOL = 1e-4
+
 CASES = {
     "point-mfs-hogbom": ("refim", "refim_point.ms"),
     "point-mfs-clark-briggs": ("refim", "refim_point.ms"),
@@ -260,7 +266,7 @@ def run_case(args, name, harness, casatools, numpy):
             "native": actual[key],
             "casa": expected[key],
             "passed": abs(actual[key] - expected[key])
-            <= 1e-8 + 1e-6 * abs(expected[key]),
+            <= 1e-8 + SCALAR_RTOL * abs(expected[key]),
         }
         for key in ("maxpsfsidelobe", "cyclethreshold")
     }
