@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The trial's `CalibrationBinding` (`docs/measurement-set/contracts.md`
-//! section 2): a calibration table's antennas, fields and spectral windows
-//! for each entity of an opened store's catalogue, and the writer that
-//! persists a solve through the store's namespace.
+//! The trial's `CalibrationBinding`: a calibration table's antennas, fields
+//! and spectral windows for each entity of an opened store's catalogue, and
+//! the writer that persists a solve through the store's namespace.
 //!
 //! A caltable numbers entities by the rows of its own subtables, and
 //! catalogue identities are scoped to one opened store, so neither side

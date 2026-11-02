@@ -142,8 +142,8 @@ fn selections_that_empty_data_descriptions_image_the_remaining_rows() {
     drop(ms);
     image("unused-state", json!({ "intent": "0" })).expect("state 0 alone");
     // Once rows hold it, the two states' rows share the partition, and a
-    // selection of one of them is refused (contracts, section 4: no
-    // selection by STATE_ID).
+    // selection of one of them is refused (the boundary has no selection
+    // by STATE_ID).
     let mut ms = MeasurementSet::open(&path).unwrap();
     for row in (0..ms.row_count()).step_by(8) {
         ms.main_table_mut()
