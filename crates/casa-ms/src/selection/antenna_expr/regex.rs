@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! casacore `Regex` as antenna selection uses it.
+//! casacore `Regex` as antenna and spectral-window selection use it.
 //!
-//! Antenna selection matches names with `String::matches(Regex)`, a full
+//! Both match names with `String::matches(Regex)`, a full
 //! match (`casa/BasicSL/String.cc:367-372`, `std::regex_match`). The regex
 //! text first passes through `Regex::fromPattern` when it came from a
 //! shell-style pattern (`casa/Utilities/Regex.cc:228-367`), and always through
@@ -19,7 +19,7 @@ use regex::bytes::{Regex, RegexBuilder};
 /// A compiled casacore regex that answers `String::matches`: whether the
 /// whole of a string matches.
 #[derive(Debug)]
-pub(super) struct FullMatch(Regex);
+pub(in crate::selection) struct FullMatch(Regex);
 
 impl FullMatch {
     /// Compile casacore regex text: what `Regex(const String&)` receives,
@@ -41,13 +41,13 @@ impl FullMatch {
 
     /// Compile a shell-style pattern as `Regex::fromPattern` does, then as
     /// [`compile`](Self::compile).
-    pub(super) fn compile_pattern(pattern: &str) -> Result<Self, String> {
+    pub(in crate::selection) fn compile_pattern(pattern: &str) -> Result<Self, String> {
         let regex = from_pattern(pattern.as_bytes());
         Self::compile(&String::from_utf8_lossy(&regex))
     }
 
     /// Whether all of `text` matches (`String::matches(const Regex&, 0)`).
-    pub(super) fn matches(&self, text: &str) -> bool {
+    pub(in crate::selection) fn matches(&self, text: &str) -> bool {
         self.0.is_match(text.as_bytes())
     }
 }

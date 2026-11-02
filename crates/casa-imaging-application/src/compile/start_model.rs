@@ -38,10 +38,20 @@ use super::domains::PreparedImageDomain;
 /// An explicit start model or same-grid restart model checked against the main domain.
 #[derive(Clone, Debug)]
 pub(crate) struct StartModel {
-    path: PathBuf,
+    source: Source,
     input_shape: Vec<usize>,
     template: RegridTemplate,
-    direct: bool,
+}
+
+/// Where a start model's pixels come from.
+#[derive(Clone, Debug)]
+enum Source {
+    /// An explicit `startmodel`, regridded onto the image.
+    Regrid(PathBuf),
+    /// An earlier run's model on the image's own grid, read as it is: one
+    /// image, or one per Taylor term, `None` for a term with none (CASA
+    /// makes it zero).
+    Direct(Box<[Option<PathBuf>]>),
 }
 
 impl StartModel {
@@ -107,26 +117,23 @@ impl StartModel {
                 "startmodel Stokes labels differ: copying planes by position as CASA does; no polarization conversion is performed");
         }
         Ok(Self {
-            path: path.to_path_buf(),
+            source: Source::Regrid(path.to_path_buf()),
             input_shape: shape,
             template,
-            direct: false,
         })
     }
 
-    /// Reuse an existing model on precisely the requested grid, without regridding.
-    pub(super) fn restart(path: &Path, main: &PreparedImageDomain) -> Result<Self, PrepareError> {
-        let template = RegridTemplate {
-            coordinates: main.coordinates.clone(),
-            shape: vec![main.image_size[0], main.image_size[1], 1, 1],
-        };
-        crate::restart::check_grid(path, &template)?;
-        Ok(Self {
-            path: path.into(),
+    /// Reuse an earlier run's model, whose images `terms` (one, or one per
+    /// Taylor term with `None` for a missing term) the caller checked on
+    /// the requested grid, without regridding. `template` is the model's
+    /// whole grid: `[nx, ny, stokes, planes]`, its planes the channels of
+    /// the one image or the Taylor terms.
+    pub(super) fn restart(terms: Box<[Option<PathBuf>]>, template: RegridTemplate) -> Self {
+        Self {
+            source: Source::Direct(terms),
             input_shape: template.shape.clone(),
             template,
-            direct: true,
-        })
+        }
     }
 
     /// Bytes [`Self::main_samples`] holds at most besides the model: the
@@ -172,15 +179,31 @@ impl StartModel {
     /// (spectral plane, polarization, y, x, x fastest), either read directly
     /// for restart or regridded for an explicit start model.
     pub(crate) fn main_samples(&self) -> Result<Vec<f32>, ImageError> {
-        if self.direct {
-            let image = casa_images::PagedImage::<f32>::open(&self.path)?;
-            // CASA's restart prediction uses StokesImageUtil::From's raw lattice
-            // iterator; unlike explicit startmodel, it does not zero a pixel mask.
-            let values = image.get()?;
-            // Iterate logical axes in model order, independent of image storage order.
-            return Ok(values.reversed_axes().iter().copied().collect());
-        }
-        let zeroed = match AnyPagedImage::open(&self.path)? {
+        let path = match &self.source {
+            Source::Regrid(path) => path,
+            Source::Direct(terms) => {
+                let total: usize = self.template.shape.iter().product();
+                let per_term = total / terms.len();
+                let mut samples = Vec::with_capacity(total);
+                for term in terms {
+                    match term {
+                        Some(path) => {
+                            let image = casa_images::PagedImage::<f32>::open(path)?;
+                            // CASA's restart prediction uses StokesImageUtil::From's raw
+                            // lattice iterator; unlike explicit startmodel, it does not
+                            // zero a pixel mask.
+                            let values = image.get()?;
+                            // Iterate logical axes in model order (term or channel,
+                            // Stokes, y, x), independent of image storage order.
+                            samples.extend(values.reversed_axes().iter().copied());
+                        }
+                        None => samples.resize(samples.len() + per_term, 0.0),
+                    }
+                }
+                return Ok(samples);
+            }
+        };
+        let zeroed = match AnyPagedImage::open(path)? {
             AnyPagedImage::Float32(image) => zeroed_copy(&image)?,
             AnyPagedImage::Float64(image) => zeroed_copy(&image)?,
             AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
@@ -296,17 +319,23 @@ mod tests {
         );
         // The task gate still refuses masked-model continuation until publication
         // can preserve the mask; the seed reader must nevertheless match CASA.
-        let direct = StartModel {
-            path,
-            input_shape: shape,
-            template,
-            direct: true,
-        };
+        let direct = StartModel::restart(Box::new([Some(path.clone())]), template.clone());
         assert_eq!(
             direct.main_samples().unwrap(),
             vec![
                 0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 13.0, 20.0, 21.0, 22.0, 23.0
             ]
         );
+        // A Taylor family reads each term in order; a missing term is zero.
+        let terms = StartModel::restart(
+            Box::new([None, Some(path)]),
+            RegridTemplate {
+                shape: vec![4, 3, 1, 2],
+                ..template
+            },
+        );
+        let samples = terms.main_samples().unwrap();
+        assert_eq!(samples[..12], [0.0; 12]);
+        assert_eq!(samples[12..], direct.main_samples().unwrap()[..]);
     }
 }

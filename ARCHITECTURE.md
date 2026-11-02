@@ -26,7 +26,7 @@ coordinates, measures, and related workflows.
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
 | boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, the one resolver of a task's executable (`resolve_task_executable`), and protocol surfaces between providers and Python | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, the shared task front end with its typed replies (#931), on which every task binary runs, and the one `--json-run` invocation a run is projected to | boundary contracts, `casa-types` and `casa-logging` (the front end installs a run's logging from the configuration and stderr the binary's `main` passes); must not implement provider science behavior |
-| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and `immoments` are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and `immoments` are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`), the MSv2/MSv4 converter `msconvert` (`casars-msconvert`, over `casa-ms`'s converter with its `msv4` feature) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -444,6 +444,18 @@ next block boundary. `casars-imager` turns the first SIGINT into the run's
 `Cancel`: the run stops at the next block boundary or before its next phase,
 removes its staging and paged state, publishes nothing, and exits with status
 130.
+
+A tclean run that continues on an earlier run's products at its prefix
+(`restart=True`, `casa-imaging-application`'s `restart` module) starts from
+that run's model, every Taylor term, channel and Stokes plane of it, and
+reuses its CLEAN mask when no new mask is given. Under `calcpsf=False` or
+`calcres=False` the first normal state is not all formed by the initial pass:
+the earlier PSF, sums of weights and residual are read
+(`restart::ExistingProducts`) and returned as the unnormalized images a pass
+would have formed, so the same minor cycle and products normalize them again.
+A run that reads its PSF forms its residual with a residual pass, one that
+reads its residual forms its PSF with a pass of the PSF alone, and one that
+reads both runs no initial pass; a residual read is not a major cycle.
 
 Accumulation is split among the workers of one `WorkerTeam`.
 `Partition::Planes` gives each worker a disjoint range of channel-local planes,

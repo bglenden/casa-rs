@@ -24,7 +24,7 @@ use casa_types::measures::{
 
 use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
-use super::selection::{SourceSpectralWindow, WindowChannels, explicit_spw_channels, one_window};
+use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
 use super::survey::Survey;
 use crate::{ImagingRequest, SpecMode};
 
@@ -120,7 +120,7 @@ pub(super) fn prepare_axis(
         source_frame,
         output_frequency_reference: law.output_frequency_reference,
         output_frame,
-        anchor: spectral_frame_anchor(source_frame, output_frame, frame)?,
+        anchor: spectral_frame_anchor(source_frame, output_frame, request.specmode, frame)?,
         wcs: SpectralWcs::Linear {
             channels: law.output_channels,
             reference_pixel: 0.0,
@@ -212,6 +212,7 @@ fn continuum_law(
             increment_hz: image_increment_hz,
             rest_frequency_hz: image_rest_frequency_hz,
             additional_rest_frequencies_hz: Vec::new(),
+            undefined_frame: false,
         },
         doppler: DopplerConvention::NotApplicable,
         sampling: SpectralSamplingLaw::IDENTITY,
@@ -334,8 +335,10 @@ fn cube_law(
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
     let (setup, support) = cube_setup(survey, window, output_channels, &axis, frame)?;
     let mut selected = support.indices;
-    let explicit = explicit_spw_channels(request, window.spw_id, &window.frequencies_hz)?
-        .map(|channels| channels.into_iter().collect::<BTreeSet<_>>());
+    let explicit = survey
+        .spw_channels
+        .get(&window.spw_id)
+        .map(|channels| channels.iter().copied().collect::<BTreeSet<_>>());
     if let Some(explicit) = &explicit {
         selected.retain(|channel| explicit.contains(channel));
     }
@@ -374,6 +377,8 @@ fn cube_law(
             increment_hz,
             rest_frequency_hz: image_rest_frequency_hz,
             additional_rest_frequencies_hz: Vec::new(),
+            undefined_frame: request.specmode == SpecMode::Cubedata
+                && setup.output_freq_ref != FrequencyRef::REST,
         },
         doppler,
         sampling: sampling_law(setup.interpolation),
@@ -432,6 +437,7 @@ fn source_frame_cube_law(
             increment_hz,
             rest_frequency_hz,
             additional_rest_frequencies_hz: Vec::new(),
+            undefined_frame: false,
         },
         doppler: doppler_convention(request.veltype)?,
         sampling: sampling_law(request.interpolation),
@@ -531,18 +537,28 @@ const fn sampling_law(interpolation: CubeInterpolation) -> SpectralSamplingLaw {
     }
 }
 
+/// The image's epoch, reference direction and observatory, where the
+/// rows' frame and the output frame differ, or where a `cube` is gridded
+/// through LSRK ([`FrequencyFrame::gridded_through_lsrk`]): CASA grids a
+/// `cube` (not `cubedata`, whose rows keep their frequencies) in LSRK
+/// whatever its `outframe`, so a TOPO cube of TOPO rows is fixed in LSRK at
+/// the first time and each row is Doppler tracked from it.
 fn spectral_frame_anchor(
     source_frame: FrequencyFrame,
     output_frame: FrequencyFrame,
+    specmode: SpecMode,
     frame: &FrameContext<'_>,
 ) -> Result<SpectralFrameAnchor, PrepareError> {
-    if source_frame == output_frame {
+    let tracked = specmode == SpecMode::Cube && output_frame.gridded_through_lsrk();
+    if source_frame == output_frame && !tracked {
         return Ok(SpectralFrameAnchor::NotApplicable);
     }
     let [x_metres, y_metres, z_metres] = frame.engine.observatory_position().as_itrf();
     Ok(SpectralFrameAnchor::Conversion {
+        // As `MEpoch::from_mjd_seconds` reads a row's time, so a row at the
+        // first time is at the anchor's epoch exactly.
         epoch: Epoch::new(
-            frame.anchor_time_mjd_seconds / 86_400.0,
+            frame.anchor_time_mjd_seconds * (1.0 / 86_400.0),
             imaging_time_scale(frame.engine.time_reference())?,
         ),
         direction: frame.direction.reference_direction(),

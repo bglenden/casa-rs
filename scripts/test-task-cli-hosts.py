@@ -23,6 +23,7 @@ HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("calibrate", ()),
     ("calibrate", ("gaincal",)),
     ("importvla", ()),
+    ("msconvert", ()),
     ("msexplore", ()),
     ("msexplore", ("plotms",)),
     ("simobserve", ()),

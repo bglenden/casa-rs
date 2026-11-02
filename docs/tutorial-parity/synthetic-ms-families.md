@@ -188,7 +188,9 @@ Supported bands remain real receiver bands: VLA `L`, `S`, `C`, `X`, `Ku`, `K`,
 `polarizations` maps to actual POLARIZATION metadata and MAIN `DATA`, `FLAG`,
 `WEIGHT`, and `SIGMA` shapes. Supported values are `1`, `2`, and `4`; VLA
 defaults to circular receptor metadata, while ALMA/ACA defaults to linear
-metadata.
+metadata. Without `source_stokes_fractional_quv` the model is unpolarized:
+its parallel hands hold Stokes I and, with `4`, its cross hands are zero, as
+CASA predicts it.
 
 `ms_channels` controls the generated MS spectral-window channel count.
 `image_channels` is persisted planning metadata for downstream imaging

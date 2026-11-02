@@ -14,9 +14,9 @@
 //! existing MeasurementSet at `DESTINATION`, which comes first unscaled, as
 //! `concat` appends to an existing `concatvis`. Padding is omitted. The
 //! memory budget is the
-//! host's usual share unless `--memory-mib` says otherwise. `KIND` is
-//! `sigma`, `row-flags`, `flag-categories`, `data-groups`, `tables`,
-//! `columns` or `defaulted`. Prints one JSON object: elapsed seconds, the
+//! host's usual share unless `--memory-mib` says otherwise. `KIND` is a
+//! [`LossKind`]'s name: `sigma`, `rowflags`, `flagcategories`,
+//! `datagroups`, `tables`, `columns` or `defaulted`. Prints one JSON object: elapsed seconds, the
 //! inputs in the order created, the report, the memory charged and the
 //! merge's notices.
 
@@ -32,19 +32,6 @@ use casa_observation::MergeTolerance;
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
-
-fn kind(name: &str) -> Result<LossKind, Error> {
-    Ok(match name {
-        "sigma" => LossKind::Sigma,
-        "row-flags" => LossKind::RowFlags,
-        "flag-categories" => LossKind::FlagCategories,
-        "data-groups" => LossKind::DataGroups,
-        "tables" => LossKind::Tables,
-        "columns" => LossKind::Columns,
-        "defaulted" => LossKind::Defaulted,
-        other => return Err(format!("unknown loss kind {other}").into()),
-    })
-}
 
 /// The earliest time of the store at `input`, MJD seconds.
 fn earliest(input: &CreationInput) -> Result<f64, Error> {
@@ -93,7 +80,10 @@ fn main() -> Result<(), Error> {
             }
             "--accept" => {
                 let value = args.next().ok_or("--accept needs a value")?;
-                options.accept = value.split(',').map(kind).collect::<Result<_, _>>()?;
+                options.accept = value
+                    .split(',')
+                    .map(str::parse::<LossKind>)
+                    .collect::<Result<_, _>>()?;
             }
             input => {
                 let (path, scale) = match input.split_once('=') {

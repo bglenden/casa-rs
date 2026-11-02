@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The header checks used by SIImageStore::openImage before reusing pixels.
-//! This is the bounded native MFS grid, not general CoordinateSystem::near.
+//! The header checks used by SIImageStore::openImage before reusing pixels:
+//! the image's shape, its Stokes planes and channels included, and its
+//! coordinates, on casa-rs's linear grids rather than general
+//! CoordinateSystem::near.
 
 use std::path::Path;
 
@@ -9,7 +11,13 @@ use casa_images::{AnyPagedImage, ImagePixel, RegridTemplate};
 
 use crate::PrepareError;
 
-pub(crate) fn check_grid(path: &Path, template: &RegridTemplate) -> Result<(), PrepareError> {
+/// Check the existing product at `path`, of product suffix `suffix`
+/// (`model`, `psf.tt1`, ...), against the requested grid `template`.
+pub(crate) fn check_grid(
+    path: &Path,
+    suffix: &str,
+    template: &RegridTemplate,
+) -> Result<(), PrepareError> {
     let refuse = |reason: String| PrepareError::Restart {
         path: path.into(),
         reason,
@@ -17,9 +25,7 @@ pub(crate) fn check_grid(path: &Path, template: &RegridTemplate) -> Result<(), P
     let image = AnyPagedImage::open(path).map_err(|error| refuse(error.to_string()))?;
     let result = match &image {
         AnyPagedImage::Float32(image) => {
-            if path
-                .extension()
-                .is_some_and(|suffix| suffix == "model" || suffix == "mask")
+            if (suffix.starts_with("model") || suffix == "mask")
                 && image.default_mask_name().is_some()
             {
                 return Err(refuse(
@@ -27,8 +33,9 @@ pub(crate) fn check_grid(path: &Path, template: &RegridTemplate) -> Result<(), P
                         .into(),
                 ));
             }
-            // SIImageStore::openImage deliberately excludes sumwt from grid checks.
-            if path.extension().is_some_and(|suffix| suffix == "sumwt") {
+            // SIImageStore::openImage deliberately excludes sumwt from grid
+            // checks; the sums are read by the plane they normalize.
+            if suffix.starts_with("sumwt") {
                 Ok(())
             } else {
                 check_header(image, template)

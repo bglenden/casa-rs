@@ -19,7 +19,11 @@ resolved case, the tclean refusals casa-rs would raise, from two sources:
 
 Three more limits casa-rs states before imaging are added and labelled apart:
 the restart surface note (`restart`, #944), which bounds a restart into an
-existing image to same-grid single-term Stokes-I MFS; the cfcache surface
+existing image to the same grid and family of products, refuses a new or
+automatic mask over an existing one when cleaning and outlier fields, and
+reads the PSF and residual (`calcpsf`, `calcres`) only with the standard and
+W-projection gridders on one facet and only where an earlier call left them
+(`casa-imaging-application/src/restart.rs`); the cfcache surface
 note, by which awproject reads an existing CASA cache and never writes one,
 so a cache the test does not stage from casatestdata is missing; and the
 availability gate (`casa-imaging-application/src/availability.rs`, `check`)
@@ -528,24 +532,49 @@ def crtf_pixel_boxes(text):
     return True
 
 
+def mask_given(params):
+    """Whether a call names a user mask (tclean reads `mask` with usemask='user')."""
+    mask = params.get("mask", "")
+    return params.get("usemask", "user") == "user" and mask not in ("", [], [""])
+
+
 def restart_limits(steps, index, step):
-    """The restart surface note: same-grid single-term Stokes-I MFS only."""
+    """The restart surface note (`restart.rs`): what a call continuing on an
+    earlier call's products, or reading its PSF or residual, is refused."""
     earlier = [s for s in steps[:index] if s["imagename"] == step["imagename"]]
     params = step["params"]
-    if not earlier or params.get("restart", True) is not True:
-        return []
     rows = []
-    specmode = params.get("specmode", "mfs")
-    if (
-        specmode not in ("mfs", "cont")
-        or params.get("deconvolver") == "mtmfs"
-        or str(params.get("stokes", "I")).strip() != "I"
-    ):
-        rows.append("restart into an existing image beyond single-term Stokes-I MFS")
-    grid = ("imsize", "cell", "phasecenter")
+    reads = params.get("calcpsf", True) is not True or params.get("calcres", True) is not True
+    if reads:
+        gridder = params.get("gridder", "standard")
+        facets = int(params.get("facets", 1) or 1)
+        if params.get("outlierfile") or gridder in ("mosaic", "mosaicft", "ftmosaic", "awproject",
+                                                    "awp2", "awphpg") or facets > 1:
+            rows.append("calcpsf=False or calcres=False with mosaic, A-projection, facets or "
+                        "outlier fields")
+    continuing = earlier and params.get("restart", True) is True
+    if reads and not continuing:
+        if params.get("calcpsf", True) is not True or (
+            params.get("calcres", True) is not True and int(params.get("niter", 0) or 0) > 0
+        ):
+            rows.append("calcpsf=False or calcres=False with no earlier PSF or residual")
+    if not continuing:
+        return [{"reason": row, "source": NOTE, "issue": 944} for row in rows]
     before = earlier[-1]["params"]
+    if params.get("outlierfile"):
+        rows.append("restart into an existing image with outlier fields")
+    family = lambda p: p.get("deconvolver") == "mtmfs"  # noqa: E731
+    if family(before) != family(params):
+        rows.append("restart into an existing image of another deconvolver family")
+    grid = ("imsize", "cell", "phasecenter", "stokes", "specmode", "nchan", "start", "width")
     if any(before.get(key) != params.get(key) for key in grid):
         rows.append("restart into an existing image on a different grid")
+    masked = any(int(s["params"].get("niter", 0) or 0) > 0 for s in earlier)
+    if masked and int(params.get("niter", 0) or 0) > 0:
+        if params.get("usemask") == "auto-multithresh":
+            rows.append("auto-multithresh over an existing CLEAN mask")
+        elif mask_given(params):
+            rows.append("a new mask over an existing CLEAN mask")
     return [{"reason": row, "source": NOTE, "issue": 944} for row in rows]
 
 

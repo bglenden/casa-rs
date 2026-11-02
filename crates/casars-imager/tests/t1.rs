@@ -9,6 +9,8 @@
 mod aw_projection;
 #[path = "t1/casa_return.rs"]
 mod casa_return;
+#[path = "t1/continuation.rs"]
+mod continuation;
 #[path = "t1/cube.rs"]
 mod cube;
 #[path = "t1/diagnostics.rs"]
@@ -49,6 +51,8 @@ mod selection;
 mod selection_antenna_time;
 #[path = "t1/selection_numeric.rs"]
 mod selection_numeric;
+#[path = "t1/selection_spw.rs"]
+mod selection_spw;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]

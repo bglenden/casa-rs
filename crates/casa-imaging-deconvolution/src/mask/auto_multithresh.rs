@@ -698,6 +698,87 @@ fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBe
 mod tests {
     use super::*;
 
+    /// CASA prunes and grows only the emission mask: an absorption feature
+    /// smaller than the minimum beam fraction is masked where an emission
+    /// feature of the same size is pruned, and the absorption mask does not
+    /// grow into the low-noise residual around it
+    /// (`SDMaskHandler::autoMaskByMultiThreshold`).
+    #[test]
+    fn the_absorption_mask_is_neither_pruned_nor_grown() {
+        let shape = [16, 16];
+        let mut residual = vec![0.0; 256];
+        // One-pixel emission and absorption, each in a collar above the
+        // low-noise threshold.
+        let [emission, absorption] = [4 * 16 + 4, 11 * 16 + 11];
+        residual[emission] = 1.0;
+        residual[absorption] = -1.0;
+        for index in [emission, absorption] {
+            for neighbour in [index - 16, index + 16, index - 1, index + 1] {
+                residual[neighbour] = 0.3;
+            }
+        }
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 0.0,
+            noise_factor: 0.0,
+            low_noise_factor: 0.0,
+            negative_factor: 1.0,
+            minimum_beam_fraction: 0.3,
+            // No smoothing isolates the pruning and growth.
+            smooth_factor: 0.0,
+            cut_threshold: 0.0,
+            grow_iterations: 4,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let plane = Plane {
+            residual: &residual,
+            valid: &[true; 256],
+            shape,
+            beam: AutoMaskBeam::new(3.0, 3.0, 0.0, 0.1),
+            controls: &controls,
+        };
+        let thresholds = Thresholds {
+            positive: 0.5,
+            low: 0.2,
+            negative: -0.5,
+            kind: AutoMaskThreshold::Noise,
+        };
+        let cycle = AutoMaskCycle {
+            completed_major_cycles: 1,
+            threshold_reached: false,
+            stopped: false,
+        };
+        let mut evidence = AutoMultithreshEvidence {
+            median: 0.0,
+            robust_rms: 0.0,
+            peak: 1.0,
+            positive_threshold: 0.5,
+            low_noise_threshold: 0.2,
+            negative_threshold: Some(-0.5),
+            threshold: AutoMaskThreshold::Noise,
+            masked: true,
+            regions: 0,
+            pruned_regions: 0,
+            grow_regions: 0,
+            grow_pruned_regions: 0,
+            negative_pixels: 0,
+            changed_pixels: 0,
+            channel_stopped: false,
+        };
+        let added = plane.additions(&[false; 256], &thresholds, cycle, &mut evidence);
+        let masked = added
+            .iter()
+            .enumerate()
+            .filter(|(_, masked)| **masked)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(masked, [absorption]);
+        assert_eq!((evidence.regions, evidence.pruned_regions), (1, 1));
+        assert_eq!(evidence.negative_pixels, 1);
+    }
+
     #[test]
     fn smoothing_scatters_the_gaussian_each_pixel_gathers() {
         let shape = [13, 9];

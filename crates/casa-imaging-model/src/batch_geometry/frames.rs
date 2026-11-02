@@ -216,8 +216,13 @@ impl Frames {
 
     /// The observatory's frame at `time_mjd_s` on `scale`.
     pub(super) fn observatory_at(&self, time_mjd_s: f64, scale: EpochRef) -> MeasFrame {
+        self.observatory_at_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
+    }
+
+    /// The observatory's frame at `epoch`.
+    pub(super) fn observatory_at_epoch(&self, epoch: MEpoch) -> MeasFrame {
         MeasFrame::new()
-            .with_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
+            .with_epoch(epoch)
             .with_position(self.observatory.clone())
             .with_measures(Arc::clone(&self.measures))
     }

@@ -2108,9 +2108,9 @@ fn validate_reconstruction(
             reason: "CASA-inclusive iteration accounting is specific to Högbom reconstruction",
         });
     }
+    // CASA bounds neither the loop gain nor its sign: a negative gain makes
+    // the residual grow until the divergence stop (`test_iterbot_divergence`).
     if !(contract.controls.gain.is_finite()
-        && contract.controls.gain > 0.0
-        && contract.controls.gain <= 1.0
         && contract.controls.threshold_jy_per_beam.is_finite()
         && contract.controls.threshold_jy_per_beam >= 0.0)
     {
@@ -2134,11 +2134,14 @@ fn validate_reconstruction(
             && rule.minimum_psf_fraction.is_finite()
             && rule.minimum_psf_fraction >= 0.0
             && rule.maximum_psf_fraction.is_finite()
-            && rule.maximum_psf_fraction > 0.0
-            && rule.minimum_psf_fraction <= rule.maximum_psf_fraction)
+            && rule.maximum_psf_fraction > 0.0)
     }) {
+        // The fractions need not be ordered: CASA raises the fraction to
+        // the minimum and then caps it at the maximum
+        // (`grpcInteractiveCleanManager::updateCycleThreshold`), so the
+        // maximum wins when they cross.
         return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "cycle threshold requires a positive factor and ordered finite PSF fractions",
+            reason: "cycle threshold requires a positive factor and finite PSF fractions",
         });
     }
     if let ReconstructionAlgorithm::Multiscale {

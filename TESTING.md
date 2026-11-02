@@ -436,8 +436,9 @@ The imaging foundation (#648, plan section 7) tests in four tiers:
   module per capability (standard MFS and masks, cube, mosaic, W and AW
   projection, MT-MFS, model column, Metal, routes, interrupt). The store
   law holds a run's batch geometry in its MeasurementSet equal to its batch
-  geometry in the MSv4 conversion, every sample on every channel, to 1e-12
-  (`casa_imaging_application::store_law`, #932, #942).
+  geometry in the MSv4 conversion, every sample on every channel, to 1e-12,
+  in either channel order (`casa_imaging_application::store_law`, #932,
+  #942, #1014).
 - **T1.5, CASA-paired small fixtures** (local, before an imaging review):
   the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
   references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5

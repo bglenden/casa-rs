@@ -1131,9 +1131,10 @@ fn read_antennas(
     let names = strings(store, &format!("{path}/antenna_name"))?;
     let stations = strings(store, &format!("{path}/station_name"))?;
     let mounts = strings(store, &format!("{path}/mount"))?;
-    // XRADIO writes no receptor angles for a window FEED states none for,
-    // though it may still write the polarization types; such antennas have
-    // no receptors, as the MSv2 adapter reads that FEED.
+    // For a window FEED states no receptors for, XRADIO and casa-rs's writer
+    // write polarization types named by the correlation products (XRADIO's
+    // schema requires them) but no receptor angles; such antennas have no
+    // receptors, as the MSv2 adapter reads that FEED.
     let types = if has_node(store, &format!("{path}/polarization_type"))?
         && has_node(store, &format!("{path}/ANTENNA_RECEPTOR_ANGLE"))?
     {

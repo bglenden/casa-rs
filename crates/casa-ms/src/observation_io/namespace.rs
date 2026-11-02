@@ -163,7 +163,7 @@ pub fn persisted_namespace(
     source: &Path,
     options: &OpenOptions,
 ) -> Result<PersistedNamespace, ObservationError> {
-    let (subtables, spectral_windows, catalogue) = if source.join("zarr.json").is_file() {
+    let (subtables, spectral_windows, catalogue) = if super::is_msv4_store(source) {
         msv4_subtables(source, options)?
     } else {
         let observation = Msv2Observation::open_with(source, options)?;

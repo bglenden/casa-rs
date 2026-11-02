@@ -40,7 +40,7 @@
     },
     "spw": {
       "status": "Partial",
-      "scope": "Copied as spectral-window/channel selector; selected-channel derived cube extents are refused in limited nchan/start/width cases (issue 980).",
+      "scope": "The text reaches casa-ms's port of CASA 6.7.6.14's spectral-window grammar (casacore aaf72eb7 MSSpwGram/MSSpwParse/MSSpwIndex: IDs, ranges, steps, ; lists, exact names, patterns, quoted and /.../ patterns, frequency and stepped frequency ranges with units, ~f, >, < and <>, : channel lists with ranges, steps, -1 and frequency ranges, ( ) ), resolved on a MeasurementSet over SPECTRAL_WINDOW and DATA_DESCRIPTION: the MAIN rows of the data descriptions CASA keeps, and per window the union of its getChanList ranges, with CASA's clamps logged; 1,552 cases match CASA's ms.msselect and msselectedindices exactly (resources/casa-compat/evidence/msselection-spw-casa-20261102.json). Every refusal CASA makes is refused; velocity units are refused as CASA disables them. Refused although CASA accepts them, as their imaging is not established: a parenthesized expression (every MAIN row, some windows' channels), a window whose rows are kept but none of whose channel ranges found a channel, and overlapping channel ranges of one window. The parameter catalog's selector normalization (ms.selection.spw revision 1) makes blank text and none unset and collapses whitespace, also inside quotes, so those CASA refusals and names are not exact (#980). Selected-channel derived cube extents are refused in limited nchan/start/width cases (#980).",
       "evidence": [
         "signature",
         "reader"
@@ -134,14 +134,15 @@
     },
     "imagename": {
       "status": "Partial",
-      "scope": "Fresh namespaces for supported imaging; default continuation reuses same-grid raw model and binary CLEAN mask for standard unfaceted single-term Stokes-I MFS with no new explicit mask. Owner-approved contract32 enables fresh single-main restart=False numbering, including relative/absolute paths. All20 small public CLI/Python product/preservation rows pass; one scalar output has identity-bound owner acceptance. Outlier/orphan namespaces and broader persistence remain unfinished (#944).",
+      "scope": "Fresh namespaces for supported imaging; restart=True continues on the products at imagename for every spectral mode, Taylor family and Stokes set casa-rs images (main image only), reusing the model, a CLEAN mask with no new mask, and with calcpsf/calcres=False the PSF, sums and residual. Owner-approved contract32 enables fresh single-main restart=False numbering, including relative/absolute paths. Outlier/orphan namespaces and broader persistence remain unfinished (#944).",
       "evidence": [
         "signature",
         "reader",
         "lifecycle",
         "restart-native-current",
         "approved-comparisons-restart",
-        "numbering-activation"
+        "numbering-activation",
+        "continuation-20261102"
       ],
       "behaviors": [
         "restart"
@@ -971,7 +972,7 @@
       ]
     },
     "restart": {
-      "scope": "True continues bounded same-grid standard unfaceted single-term Stokes-I MFS using raw model and binary CLEAN mask. False is active in owner-approved contract32: a single main image starts fresh at the highest recognized numbered suffix plus1, preserving old files. All20 small public CLI/Python product/naming/preservation rows pass;19/20 selected scalar rows pass raw limits and one exact Metal output is owner-accepted by identity-bound review. Preserving prior image histories is an owner-agreed deviation; new-image history completeness remains unfinished. Outlier numbering, occupied chosen orphan namespaces, embedded/new masks, broader modes and false calc controls remain unfinished (#944).",
+      "scope": "Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask whose planes agree is reused when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False keeps contract32's single-main numbering. Refused (#944, #980): outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a mask whose planes differ, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation.",
       "evidence": [
         "signature",
         "reader",
@@ -979,7 +980,8 @@
         "restart-native-current",
         "approved-comparisons-restart",
         "numbering-preview",
-        "numbering-activation"
+        "numbering-activation",
+        "continuation-20261102"
       ],
       "behaviors": [
         "restart"
@@ -998,20 +1000,24 @@
       ]
     },
     "calcres": {
-      "scope": "Read and ignored; non-default catalog-refused (issue 980).",
+      "status": "Partial",
+      "scope": "Contract 36: False runs no major cycle before the first minor cycle and cleans the residual an earlier run left at imagename, read with its sums of weights as the unnormalized normal state (task_tclean.py; not counted in nmajordone). With no residual and niter=0 the run makes the PSF alone in a PSF-only pass (psf, sumwt, pb). niter=0 with savemodel predicts the read model (predictModel) and leaves the residual as read. Refused: niter>0 with no earlier residual, and mosaic, A-projection, facets or outliers (#980).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "continuation-20261102"
       ],
       "behaviors": [
         "restart"
       ]
     },
     "calcpsf": {
-      "scope": "Read and ignored; non-default catalog-refused (issue 980).",
+      "status": "Partial",
+      "scope": "Contract 36: False reads the PSF and sums of weights an earlier run left (each channel and Stokes plane's, or a Taylor family's 2*nterms-1 moments) in place of gridding them; the restoring beam is fitted on the PSF read and the primary beam formed as before. Refused: no earlier PSF or .sumwt, and mosaic, A-projection, facets or outliers (#980).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "continuation-20261102"
       ],
       "behaviors": [
         "restart"
@@ -1061,7 +1067,7 @@
       "title": "Restart, product persistence and recalculation",
       "status": "Partial",
       "scope": "imagename, restart, startmodel, calcres, calcpsf, restoration; main and outlier fields (#944).",
-      "gap": "Paired CASA 6.7.6.14/6.7.6-14 small standard Stokes-I MFS defaults now pass: 18 native 10->0->10 rows, 6 persisted nontrivial-mask cases,6 CASA-to-native continuations and 2 native-to-CASA continuations with actual rewrite, across default positive and negative PB limits. Model is retained exactly at niter0; masks confine new components. Resolved-rotation/SIN representation fix preserves real-grid refusal. Embedded model/mask pixel masks, tabulated spectral grids, new explicit/auto masks on occupied outputs, broader modes/outliers and false calc controls remain unfinished; concurrency at one prefix unassessed. Contract32 now activates single-main False numbering. All20 small CLI/Python product/preservation rows pass;19/20 selected scalar rows pass raw limits, with one exact Metal result owner-accepted. CASA mutates prior logtables whereas native preserves them: the owner agreed to preserve prior histories. New-image history completeness remains unfinished. Singleton-list startmodel is a measured catalog gap. This is not general persistence or full metadata acceptance.",
+      "gap": "Contract 36 continues every spectral mode, Taylor family and Stokes set of the main image and activates calcres/calcpsf (CASA test-case matrix at 4fe0e56: 11/48 restart/calcres/calcpsf cases pass, from 1/48 counting the 74a3b85 run's CASA refusals as environment failures; the rest are blocked by other gaps or an f32 scalar floor). Earlier: paired CASA 6.7.6.14 small standard Stokes-I MFS defaults pass (18 native 10->0->10 rows, 6 persisted nontrivial-mask cases, 6 CASA-to-native and 2 native-to-CASA continuations). Embedded model/mask pixel masks, tabulated spectral grids, new explicit/auto masks over occupied masks when cleaning, outliers, and reads under mosaic/A-projection/facets remain unfinished; concurrency at one prefix unassessed. CASA mutates prior logtables whereas native preserves them (owner-agreed). New-image history completeness remains unfinished. This is not general persistence or full metadata acceptance.",
       "evidence": [
         "reader",
         "lifecycle",
@@ -1069,7 +1075,8 @@
         "approved-comparisons-restart",
         "scalars-empty-mask",
         "numbering-preview",
-        "numbering-activation"
+        "numbering-activation",
+        "continuation-20261102"
       ]
     },
     {
@@ -1715,6 +1722,21 @@
       ],
       "command": "CASA python -I tools/casa-compat/tclean_scan_observation_replay.py --archive-root <scan-observation-engine-20261101 extract> --casars-python <venv python> --imager-binary <binary> --backend {cpu,gpu} --precision {f64,f32}",
       "receipt": "resources/casa-compat/evidence/tclean-decisions-20261102.json"
+    },
+    "continuation-20261102": {
+      "kind": "CASA tclean test-case matrix, T1 imaging and counting laws",
+      "state": "measured: 11/48 of the class pass against CASA 6.7.6.14 (from 1/48), 12/48 merged with the spw grammar; remaining failures attributed",
+      "source_revision": "a21ee93340e9267169e6137c2990e207e6ec5a78",
+      "scope": "tclean contract 36. CASA's own tclean test cases through the public Python casars.tasks.tclean (CPU f64, Apple M2): test_onefield restart_mfs, restore_mtmfs_niter0, psf_fit 1-3, test_iterbot nmajor_0, test_cube common_restoringbeam, test_modelvis 20/22/26 and test_startmodel changeshape_1 pass products, counts and scalars; restart_mtmfs passes every product and count but one f32-floor cyclethreshold (4.5e-6 relative); the mosaic cases are stopped first by spw='*' and other gaps (an evidence-only spw='' run passes test_mtmfs_standard_onefield's 1024-pixel mtmfs restart). Native: T1 continuation (MFS, Taylor, cube, two Stokes planes, mosaic cube and Taylor, nmajor=0, predicted model, refusals) and the reader's counting law.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-continuation-20261102.json",
+        "crates/casa-imaging-application/src/restart.rs",
+        "crates/casa-imaging-application/src/restart/existing.rs",
+        "crates/casa-imaging-application/src/imaging/cycle/continuation.rs",
+        "crates/casars-imager/tests/t1/continuation.rs",
+        "crates/casa-imaging-application/tests/restart_products_memory.rs",
+        "tools/casa-compat/tclean_case_matrix.py"
+      ]
     }
   }
 }
