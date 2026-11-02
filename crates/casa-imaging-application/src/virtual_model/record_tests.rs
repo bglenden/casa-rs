@@ -179,5 +179,35 @@ fn a_multi_term_record_is_casa_s() {
 #[test]
 fn a_longitude_is_casa_s_angle() {
     let written = direction([5.233697011339746, 0.7109380541842404], "J2000");
-    assert!((quantity_of(&written, "m0") + 1.0494882958398402).abs() < 1e-15);
+    assert_eq!(quantity_of(&written, "m0"), -1.0494882958398402);
+}
+
+/// casa-rs's record of the spectral coordinate CASA's machine saved (read
+/// from CASA's record and written by casa-rs's codec, which has no
+/// conversion layer for it) becomes CASA's record field for field.
+#[test]
+fn a_spectral_record_is_casa_s() {
+    for name in ["casa_mfs_source", "casa_mtmfs_source"] {
+        let casa = casa_container(name);
+        let machine = match casa.get("subftm_0") {
+            Some(Value::Record(term)) => term.clone(),
+            _ => casa.clone(),
+        };
+        let Value::Record(saved) = field(&machine, "spectralcoord") else {
+            panic!("spectralcoord");
+        };
+        // The coordinate as casa-rs builds an image's: no conversion layer.
+        let mut native = saved.clone();
+        native.remove("conversion");
+        let coordinates = casa_coordinates::CoordinateSystem::from_record(&RecordValue::new(vec![
+            RecordField::new("spectral0", Value::Record(native)),
+        ]))
+        .expect("CASA's spectral coordinate");
+        let index = coordinates
+            .find_coordinate(casa_coordinates::CoordinateType::Spectral)
+            .expect("spectral");
+        let ours = casa_spectral(&coordinates.coordinate(index).to_record());
+        assert_eq!(difference(&ours, saved, name), None);
+        assert_eq!(&ours, saved);
+    }
 }

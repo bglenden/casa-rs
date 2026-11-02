@@ -435,7 +435,7 @@ fn write_machine(
         .map_err(|error| other(error.into()))?;
     let (longitude, latitude, radius) = engine.observatory_position().as_spherical();
     let (centre, frame) = phase_centre(&plan.coordinates).map_err(other)?;
-    let spectral = spectral_record(&plan.coordinates).map_err(other)?;
+    let spectral = record::casa_spectral(&spectral_record(&plan.coordinates).map_err(other)?);
     let extent = imaging::image_extent(domain)?;
     let machine = |path: &Path| {
         GridFt {
@@ -449,7 +449,9 @@ fn write_machine(
             observatory: [longitude, latitude, radius],
             spectral: spectral.clone(),
             buffer,
-            interpolation: plan.interpolation,
+            // A Taylor term's machine, which `MultiTermFTNew` drives,
+            // records nearest-neighbour interpolation.
+            interpolation: if taylor { 0 } else { plan.interpolation },
             frequency_frame_valid: !taylor,
         }
         .record()

@@ -195,6 +195,106 @@ pub(crate) fn multi_term(terms: Vec<RecordValue>, reference_hz: f64) -> RecordVa
     record
 }
 
+/// The fields of CASA's spectral coordinate record, in the order
+/// `SpectralCoordinate::save` writes them; `conversion` follows.
+const SPECTRAL_FIELDS: [&str; 12] = [
+    "version",
+    "system",
+    "restfreq",
+    "restfreqs",
+    "velType",
+    "nativeType",
+    "velUnit",
+    "waveUnit",
+    "formatUnit",
+    "wcs",
+    "unit",
+    "name",
+];
+
+/// A spectral coordinate's record as CASA's `SpectralCoordinate::save`
+/// leaves it in a machine record: its fields in CASA's order, a linear
+/// axis's WCS in `crval, crpix, cdelt, pc, ctype` with the type as wcslib's
+/// nine-character `FREQ`, and, for a coordinate with no conversion layer,
+/// CASA's default one (the default J2000 direction, ITRF origin and LAST
+/// epoch, to the coordinate's own system).
+pub(crate) fn casa_spectral(record: &RecordValue) -> RecordValue {
+    let mut out = RecordValue::default();
+    for name in SPECTRAL_FIELDS {
+        let Some(value) = record.get(name) else {
+            continue;
+        };
+        let value = match (name, value) {
+            ("wcs", Value::Record(wcs)) => Value::Record(casa_wcs(wcs)),
+            _ => value.clone(),
+        };
+        out.push(RecordField::new(name, value));
+    }
+    for field in record.fields() {
+        if !SPECTRAL_FIELDS.contains(&field.name.as_str()) && field.name != "conversion" {
+            out.push(field.clone());
+        }
+    }
+    let conversion = match record.get("conversion") {
+        Some(Value::Record(conversion)) => {
+            let mut ordered = RecordValue::default();
+            for name in ["direction", "position", "epoch", "system"] {
+                if let Some(value) = conversion.get(name) {
+                    ordered.push(RecordField::new(name, value.clone()));
+                }
+            }
+            ordered
+        }
+        _ => {
+            let system = record
+                .get("system")
+                .cloned()
+                .unwrap_or_else(|| text("LSRK"));
+            RecordValue::new(vec![
+                RecordField::new(
+                    "direction",
+                    direction([0.0, std::f64::consts::FRAC_PI_2], "J2000"),
+                ),
+                RecordField::new("position", position([0.0, 0.0, 0.0])),
+                RecordField::new(
+                    "epoch",
+                    Value::Record(RecordValue::new(vec![
+                        RecordField::new("type", text("epoch")),
+                        RecordField::new("refer", text("LAST")),
+                        RecordField::new("m0", quantity(0.0, "d", false)),
+                    ])),
+                ),
+                RecordField::new("system", system),
+            ])
+        }
+    };
+    out.push(RecordField::new("conversion", Value::Record(conversion)));
+    out
+}
+
+/// A linear spectral axis's WCS in CASA's order, its `FREQ` type padded
+/// with NULs to wcslib's nine characters as CASA records it.
+fn casa_wcs(wcs: &RecordValue) -> RecordValue {
+    let mut out = RecordValue::default();
+    for name in ["crval", "crpix", "cdelt", "pc", "ctype"] {
+        if let Some(value) = wcs.get(name) {
+            let value = match value {
+                Value::Scalar(ScalarValue::String(kind)) if kind == "FREQ" => {
+                    text("FREQ\0\0\0\0\0")
+                }
+                value => value.clone(),
+            };
+            out.push(RecordField::new(name, value));
+        }
+    }
+    for field in wcs.fields() {
+        if out.get(&field.name).is_none() {
+            out.push(field.clone());
+        }
+    }
+    out
+}
+
 fn text(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
@@ -238,13 +338,11 @@ fn quantity(value: f64, unit: &str, unit_first: bool) -> Value {
 /// A direction measure as `MeasureHolder::toRecord` leaves it in CASA's
 /// machine records: `type`, `refer`, then `m1` and `m0`, the latitude's
 /// value before its unit and the longitude's unit before its value. The
-/// longitude is CASA's `MVDirection` angle, in (−π, π].
+/// longitude is CASA's `MVDirection` angle, the `atan2` of its direction
+/// cosines, in (−π, π].
 fn direction([longitude, latitude]: [f64; 2], frame: &str) -> Value {
-    let longitude = if longitude > std::f64::consts::PI {
-        longitude - std::f64::consts::TAU
-    } else {
-        longitude
-    };
+    let cosine = latitude.cos();
+    let longitude = (cosine * longitude.sin()).atan2(cosine * longitude.cos());
     Value::Record(RecordValue::new(vec![
         RecordField::new("type", text("direction")),
         RecordField::new("refer", text(frame)),
