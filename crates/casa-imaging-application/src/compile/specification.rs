@@ -462,8 +462,9 @@ pub(super) fn w_projection(
 /// CASA's default AW pointing thresholds under `usepointing`.
 const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
 
-/// The installed A-projection: CASA's EVLA wideband aperture term with
-/// conjugate beams, no separate prolate spheroidal, and 360-degree
+/// The installed A-projection: CASA's EVLA aperture, prolate-spheroidal,
+/// wideband and conjugate-beam terms as tclean asks for them (wideband
+/// only with the aperture, [`AwProjection::wideband`]), and 360-degree
 /// parallactic-angle steps, over the selected `|w|` range.
 pub(super) fn aw_projection(
     aw: &AwProjection,
@@ -477,10 +478,10 @@ pub(super) fn aw_projection(
     Ok(AwProjectionContract::new(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
         planes,
-        true,
-        false,
-        true,
-        true,
+        aw.aterm,
+        aw.psterm,
+        aw.wideband(),
+        aw.conjbeams,
         aw.usepointing,
         effective_aw_pointing_offset_sigdev_arcsec(aw.usepointing, &aw.pointingoffsetsigdev),
         360.0,

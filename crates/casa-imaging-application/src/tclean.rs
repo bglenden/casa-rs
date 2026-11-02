@@ -646,34 +646,18 @@ impl<'a> Tclean<'a> {
         ])
     }
 
-    /// casa-rs's AW projection runs as CASA's `aterm=True, psterm=False,
-    /// wbawp=True, conjbeams=True`; its mosaic reads `conjbeams`.
+    /// The AW projection reads `aterm`, `psterm`, `wbawp` and `conjbeams`
+    /// (`createAWPFTMachine`); the mosaic reads `conjbeams` alone.
     fn aw_terms(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        let fixed: &[(&str, bool)] = match modes.gridder {
-            "awproject" => &[
-                ("aterm", true),
-                ("psterm", false),
-                ("wbawp", true),
-                ("conjbeams", true),
-            ],
-            "mosaic" => {
-                let conjbeams = self.flag("conjbeams")?;
-                self.set("conjbeams", conjbeams);
-                &[]
-            }
+        let read: &[&str] = match modes.gridder {
+            "awproject" => &["aterm", "psterm", "wbawp", "conjbeams"],
+            "mosaic" => &["conjbeams"],
             _ => &[],
         };
         for name in ["aterm", "psterm", "wbawp", "conjbeams"] {
             let value = self.flag(name)?;
-            if let Some((_, required)) = fixed.iter().find(|(fixed, _)| *fixed == name)
-                && value != *required
-            {
-                let given = if value { "True" } else { "False" };
-                return Err(TcleanRefusal::not_yet(
-                    name,
-                    format!("{given} with gridder='{}'", modes.gridder),
-                    980,
-                ));
+            if read.contains(&name) {
+                self.set(name, value);
             }
         }
         Ok(())

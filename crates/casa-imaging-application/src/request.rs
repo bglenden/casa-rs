@@ -473,11 +473,30 @@ pub enum Gridder {
 }
 
 /// The parameters of `gridder = awproject`.
+///
+/// The four terms are tclean's, as `AWProjectFT::makeCFObject` reads them.
+/// They shape the cells a native cache generates
+/// (`AWConvFunc::makeConvFunction2`). An imported CASA cache already holds
+/// the cells its own run made, so with one only `conjbeams` changes the
+/// run: it selects the cell a row grids with (`CFBuffer::nearestFreqNdx`).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AwProjection {
-    /// W planes of the convolution-function cache.
+    /// W planes of the convolution-function cache: one images co-planar,
+    /// without the W term (`createAWPFTMachine`'s `wprojPlane > 1`).
     #[serde(deserialize_with = "optional")]
     pub wprojplanes: Option<NonZeroUsize>,
+    /// The EVLA aperture term (tclean `aterm`).
+    pub aterm: bool,
+    /// The prolate-spheroidal anti-aliasing term (tclean `psterm`).
+    pub psterm: bool,
+    /// Cells at each selected window's frequency rather than at the image
+    /// reference frequency alone (tclean `wbawp`); without the aperture
+    /// CASA's `AWConvFunc` drops it.
+    pub wbawp: bool,
+    /// Grid each sample with the cell at its conjugate frequency
+    /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
+    /// beam there (tclean `conjbeams`).
+    pub conjbeams: bool,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -775,13 +794,27 @@ impl ImagingRequest {
 }
 
 impl AwProjection {
+    /// Whether the cells vary with frequency: `wbawp` with the aperture, as
+    /// `AWConvFunc`'s constructor resets `wbAWP` when the A-term is off.
+    #[must_use]
+    pub const fn wideband(&self) -> bool {
+        self.wbawp && self.aterm
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
-        // The EVLA cache contract CASA's AWProjectFT builds: 32 W planes.
-        if self.wprojplanes.map(NonZeroUsize::get) != Some(32) {
+        let Some(planes) = self.wprojplanes else {
             return invalid(
                 "wprojplanes",
-                "AW projection uses CASA's 32-plane EVLA cache",
+                "AW projection takes a positive W-plane count; deriving it (-1) is not \
+                 implemented by casa-rs yet (#980)",
+            );
+        };
+        // `AWConvFunc`'s constructor: a cell needs one of the two.
+        if !self.aterm && !self.psterm {
+            return invalid(
+                "aterm, psterm",
+                "both psterm and aterm cannot be off, as CASA's AWConvFunc refuses",
             );
         }
         if self
@@ -815,7 +848,7 @@ impl AwProjection {
                      quarter of its side",
                 );
             }
-            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < 32 {
+            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < planes.get() {
                 return invalid(
                     "native_cf_cache_bytes, native_cf_maximum_cells",
                     "the cache must hold every W plane",

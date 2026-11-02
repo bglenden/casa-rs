@@ -326,6 +326,61 @@ fn conjugate_beams_select_the_cell_nearest_the_conjugate_frequency() {
     );
 }
 
+/// CASA's `aterm=False, psterm=True, wbawp=False, wprojplanes=1` cache:
+/// `makeCFObject` drops the W term over one plane, whose `wScale` stays
+/// zero (`makeWValList`), and `makeFreqValList` samples the image
+/// reference frequency alone. Every w and every frequency select the one
+/// cell, which without the aperture is the spheroidal alone.
+#[test]
+fn a_co_planar_narrowband_spheroidal_catalog_selects_its_one_cell() {
+    let mut input = request(false);
+    input.frequencies = vec![NativeAwFrequencyGroup {
+        spectral_window: 0,
+        channel_frequencies_hz: FREQUENCIES_HZ.to_vec(),
+        cf_frequency_hz: REFERENCE_HZ,
+    }];
+    input.w_values = vec![0.0];
+    input.w_increment = 0.0;
+    input.terms = NativeAwTerms {
+        aperture: false,
+        w_term: false,
+        prolate_spheroidal: true,
+        wideband: false,
+        conjugate_beams: false,
+    };
+    input.validate().expect("a co-planar narrowband request");
+    let root = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(root.path(), &input, false, 2).expect("generate");
+    let catalog = AwCatalog::open_casa(
+        root.path(),
+        indexing(true),
+        &geometry(),
+        &routing(),
+        usize::MAX,
+    )
+    .expect("open");
+    assert_eq!(catalog.w_values(), [0.0]);
+    assert_eq!(catalog.w_increment(), 0.0);
+    assert_eq!(catalog.frequencies_hz().len(), 1);
+    assert_eq!(catalog.groups(), 1);
+    for w in [-3.0e4, -1.0, 0.0, 2.5, 1.0e5] {
+        assert_eq!(catalog.w_cell(w), 0, "w = {w}");
+    }
+    for frequency in [1.2e9, REFERENCE_HZ, 1.8e9] {
+        assert_eq!(catalog.frequency_cell(frequency), 0, "{frequency} Hz");
+    }
+    let key = catalog.key(&context(17.0, 0), 1.4e9, -40.0);
+    assert_eq!((key.group, key.cube), (0, 0));
+    let mut hold = CellHold::new();
+    let TapLayout::Dense { data, .. } = catalog.taps(key, &mut hold) else {
+        panic!("AW cells are dense");
+    };
+    let peak = data.iter().map(|tap| tap.norm()).fold(0.0_f32, f32::max);
+    assert!(peak > 0.0 && data.iter().all(|tap| tap.norm().is_finite()));
+    let mut weight = CellHold::new();
+    assert!(catalog.weight_taps(key, &mut weight).is_some());
+}
+
 #[test]
 fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
     let root = tempfile::tempdir().expect("cache directory");

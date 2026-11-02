@@ -110,6 +110,31 @@ fn parameters_a_mode_does_not_read_are_ignored() {
         request(json!({ "gridder": "mosaic", "conjbeams": true })),
         request(json!({ "gridder": "mosaic" }))
     );
+    // An A-projection reads every one of its terms, and the mosaic none
+    // but conjbeams.
+    let aw = json!({ "gridder": "awproject", "cfcache": "cf", "wprojplanes": 32 });
+    for term in ["aterm", "psterm", "wbawp", "conjbeams"] {
+        let mut flipped = aw.clone();
+        let default = request(aw.clone());
+        let Gridder::Awproject(terms) = &default.gridder else {
+            panic!("an AW request");
+        };
+        let value = match term {
+            "aterm" => terms.aterm,
+            "psterm" => terms.psterm,
+            "wbawp" => terms.wbawp,
+            _ => terms.conjbeams,
+        };
+        flipped[term] = json!(!value);
+        assert_ne!(request(flipped), default, "awproject reads {term}");
+        if term != "conjbeams" {
+            assert_eq!(
+                request(json!({ "gridder": "mosaic", term: !value })),
+                request(json!({ "gridder": "mosaic" })),
+                "the mosaic ignores {term}"
+            );
+        }
+    }
     // A mosaic reads no W planes.
     assert_eq!(
         request(json!({ "gridder": "mosaic", "wprojplanes": 8 })),
@@ -307,11 +332,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "gridder": "mosaic", "weighting": "briggs", "specmode": "cube", "nchan": 4 }),
             "mosweight",
             "#818",
-        ),
-        (
-            json!({ "gridder": "awproject", "cfcache": "cf" }),
-            "conjbeams",
-            "#980",
         ),
         (
             json!({ "mask": "circle[[10pix,10pix],5pix]" }),
