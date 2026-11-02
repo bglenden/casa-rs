@@ -1,0 +1,1509 @@
+{
+ "source": {
+  "tool": "tools/casa-compat/tclean_case_scope.py",
+  "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+  "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+  "decided": "2026-11-02"
+ },
+ "rule": "A case is LATER when any of its calls matches a LATER family; otherwise NOW (simulation calls and very common use).",
+ "later_families": [
+  {
+   "family": "moving-sources",
+   "reason": "owner decision 2026-11-02: moving sources are an infrequent use case",
+   "cases": 8
+  },
+  {
+   "family": "gridder-awp2-awphpg-imagemosaic",
+   "reason": "gridders awp2, awphpg and imagemosaic: no simulation task issues it and it is not common use",
+   "cases": 25
+  },
+  {
+   "family": "specmode-mvc",
+   "reason": "specmode mvc: no simulation task issues it and it is not common use",
+   "cases": 9
+  },
+  {
+   "family": "deconvolver-asp-mem-clarkstokes",
+   "reason": "deconvolvers asp, mem and clarkstokes: no simulation task issues it and it is not common use",
+   "cases": 5
+  },
+  {
+   "family": "pb-mask",
+   "reason": "usemask='pb' and pbmask: simanalyze passes pbmask=0.0 with usemask='user', and no common-use evidence moved it (decided 2026-11-02)",
+   "cases": 1
+  },
+  {
+   "family": "normtype-pbsquare",
+   "reason": "normtype pbsquare: no simulation task issues it and it is not common use",
+   "cases": 1
+  },
+  {
+   "family": "psfphasecenter",
+   "reason": "psfphasecenter: no simulation task issues it and it is not common use",
+   "cases": 2
+  },
+  {
+   "family": "facets-beyond-single-term-mfs",
+   "reason": "facets with AW projection, Taylor terms or cubes: no simulation task issues it and it is not common use",
+   "cases": 1
+  },
+  {
+   "family": "projection",
+   "reason": "projections other than SIN: no simulation task issues it and it is not common use",
+   "cases": 3
+  },
+  {
+   "family": "mtmfs-nterms-1",
+   "reason": "nterms=1 with mtmfs: no simulation task issues it and it is not common use",
+   "cases": 4
+  },
+  {
+   "family": "polarized-taylor",
+   "reason": "Taylor images of Stokes other than I: no simulation task issues it and it is not common use",
+   "cases": 3
+  },
+  {
+   "family": "cubic-interpolation",
+   "reason": "cubic interpolation: no simulation task issues it and it is not common use",
+   "cases": 0
+  },
+  {
+   "family": "start-model-list",
+   "reason": "start-model lists: simanalyze passes one image; no simulation task issues it and it is not common use",
+   "cases": 4
+  },
+  {
+   "family": "start-model-spectral-regrid",
+   "reason": "a start model regridded along its spectral axis: no simulation task issues it and it is not common use",
+   "cases": 3
+  },
+  {
+   "family": "pa-steps",
+   "reason": "computepastep and rotatepastep: no simulation task issues it and it is not common use",
+   "cases": 2
+  },
+  {
+   "family": "awproject-cache-generation",
+   "reason": "awproject with no CASA CF cache to read: generating one is not native yet",
+   "cases": 14
+  },
+  {
+   "family": "awproject-cube",
+   "reason": "AW projection of a cube: awproject stays at its current coverage",
+   "cases": 12
+  },
+  {
+   "family": "awproject-imported-mosaic",
+   "reason": "AW mosaics on imported CASA caches: awproject stays at its current coverage",
+   "cases": 14
+  },
+  {
+   "family": "derived-cube-axes",
+   "reason": "tabular, strided and derived cube axes (nchan=-1 with a selection, start or width; strided channels; optical-velocity widths): no simulation task issues it and it is not common use",
+   "cases": 3
+  }
+ ],
+ "moved_to_now": [
+  {
+   "family": "mosweight-per-channel-density",
+   "evidence": "simanalyze images several pointings with gridder='mosaic' and a multi-channel MeasurementSet as specmode='cube', weighting 'uniform' or 'briggs' allowed, mosweight and perchanweightdensity at tclean's defaults (True): BriggsCubeWeightor's per-field density (#818)"
+  },
+  {
+   "family": "full-polarization-mosaic",
+   "evidence": "simanalyze passes the caller's stokes (IQUV, QU, IV and the correlations) to gridder='mosaic', and simobserve simulates all four correlations for an IQUV sky model"
+  }
+ ],
+ "totals": {
+  "cases": 354,
+  "NOW": 260,
+  "LATER": 94,
+  "matrix_cases": 339,
+  "matrix_NOW": 252,
+  "matrix_LATER": 87
+ },
+ "cases": {
+  "test_cube.test_cube_0.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_1.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_10.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_11.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_12.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_13.1": {
+   "scope": "LATER",
+   "families": [
+    "derived-cube-axes"
+   ]
+  },
+  "test_cube.test_cube_2.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_21.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_22.1": {
+   "scope": "LATER",
+   "families": [
+    "derived-cube-axes"
+   ]
+  },
+  "test_cube.test_cube_23.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_3.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_4.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_5.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_6.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_7.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_8.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_9.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_D1.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_D2.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_badchannel_restoringbeam.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_badchannel_restoringbeam.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_chanchunks_auto.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_chanchunks_savemodel.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_common_restoringbeam.1+2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_continuum_subtract_uvsub.1+2": {
+   "scope": "LATER",
+   "families": [
+    "start-model-list"
+   ],
+   "casa_skip": true
+  },
+  "test_cube.test_cube_descendF1.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF10.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF11.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF12.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF13.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF14.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF2.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF3.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF4.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF5.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF6.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF7.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF8.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_descendF9.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_mtmfs_nterms1.1": {
+   "scope": "LATER",
+   "families": [
+    "mtmfs-nterms-1"
+   ],
+   "casa_skip": true
+  },
+  "test_cube.test_cube_perchanweight_briggs.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_perchanweight_briggs.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_perchanweight_briggs.3": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_perchanweight_briggs.4": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_twoMS_startfreq.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_twoMS_startfreq.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_twoMS_startvel.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_twoMS_startvel.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper.3": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper.4": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.2": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.3": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.4": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.1": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.2": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.3": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.4": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.5": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.6": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_cube.test_cubedata_briggs.1": {
+   "scope": "NOW"
+  },
+  "test_cube.test_cubedata_mtmfs_nterms1.1": {
+   "scope": "LATER",
+   "families": [
+    "mtmfs-nterms-1"
+   ],
+   "casa_skip": true
+  },
+  "test_ephemeris.test_multifield_cube_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_multifield_cube_exttab_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_multifield_mfs_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_multifield_mfs_exttab_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_onefield_cube_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_onefield_cube_exttab_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_onefield_mfs_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_ephemeris.test_onefield_mfs_exttab_eph.1": {
+   "scope": "LATER",
+   "families": [
+    "moving-sources"
+   ]
+  },
+  "test_errors_failures.test_bad_freqframe_define_image.1": {
+   "scope": "NOW",
+   "expect_error": "RuntimeError"
+  },
+  "test_errors_failures.test_error_gridding.1": {
+   "scope": "NOW",
+   "expect_error": "RuntimeError"
+  },
+  "test_errors_failures.test_wrong_field_select_data.1": {
+   "scope": "NOW",
+   "expect_error": "RuntimeError"
+  },
+  "test_errors_failures.test_wrong_spw_select_data.1": {
+   "scope": "NOW",
+   "expect_error": "RuntimeError"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.2": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.3": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.4": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.5": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.1": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.2": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14350fix.1": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.5": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.1": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.4": {
+   "scope": "NOW"
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.5": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_iterbot.test_iterbot_cube_1.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_2.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_3.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.2": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.3": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_false.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_true.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_nsigma.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_restart_pbmask.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_restart_updatedmask.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_cube_tol.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_divergence.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_false.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_true.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_1.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_2.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_3.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_4.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_5.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_6.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_7.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_8.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_9.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.2": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.3": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_false.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_true.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_restart_pbmask.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_mfs_restart_updatedmask.1": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_nmajor_0.1+2": {
+   "scope": "NOW"
+  },
+  "test_iterbot.test_iterbot_nmajor_2.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_1.2": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_2.2": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_cube_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_mfs_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_newnoise.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_with_absorption.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_with_nsigma.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_with_nsigma_newnoise.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_with_prune.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_autobox_multithresh_with_stopmask.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_expand_contstokesIQUVmask_to_cube_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_cube.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_cube_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_expand_cubestokesImask_to_cube_IQUV.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_preserve_input_zero_mask.1": {
+   "scope": "NOW"
+  },
+  "test_mask.test_mask_zerostart.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_1.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_10.1+2+3": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_11.1+2+3": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_12.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_13.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_14.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_15.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_16.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_17.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_18.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_19.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_2.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_20.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_21.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_22.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_23.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_24.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_25.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_26.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_27.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_28.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_29.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_3.1+2": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_4.1": {
+   "scope": "NOW"
+  },
+  "test_modelvis.test_modelvis_5.1+2": {
+   "scope": "LATER",
+   "families": [
+    "start-model-list"
+   ]
+  },
+  "test_modelvis.test_modelvis_6.1+2": {
+   "scope": "LATER",
+   "families": [
+    "start-model-list"
+   ]
+  },
+  "test_modelvis.test_modelvis_7.1+2": {
+   "scope": "LATER",
+   "families": [
+    "start-model-spectral-regrid"
+   ]
+  },
+  "test_modelvis.test_modelvis_8.1+2": {
+   "scope": "LATER",
+   "families": [
+    "derived-cube-axes",
+    "start-model-spectral-regrid"
+   ]
+  },
+  "test_modelvis.test_modelvis_9.1+2+3": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cube",
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_cube.test_mosaic_briggsbwtaper.1": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_mosaic_cube.test_mosaic_briggsbwtaper.2": {
+   "scope": "NOW",
+   "casa_skip": true
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield_upTrue.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield_upTrue.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield_use_standard_psf.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield_use_standard_psf.2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield.1+2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield_use_standard_psf.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield_use_standard_psf.2": {
+   "scope": "LATER",
+   "families": [
+    "awproject-imported-mosaic"
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield_upTrue.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield_upTrue.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_mwFalse_briggs_twofield.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_twofield.1": {
+   "scope": "NOW"
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_twofield.2": {
+   "scope": "NOW"
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_awp2.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic",
+    "specmode-mvc"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_awproject.1": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc",
+    "awproject-cache-generation"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_compare_with_mfs.1": {
+   "scope": "NOW"
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_compare_with_mfs.2": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_mosaic.1": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_standard.1": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.1": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc"
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_wproject.1": {
+   "scope": "LATER",
+   "families": [
+    "specmode-mvc"
+   ]
+  },
+  "test_multifield.test_multifield_facets_mfs.1": {
+   "scope": "NOW"
+  },
+  "test_multifield.test_multifield_facets_mtmfs.1": {
+   "scope": "LATER",
+   "families": [
+    "facets-beyond-single-term-mfs"
+   ]
+  },
+  "test_onefield.test_onefield_all_outputs_mfs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_all_outputs_mtmfs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_asp.1": {
+   "scope": "LATER",
+   "families": [
+    "deconvolver-asp-mem-clarkstokes"
+   ]
+  },
+  "test_onefield.test_onefield_asp.2": {
+   "scope": "LATER",
+   "families": [
+    "deconvolver-asp-mem-clarkstokes"
+   ]
+  },
+  "test_onefield.test_onefield_asp.3": {
+   "scope": "LATER",
+   "families": [
+    "deconvolver-asp-mem-clarkstokes"
+   ]
+  },
+  "test_onefield.test_onefield_asp.4": {
+   "scope": "LATER",
+   "families": [
+    "deconvolver-asp-mem-clarkstokes"
+   ]
+  },
+  "test_onefield.test_onefield_autonames.1+2+3": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_briggsabs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_briggsabs.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_briggsabs.3": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_clark.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_cube_restoringbeam.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_cube_restoringbeam.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_defaults.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_gridders.1+2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_hogbom.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_mem.1": {
+   "scope": "LATER",
+   "families": [
+    "deconvolver-asp-mem-clarkstokes"
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_mtmfs_2spws_2MSs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_mtmfs_nterms1.1": {
+   "scope": "LATER",
+   "families": [
+    "mtmfs-nterms-1"
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_mtmfs_smallscalebias.1": {
+   "scope": "LATER",
+   "families": [
+    "mtmfs-nterms-1"
+   ]
+  },
+  "test_onefield.test_onefield_multiscale.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_projections.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_projections.2": {
+   "scope": "LATER",
+   "families": [
+    "projection"
+   ]
+  },
+  "test_onefield.test_onefield_projections.3": {
+   "scope": "LATER",
+   "families": [
+    "projection"
+   ]
+  },
+  "test_onefield.test_onefield_projections.4": {
+   "scope": "LATER",
+   "families": [
+    "projection"
+   ]
+  },
+  "test_onefield.test_onefield_psf_fit.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_psf_fit.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_psf_fit.3": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_rectangular_pixels.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_restart_mfs.1+2+3+4": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_restore_mtmfs_niter0.1+2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_restore_mtmfs_niter0.3": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_twoMS.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_twoMS_Briggs.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_twoMS_weightSpectrum.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_twoMS_weightSpectrum2.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.1": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.2": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.3": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.4": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.5": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.6": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.7": {
+   "scope": "NOW"
+  },
+  "test_onefield.test_onefield_weighting.8": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_mfs_changeshape_1.1+2": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_mfs_changeshape_2.1+2": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_mfs_continue.1+2": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_mfs_restart.1+2": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4": {
+   "scope": "LATER",
+   "families": [
+    "start-model-list"
+   ]
+  },
+  "test_startmodel.test_startmodel_regrid_cube.1+2": {
+   "scope": "LATER",
+   "families": [
+    "start-model-spectral-regrid"
+   ]
+  },
+  "test_startmodel.test_startmodel_regrid_mfs.1+2": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_with_mask_mfs.1": {
+   "scope": "NOW"
+  },
+  "test_startmodel.test_startmodel_with_mask_mtmfs.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_awp2_cube_I.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IQUV_fromRL.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IQUV_fromXY.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IV.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_Q.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_QU.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_U.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_V.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_I.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_IV.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_Q.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_QU.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_U.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_V.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_stokes.test_stokes_cube_I.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_IQUV_fromRL.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_IQUV_fromXY.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_IV.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_Q.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_QU.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_U.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_cube_V.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_I.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_IV.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_Q.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_QU.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_U.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mfs_V.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
+   "scope": "LATER",
+   "families": [
+    "pb-mask",
+    "polarized-taylor"
+   ]
+  },
+  "test_stokes.test_stokes_mtmfs_Q.1": {
+   "scope": "LATER",
+   "families": [
+    "polarized-taylor"
+   ]
+  },
+  "test_stokes.test_stokes_weighting.1": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.2": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.3": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.4": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.5": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.6": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.7": {
+   "scope": "NOW"
+  },
+  "test_stokes.test_stokes_weighting.8": {
+   "scope": "LATER",
+   "families": [
+    "polarized-taylor"
+   ]
+  },
+  "test_stokes.test_stokes_weighting.9": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_mosaicft_newpsfphasecenter.1": {
+   "scope": "LATER",
+   "families": [
+    "psfphasecenter"
+   ]
+  },
+  "test_widefield.test_mosaicft_newpsfphasecenter_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "psfphasecenter"
+   ]
+  },
+  "test_widefield.test_widefield_aproj_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation",
+    "awproject-cube"
+   ]
+  },
+  "test_widefield.test_widefield_aproj_mfs.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_widefield.test_widefield_aproj_mtmfs.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_widefield.test_widefield_awp2_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_widefield.test_widefield_awp2_mfs.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_widefield.test_widefield_awp2_mtmfs.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_widefield.test_widefield_awphpg_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ],
+   "casa_skip": true
+  },
+  "test_widefield.test_widefield_awphpg_mfs.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ],
+   "casa_skip": true
+  },
+  "test_widefield.test_widefield_awphpg_mtmfs_via_cube.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic",
+    "specmode-mvc"
+   ],
+   "casa_skip": true
+  },
+  "test_widefield.test_widefield_mosaicft_cube.1": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mfs.1": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.1+2": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.3": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.4": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs.1": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs_conj.1": {
+   "scope": "NOW"
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1": {
+   "scope": "LATER",
+   "families": [
+    "normtype-pbsquare"
+   ]
+  },
+  "test_widefield.test_widefield_mvc_squint_awp2.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic",
+    "specmode-mvc",
+    "pa-steps"
+   ]
+  },
+  "test_widefield.test_widefield_wbaproj_mfs.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_widefield.test_widefield_wbaproj_mtmfs.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_wproject.test_wterm_awp2.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ]
+  },
+  "test_wproject.test_wterm_awphpg.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic"
+   ],
+   "casa_skip": true
+  },
+  "test_wproject.test_wterm_awproject.1": {
+   "scope": "LATER",
+   "families": [
+    "awproject-cache-generation"
+   ]
+  },
+  "test_wproject.test_wterm_facets.1": {
+   "scope": "NOW"
+  },
+  "test_wproject.test_wterm_squint_awp2.1": {
+   "scope": "LATER",
+   "families": [
+    "gridder-awp2-awphpg-imagemosaic",
+    "pa-steps"
+   ]
+  },
+  "test_wproject.test_wterm_wproject.1": {
+   "scope": "NOW"
+  },
+  "test_wproject.test_wterm_wproject_facets.1": {
+   "scope": "NOW"
+  }
+ }
+}
