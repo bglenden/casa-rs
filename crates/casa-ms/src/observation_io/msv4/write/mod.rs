@@ -612,11 +612,12 @@ impl Msv4Writer {
         // window's own as its source states it (MSv2 `REF_FREQUENCY`, an
         // MSv4's `reference_frequency`), in its frame, as XRADIO's
         // converter writes it; the middle channel only where the source
-        // states none.
+        // states none, or none that is finite (JSON holds no NaN).
         let (reference, reference_observer) = match catalogue
             .windows
             .get(entry.window.0 as usize)
             .and_then(|window| window.reference_frequency.as_ref())
+            .filter(|frequency| frequency.hz().is_finite())
         {
             Some(frequency) => (
                 frequency.hz(),

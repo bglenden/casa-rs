@@ -225,23 +225,26 @@ fn two_windows(root: &Path) -> PathBuf {
 
 /// MSv4 requires each window's reference frequency (XRADIO's schema): the
 /// converter writes the one the MSv2 states (`REF_FREQUENCY`, in its frame),
-/// as XRADIO's converter does, not a channel's. Each window's is set to a
-/// frequency no channel has, and reads back from the MSv4 bit for bit.
+/// as XRADIO's converter does, not a channel's. Window 0's is set to a
+/// frequency no channel has and reads back from the MSv4, and from the MSv2
+/// converted back from it, bit for bit. Window 1's is set to NaN, which the
+/// MSv4 cannot hold: it is written as unstated, the middle channel, and
+/// that is what the MSv2 converted back holds.
 #[test]
 fn the_reference_frequency_is_the_windows() {
     let root = tempfile::tempdir().expect("root");
     let v2 = two_windows(root.path());
-    let stated = |row: usize| 600.0e9 + 1.0e6 * row as f64 + 0.25;
+    let stated = 600.25e9;
     let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
     let windows = ms
         .subtable_mut(casa_ms::SubtableId::SpectralWindow)
         .expect("SPECTRAL_WINDOW");
-    for row in 0..windows.row_count() {
+    for (row, hz) in [(0, stated), (1, f64::NAN)] {
         windows
             .cell_accessor_mut(row, "REF_FREQUENCY")
             .and_then(|mut cell| {
                 cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(
-                    stated(row),
+                    hz,
                 )))
             })
             .expect("REF_FREQUENCY");
@@ -249,29 +252,49 @@ fn the_reference_frequency_is_the_windows() {
     ms.save().expect("save");
     drop(ms);
     let out = root.path().join("two_windows.ps.zarr");
-    let accept = [LossKind::Sigma, LossKind::Tables];
-    to_msv4(&v2, &out, &options(&accept)).expect("convert");
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
+    to_msv4(&v2, &out, &options(&accept)).expect("to MSv4");
+    let back = root.path().join("back.ms");
+    to_msv2(&out, &back, &options(&accept)).expect("to MSv2");
     let source = open(&v2, &OpenOptions::default()).expect("v2");
     let converted = open(&out, &OpenOptions::default()).expect("v4");
+    let returned = open(&back, &OpenOptions::default()).expect("back");
     let (ours, theirs) = (source.catalogue(), converted.catalogue());
     assert_eq!(theirs.partitions.len(), 2);
-    for (a, b) in ours.partitions.iter().zip(&theirs.partitions) {
+    for (index, (a, b)) in ours.partitions.iter().zip(&theirs.partitions).enumerate() {
         let row = a.window.0 as usize;
-        let reference = theirs
-            .window(b.window)
-            .reference_frequency
-            .as_ref()
-            .expect("reference_frequency");
-        assert_eq!(
-            reference.hz().to_bits(),
-            stated(row).to_bits(),
-            "window {row}"
-        );
-        assert_eq!(reference.refer(), a.frequency_frame, "window {row}");
-        assert!(
-            !b.frequencies_hz.contains(&reference.hz()),
-            "not a channel's"
-        );
+        let expected = if row == 0 {
+            stated
+        } else {
+            a.frequencies_hz[a.frequencies_hz.len() / 2]
+        };
+        for (store, catalogue, partition) in [
+            ("MSv4", theirs, b),
+            (
+                "MSv2 back",
+                returned.catalogue(),
+                &returned.catalogue().partitions[index],
+            ),
+        ] {
+            let reference = catalogue
+                .window(partition.window)
+                .reference_frequency
+                .as_ref()
+                .expect("a reference frequency");
+            assert_eq!(
+                reference.hz().to_bits(),
+                expected.to_bits(),
+                "{store}, window {row}"
+            );
+            assert_eq!(
+                reference.refer(),
+                a.frequency_frame,
+                "{store}, window {row}"
+            );
+        }
+        if row == 0 {
+            assert!(!b.frequencies_hz.contains(&stated), "not a channel's");
+        }
     }
 }
 
