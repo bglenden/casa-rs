@@ -22,8 +22,9 @@ SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
   and ACA selection are re-expressed on the catalogue/partition path. A new
   production-traversal oracle (`selection_casa_oracle`) matches CASA's
   physical MAIN rows for the FIELD cases and refusals, and for scan 1, scan 3
-  and observation 0. **Known gap:** the first visibility field ignores
-  ARRAY_ID, which CASA sorts first and neither store's partitions carry.
+  and observation 0. Astra's review found the merge had dropped ARRAY_ID
+  from the MFS header's first-visibility key; `3bdf6fa` restores CASA's
+  (ARRAY_ID, DATA_DESC_ID, FIELD_ID) order, with a T1 regression.
 - **Full gate after the FIELD repair (item 2).** `just quick` at `3016f1b` on
   the mini passes: 4,684 tests passed, 42 skipped, doctests, CLI hosts,
   clippy and arch-check. The Metal gates pass on Apple M2.
@@ -41,9 +42,11 @@ SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
   Supplementary archive `tclean-cloud-continuation-20261102b.tar`, SHA256
   `8894d5754832688da6cea7acf8c9dcdc42f91e4c9875e716502b103dddc4d90a`.
 - **Review.** A fresh-context Claude review found nothing blocking; its
-  follow-ups are in `8b0fe44`. The repository's required Astra review is
-  unavailable in this environment and remains pending. The T41 moving-MFS
-  and TRACKFIELD CASA oracles pass on the merged path.
+  follow-ups are in `8b0fe44`. The required Astra review (posted on #1043
+  against `9c67388`) found one P2, the ARRAY_ID ordering, fixed in
+  `3bdf6fa` with its non-blocking odd-width note; a re-review of that fix
+  is due. The T41 moving-MFS and TRACKFIELD CASA oracles pass on the
+  merged path.
 - **Pending owner decisions:** the provider 32→33 scan/observation activation
   (its candidate patch no longer applies and its 39-pair engine evidence
   predates the merge) and the summary sidecar.
