@@ -605,6 +605,89 @@ fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
 }
 
 #[test]
+fn every_corruption_applies_to_all_four_correlations() {
+    let temp = tempfile::tempdir().unwrap();
+    let corrupted_root = temp.path().join("corrupted");
+    std::fs::create_dir_all(&corrupted_root).unwrap();
+    let mut corrupted = request(&corrupted_root);
+    corrupted.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Circular, 4).unwrap();
+    // Three channels, so that no channel is mistaken for a correlation.
+    corrupted.spectral_windows[0].channel_count = 3;
+    let mut uncorrupted = corrupted.clone();
+    corrupted.corruption = Some(SyntheticCorruptionConfig {
+        seed: 7,
+        noise: Some(SyntheticNoiseCorruption {
+            mode: SyntheticNoiseMode::SimpleNoise,
+            simplenoise_jy: 0.001,
+        }),
+        gain: Some(SyntheticGainCorruption {
+            mode: SyntheticGainMode::Fbm,
+            interval_seconds: 10.0,
+            amplitude: [0.05, 0.02],
+        }),
+        bandpass: Some(SyntheticBandpassCorruption {
+            mode: SyntheticBandpassMode::Calculate,
+            interval_seconds: 3600.0,
+            amplitude: [0.08, 0.04],
+        }),
+        leakage: Some(SyntheticPolarizationLeakageCorruption {
+            mode: SyntheticPolarizationLeakageMode::Constant,
+            amplitude: [0.1, 0.0],
+            offset: [0.0, 0.0],
+        }),
+        pointing: None,
+    });
+    let report = generate_synthetic_observation_ms(&corrupted).unwrap();
+    assert_eq!(report.correlation_count, 4);
+    assert_eq!(
+        report.applied_corruptions,
+        ["noise", "gain", "bandpass", "leakage"].map(str::to_string)
+    );
+
+    let uncorrupted_root = temp.path().join("uncorrupted");
+    std::fs::create_dir_all(&uncorrupted_root).unwrap();
+    uncorrupted.output_ms = uncorrupted_root.join("ppdisk.synthetic.ms");
+    generate_synthetic_observation_ms(&uncorrupted).unwrap();
+    // Every correlation of every channel is corrupted, the cross hands
+    // included.
+    let corrupted_data = first_row_data(&corrupted.output_ms);
+    let uncorrupted_data = first_row_data(&uncorrupted.output_ms);
+    assert_eq!(
+        corrupted_data.len(),
+        12,
+        "three channels of four correlations"
+    );
+    for (index, (corrupted, uncorrupted)) in
+        corrupted_data.iter().zip(&uncorrupted_data).enumerate()
+    {
+        assert_ne!(corrupted, uncorrupted, "value {index}");
+    }
+
+    // Leakage alone moves the cross hands (RL, LR) and keeps the parallel
+    // hands (RR, LL) of every channel. A cell reads as [correlation,
+    // channel], so value `index` is of correlation `index / 3`.
+    let leaked_root = temp.path().join("leaked");
+    std::fs::create_dir_all(&leaked_root).unwrap();
+    let mut leaked = corrupted.clone();
+    leaked.output_ms = leaked_root.join("ppdisk.synthetic.ms");
+    if let Some(corruption) = leaked.corruption.as_mut() {
+        corruption.noise = None;
+        corruption.gain = None;
+        corruption.bandpass = None;
+    }
+    let report = generate_synthetic_observation_ms(&leaked).unwrap();
+    assert_eq!(report.applied_corruptions, ["leakage".to_string()]);
+    let leaked_data = first_row_data(&leaked.output_ms);
+    for (index, (leaked, uncorrupted)) in leaked_data.iter().zip(&uncorrupted_data).enumerate() {
+        match index / 3 {
+            0 | 3 => assert_eq!(leaked, uncorrupted, "parallel hand, value {index}"),
+            _ => assert_ne!(leaked, uncorrupted, "cross hand, value {index}"),
+        }
+    }
+}
+
+#[test]
 fn pointing_corruption_shifts_primary_beam_prediction_when_model_has_direction() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("pointing");
