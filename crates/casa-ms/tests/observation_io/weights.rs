@@ -5,17 +5,23 @@
 //! `WEIGHT_SPECTRUM`, else from `SIGMA`; a σ that is not positive gives 0;
 //! padding stays NaN. An MSv4 holds no sigmas: the request's fallback is
 //! taken and recorded, or the request is refused. A weight write is never
-//! bound to sigma-derived weights.
+//! bound to sigma-derived weights. Both readings hold however the MSv2
+//! tiles its weights and sigmas, a correlation to a tile included.
+
+use std::collections::BTreeMap;
+use std::path::Path;
 
 use casa_ms::OptionalMainColumn;
 use casa_ms::column_def::build_table_schema;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions, open_update};
 use casa_observation::{
-    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Observation,
-    ObservationError, PartitionId, PatchValues, ReadEvent, Roles, SigmaFallback, UpdateTarget,
-    WeightChannels, WeightRequest, WeightRule, WeightSource, WritableRole, inverse_sigma_squared,
+    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FieldSelection, FlagsFrom, Grouping,
+    Observation, ObservationError, PartitionId, PatchValues, ReadEvent, Roles, SigmaFallback,
+    TimeSelection, UpdateTarget, WeightChannels, WeightRequest, WeightRule, WeightSource,
+    WritableRole, inverse_sigma_squared,
 };
-use casa_types::{ArrayValue, Value};
+use casa_types::measures::MjdHighPrec;
+use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::{fixture, open_both, per_times, request, samples};
@@ -511,5 +517,166 @@ fn each_partition_reads_weight_spectrum_by_its_first_row() {
                 );
             }
         }
+    }
+}
+
+/// A MAIN row of CASA's ALMA test MS by spectral window, time (its bits)
+/// and antennas.
+type RowKey = (u32, u64, u32, u32);
+
+/// Each MAIN row's `WEIGHT` and `SIGMA` of the MSv2 at `path`, as
+/// `casa_ms::MeasurementSet` reads its cells, by [`RowKey`].
+fn weights_and_sigmas(path: &Path) -> BTreeMap<RowKey, [Vec<f32>; 2]> {
+    let ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let int = |table: &casa_tables::Table, row: usize, column: &str| match table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+    {
+        Ok(ScalarValue::Int32(value)) => u32::try_from(*value).expect("an index"),
+        other => panic!("{column} of row {row}: {other:?}"),
+    };
+    let floats = |row: usize, column: &str| match ms
+        .main_table()
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array())
+    {
+        Ok(ArrayValue::Float32(values)) => values.iter().copied().collect::<Vec<_>>(),
+        other => panic!("{column} of row {row}: {other:?}"),
+    };
+    let descriptions = ms
+        .subtable(casa_ms::SubtableId::DataDescription)
+        .expect("DATA_DESCRIPTION");
+    let main = ms.main_table();
+    (0..main.row_count())
+        .map(|row| {
+            let time = match main
+                .cell_accessor(row, "TIME")
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(ScalarValue::Float64(time)) => *time,
+                other => panic!("TIME of row {row}: {other:?}"),
+            };
+            let description = int(main, row, "DATA_DESC_ID") as usize;
+            let key = (
+                int(descriptions, description, "SPECTRAL_WINDOW_ID"),
+                time.to_bits(),
+                int(main, row, "ANTENNA1"),
+                int(main, row, "ANTENNA2"),
+            );
+            (key, [floats(row, "WEIGHT"), floats(row, "SIGMA")])
+        })
+        .collect()
+}
+
+/// CASA's ALMA test MS (`mssel_test_small.ms`) tiles `WEIGHT` and `SIGMA`
+/// one correlation to a tile (`TiledShapeStMan`, tile `[1, 131072]`), so
+/// each cell lies in four tiles. Read with every role through the
+/// observation boundary, each row's weights are its stored `WEIGHT`, and
+/// its sigma-derived weights 1/σ² of its `SIGMA`, correlation by
+/// correlation over every channel, in every partition and batch: each of
+/// its 1058 rows delivered once a reading. casacore (arcae) reads the same
+/// weights, 1.2e8 or 6.96e9, summing to 3.74532e12 a correlation.
+#[test]
+fn weights_tiled_a_correlation_to_a_tile_are_gathered() {
+    let root = tempfile::tempdir().expect("root");
+    let archive =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mssel_test_small.ms.tgz");
+    tar::Archive::new(flate2::read::GzDecoder::new(
+        std::fs::File::open(archive).expect("fixture"),
+    ))
+    .unpack(root.path())
+    .expect("unpack");
+    let path = root.path().join("mssel_test_small.ms");
+    let main = casa_tables::Table::open(casa_tables::TableOptions::new(&path)).expect("MAIN");
+    for column in ["WEIGHT", "SIGMA"] {
+        assert_eq!(
+            main.array_column_tile_shape(column).expect("tile shape"),
+            Some(vec![1, 131_072]),
+            "{column}: a correlation to a tile"
+        );
+    }
+    drop(main);
+    let expected = weights_and_sigmas(&path);
+    assert_eq!(expected.len(), 1058, "a key a row");
+    let mut sums = [0.0f64; 4];
+    for [weights, _] in expected.values() {
+        for (sum, weight) in sums.iter_mut().zip(weights) {
+            *sum += f64::from(*weight);
+        }
+    }
+    assert_eq!(sums, [3.74532e12; 4], "casacore's WEIGHT sums");
+
+    let observation = casa_ms::observation_io::open(&path, &OpenOptions::default()).expect("open");
+    let catalogue = observation.catalogue().clone();
+    let mjd_zero = MjdHighPrec::new(0.0, 0.0);
+    for (reading, weights) in [
+        (0, WeightRequest::Stored),
+        (1, from_sigmas(SigmaFallback::Refuse)),
+    ] {
+        let mut delivered = 0;
+        for (index, partition) in catalogue.partitions.iter().enumerate() {
+            let whole = AccessRequest {
+                partitions: vec![PartitionId(u32::try_from(index).expect("partition"))],
+                data_group: partition.data_groups[0].name.clone(),
+                roles: Roles::ALL,
+                channels: 0..partition.frequencies_hz.len(),
+                times: TimeSelection::All,
+                fields: FieldSelection::All,
+                weights,
+                correlations: CorrelationRequest::ALL,
+                grouping: Grouping::None,
+                batch_bytes: usize::MAX,
+            };
+            let request = per_times(observation.as_ref(), whole, 3);
+            let mut traversal = observation.bind_read(&request).expect("bind");
+            let mut buffers = BatchBuffers::default();
+            while let Some(event) = traversal.next(&mut buffers).expect("read") {
+                let ReadEvent::Batch(batch) = event else {
+                    continue;
+                };
+                let values = batch.group.weights.expect("weights");
+                let per_time = batch.samples_per_time();
+                for sample in 0..batch.samples() {
+                    let cell = values.slice(ndarray::s![sample, .., ..]);
+                    if cell.iter().all(|value| value.is_nan()) {
+                        continue;
+                    }
+                    let baseline = batch.sample(sample).baseline;
+                    let key = (
+                        partition.window.0,
+                        batch
+                            .time
+                            .seconds_since(sample / per_time, mjd_zero)
+                            .to_bits(),
+                        baseline.antenna1.0,
+                        baseline.antenna2.0,
+                    );
+                    let row = &expected.get(&key).expect("a MAIN row")[reading];
+                    for channel in cell.rows() {
+                        let want = row.iter().map(|&value| {
+                            if reading == 0 {
+                                value
+                            } else {
+                                inverse_sigma_squared(value)
+                            }
+                        });
+                        assert_eq!(
+                            channel
+                                .iter()
+                                .map(|value| value.to_bits())
+                                .collect::<Vec<_>>(),
+                            want.map(f32::to_bits).collect::<Vec<_>>(),
+                            "reading {reading}, row {key:?}"
+                        );
+                    }
+                    delivered += 1;
+                }
+            }
+        }
+        assert_eq!(
+            delivered,
+            expected.len(),
+            "reading {reading}: every row once"
+        );
     }
 }
