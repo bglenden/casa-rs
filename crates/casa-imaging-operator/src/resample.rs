@@ -366,6 +366,51 @@ fn is_autocorrelation(row: &NativeRow<'_>) -> bool {
     row.context.antennas[0] == row.context.antennas[1]
 }
 
+/// The correlations CASA's Stokes I polarization map grids: the parallel
+/// hands, first and last.
+fn parallel_hands(npol: usize) -> Vec<usize> {
+    if npol <= 1 {
+        vec![0]
+    } else {
+        vec![0, npol - 1]
+    }
+}
+
+/// Whether correlation `pol` of a sample is flagged, its row included,
+/// with an interpolated pair's channels read as [`sample_flagged`] reads
+/// them.
+fn hand_flagged(row: &NativeRow<'_>, npol: usize, source: Source, pol: usize) -> bool {
+    let flagged = |channel: usize| row.flags[channel * npol + pol];
+    row.row_flag
+        || match source {
+            Source::Channel(channel) => flagged(channel),
+            Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => flagged(left),
+            Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+                flagged(left + 1)
+            }
+            Source::Pair { left, .. } => flagged(left) || flagged(left + 1),
+        }
+}
+
+/// The unpolarized input weight of a density sample whose flags were
+/// tested: its channel's, or for an interpolated pair the linear
+/// interpolation of the two channels', taking one end's own at that end.
+fn unflagged_weight(row: &NativeRow<'_>, npol: usize, source: Source) -> Option<f32> {
+    let weight = |channel| unpolarized_weight(row, npol, channel);
+    let weight = match source {
+        Source::Channel(channel) => weight(channel),
+        Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => weight(left),
+        Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+            weight(left + 1)
+        }
+        Source::Pair { left, right_factor } => {
+            let (low, high) = (weight(left), weight(left + 1));
+            low + (high - low) * right_factor as f32
+        }
+    };
+    (weight.is_finite() && weight > 0.0).then_some(weight)
+}
+
 /// CASA's unpolarized input weight `(w_first + w_last)/2` of a native channel.
 fn unpolarized_weight(row: &NativeRow<'_>, npol: usize, channel: usize) -> f32 {
     let weights = &row.weights[channel * npol..(channel + 1) * npol];
@@ -943,7 +988,7 @@ impl SpectralResampler {
         }
         let cf = operator.cf();
         let mut visit = |plane: u32, frequency_hz: f64, source: Source| {
-            let Some(input_weight) = self.input_weight(row, npol, source) else {
+            let Some(input_weight) = self.density_weight(row, npol, source, rule) else {
                 return;
             };
             let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
@@ -1076,6 +1121,40 @@ impl SpectralResampler {
         }
     }
 
+    /// The weight a density sample adds to its cell, or `None` when it adds
+    /// none.
+    ///
+    /// Under the standard rule it is [`Self::input_weight`]:
+    /// `VisImagingWeight` adds a row's unpolarized weight once per sample not
+    /// flagged in any correlation. Under the cube rule CASA grids the
+    /// density with a `GridFT` onto a Stokes I template, whose gridder adds
+    /// that unpolarized weight once for every correlation its polarization
+    /// map sends to Stokes I and that is not flagged: once per unflagged
+    /// parallel hand, so twice for dual-polarization data
+    /// (`BriggsCubeWeightor::init`, `GridFT::put`). Uniform and absolute
+    /// Briggs weights see the factor; normal Briggs weights do not, since
+    /// their `f2` scales inversely with the density.
+    fn density_weight(
+        &self,
+        row: &NativeRow<'_>,
+        npol: usize,
+        source: Source,
+        rule: DensityCellRule,
+    ) -> Option<f32> {
+        if rule == DensityCellRule::Standard {
+            return self.input_weight(row, npol, source);
+        }
+        let hands = parallel_hands(npol)
+            .iter()
+            .filter(|&&pol| !hand_flagged(row, npol, source, pol))
+            .count();
+        if hands == 0 {
+            return None;
+        }
+        let weight = unflagged_weight(row, npol, source)? * hands as f32;
+        (weight.is_finite() && weight > 0.0).then_some(weight)
+    }
+
     /// CASA's unpolarized input weight of a density sample, or `None` when
     /// the sample is flagged: its channel's, or for an interpolated pair the
     /// linear interpolation of the two channels' weights, taking one end's
@@ -1087,19 +1166,7 @@ impl SpectralResampler {
         if sample_flagged(row, npol, source) {
             return None;
         }
-        let weight = |channel| unpolarized_weight(row, npol, channel);
-        let weight = match source {
-            Source::Channel(channel) => weight(channel),
-            Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => weight(left),
-            Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
-                weight(left + 1)
-            }
-            Source::Pair { left, right_factor } => {
-                let (low, high) = (weight(left), weight(left + 1));
-                low + (high - low) * right_factor as f32
-            }
-        };
-        (weight.is_finite() && weight > 0.0).then_some(weight)
+        unflagged_weight(row, npol, source)
     }
 
     /// The value of a sample: its channel's, or the linear interpolation of
