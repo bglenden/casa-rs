@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Diagnostics (IF-9, plan section 8): the request's switches add structured
+//! Diagnostics (ADR-0016 decision 9): the request's switches add structured
 //! `tracing` events through `casa-logging`, and nothing else does. With
 //! `stage_timing` each phase logs one event carrying the phase record of the
 //! run summary; with `science_trace` the controller logs what it reads and
@@ -357,8 +357,8 @@ fn auto_grids_on_the_gpu_where_it_can_and_the_summary_says_which() {
     }
 }
 
-/// The imaging log does not grow with the planes a cube cleans (plan
-/// section 10 rule 6): with every diagnostic off and DEBUG logging, a
+/// The imaging log does not grow with the planes a cube cleans (imaging
+/// code rule 6 in `ARCHITECTURE.md`): with every diagnostic off and DEBUG logging, a
 /// four-channel cube logs as many imaging events as a one-channel cube
 /// whose run has the same phases.
 #[test]

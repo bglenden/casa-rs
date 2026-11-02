@@ -629,9 +629,9 @@ fn observe_time(
 
 /// Whether sample `sample` of `batch` is padding its store holds: every
 /// weight across its native channels not finite. A NaN weight is
-/// padding's one mark (`docs/measurement-set/contracts.md`, "padding"),
-/// and XRADIO's converter and casa-rs's writer put it on every channel and
-/// product of a cell no acquisition filled.
+/// padding's one mark in both stores, and XRADIO's converter and
+/// casa-rs's writer put it on every channel and product of a cell no
+/// acquisition filled.
 fn stored_padding(batch: &VisibilityBatch<'_>, sample: usize) -> bool {
     batch
         .group

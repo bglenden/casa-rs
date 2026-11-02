@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# The MSv2/MSv4 trial's bidirectional XRADIO check
-# (docs/measurement-set/trial/README.md), on the committed fixtures:
+# The MSv2/MSv4 trial's bidirectional XRADIO check, on the committed
+# fixtures:
 #
 #   1. XRADIO writes, Rust reads: the trial reader dumps what it delivers from
 #      XRADIO's store, and XRADIO's own load of that store must equal it.
@@ -10,14 +10,14 @@
 #      batches into a fresh store, which XRADIO must open, schema-check and
 #      fully load, equal to XRADIO's conversion and to the MSv2 itself.
 #
-# Writes both JSON reports to OUT (default docs/measurement-set/trial/interop)
+# Writes both JSON reports to OUT (default target/ms-trial/interop)
 # and exits non-zero if either check fails or cannot run. Needs cargo and uv.
 
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
-out="${1:-docs/measurement-set/trial/interop}"
+out="${1:-target/ms-trial/interop}"
 mkdir -p "$out"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

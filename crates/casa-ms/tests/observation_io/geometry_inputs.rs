@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Geometry's inputs on the boundary (#932, step 3a;
-//! `docs/measurement-set/imaging-port.md` §2.2.1): what imaging's per-row
+//! Geometry's inputs on the boundary (#932, step 3a): what imaging's per-row
 //! geometry reads from a MeasurementSet today, carried by both stores.
 
 use std::path::Path;

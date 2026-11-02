@@ -14,8 +14,7 @@ subtables are the namespace `batch.G` persists. CASA applies each table to
 its own MeasurementSet by CASA's own association (rows as indices), and the
 corrected visibilities and flags must agree sample for sample, matched on
 (TIME, station, station): the namespace the writer persisted is the one
-CASA reads. See docs/measurement-set/trial/README.md, "Caltable round
-trip".
+CASA reads.
 """
 import shutil
 import sys

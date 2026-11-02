@@ -1,7 +1,7 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-10-28
+Last reality check: 2026-11-02
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
@@ -22,16 +22,15 @@ Independently authored source is LGPL-3.0-or-later; FFTW-linked distributions
 are GPL-3.0-or-later. See [License](#license).
 
 Python is the user-facing surface, alongside reusable Rust libraries and
-command-line tasks. The [UI experiments](#ui-experiments) below record the
-terminal and native macOS interfaces we explored and then retired.
+command-line tasks.
 
 ## Current Status
 
 The project implements substantial table, MeasurementSet, image, calibration,
 flagging, simulation, and imaging functionality. It remains experimental:
 implemented functionality is not a claim of complete CASA task or casacore
-module parity, and APIs and workflows are still evolving. The workspace
-version is `0.27.0`; published release assets may lag the checkout.
+module parity, and APIs and workflows are still evolving. Published release
+assets may lag the checkout.
 
 The central requirements are CASA-compatible persistent data and scientific
 agreement with CASA. Tests compare both implementations' reads and writes,
@@ -46,7 +45,7 @@ blanket scientific validation. See [TESTING.md](TESTING.md).
 | Tables and MeasurementSets | CASA-compatible storage managers, typed row/column/cell access, TaQL, MS selection and transformation, flag versions, and plotting/export data. |
 | Images and coordinates | Persistent images, masks, regions, statistics, moments, image arithmetic, regridding, FITS import/export, coordinate systems, units, and measures. |
 | Calibration and flagging | Native gain, bandpass, flux-scale, calibration application/generation, manual/clip/quack/tfcrop/rflag workflows, and diagnostic tasks. |
-| Simulation and import | MeasurementSet simulation and VLA archive import, with comparison harnesses against CASA. |
+| Simulation and import | CASA's `sm` simulator tool and `simobserve`, component lists, the ATM atmosphere model, VLA archive import, and MSv2/MSv4 conversion, with comparison harnesses against CASA. |
 | Imaging | Continuum and spectral cubes; standard, W-projection, mosaic, and AW-projection gridders; Högbom, Clark, multiscale, and MT-MFS deconvolution; masks, restoration, and primary-beam products. Not every combination is available. |
 | Python | In-process NumPy-compatible table/image access, generated task wrappers, shared parameter profiles, and numeric MeasurementSet plot documents. |
 
@@ -156,11 +155,11 @@ implementation, not a wrapper around casacore C++.
 | Area | Crates or source |
 |---|---|
 | Values and foundations | `casa-types`, internal `casa-values` and `casa-aipsio`, `casa-logging` |
-| Persistent data | `casa-tables`, `casa-ms`, `casa-lattices`, `casa-images` |
+| Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
 | Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
-| Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
-| Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
+| Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-simulation-synthesis`, `casa-components`, `casa-atmosphere`, `casa-vla` |
+| Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
 | Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
@@ -257,44 +256,26 @@ the release's wheel assets.
 
 ### Install a published suite
 
-Choose a version from the [releases page](https://github.com/bglenden/casa-rs/releases).
-Set `version` to its version number without the leading `v`, then run the
-installer attached to that release. For example, after setting `version`:
+Choose a version from the [releases page](https://github.com/bglenden/casa-rs/releases)
+and run the installer attached to it, with `version` set to the version number
+without the leading `v`:
 
 ```bash
 curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
   -o install-casa-rs.sh
 bash install-casa-rs.sh --version "$version" --python python3.12
-```
-
-This installs the catalog's binaries and a Python environment together under
-`~/.local/opt/casa-rs/<version>/`. Stable installs normally update the `stable`
-and `current` links; release candidates update `rc` without taking over
-`current` unless `--activate` is supplied. The installer also links each of
-the suite's task executables into `~/.local/bin` as `<command>-<channel>`
-and, for the active suite, `<command>` (`calibrate`, `msexplore`,
-`casars-imager`, and so on). `split`, `feather`, `immath` and `impv` stay off
-`PATH`, since they are system commands or generic words (`split` runs as
-`mstransform split`); Python still starts them from the suite.
-
-Add that directory to your shell's `PATH`, then activate the suite's Python:
-
-```bash
 export PATH="$HOME/.local/bin:$PATH"
 source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
-python -c "import casars; print(casars.__version__)"
 ```
 
-The suite's Python finds the task executables in its own suite. To select
-another installed suite explicitly, set `CASARS_SUITE_ROOT` to its versioned
-root. A wheel installed outside a suite (from PyPI, say) provides the
-in-process data bindings and tools, but its task calls need
-`CASARS_SUITE_ROOT` or a task's own `CASARS_<APP>_BIN` override; see
-[Install](docs/install.md).
+This installs the task executables and a Python environment together under
+`~/.local/opt/casa-rs/<version>/` and links the commands into `~/.local/bin`.
+[Install](docs/install.md) covers release candidates, channels, the commands
+kept off `PATH`, and running tasks from a wheel installed outside a suite.
 
 ### Build from source
 
-Source builds require Rust **1.99 or newer**, a C/C++ toolchain, `pkg-config`,
+Source builds require Rust at least `Cargo.toml`'s `rust-version`, a C/C++ toolchain, `pkg-config`,
 and FFTW single- and double-precision libraries including their threaded/static
 archives. Python packaging additionally needs Python 3.10 or newer and its
 virtual-environment support. Install `just` for the repository commands.
@@ -394,7 +375,7 @@ record.
 
 ```bash
 just quick       # architecture, formatting, clippy, workspace tests, tooling checks
-just verify      # quick plus frontend binding and Python package checks
+just verify      # quick plus the Python package checks
 just docs-check  # documentation and generated-contract consistency
 ```
 
@@ -407,8 +388,10 @@ acceptance.
 Build local Rust API docs with
 `CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps`.
 
-The optional staged-file SPDX hook can be enabled with
-`git config core.hooksPath .githooks`.
+`git config core.hooksPath .githooks` enables the repository's hooks: an
+SPDX check on staged files, and daily housekeeping after commits that removes
+merged worktrees and branches, old build output and stale `target/` scratch
+(`just housekeeping --dry-run` previews it).
 
 Tagged `v*` releases trigger the Python release workflow, which builds wheels,
 a source distribution, suite and standalone-binary bundles, and the installer.

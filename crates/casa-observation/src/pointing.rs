@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Where the antennas pointed: one partition's pointing samples, per
 //! antenna, as MSv4's `pointing_xds` holds them and the MSv2 adapter
-//! assembles them from `POINTING` (`docs/measurement-set/imaging-port.md`
-//! §2.2.1).
+//! assembles them from `POINTING`.
 //!
 //! The boundary does not interpolate. [`PointingSeries::bracket`] returns,
 //! for an (antenna, time) query, the samples around the time, each

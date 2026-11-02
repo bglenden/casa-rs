@@ -24,7 +24,7 @@ xcode-select --install
 python3 --version
 ```
 
-`casa-rs-python` currently supports Python 3.10 through 3.12.
+Release wheels are built for Python 3.10, 3.11 and 3.12.
 
 ## Install a stable release
 
@@ -120,22 +120,24 @@ in [Python Compatibility](python/versioning.md).
 ## Stable and RC installs
 
 Stable releases and release candidates can live on the same machine at the same
-time:
+time. The installed layout is:
 
 ```text
-~/.local/opt/casa-rs/0.15.0/
-~/.local/opt/casa-rs/0.16.0-rc1/
-~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/0.15.0
-~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/0.16.0-rc1
+~/.local/opt/casa-rs/<version>/
+  bin/                  (every task executable of the catalog)
+  python/               (the suite's virtual environment)
+  wheels/
+  bundle-manifest.json
+~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
+~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
+~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<version>
+~/.local/bin/
+  calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
+  calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
+  calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
+  ...                   (the same links for each executable in bin/,
+                         except feather, immath and impv)
 ```
-
-The installer also maintains channel-specific commands, one per command and
-channel, such as:
-
-- `~/.local/bin/calibrate-stable`
-- `~/.local/bin/calibrate-rc`
-- `~/.local/bin/casars-imager-stable`
-- `~/.local/bin/casars-imager-rc`
 
 Switch the default suite by repointing `~/.local/opt/casa-rs/current`,
 re-running the installer with `--activate`, or keep multiple installs in place

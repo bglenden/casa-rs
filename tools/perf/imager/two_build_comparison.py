@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Two-build blocking comparison helpers for ``run_alternating_comparison.py``.
 
-The imaging port's baseline and blocking comparison
-(``docs/measurement-set/imaging-port.md`` section 5, thresholds in decision 4)
-runs one workload on two casa-rs checkouts in counterbalanced A B B A order
-and judges the candidate (B) against the baseline (A) three ways:
+The imaging port's baseline and blocking comparison (#932, whose owner
+decision set the thresholds) runs one workload on two casa-rs checkouts in
+counterbalanced A B B A order and judges the candidate (B) against the
+baseline (A) three ways:
 
 - **wall time:** the median paired relative delta is at most
   ``max(wall_tolerance, noise_sigmas * sigma)``, where ``sigma`` is the

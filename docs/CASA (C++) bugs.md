@@ -23,6 +23,7 @@ CASA behaviours casa-rs does not follow:
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
@@ -183,7 +184,7 @@ and the phase shift (`vbs.uvw_p`, `dphase_p`) together with the VisBuffer
 VisBuffer's unrotated w while placing the sample at the rotated u, v with the
 rotated phasor; `DataToGridImpl_p` uses the rotated w for both. The two
 differ only where the rotation moves a w across a plane boundary or through
-zero. casa-rs carries the unrotated w per row (`RowContext::original_w_m`,
+zero. casa-rs carries the unrotated uvw per row (`RowContext::original_uvw_m`,
 `ConvolutionFunctionSet::prediction_w`) and keys the AW prediction on it.
 
 ## `importvla` stale `VLACDA` cache crash on old VLA export data
@@ -193,8 +194,7 @@ zero. casa-rs carries the unrotated w per row (`RowContext::original_w_m`,
 - Affected code:
   - `casatools/src/code/nrao/VLA/VLACDA.cc`
   - `casatools/src/code/nrao/VLA/VLABaselineRecord.cc`
-- NRAO Archive file: `AG189_1_46325.23029_46325.80807.exp`
-- Standalone note: [casa-importvla-vlacda-offset-zero.md](casa-importvla-vlacda-offset-zero.md)
+- NRAO Archive file: `AG189_1_46325.23029_46325.80807.exp` (archive revision 11)
 
 ### Summary
 
@@ -260,7 +260,6 @@ parity work that surfaced this CASA-side issue.
   - `casatools/src/code/synthesis/ImagerObjects/SynthesisDeconvolver.cc`
   - `casatools/src/code/synthesis/ImagerObjects/SDAlgorithmHogbomClean.cc`
   - `casatools/casacore/scimath_f/hclean.f`
-- Source note: `/Users/brianglendenning/Downloads/casa-hogbom-niter-findings (2).pdf`
 
 ### Summary
 
@@ -280,7 +279,7 @@ one more component than the reported minor-cycle count. In a Cotton-Schwab run,
 that means the model, residual, restored image, and controller stop/refresh
 decisions can shift by up to one extra component per Hogbom minor-cycle block.
 
-The concrete repro described in the attached note used:
+The first repro used:
 
 - dataset: `.../casatestdata/measurementset/vla/sim_data_VLA_jet.ms`
 - setup: `imsize=512`, `cell='12arcsec'`, `specmode='mfs'`, `weighting='natural'`,
@@ -290,7 +289,7 @@ The concrete repro described in the attached note used:
 
 ### Likely mechanism
 
-The note points to an off-by-one style caller/kernel mismatch:
+An off-by-one caller/kernel mismatch:
 
 1. `SDAlgorithmHogbomClean::takeOneStep` seeds `starting_iteration = 0`
 2. the Fortran `hclean` kernel iterates over an inclusive `do iter = siter, niter`
@@ -299,7 +298,7 @@ The note points to an off-by-one style caller/kernel mismatch:
 With `siter = 0` and `niter = 1`, that inclusive loop permits two update opportunities,
 which matches the observed behavior.
 
-### Repro detail from the attached note
+### Repro detail
 
 The output `.model` image contained two nonzero pixels:
 
@@ -316,12 +315,10 @@ peak was `0.299844 Jy/beam`, so one strict-gain component at `gain=0.1` would ac
 only about `0.0299844 Jy`. The reported model flux is therefore consistent with two committed
 Hogbom components in that minor-cycle call.
 
-### Wave 3 heavy benchmark repro
+### Benchmark repro
 
-The same behavior appeared again during the ImPerformance Wave 3 standard-MFS heavy
-review on the retained Wave 2 medium VLA dataset:
+The same behavior appeared on a medium standard-MFS VLA benchmark dataset:
 
-- dataset: `/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms`
 - setup: `specmode='mfs'`, `gridder='standard'`, `deconvolver='hogbom'`,
   `imsize=1024`, `cell='0.25arcsec'`, `spw='0:0~63'`, Briggs `robust=0.5`,
   `gain=0.1`, `threshold='0Jy'`, `niter=1`, `cycleniter=1`
@@ -331,9 +328,10 @@ review on the retained Wave 2 medium VLA dataset:
   2. `(508, 507) = 8.556220054626465`
 
 In a strict one-component casa-rs comparison this made the one-cycle residual RMS
-difference jump to `3.65e-2`. Running casa-rs with its explicit CASA-compatible
-Hogbom accounting mode reproduced both components and reduced the residual RMS
-difference to `7.64e-5`, matching the dirty gridding numerical floor. On the full
+difference jump to `3.65e-2`. Running casa-rs with its CASA-compatible Hogbom
+accounting (`HogbomIterationAccounting::CasaInclusive`) reproduced both
+components and reduced the residual RMS difference to `7.64e-5`, matching the
+dirty gridding numerical floor. On the full
 `niter=500`, `cycleniter=50` heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to `.model` RMS `1.71e-7`, `.residual` RMS
 `5.68e-5`, and `.image` RMS `5.87e-5`.
@@ -531,6 +529,23 @@ A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
 division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
+
+## An unflagged non-finite sample turns the image to NaN
+
+- Date noted: 2026-11-02
+- Status: CASA behaviour casa-rs does not follow (a NaN image loses the
+  product, so casa-rs corrects it)
+- Affected code: CASA's gridding path, which accumulates unflagged samples
+  without testing them for finiteness
+
+CASA grids a NaN or infinite visibility, weight or UVW in an unflagged
+sample like any other, and the transform spreads it, so the products come
+out NaN everywhere without naming the sample. casa-rs fails the run instead
+(`FiniteValuePolicy::RejectUnflaggedInput`, and `PrepareError::NonFiniteUvw`
+for UVW found while compiling), naming the row, channel and correlation so
+the sample can be flagged. Flagged samples and grid padding are skipped, as
+in CASA. The CASA behaviour is as ARCHITECTURE.md has recorded it since the
+review of #792; it has not been rerun against CASA for this entry.
 
 ## `tclean` images DATA when CORRECTED_DATA is missing, and says nothing
 

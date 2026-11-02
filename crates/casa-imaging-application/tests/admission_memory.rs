@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Admission covers every live phase (plan section 7 as R3 amended it).
+//! Admission covers every live phase.
 //!
 //! This binary's global allocator counts the process's live heap bytes. At
 //! every allocation of a measured run it compares the bytes the run holds

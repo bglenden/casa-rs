@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The product list (plan section 5.7): what each product of an imaging
+//! The product list: what each product of an imaging
 //! problem means, how it is stored, and which products are published, each
 //! replaced on its own.
 
