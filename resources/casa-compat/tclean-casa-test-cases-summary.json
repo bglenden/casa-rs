@@ -1,0 +1,1293 @@
+{
+ "source": {
+  "casa_version": "6.7.6.14",
+  "test_file": "test_task_tclean.py of CASA 6.7.6.14 (read, not run)",
+  "test_file_sha256": "f4ea4625504284128bd638a782a6e680eb577acdd93e633845543f6ee6fe3fb6",
+  "task_file_sha256": "2948a8d41071baf883018aea2ec51f8dbf59b2923bd4d19d0f004e25766b1d60",
+  "extractor": "tools/casa-compat/extract_tclean_test_cases.py",
+  "assumptions": [
+   "serial run: self.parallel and ParallelTaskHelper.isMPIEnabled() are False",
+   "sys.platform is 'linux'; GPU availability is unknown",
+   "inputs are casatestdata paths; tests copy them into the working directory"
+  ]
+ },
+ "totals": {
+  "test_methods": 338,
+  "test_methods_with_tclean": 333,
+  "test_methods_casa_skips": 18,
+  "tclean_call_sites": 501,
+  "tclean_calls": 521,
+  "tclean_calls_not_run_serially": 2,
+  "resolved_calls": 429,
+  "unresolved_calls": 92,
+  "resolved_cases": 354,
+  "resolved_single_call_cases": 290,
+  "resolved_sequence_cases": 64,
+  "resolved_cases_casa_skips": 15,
+  "resolved_cases_expecting_errors": 4,
+  "unresolved_cases": 81
+ },
+ "by_class": {
+  "test_onefield": {
+   "resolved_calls": 61,
+   "resolved_cases": 50,
+   "resolved_sequences": 5,
+   "tclean_calls": 62,
+   "tests": 30,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 30,
+   "unresolved_calls": 1,
+   "unresolved_cases": 1
+  },
+  "test_iterbot": {
+   "resolved_calls": 34,
+   "resolved_cases": 33,
+   "resolved_sequences": 1,
+   "tclean_calls": 38,
+   "tests": 29,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 29,
+   "unresolved_calls": 4,
+   "unresolved_cases": 4
+  },
+  "test_multifield": {
+   "resolved_calls": 2,
+   "resolved_cases": 2,
+   "resolved_sequences": 0,
+   "tclean_calls": 18,
+   "tests": 15,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 15,
+   "unresolved_calls": 16,
+   "unresolved_cases": 13
+  },
+  "test_stokes": {
+   "resolved_calls": 40,
+   "resolved_cases": 39,
+   "resolved_sequences": 1,
+   "tclean_calls": 50,
+   "tests": 35,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 35,
+   "unresolved_calls": 10,
+   "unresolved_cases": 10
+  },
+  "test_cube": {
+   "resolved_calls": 66,
+   "resolved_cases": 64,
+   "resolved_sequences": 2,
+   "tclean_calls": 77,
+   "tests": 58,
+   "tests_casa_skips": 5,
+   "tests_with_tclean": 58,
+   "unresolved_calls": 11,
+   "unresolved_cases": 11
+  },
+  "test_mask": {
+   "resolved_calls": 18,
+   "resolved_cases": 18,
+   "resolved_sequences": 0,
+   "tclean_calls": 34,
+   "tests": 31,
+   "tests_casa_skips": 4,
+   "tests_with_tclean": 27,
+   "unresolved_calls": 16,
+   "unresolved_cases": 13
+  },
+  "test_wproject": {
+   "resolved_calls": 7,
+   "resolved_cases": 7,
+   "resolved_sequences": 0,
+   "tclean_calls": 7,
+   "tests": 7,
+   "tests_casa_skips": 1,
+   "tests_with_tclean": 7
+  },
+  "test_widefield": {
+   "resolved_calls": 23,
+   "resolved_cases": 22,
+   "resolved_sequences": 1,
+   "tclean_calls": 23,
+   "tests": 20,
+   "tests_casa_skips": 3,
+   "tests_with_tclean": 20
+  },
+  "test_modelvis": {
+   "resolved_calls": 49,
+   "resolved_cases": 29,
+   "resolved_sequences": 17,
+   "tclean_calls": 49,
+   "tests": 29,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 29
+  },
+  "test_startmodel": {
+   "resolved_calls": 18,
+   "resolved_cases": 9,
+   "resolved_sequences": 7,
+   "tclean_calls": 28,
+   "tests": 11,
+   "tests_casa_skips": 1,
+   "tests_with_tclean": 11,
+   "unresolved_calls": 10,
+   "unresolved_cases": 8
+  },
+  "test_pbcor": {
+   "tclean_calls": 10,
+   "tests": 7,
+   "tests_casa_skips": 1,
+   "tests_with_tclean": 7,
+   "unresolved_calls": 10,
+   "unresolved_cases": 7
+  },
+  "test_hetarray_imaging": {
+   "resolved_calls": 18,
+   "resolved_cases": 18,
+   "resolved_sequences": 0,
+   "tclean_calls": 26,
+   "tests": 8,
+   "tests_casa_skips": 2,
+   "tests_with_tclean": 8,
+   "unresolved_calls": 8,
+   "unresolved_cases": 8
+  },
+  "test_mtmfsviacube": {
+   "resolved_calls": 8,
+   "resolved_cases": 8,
+   "resolved_sequences": 0,
+   "tclean_calls": 9,
+   "tests": 7,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 7,
+   "unresolved_calls": 1,
+   "unresolved_cases": 1
+  },
+  "test_mosaic_mtmfs": {
+   "resolved_calls": 37,
+   "resolved_cases": 24,
+   "resolved_sequences": 13,
+   "tclean_calls": 41,
+   "tests": 19,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 19,
+   "unresolved_calls": 4,
+   "unresolved_cases": 4
+  },
+  "test_mosaic_cube": {
+   "resolved_calls": 36,
+   "resolved_cases": 19,
+   "resolved_sequences": 17,
+   "tclean_calls": 36,
+   "tests": 18,
+   "tests_casa_skips": 1,
+   "tests_with_tclean": 18
+  },
+  "test_ephemeris": {
+   "resolved_calls": 8,
+   "resolved_cases": 8,
+   "resolved_sequences": 0,
+   "tclean_calls": 9,
+   "tests": 9,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 9,
+   "unresolved_calls": 1,
+   "unresolved_cases": 1
+  },
+  "test_errors_failures": {
+   "resolved_calls": 4,
+   "resolved_cases": 4,
+   "resolved_sequences": 0,
+   "tclean_calls": 4,
+   "tests": 4,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 4
+  },
+  "test_gclean": {
+   "tclean_calls": 0,
+   "tests": 1,
+   "tests_casa_skips": 0,
+   "tests_with_tclean": 0
+  }
+ },
+ "unresolved_by_reason": [
+  {
+   "reason": "names a file a non-tclean step makes",
+   "cases": 30,
+   "examples": [
+    "test_iterbot.test_iterbot_mfs_restart_updatedmask.2",
+    "test_iterbot.test_iterbot_cube_restart_updatedmask.2",
+    "test_stokes.test_stokes_mixed_cube_IQUV.2",
+    "test_stokes.test_stokes_mixed_cube_IQUV.3",
+    "test_stokes.test_stokes_mixed_cube_IQUV.4"
+   ]
+  },
+  {
+   "reason": "names a file the test writes (outlier file, region file)",
+   "cases": 18,
+   "examples": [
+    "test_multifield.test_multifield_return_dict_mfs.1",
+    "test_multifield.test_multifield_return_dict_mtmfs.1",
+    "test_multifield.test_multifield_both_mfs.1",
+    "test_multifield.test_multifield_both_mtmfs.1",
+    "test_multifield.test_multifield_both_cube.1"
+   ]
+  },
+  {
+   "reason": "inside a loop",
+   "cases": 10,
+   "examples": [
+    "test_stokes.test_stokes_mixed_mfs_I_and_U.1",
+    "test_stokes.test_stokes_mixed_mfs_I_and_U.2",
+    "test_stokes.test_stokes_mixed_cube_I_and_U.1",
+    "test_stokes.test_stokes_mixed_cube_I_and_U.2",
+    "test_stokes.test_stokes_mixed_mfs_IQUV.1"
+   ]
+  },
+  {
+   "reason": "MeasurementSet changed by a non-tclean step first",
+   "cases": 7,
+   "examples": [
+    "test_onefield.test_onefield_twoMS_diffcolumns.1",
+    "test_cube.test_cube_flagged_mosaic_hogbom.1",
+    "test_cube.test_cube_flagged_mosaic_clark.1",
+    "test_cube.test_cube_flagged_mosaic_multiscale.1",
+    "test_cube.test_cube_flagged_mosaic_mtmfs.1"
+   ]
+  },
+  {
+   "reason": "value built by casatools quanta/measures",
+   "cases": 7,
+   "examples": [
+    "test_cube.test_cube_14.1",
+    "test_cube.test_cube_15.1",
+    "test_cube.test_cube_16.1",
+    "test_cube.test_cube_17.1",
+    "test_cube.test_cube_18.1"
+   ]
+  },
+  {
+   "reason": "restart after a non-tclean step changed products",
+   "cases": 6,
+   "examples": [
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.3",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.6",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.3",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.3",
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield_use_standard_psf.3"
+   ]
+  },
+  {
+   "reason": "restart after a non-tclean step removed products",
+   "cases": 5,
+   "examples": [
+    "test_iterbot.test_iterbot_mfs_restart_updatedmask.2",
+    "test_iterbot.test_iterbot_cube_restart_updatedmask.2",
+    "test_iterbot.test_iterbot_mfs_restart_pbmask.2",
+    "test_iterbot.test_iterbot_cube_restart_pbmask.2",
+    "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.2"
+   ]
+  },
+  {
+   "reason": "under a condition unknown statically",
+   "cases": 4,
+   "examples": [
+    "test_startmodel.test_csys_startmodel_restart_mfs.1+2",
+    "test_startmodel.test_csys_startmodel_restart_mfs.3",
+    "test_startmodel.test_csys_startmodel_restart_cube.1+2",
+    "test_startmodel.test_csys_startmodel_restart_cube.3"
+   ]
+  },
+  {
+   "reason": "value read from a file at run time",
+   "cases": 1,
+   "examples": [
+    "test_mask.test_mask_long_region_specification.1"
+   ]
+  }
+ ],
+ "inputs": {
+  "Venus_58491dUTC_JPLHorizons20230629.tab": {
+   "path": "unittest/tclean/Venus_58491dUTC_JPLHorizons20230629.tab",
+   "kind": "phasecenter table",
+   "resolved_uses": 4
+  },
+  "aca-sim.cycle10.ms": {
+   "path": "unittest/tclean/aca-sim.cycle10.ms",
+   "kind": "measurement set",
+   "resolved_uses": 2
+  },
+  "alma-sim.cycle10.1.ms": {
+   "path": "unittest/tclean/alma-sim.cycle10.1.ms",
+   "kind": "measurement set",
+   "resolved_uses": 2
+  },
+  "cfcache_oneshiftpoint_mosaic_cbFalse": {
+   "path": "unittest/tclean/cfcache_oneshiftpoint_mosaic_cbFalse",
+   "kind": "CF cache",
+   "resolved_uses": 10
+  },
+  "cfcache_oneshiftpoint_mosaic_cbTrue": {
+   "path": "unittest/tclean/cfcache_oneshiftpoint_mosaic_cbTrue",
+   "kind": "CF cache",
+   "resolved_uses": 10
+  },
+  "poly.rgn": {
+   "path": "unittest/tclean/poly.rgn",
+   "kind": "region text",
+   "resolved_uses": 0
+  },
+  "refim_Cband.G37line.ms": {
+   "path": "unittest/tclean/refim_Cband.G37line.ms",
+   "kind": "measurement set",
+   "resolved_uses": 3
+  },
+  "refim_alma_mosaic.ms": {
+   "path": "unittest/tclean/refim_alma_mosaic.ms",
+   "kind": "measurement set",
+   "resolved_uses": 2
+  },
+  "refim_cont_stokesIQUV_input.mask": {
+   "path": "unittest/tclean/refim_cont_stokesIQUV_input.mask",
+   "kind": "mask",
+   "resolved_uses": 1
+  },
+  "refim_cont_stokesI_input.mask": {
+   "path": "unittest/tclean/refim_cont_stokesI_input.mask",
+   "kind": "mask",
+   "resolved_uses": 3
+  },
+  "refim_cube_StokesI_input.mask": {
+   "path": "unittest/tclean/refim_cube_StokesI_input.mask",
+   "kind": "mask",
+   "resolved_uses": 1
+  },
+  "refim_eptwochan.ms": {
+   "path": "unittest/tclean/refim_eptwochan.ms",
+   "kind": "measurement set",
+   "resolved_uses": 8
+  },
+  "refim_heterogeneous_pointings.ms": {
+   "path": "unittest/tclean/refim_heterogeneous_pointings.ms",
+   "kind": "measurement set",
+   "resolved_uses": 9
+  },
+  "refim_mawproject.ms": {
+   "path": "unittest/tclean/refim_mawproject.ms",
+   "kind": "measurement set",
+   "resolved_uses": 22
+  },
+  "refim_oneshiftpoint.mosaic.ms": {
+   "path": "unittest/tclean/refim_oneshiftpoint.mosaic.ms",
+   "kind": "measurement set",
+   "resolved_uses": 77
+  },
+  "refim_point.ms": {
+   "path": "unittest/tclean/refim_point.ms",
+   "kind": "measurement set",
+   "resolved_uses": 68
+  },
+  "refim_point_descendingfreqs.ms": {
+   "path": "unittest/tclean/refim_point_descendingfreqs.ms",
+   "kind": "measurement set",
+   "resolved_uses": 14
+  },
+  "refim_point_first11chans.ms": {
+   "path": "unittest/tclean/refim_point_first11chans.ms",
+   "kind": "measurement set",
+   "resolved_uses": 4
+  },
+  "refim_point_last10chans.ms": {
+   "path": "unittest/tclean/refim_point_last10chans.ms",
+   "kind": "measurement set",
+   "resolved_uses": 4
+  },
+  "refim_point_linRL.ms": {
+   "path": "unittest/tclean/refim_point_linRL.ms",
+   "kind": "measurement set",
+   "resolved_uses": 41
+  },
+  "refim_point_linXY.ms": {
+   "path": "unittest/tclean/refim_point_linXY.ms",
+   "kind": "measurement set",
+   "resolved_uses": 5
+  },
+  "refim_point_onespw0.ms": {
+   "path": "unittest/tclean/refim_point_onespw0.ms",
+   "kind": "measurement set",
+   "resolved_uses": 9
+  },
+  "refim_point_onespw0_withWtSpec.ms": {
+   "path": "unittest/tclean/refim_point_onespw0_withWtSpec.ms",
+   "kind": "measurement set",
+   "resolved_uses": 1
+  },
+  "refim_point_onespw1.ms": {
+   "path": "unittest/tclean/refim_point_onespw1.ms",
+   "kind": "measurement set",
+   "resolved_uses": 5
+  },
+  "refim_point_onespw1_noWtSpec.ms": {
+   "path": "unittest/tclean/refim_point_onespw1_noWtSpec.ms",
+   "kind": "measurement set",
+   "resolved_uses": 1
+  },
+  "refim_point_onespw1_withWtSpec.ms": {
+   "path": "unittest/tclean/refim_point_onespw1_withWtSpec.ms",
+   "kind": "measurement set",
+   "resolved_uses": 1
+  },
+  "refim_point_pos_neg.ms": {
+   "path": "unittest/tclean/refim_point_pos_neg.ms",
+   "kind": "measurement set",
+   "resolved_uses": 1
+  },
+  "refim_point_withline.ms": {
+   "path": "unittest/tclean/refim_point_withline.ms",
+   "kind": "measurement set",
+   "resolved_uses": 20
+  },
+  "refim_point_wterm_vlad.ms": {
+   "path": "unittest/tclean/refim_point_wterm_vlad.ms",
+   "kind": "measurement set",
+   "resolved_uses": 4
+  },
+  "refim_sim_hetarray_alma.ms": {
+   "path": "unittest/tclean/refim_sim_hetarray_alma.ms",
+   "kind": "measurement set",
+   "resolved_uses": 5
+  },
+  "refim_sim_hetarray_ngvla.ms": {
+   "path": "unittest/tclean/refim_sim_hetarray_ngvla.ms",
+   "kind": "measurement set",
+   "resolved_uses": 2
+  },
+  "refim_sim_hetarray_vp_ngvla.ms": {
+   "path": "unittest/tclean/refim_sim_hetarray_vp_ngvla.ms",
+   "kind": "measurement set",
+   "resolved_uses": 0
+  },
+  "refim_twochan.ms": {
+   "path": "unittest/tclean/refim_twochan.ms",
+   "kind": "measurement set",
+   "resolved_uses": 106
+  },
+  "refim_twopoints_twochan.ms": {
+   "path": "unittest/tclean/refim_twopoints_twochan.ms",
+   "kind": "measurement set",
+   "resolved_uses": 10
+  },
+  "sim_data_VLA_jet.ms": {
+   "path": "unittest/tclean/sim_data_VLA_jet.ms",
+   "kind": "measurement set",
+   "resolved_uses": 4
+  },
+  "venus_ephem_1spw12chan.ms": {
+   "path": "unittest/tclean/venus_ephem_1spw12chan.ms",
+   "kind": "measurement set",
+   "resolved_uses": 1
+  },
+  "venus_ephem_test.ms": {
+   "path": "unittest/tclean/venus_ephem_test.ms",
+   "kind": "measurement set",
+   "resolved_uses": 7
+  },
+  "vla_wideband_2ptg_w_squint.ms": {
+   "path": "unittest/tclean/vla_wideband_2ptg_w_squint.ms",
+   "kind": "measurement set",
+   "resolved_uses": 4
+  }
+ },
+ "not_run_serially": [
+  {
+   "test": "test_cube.test_cube_badchannel_restoringbeam",
+   "line": 3350,
+   "reason": "branch not taken in a serial run: self.parallel"
+  },
+  {
+   "test": "test_cube.test_cube_badchannel_restoringbeam",
+   "line": 3352,
+   "reason": "branch not taken in a serial run: self.parallel"
+  }
+ ],
+ "parameters": {
+  "imsize": {
+   "calls": 429,
+   "values": {
+    "100": 250,
+    "1024": 76,
+    "512": 40,
+    "200": 20,
+    "2048": 13,
+    "[288, 288]": 4,
+    "[480, 420]": 4,
+    "256": 3,
+    "1200": 3,
+    "98": 3,
+    "20": 2,
+    "360": 2,
+    "50": 2,
+    "120": 2,
+    "[350, 280]": 2,
+    "1000": 1,
+    "2000": 1,
+    "4": 1
+   },
+   "other_distinct_values": 0
+  },
+  "cell": {
+   "calls": 429,
+   "values": {
+    "\"8.0arcsec\"": 264,
+    "\"10.0arcsec\"": 122,
+    "5.0": 9,
+    "[\"0.14arcsec\"]": 8,
+    "\"0.4arcsec\"": 5,
+    "\"12.0arcsec\"": 4,
+    "\"1.6arcsec\"": 4,
+    "\"0.01arcmin\"": 3,
+    "\"1.0arcsec\"": 2,
+    "\"0.8arcsec\"": 2,
+    "[0.06, 0.06]": 2,
+    "[\"10.0arcsec\", \"30.0arcsec\"]": 1,
+    "[\"28.8arcsec\"]": 1,
+    "[\"14.4arcsec\"]": 1,
+    "[\"3.6arcsec\"]": 1
+   },
+   "other_distinct_values": 0
+  },
+  "niter": {
+   "calls": 419,
+   "values": {
+    "10": 221,
+    "0": 114,
+    "1": 25,
+    "100": 20,
+    "30": 13,
+    "20": 8,
+    "2": 6,
+    "60": 3,
+    "50": 2,
+    "1000000": 2,
+    "500": 2,
+    "5": 2,
+    "4": 1
+   },
+   "other_distinct_values": 0
+  },
+  "parallel": {
+   "calls": 401,
+   "values": {
+    "false": 401
+   },
+   "other_distinct_values": 0
+  },
+  "specmode": {
+   "calls": 266,
+   "values": {
+    "\"cube\"": 182,
+    "\"mfs\"": 68,
+    "\"mvc\"": 9,
+    "\"cubesource\"": 4,
+    "\"cubedata\"": 3
+   },
+   "other_distinct_values": 0
+  },
+  "deconvolver": {
+   "calls": 242,
+   "values": {
+    "\"hogbom\"": 121,
+    "\"mtmfs\"": 92,
+    "\"clark\"": 21,
+    "\"asp\"": 4,
+    "\"multiscale\"": 3,
+    "\"mem\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "field": {
+   "calls": 161,
+   "values": {
+    "\"0\"": 94,
+    "\"0,1\"": 37,
+    "\"*\"": 21,
+    "\"1\"": 6,
+    "\"\"": 1,
+    "\"a*\"": 1,
+    "\"33\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "phasecenter": {
+   "calls": 160,
+   "values": {
+    "\"J2000 19:59:28.500 +40.44.01.50\"": 56,
+    "\"\"": 40,
+    "\"J2000 19h59m28.5 +40d40m01.5\"": 31,
+    "\"J2000 19h59m28.523 +40d54m01.152\"": 6,
+    "\"J2000 +19h59m28.5s -40d44m21.5s\"": 5,
+    "\"TRACKFIELD\"": 4,
+    "\"Venus_58491dUTC_JPLHorizons20230629.tab\"": 4,
+    "1": 3,
+    "\"J2000 19:59:00.2 +40.50.15.50\"": 2,
+    "\"J2000 +19h59m28.5s +40d44m21.5s\"": 2,
+    "\"J2000 13h47m31.0s -11d45m13.0s\"": 2,
+    "\"J2000 12:01:52.430856 -18.51.49.94369\"": 2,
+    "\"J2000 00h07m0.0 50d0m0.000\"": 1,
+    "\"J2000 19h58m40.801s +40d55m59.863s\"": 1,
+    "\"J2000 02:59:28.500 -40.44.01.50\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "gridder": {
+   "calls": 155,
+   "values": {
+    "\"mosaic\"": 48,
+    "\"awproject\"": 40,
+    "\"standard\"": 24,
+    "\"awp2\"": 21,
+    "\"wproject\"": 8,
+    "\"mosaicft\"": 6,
+    "\"awphpg\"": 4,
+    "\"widefield\"": 2,
+    "\"ft\"": 1,
+    "\"gridft\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "spw": {
+   "calls": 154,
+   "values": {
+    "\"*\"": 77,
+    "\"0\"": 37,
+    "[\"0\", \"0\"]": 8,
+    "\"1\"": 8,
+    "\"0:0~2\"": 7,
+    "\"0:105~135\"": 3,
+    "\"0:5~12\"": 3,
+    "\"0:1\"": 2,
+    "\"0:5~19\"": 1,
+    "\"0:4~19\"": 1,
+    "\"0:4~9;12~14\"": 1,
+    "\"0:0~10^2\"": 1,
+    "\"0:4~13\"": 1,
+    "\"0:12~19\"": 1,
+    "\"0:0~8;12~19\"": 1,
+    "\"0:0\"": 1,
+    "\"33:5~19\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "pblimit": {
+   "calls": 116,
+   "values": {
+    "0.1": 77,
+    "-0.1": 11,
+    "-0.01": 9,
+    "0.3": 8,
+    "0.05": 7,
+    "-1e-05": 4
+   },
+   "other_distinct_values": 0
+  },
+  "reffreq": {
+   "calls": 80,
+   "values": {
+    "\"1.5GHz\"": 80
+   },
+   "other_distinct_values": 0
+  },
+  "wbawp": {
+   "calls": 79,
+   "values": {
+    "true": 77,
+    "false": 2
+   },
+   "other_distinct_values": 0
+  },
+  "conjbeams": {
+   "calls": 76,
+   "values": {
+    "false": 52,
+    "true": 24
+   },
+   "other_distinct_values": 0
+  },
+  "nchan": {
+   "calls": 72,
+   "values": {
+    "10": 39,
+    "3": 19,
+    "5": 4,
+    "30": 3,
+    "1": 2,
+    "8": 2,
+    "20": 2,
+    "-1": 1
+   },
+   "other_distinct_values": 0
+  },
+  "psterm": {
+   "calls": 72,
+   "values": {
+    "false": 71,
+    "true": 1
+   },
+   "other_distinct_values": 0
+  },
+  "pbcor": {
+   "calls": 70,
+   "values": {
+    "true": 41,
+    "false": 29
+   },
+   "other_distinct_values": 0
+  },
+  "weighting": {
+   "calls": 69,
+   "values": {
+    "\"briggs\"": 25,
+    "\"natural\"": 23,
+    "\"uniform\"": 13,
+    "\"radial\"": 2,
+    "\"superuniform\"": 2,
+    "\"briggsabs\"": 2,
+    "\"briggsbwtaper\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "interpolation": {
+   "calls": 66,
+   "values": {
+    "\"nearest\"": 51,
+    "\"linear\"": 15
+   },
+   "other_distinct_values": 0
+  },
+  "savemodel": {
+   "calls": 57,
+   "values": {
+    "\"modelcolumn\"": 28,
+    "\"virtual\"": 17,
+    "\"none\"": 12
+   },
+   "other_distinct_values": 0
+  },
+  "stokes": {
+   "calls": 55,
+   "values": {
+    "\"IQUV\"": 25,
+    "\"I\"": 8,
+    "\"IV\"": 5,
+    "\"Q\"": 5,
+    "\"QU\"": 4,
+    "\"U\"": 4,
+    "\"V\"": 4
+   },
+   "other_distinct_values": 0
+  },
+  "start": {
+   "calls": 53,
+   "values": {
+    "\"\"": 8,
+    "0": 7,
+    "\"1.9GHz\"": 5,
+    "\"1.0GHz\"": 4,
+    "5": 4,
+    "105": 3,
+    "\"1.1GHz\"": 2,
+    "\"1.499983125GHz\"": 2,
+    "\"-107920.698km/s\"": 2,
+    "\"1.199989GHz\"": 2,
+    "\"11994.3km/s\"": 2,
+    "22": 2,
+    "\"1.5GHz\"": 1,
+    "\"11991.7km/s\"": 1,
+    "\"11977.6km/s\"": 1,
+    "\"-41347.8km/s\"": 1,
+    "4": 1,
+    "9": 1,
+    "\"1.699981GHz\"": 1,
+    "\"-59954.444km/s\"": 1,
+    "\"1.05GHz\"": 1,
+    "1": 1
+   },
+   "other_distinct_values": 0
+  },
+  "nterms": {
+   "calls": 52,
+   "values": {
+    "2": 48,
+    "1": 4
+   },
+   "other_distinct_values": 0
+  },
+  "width": {
+   "calls": 49,
+   "values": {
+    "1": 12,
+    "\"\"": 10,
+    "\"0.4GHz\"": 5,
+    "\"0.2GHz\"": 4,
+    "\"0.049999438GHz\"": 2,
+    "\"-0.049999438GHz\"": 2,
+    "\"1.1991563418e4km/s\"": 2,
+    "\"-1.1991563418e4km/s\"": 2,
+    "\"-11991.7km/s\"": 2,
+    "2": 1,
+    "\"100MHz\"": 1,
+    "\"-50MHz\"": 1,
+    "\"23983.4km/s\"": 1,
+    "\"-23983.4km/s\"": 1,
+    "\"20000km/s\"": 1,
+    "-1": 1,
+    "\"50MHz\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "threshold": {
+   "calls": 44,
+   "values": {
+    "\"0Jy\"": 21,
+    "\"0.1Jy\"": 8,
+    "\"0.01Jy\"": 5,
+    "\"0.75Jy\"": 3,
+    "\"0.1mJy\"": 3,
+    "\"1.75Jy\"": 1,
+    "\"3.5Jy\"": 1,
+    "\"0.50001Jy\"": 1,
+    "\"0.000001Jy\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "veltype": {
+   "calls": 42,
+   "values": {
+    "\"radio\"": 41,
+    "\"optical\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "restfreq": {
+   "calls": 39,
+   "values": {
+    "[\"1.25GHz\"]": 39
+   },
+   "other_distinct_values": 0
+  },
+  "outframe": {
+   "calls": 39,
+   "values": {
+    "\"LSRK\"": 26,
+    "\"TOPO\"": 11,
+    "\"BARY\"": 1,
+    "\"fail_!\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "cfcache": {
+   "calls": 38,
+   "values": {
+    "\"cfcache_oneshiftpoint_mosaic_cbFalse\"": 20,
+    "\"cfcache_oneshiftpoint_mosaic_cbTrue\"": 12,
+    "\"tst.cfcache\"": 4,
+    "\"tst_use_awp.cf\"": 1,
+    "\"\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "usemask": {
+   "calls": 32,
+   "values": {
+    "\"auto-multithresh\"": 21,
+    "\"user\"": 9,
+    "\"pb\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "calcres": {
+   "calls": 28,
+   "values": {
+    "false": 20,
+    "true": 8
+   },
+   "other_distinct_values": 0
+  },
+  "mosweight": {
+   "calls": 27,
+   "values": {
+    "false": 17,
+    "true": 10
+   },
+   "other_distinct_values": 0
+  },
+  "usepointing": {
+   "calls": 25,
+   "values": {
+    "true": 24,
+    "false": 1
+   },
+   "other_distinct_values": 0
+  },
+  "nsigma": {
+   "calls": 24,
+   "values": {
+    "1.0": 14,
+    "3.0": 9,
+    "10.0": 1
+   },
+   "other_distinct_values": 0
+  },
+  "gain": {
+   "calls": 23,
+   "values": {
+    "0.1": 8,
+    "0.2": 5,
+    "0.5": 5,
+    "1.0": 3,
+    "-0.2": 1,
+    "1e-06": 1
+   },
+   "other_distinct_values": 0
+  },
+  "restoration": {
+   "calls": 23,
+   "values": {
+    "false": 15,
+    "true": 8
+   },
+   "other_distinct_values": 0
+  },
+  "calcpsf": {
+   "calls": 22,
+   "values": {
+    "false": 17,
+    "true": 5
+   },
+   "other_distinct_values": 0
+  },
+  "startmodel": {
+   "calls": 20,
+   "values": {
+    "\"tst.model\"": 10,
+    "\"tst1.model\"": 4,
+    "[\"tst.model.tt0\", \"tst.model.tt1\"]": 2,
+    "[\"refimager_tst_subdir/tst.model.tt0\", \"refimager_tst_subdir/tst.model.tt1\"]": 1,
+    "[\"tst1.model.tt0\", \"tst1.model.tt1\"]": 1,
+    "\"tst1.model.tt0\"": 1,
+    "[\"\", \"tst1.model.tt1\"]": 1
+   },
+   "other_distinct_values": 0
+  },
+  "datacolumn": {
+   "calls": 20,
+   "values": {
+    "\"observed\"": 9,
+    "\"data\"": 7,
+    "\"corrected\"": 4
+   },
+   "other_distinct_values": 0
+  },
+  "robust": {
+   "calls": 19,
+   "values": {
+    "0.5": 8,
+    "0": 3,
+    "-2.0": 3,
+    "-2": 2,
+    "2": 2,
+    "0.0": 1
+   },
+   "other_distinct_values": 0
+  },
+  "restoringbeam": {
+   "calls": 18,
+   "values": {
+    "\"common\"": 16,
+    "\"120.0arcsec\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "wprojplanes": {
+   "calls": 15,
+   "values": {
+    "4": 7,
+    "16": 3,
+    "-1": 2,
+    "1": 1,
+    "6": 1,
+    "2": 1
+   },
+   "other_distinct_values": 0
+  },
+  "uvtaper": {
+   "calls": 14,
+   "values": {
+    "[\"50arcsec\"]": 3,
+    "[\"500arcsec\"]": 3,
+    "[\"183lambda\"]": 2,
+    "[\"910.19lambda\"]": 1,
+    "[\"100.0arcsec\"]": 1,
+    "[\"910.19lambda\", \"455.09lambda\", \"120.00deg\"]": 1,
+    "[\"200.00arcsec\", \"100.00arcsec\", \"30.00deg\"]": 1,
+    "[\"91.5klambda\"]": 1,
+    "[\"1arcsec\"]": 1
+   },
+   "other_distinct_values": 0
+  },
+  "antenna": {
+   "calls": 14,
+   "values": {
+    "\"*\"": 4,
+    "\"0,2,4,6,8,10,12,14,16,18,20,22,24,26 & ; 1,3,5,7,9,11,13,15,17,19,21,23,25 &\"": 3,
+    "\"0,2,4,6,8,10,12,14,16,18,20,22,24,26 &\"": 2,
+    "\"0,2,4,6,8,10,12,14,16,18,20,22,24,26 & \"": 1,
+    "\"0,2,4,6,8,10,12,14,16,18,20,22,24,26 & 1,3,5,7,9,11,13,15,17,19,21,23,25\"": 1,
+    "\"A*&\"": 1,
+    "\"J*,N*&\"": 1,
+    "\"A* && J*,N*\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "mask": {
+   "calls": 13,
+   "values": {
+    "\"circle[[256pix,256pix],150pix]\"": 3,
+    "\"refim_cont_stokesI_input.mask\"": 3,
+    "\"\"": 3,
+    "\"circle[[50pix,80pix],10pix]\"": 1,
+    "\"circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]\"": 1,
+    "\"refim_cont_stokesIQUV_input.mask\"": 1,
+    "\"refim_cube_StokesI_input.mask\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "perchanweightdensity": {
+   "calls": 12,
+   "values": {
+    "true": 11,
+    "false": 1
+   },
+   "other_distinct_values": 0
+  },
+  "fullsummary": {
+   "calls": 11,
+   "values": {
+    "true": 8,
+    "false": 3
+   },
+   "other_distinct_values": 0
+  },
+  "scales": {
+   "calls": 10,
+   "values": {
+    "[0]": 5,
+    "[0, 20, 40, 100]": 4,
+    "[0, 6, 10, 20, 40]": 1
+   },
+   "other_distinct_values": 0
+  },
+  "cycleniter": {
+   "calls": 10,
+   "values": {
+    "5": 6,
+    "3": 2,
+    "10": 2
+   },
+   "other_distinct_values": 0
+  },
+  "normtype": {
+   "calls": 10,
+   "values": {
+    "\"flatnoise\"": 9,
+    "\"pbsquare\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "pointingoffsetsigdev": {
+   "calls": 8,
+   "values": {
+    "[20.0, 20.0]": 5,
+    "[20.0, 2000.0]": 2,
+    "[2000.0, 2000.0]": 1
+   },
+   "other_distinct_values": 0
+  },
+  "computepastep": {
+   "calls": 7,
+   "values": {
+    "360.0": 5,
+    "15": 2
+   },
+   "other_distinct_values": 0
+  },
+  "rotatepastep": {
+   "calls": 5,
+   "values": {
+    "360.0": 5
+   },
+   "other_distinct_values": 0
+  },
+  "restart": {
+   "calls": 4,
+   "values": {
+    "false": 2,
+    "true": 2
+   },
+   "other_distinct_values": 0
+  },
+  "facets": {
+   "calls": 4,
+   "values": {
+    "2": 2,
+    "4": 2
+   },
+   "other_distinct_values": 0
+  },
+  "timerange": {
+   "calls": 4,
+   "values": {
+    "\"<21:40:00.0\"": 4
+   },
+   "other_distinct_values": 0
+  },
+  "smallscalebias": {
+   "calls": 3,
+   "values": {
+    "0.6": 2,
+    "0.9": 1
+   },
+   "other_distinct_values": 0
+  },
+  "projection": {
+   "calls": 3,
+   "values": {
+    "\"NCP\"": 1,
+    "\"TAN\"": 1,
+    "\"ARC\"": 1
+   },
+   "other_distinct_values": 0
+  },
+  "nmajor": {
+   "calls": 3,
+   "values": {
+    "0": 2,
+    "2": 1
+   },
+   "other_distinct_values": 0
+  },
+  "minbeamfrac": {
+   "calls": 3,
+   "values": {
+    "0.3": 2,
+    "0.05": 1
+   },
+   "other_distinct_values": 0
+  },
+  "interactive": {
+   "calls": 3,
+   "values": {
+    "false": 3
+   },
+   "other_distinct_values": 0
+  },
+  "fusedthreshold": {
+   "calls": 2,
+   "values": {
+    "0.05": 2
+   },
+   "other_distinct_values": 0
+  },
+  "largestscale": {
+   "calls": 2,
+   "values": {
+    "10": 2
+   },
+   "other_distinct_values": 0
+  },
+  "noise": {
+   "calls": 2,
+   "values": {
+    "\"1Jy\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "minpsffraction": {
+   "calls": 2,
+   "values": {
+    "0.5": 1,
+    "0.8": 1
+   },
+   "other_distinct_values": 0
+  },
+  "pbmask": {
+   "calls": 2,
+   "values": {
+    "0.7": 2
+   },
+   "other_distinct_values": 0
+  },
+  "fastnoise": {
+   "calls": 2,
+   "values": {
+    "false": 2
+   },
+   "other_distinct_values": 0
+  },
+  "verbose": {
+   "calls": 2,
+   "values": {
+    "true": 2
+   },
+   "other_distinct_values": 0
+  },
+  "psfphasecenter": {
+   "calls": 2,
+   "values": {
+    "\"J2000 19:59:28.520 +40.44.01.51\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "vptable": {
+   "calls": 2,
+   "values": {
+    "\"\"": 2
+   },
+   "other_distinct_values": 0
+  },
+  "cyclefactor": {
+   "calls": 1,
+   "values": {
+    "10.0": 1
+   },
+   "other_distinct_values": 0
+  },
+  "maxpsffraction": {
+   "calls": 1,
+   "values": {
+    "0.5": 1
+   },
+   "other_distinct_values": 0
+  },
+  "minpercentchange": {
+   "calls": 1,
+   "values": {
+    "0.2": 1
+   },
+   "other_distinct_values": 0
+  },
+  "negativethreshold": {
+   "calls": 1,
+   "values": {
+    "5.0": 1
+   },
+   "other_distinct_values": 0
+  },
+  "aterm": {
+   "calls": 1,
+   "values": {
+    "false": 1
+   },
+   "other_distinct_values": 0
+  }
+ }
+}

@@ -1,0 +1,4687 @@
+{
+ "source": {
+  "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
+  "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+  "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+  "casa_rs_revision": "fb28e9c751c34d308091fcf679e8a205e42a8af1",
+  "parameter_surfaces_sha256": "59d96a9e59fc7f3691806e6bd5e375e78756a77d75284d941fd78695c7de7260",
+  "parameter_catalog_sha256": "a0e6dcbc8e89f631818eaa5b6f211e1d1e012f6044f483404537e2225e0b0c48",
+  "tclean_rs_sha256": "6418cbfc67f36ecc7805a8481332f0aa06ce1e6530ce2c79c13dbb212cfb1634",
+  "tclean_contract_version": 33
+ },
+ "totals": {
+  "resolved_cases": 354,
+  "cases_where_casa_expects_an_error": 4,
+  "cases_counted": 350,
+  "cases_with_no_refusal": 166,
+  "cases_with_a_gap": 184,
+  "cases_with_only_refusals_casa_shares": 0,
+  "single_call_cases_with_no_refusal": 156
+ },
+ "gaps": [
+  {
+   "reason": "reffreq: only the default \"\" is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 50,
+   "sole_blocker": 10,
+   "examples": [
+    "test_widefield.test_widefield_awphpg_mtmfs_via_cube.1",
+    "test_mtmfsviacube.test_mtmfsviacube_standard.1",
+    "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.1",
+    "test_mtmfsviacube.test_mtmfsviacube_mosaic.1",
+    "test_mtmfsviacube.test_mtmfsviacube_awproject.1"
+   ]
+  },
+  {
+   "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+   "source": "surface note: restart (#944)",
+   "issue": 944,
+   "cases": 38,
+   "sole_blocker": 0,
+   "examples": [
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5",
+    "test_onefield.test_onefield_restore_mtmfs_niter0.1+2",
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2",
+    "test_cube.test_cube_common_restoringbeam.1+2",
+    "test_modelvis.test_modelvis_24.1+2"
+   ]
+  },
+  {
+   "reason": "gridder='awp2'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 21,
+   "sole_blocker": 18,
+   "examples": [
+    "test_stokes.test_stokes_awp2_mfs_I.1",
+    "test_stokes.test_stokes_awp2_mfs_IV.1",
+    "test_stokes.test_stokes_awp2_mfs_QU.1",
+    "test_stokes.test_stokes_awp2_mfs_Q.1",
+    "test_stokes.test_stokes_awp2_mfs_U.1"
+   ]
+  },
+  {
+   "reason": "conjbeams=False with gridder='awproject'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 19,
+   "sole_blocker": 0,
+   "examples": [
+    "test_wproject.test_wterm_awproject.1",
+    "test_widefield.test_widefield_aproj_cube.1",
+    "test_widefield.test_widefield_aproj_mtmfs.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2"
+   ]
+  },
+  {
+   "reason": "calcres: only the default true is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 16,
+   "sole_blocker": 3,
+   "examples": [
+    "test_onefield.test_onefield_restart_mfs.1+2+3+4",
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5",
+    "test_onefield.test_onefield_restore_mtmfs_niter0.1+2",
+    "test_onefield.test_onefield_psf_fit.1",
+    "test_onefield.test_onefield_psf_fit.2"
+   ]
+  },
+  {
+   "reason": "restoration: only the default true is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 15,
+   "sole_blocker": 2,
+   "examples": [
+    "test_onefield.test_onefield_restart_mfs.1+2+3+4",
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5",
+    "test_onefield.test_onefield_restore_mtmfs_niter0.1+2",
+    "test_iterbot.test_iterbot_mfs_1.1",
+    "test_iterbot.test_iterbot_nmajor_0.1+2"
+   ]
+  },
+  {
+   "reason": "antenna: only the default \"\" is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 14,
+   "sole_blocker": 1,
+   "examples": [
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.5",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.2"
+   ]
+  },
+  {
+   "reason": "savemodel='virtual'",
+   "source": "tclean.rs not_yet",
+   "issue": 823,
+   "cases": 14,
+   "sole_blocker": 8,
+   "examples": [
+    "test_modelvis.test_modelvis_3.1+2",
+    "test_modelvis.test_modelvis_6.1+2",
+    "test_modelvis.test_modelvis_8.1+2",
+    "test_modelvis.test_modelvis_9.1+2+3",
+    "test_modelvis.test_modelvis_10.1+2+3"
+   ]
+  },
+  {
+   "reason": "AW projection of a cube (#719)",
+   "source": "availability.rs gate",
+   "issue": 719,
+   "cases": 13,
+   "sole_blocker": 0,
+   "examples": [
+    "test_widefield.test_widefield_aproj_cube.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4"
+   ]
+  },
+  {
+   "reason": "vis: a list of more than one MeasurementSet",
+   "source": "surface: unimplemented_forms",
+   "issue": 980,
+   "cases": 13,
+   "sole_blocker": 3,
+   "examples": [
+    "test_onefield.test_onefield_twoMS.1",
+    "test_onefield.test_onefield_twoMS_Briggs.1",
+    "test_onefield.test_onefield_twoMS_weightSpectrum.1",
+    "test_onefield.test_onefield_twoMS_weightSpectrum2.1",
+    "test_onefield.test_onefield_mtmfs_2spws_2MSs.1"
+   ]
+  },
+  {
+   "reason": "calcpsf: only the default true is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 12,
+   "sole_blocker": 0,
+   "examples": [
+    "test_onefield.test_onefield_restart_mfs.1+2+3+4",
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5",
+    "test_onefield.test_onefield_restore_mtmfs_niter0.1+2",
+    "test_cube.test_cube_common_restoringbeam.1+2",
+    "test_modelvis.test_modelvis_20.1+2"
+   ]
+  },
+  {
+   "reason": "start='' with a channel selection in spw",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 11,
+   "sole_blocker": 3,
+   "examples": [
+    "test_onefield.test_onefield_pcwdT_and_pcwdF.1",
+    "test_onefield.test_onefield_pcwdT_and_pcwdF.2",
+    "test_cube.test_cube_23.1",
+    "test_modelvis.test_modelvis_8.1+2",
+    "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1"
+   ]
+  },
+  {
+   "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+   "source": "tclean.rs refusal (casa-rs only)",
+   "issue": null,
+   "cases": 9,
+   "sole_blocker": 0,
+   "examples": [
+    "test_widefield.test_widefield_aproj_mfs.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4"
+   ]
+  },
+  {
+   "reason": "specmode='mvc'",
+   "source": "tclean.rs not_yet",
+   "issue": 823,
+   "cases": 9,
+   "sole_blocker": 0,
+   "examples": [
+    "test_widefield.test_widefield_mvc_squint_awp2.1",
+    "test_widefield.test_widefield_awphpg_mtmfs_via_cube.1",
+    "test_mtmfsviacube.test_mtmfsviacube_standard.1",
+    "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.1",
+    "test_mtmfsviacube.test_mtmfsviacube_mosaic.1"
+   ]
+  },
+  {
+   "reason": "mosweight=True with gridder='mosaic' and density weighting",
+   "source": "tclean.rs not_yet",
+   "issue": 818,
+   "cases": 8,
+   "sole_blocker": 5,
+   "examples": [
+    "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.3",
+    "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.4",
+    "test_widefield.test_mosaicft_newpsfphasecenter_cube.1",
+    "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1",
+    "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14350fix.1"
+   ]
+  },
+  {
+   "reason": "spw given as a list",
+   "source": "catalog: value domain",
+   "issue": null,
+   "cases": 8,
+   "sole_blocker": 0,
+   "examples": [
+    "test_onefield.test_onefield_twoMS.1",
+    "test_onefield.test_onefield_twoMS_Briggs.1",
+    "test_onefield.test_onefield_twoMS_weightSpectrum.1",
+    "test_onefield.test_onefield_twoMS_weightSpectrum2.1",
+    "test_cube.test_cube_twoMS_startfreq.1"
+   ]
+  },
+  {
+   "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+   "source": "surface note: cfcache",
+   "issue": null,
+   "cases": 5,
+   "sole_blocker": 2,
+   "examples": [
+    "test_wproject.test_wterm_awproject.1",
+    "test_widefield.test_widefield_aproj_cube.1",
+    "test_widefield.test_widefield_wbaproj_mfs.1",
+    "test_widefield.test_widefield_aproj_mtmfs.1",
+    "test_widefield.test_widefield_wbaproj_mtmfs.1"
+   ]
+  },
+  {
+   "reason": "conjbeams=True with gridder='mosaic'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 5,
+   "sole_blocker": 1,
+   "examples": [
+    "test_widefield.test_widefield_mosaicft_mtmfs_conj.1",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield.1+2",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield.1+2",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.2",
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.2"
+   ]
+  },
+  {
+   "reason": "mask: a region other than integer pixel boxes",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 5,
+   "sole_blocker": 2,
+   "examples": [
+    "test_onefield.test_onefield_asp.2",
+    "test_onefield.test_onefield_asp.3",
+    "test_onefield.test_onefield_asp.4",
+    "test_mask.test_mask_1.2",
+    "test_mask.test_mask_2.2"
+   ]
+  },
+  {
+   "reason": "deconvolver='asp'",
+   "source": "tclean.rs not_yet",
+   "issue": 223,
+   "cases": 4,
+   "sole_blocker": 1,
+   "examples": [
+    "test_onefield.test_onefield_asp.1",
+    "test_onefield.test_onefield_asp.2",
+    "test_onefield.test_onefield_asp.3",
+    "test_onefield.test_onefield_asp.4"
+   ]
+  },
+  {
+   "reason": "gridder='awphpg'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 4,
+   "sole_blocker": 3,
+   "examples": [
+    "test_wproject.test_wterm_awphpg.1",
+    "test_widefield.test_widefield_awphpg_mfs.1",
+    "test_widefield.test_widefield_awphpg_cube.1",
+    "test_widefield.test_widefield_awphpg_mtmfs_via_cube.1"
+   ]
+  },
+  {
+   "reason": "nterms=1 with deconvolver='mtmfs'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 4,
+   "sole_blocker": 4,
+   "examples": [
+    "test_onefield.test_onefield_mtmfs_nterms1.1",
+    "test_onefield.test_onefield_mtmfs_smallscalebias.1",
+    "test_cube.test_cube_mtmfs_nterms1.1",
+    "test_cube.test_cubedata_mtmfs_nterms1.1"
+   ]
+  },
+  {
+   "reason": "startmodel given as a list",
+   "source": "catalog: value domain",
+   "issue": null,
+   "cases": 4,
+   "sole_blocker": 3,
+   "examples": [
+    "test_cube.test_cube_continuum_subtract_uvsub.1+2",
+    "test_modelvis.test_modelvis_5.1+2",
+    "test_modelvis.test_modelvis_6.1+2",
+    "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4"
+   ]
+  },
+  {
+   "reason": "timerange: only the default \"\" is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 4,
+   "sole_blocker": 0,
+   "examples": [
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.1",
+    "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.2"
+   ]
+  },
+  {
+   "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
+   "source": "availability.rs gate",
+   "issue": null,
+   "cases": 3,
+   "sole_blocker": 2,
+   "examples": [
+    "test_stokes.test_stokes_mtmfs_Q.1",
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2",
+    "test_stokes.test_stokes_weighting.8"
+   ]
+  },
+  {
+   "reason": "projection: only the default \"SIN\" is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 3,
+   "sole_blocker": 3,
+   "examples": [
+    "test_onefield.test_onefield_projections.2",
+    "test_onefield.test_onefield_projections.3",
+    "test_onefield.test_onefield_projections.4"
+   ]
+  },
+  {
+   "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 0,
+   "examples": [
+    "test_wproject.test_wterm_squint_awp2.1",
+    "test_widefield.test_widefield_mvc_squint_awp2.1"
+   ]
+  },
+  {
+   "reason": "fastnoise: only the default true is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 2,
+   "examples": [
+    "test_mask.test_mask_autobox_multithresh_newnoise.1",
+    "test_mask.test_mask_autobox_multithresh_with_nsigma_newnoise.1"
+   ]
+  },
+  {
+   "reason": "noise: only the default \"1.0Jy\" is implemented (where weighting is briggsabs)",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 0,
+   "examples": [
+    "test_onefield.test_onefield_briggsabs.2",
+    "test_onefield.test_onefield_briggsabs.3"
+   ]
+  },
+  {
+   "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 1,
+   "examples": [
+    "test_widefield.test_mosaicft_newpsfphasecenter.1",
+    "test_widefield.test_mosaicft_newpsfphasecenter_cube.1"
+   ]
+  },
+  {
+   "reason": "restoringbeam: a beam given by its axes",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 2,
+   "examples": [
+    "test_onefield.test_onefield_cube_restoringbeam.2",
+    "test_onefield.test_onefield_mtmfs_restoringbeam.2"
+   ]
+  },
+  {
+   "reason": "verbose: only the default false is implemented (where usemask is auto-multithresh)",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 2,
+   "examples": [
+    "test_mask.test_mask_autobox_multithresh_mfs_IQUV.1",
+    "test_mask.test_mask_autobox_multithresh_cube_IQUV.1"
+   ]
+  },
+  {
+   "reason": "wbawp=False with gridder='awproject'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 0,
+   "examples": [
+    "test_wproject.test_wterm_awproject.1",
+    "test_widefield.test_widefield_aproj_mfs.1"
+   ]
+  },
+  {
+   "reason": "weighting='briggsabs'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 0,
+   "examples": [
+    "test_onefield.test_onefield_briggsabs.2",
+    "test_onefield.test_onefield_briggsabs.3"
+   ]
+  },
+  {
+   "reason": "weighting='radial'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 2,
+   "examples": [
+    "test_onefield.test_onefield_weighting.6",
+    "test_stokes.test_stokes_weighting.6"
+   ]
+  },
+  {
+   "reason": "weighting='superuniform'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 2,
+   "sole_blocker": 2,
+   "examples": [
+    "test_onefield.test_onefield_weighting.7",
+    "test_stokes.test_stokes_weighting.7"
+   ]
+  },
+  {
+   "reason": "aterm=False with gridder='awproject'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 0,
+   "examples": [
+    "test_wproject.test_wterm_awproject.1"
+   ]
+  },
+  {
+   "reason": "deconvolver='mem'",
+   "source": "tclean.rs not_yet",
+   "issue": 823,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_onefield.test_onefield_mem.1"
+   ]
+  },
+  {
+   "reason": "facets beyond single-term MFS",
+   "source": "availability.rs gate",
+   "issue": null,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_multifield.test_multifield_facets_mtmfs.1"
+   ]
+  },
+  {
+   "reason": "facets>1 with gridder='wproject'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_wproject.test_wterm_wproject_facets.1"
+   ]
+  },
+  {
+   "reason": "minpercentchange: only the default -1.0 is implemented (where usemask is auto-multithresh)",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_mask.test_mask_autobox_multithresh_with_stopmask.1"
+   ]
+  },
+  {
+   "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 0,
+   "examples": [
+    "test_modelvis.test_modelvis_8.1+2"
+   ]
+  },
+  {
+   "reason": "normtype='pbsquare'",
+   "source": "tclean.rs not_yet",
+   "issue": 823,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1"
+   ]
+  },
+  {
+   "reason": "pbmask: only the default 0.0 is implemented",
+   "source": "surface: unimplemented (default only)",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 0,
+   "examples": [
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2"
+   ]
+  },
+  {
+   "reason": "psterm=True with gridder='awproject'",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 0,
+   "examples": [
+    "test_wproject.test_wterm_awproject.1"
+   ]
+  },
+  {
+   "reason": "restart into an existing image on a different grid",
+   "source": "surface note: restart (#944)",
+   "issue": 944,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_startmodel.test_startmodel_mfs_changeshape_1.1+2"
+   ]
+  },
+  {
+   "reason": "usemask='pb'",
+   "source": "tclean.rs not_yet",
+   "issue": 823,
+   "cases": 1,
+   "sole_blocker": 0,
+   "examples": [
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2"
+   ]
+  }
+ ],
+ "refusals_casa_shares": [],
+ "cases_where_casa_expects_an_error": {
+  "test_errors_failures.test_bad_freqframe_define_image.1": {
+   "expect_error": "RuntimeError",
+   "casa_rs": [
+    {
+     "reason": "outframe='fail_!'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_errors_failures.test_error_gridding.1": {
+   "expect_error": "RuntimeError",
+   "casa_rs": []
+  },
+  "test_errors_failures.test_wrong_field_select_data.1": {
+   "expect_error": "RuntimeError",
+   "casa_rs": []
+  },
+  "test_errors_failures.test_wrong_spw_select_data.1": {
+   "expect_error": "RuntimeError",
+   "casa_rs": []
+  }
+ },
+ "cases": {
+  "test_onefield.test_onefield_defaults.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_clark.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_hogbom.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_mem.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "deconvolver='mem'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_multiscale.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_asp.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "deconvolver='asp'",
+     "source": "tclean.rs not_yet",
+     "issue": 223,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_asp.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "deconvolver='asp'",
+     "source": "tclean.rs not_yet",
+     "issue": 223,
+     "call": 2
+    },
+    {
+     "reason": "mask: a region other than integer pixel boxes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_asp.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "deconvolver='asp'",
+     "source": "tclean.rs not_yet",
+     "issue": 223,
+     "call": 3
+    },
+    {
+     "reason": "mask: a region other than integer pixel boxes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 3
+    }
+   ]
+  },
+  "test_onefield.test_onefield_asp.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "deconvolver='asp'",
+     "source": "tclean.rs not_yet",
+     "issue": 223,
+     "call": 4
+    },
+    {
+     "reason": "mask: a region other than integer pixel boxes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 4
+    }
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_autonames.1+2+3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.5": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_weighting.6": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "weighting='radial'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 6
+    }
+   ]
+  },
+  "test_onefield.test_onefield_weighting.7": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "weighting='superuniform'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 7
+    }
+   ]
+  },
+  "test_onefield.test_onefield_weighting.8": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_twoMS.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_twoMS_Briggs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_twoMS_weightSpectrum.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_twoMS_weightSpectrum2.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_briggsabs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_briggsabs.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "noise: only the default \"1.0Jy\" is implemented (where weighting is briggsabs)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "weighting='briggsabs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_briggsabs.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "noise: only the default \"1.0Jy\" is implemented (where weighting is briggsabs)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "weighting='briggsabs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 3
+    }
+   ]
+  },
+  "test_onefield.test_onefield_restart_mfs.1+2+3+4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    }
+   ]
+  },
+  "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 3
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 4
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 5
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 5
+    }
+   ]
+  },
+  "test_onefield.test_onefield_all_outputs_mfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_all_outputs_mtmfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_restore_mtmfs_niter0.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_restore_mtmfs_niter0.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_rectangular_pixels.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_mtmfs_2spws_2MSs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs_nterms1.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "nterms=1 with deconvolver='mtmfs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs_smallscalebias.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "nterms=1 with deconvolver='mtmfs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_gridders.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_cube_restoringbeam.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_cube_restoringbeam.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoringbeam: a beam given by its axes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoringbeam: a beam given by its axes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_projections.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_onefield.test_onefield_projections.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "projection: only the default \"SIN\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_projections.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "projection: only the default \"SIN\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    }
+   ]
+  },
+  "test_onefield.test_onefield_projections.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "projection: only the default \"SIN\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    }
+   ]
+  },
+  "test_onefield.test_onefield_psf_fit.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_onefield.test_onefield_psf_fit.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_onefield.test_onefield_psf_fit.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    }
+   ]
+  },
+  "test_iterbot.test_iterbot_mfs_1.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_iterbot.test_iterbot_mfs_2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_3.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_4.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_5.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_6.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_7.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_8.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_9.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_1.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_3.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_divergence.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_deconvolvers.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_deconvolvers.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_tol.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_nsigma.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_restart_updatedmask.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_restart_updatedmask.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_restart_pbmask.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_restart_pbmask.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_nmajor_0.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_iterbot.test_iterbot_nmajor_2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_true.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_false.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_true.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_false.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_true.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_false.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_multifield.test_multifield_facets_mfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_multifield.test_multifield_facets_mtmfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "facets beyond single-term MFS",
+     "source": "availability.rs gate",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_mfs_I.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mfs_IV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mfs_QU.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mfs_Q.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mfs_U.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mfs_V.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_I.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_IV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_QU.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_Q.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_U.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_V.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_IQUV_fromRL.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_cube_IQUV_fromXY.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_mtmfs_Q.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
+     "source": "availability.rs gate",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "pbmask: only the default 0.0 is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "usemask='pb'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
+     "source": "availability.rs gate",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "pbmask: only the default 0.0 is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "usemask='pb'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    },
+    {
+     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
+     "source": "availability.rs gate",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_stokes.test_stokes_weighting.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_weighting.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_weighting.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_weighting.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_weighting.5": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_weighting.6": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "weighting='radial'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 6
+    }
+   ]
+  },
+  "test_stokes.test_stokes_weighting.7": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "weighting='superuniform'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 7
+    }
+   ]
+  },
+  "test_stokes.test_stokes_weighting.8": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
+     "source": "availability.rs gate",
+     "issue": null,
+     "call": 8
+    }
+   ]
+  },
+  "test_stokes.test_stokes_weighting.9": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_stokes.test_stokes_awp2_mfs_I.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_IV.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_QU.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_Q.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_U.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_mfs_V.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_I.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IV.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_QU.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_Q.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_U.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_V.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IQUV_fromRL.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_stokes.test_stokes_awp2_cube_IQUV_fromXY.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cube_0.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_1.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_3.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_4.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_5.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_6.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_7.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_8.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_9.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_10.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_11.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_12.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_13.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_21.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_22.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_23.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cube_descendF1.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF3.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF4.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF5.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF6.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF7.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF8.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF9.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF10.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF11.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF12.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF13.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_descendF14.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_D1.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cubedata_briggs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_D2.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_perchanweight_briggs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_perchanweight_briggs.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_perchanweight_briggs.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_perchanweight_briggs.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.3": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.4": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.5": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_weighting_taper_cas13260_old.6": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_continuum_subtract_uvsub.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "startmodel given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    }
+   ]
+  },
+  "test_cube.test_cube_badchannel_restoringbeam.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_badchannel_restoringbeam.2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_common_restoringbeam.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_cube.test_cube_chanchunks_auto.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_chanchunks_savemodel.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_cube.test_cube_mtmfs_nterms1.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "nterms=1 with deconvolver='mtmfs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cubedata_mtmfs_nterms1.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "nterms=1 with deconvolver='mtmfs'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cube_twoMS_startfreq.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cube_twoMS_startfreq.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_cube.test_cube_twoMS_startvel.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_cube.test_cube_twoMS_startvel.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "spw given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mask.test_mask_1.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mask: a region other than integer pixel boxes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mask.test_mask_2.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mask: a region other than integer pixel boxes",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mask.test_mask_autobox_multithresh.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_autobox_multithresh_newnoise.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "fastnoise: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mask.test_mask_autobox_multithresh_with_nsigma.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_autobox_multithresh_with_nsigma_newnoise.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "fastnoise: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mask.test_mask_autobox_multithresh_with_prune.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_autobox_multithresh_with_stopmask.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "minpercentchange: only the default -1.0 is implemented (where usemask is auto-multithresh)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mask.test_mask_autobox_multithresh_with_absorption.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_autobox_multithresh_mfs_IQUV.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "verbose: only the default false is implemented (where usemask is auto-multithresh)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mask.test_mask_autobox_multithresh_cube_IQUV.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "verbose: only the default false is implemented (where usemask is auto-multithresh)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mask.test_mask_zerostart.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_cube.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_IQUV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_expand_contstokesImask_to_cube_IQUV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_expand_contstokesIQUVmask_to_cube_IQUV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_expand_cubestokesImask_to_cube_IQUV.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_mask.test_mask_preserve_input_zero_mask.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_wproject.test_wterm_wproject.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_wproject.test_wterm_facets.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_wproject.test_wterm_wproject_facets.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "facets>1 with gridder='wproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_wproject.test_wterm_awproject.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "aterm=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "psterm=True with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "wbawp=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+     "source": "surface note: cfcache",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_wproject.test_wterm_awphpg.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awphpg'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_wproject.test_wterm_awp2.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_wproject.test_wterm_squint_awp2.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_aproj_mfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "wbawp=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awp2_mfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mvc_squint_awp2.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awphpg_mfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awphpg'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_aproj_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+     "source": "surface note: cfcache",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awp2_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awphpg_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awphpg'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_wbaproj_mfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+     "source": "surface note: cfcache",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_aproj_mtmfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+     "source": "surface note: cfcache",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_wbaproj_mtmfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
+     "source": "surface note: cfcache",
+     "issue": null,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awp2_mtmfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_awphpg_mtmfs_via_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "gridder='awphpg'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mosaicft_mfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 3
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 4
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs_conj.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "normtype='pbsquare'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_widefield_mosaicft_cube.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_widefield.test_mosaicft_newpsfphasecenter.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_widefield.test_mosaicft_newpsfphasecenter_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_1.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_2.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_3.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_4.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_5.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "startmodel given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_6.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "startmodel given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_7.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_8.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_9.1+2+3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 3
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_10.1+2+3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 3
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_11.1+2+3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 3
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_12.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_13.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_14.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_15.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_16.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_17.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_18.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_modelvis.test_modelvis_19.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_20.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_21.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_22.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_23.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_24.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_25.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_26.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_27.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restoration: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcres: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "calcpsf: only the default true is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "savemodel='virtual'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_28.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_modelvis.test_modelvis_29.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_startmodel.test_startmodel_regrid_mfs.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_regrid_cube.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_mfs_continue.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_mfs_restart.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_mfs_changeshape_1.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "restart into an existing image on a different grid",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_startmodel.test_startmodel_mfs_changeshape_2.1+2": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "startmodel given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "startmodel given as a list",
+     "source": "catalog: value domain",
+     "issue": null,
+     "call": 4
+    }
+   ]
+  },
+  "test_startmodel.test_startmodel_with_mask_mfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_startmodel.test_startmodel_with_mask_mtmfs.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "timerange: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 3
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 3
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "timerange: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 4
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 4
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.5": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 5
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 5
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 5
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 5
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "timerange: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "timerange: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 2
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.5": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 5
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 5
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.3": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 3
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 3
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.4": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 4
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 4
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.5": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 5
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 5
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "antenna: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "start='' with a channel selection in spw",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 1
+    }
+   ]
+  },
+  "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14350fix.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "vis: a list of more than one MeasurementSet",
+     "source": "surface: unimplemented_forms",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_standard.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_mosaic.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_awproject.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
+     "source": "tclean.rs refusal (casa-rs only)",
+     "issue": null,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_awp2.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    },
+    {
+     "reason": "gridder='awp2'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_wproject.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_compare_with_mfs.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mtmfsviacube.test_mtmfsviacube_compare_with_mfs.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "specmode='mvc'",
+     "source": "tclean.rs not_yet",
+     "issue": 823,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_twofield.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_standard_twofield.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield_use_standard_psf.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield_use_standard_psf.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=True with gridder='mosaic'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield_use_standard_psf.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield_use_standard_psf.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield_use_standard_psf.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield_use_standard_psf.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_mtmfs.test_mtmfs_mosaic_mwFalse_briggs_twofield.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_cube.test_mosaic_briggsbwtaper.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 1
+    }
+   ]
+  },
+  "test_mosaic_cube.test_mosaic_briggsbwtaper.2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "conjbeams=False with gridder='awproject'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "AW projection of a cube (#719)",
+     "source": "availability.rs gate",
+     "issue": 719,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 1
+    },
+    {
+     "reason": "reffreq: only the default \"\" is implemented",
+     "source": "surface: unimplemented (default only)",
+     "issue": 980,
+     "call": 2
+    },
+    {
+     "reason": "restart into an existing image beyond single-term Stokes-I MFS",
+     "source": "surface note: restart (#944)",
+     "issue": 944,
+     "call": 2
+    }
+   ]
+  },
+  "test_ephemeris.test_onefield_mfs_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_onefield_cube_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_multifield_mfs_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_multifield_cube_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_onefield_mfs_exttab_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_onefield_cube_exttab_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_multifield_mfs_exttab_eph.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_ephemeris.test_multifield_cube_exttab_eph.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "mosweight=True with gridder='mosaic' and density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 818,
+     "call": 1
+    }
+   ]
+  },
+  "test_errors_failures.test_wrong_spw_select_data.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_errors_failures.test_wrong_field_select_data.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  },
+  "test_errors_failures.test_bad_freqframe_define_image.1": {
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "outframe='fail_!'",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
+  },
+  "test_errors_failures.test_error_gridding.1": {
+   "runs_without_refusal": true,
+   "refusals": []
+  }
+ }
+}
