@@ -17,14 +17,20 @@ use super::charts::FacetBox;
 ///
 /// Data images become the residual planes `[channel][term][pol]`; on an
 /// initial pass the PSF moments, their `sumwt` and the `sumwt` CASA
-/// publishes for `basis` come along.
+/// publishes for `basis` come along. A pass that formed the PSF alone
+/// (`calcres=False`) leaves the residual empty, for its caller to set.
 pub(crate) fn pass_images(
     domain: usize,
     images: &NormalImages,
     initial: bool,
     basis: Basis,
 ) -> PassImages {
-    let (height, width) = images.planes[0].data[0].dim();
+    let first_image = images.planes[0]
+        .data
+        .first()
+        .or_else(|| images.planes[0].psf.first())
+        .expect("a pass forms data or PSF images");
+    let (height, width) = first_image.dim();
     let first = images.first_plane as usize;
     let mut residual = Vec::with_capacity(images.planes.len() * images.data_terms * images.pols);
     for plane in &images.planes {

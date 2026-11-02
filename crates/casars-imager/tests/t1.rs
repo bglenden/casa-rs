@@ -9,6 +9,8 @@
 mod aw_projection;
 #[path = "t1/casa_return.rs"]
 mod casa_return;
+#[path = "t1/continuation.rs"]
+mod continuation;
 #[path = "t1/cube.rs"]
 mod cube;
 #[path = "t1/diagnostics.rs"]

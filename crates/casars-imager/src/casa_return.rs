@@ -96,7 +96,9 @@ pub fn tclean_record(
             float_or_zero(single(request.minpsffraction)),
         ),
         ("niter", int(request.niter)),
-        ("nmajordone", int(run.major_cycles.max(1))),
+        // CASA's dirty summary counts one major cycle; a clean run counts those
+        // it ran, none for a residual it read (`calcres=False`).
+        ("nmajordone", int(if dirty { 1 } else { run.major_cycles })),
         (
             "nsigma",
             CasaValue::float(if dirty { 0.0 } else { request.nsigma }),
@@ -105,7 +107,7 @@ pub fn tclean_record(
         ("summarymajor", CasaValue::int64_vector(major)),
         (
             "summaryminor",
-            summary_minor(run, dirty, fullsummary, request.startmodel.is_some()),
+            summary_minor(run, dirty, fullsummary, request.starts_from_model()),
         ),
         ("threshold", threshold),
         ("stopDescription", CasaValue::string(description)),

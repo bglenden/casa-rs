@@ -295,7 +295,7 @@ def tclean(
     ``projection``, ``psfphasecenter``, ``vptable``, ``computepastep``,
     ``rotatepastep``, ``interactive``, ``pbmask``, ``smoothfactor``,
     ``cutthreshold``, ``dogrowprune``, ``minpercentchange``, ``verbose``,
-    ``fastnoise``, ``calcres``, ``calcpsf``.
+    ``fastnoise``.
     """
     return _call_casa(tclean, locals())
 

@@ -122,14 +122,15 @@ impl PassNormalState {
     /// A residual refresh of `previous`, with `previous`'s imaging weights:
     /// the PSF, `sumwt` and validity carry over; every residual plane must be
     /// appended again, and [`Self::finish`] requires the refresh to have
-    /// placed the samples `previous` placed.
+    /// placed the samples `previous` placed, when a pass placed them (a
+    /// state read from products placed none).
     pub(crate) fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
         storage: NormalStoragePlan,
     ) -> Result<Self, NormalStateError> {
         let mut state = Self::initial(problem, storage)?;
-        state.refreshed_samples = Some(previous.sample_count());
+        state.refreshed_samples = Some(previous.sample_count()).filter(|&samples| samples > 0);
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
                 for (target, domain) in state.domains.iter_mut().zip(domains.iter()) {
@@ -214,6 +215,13 @@ impl PassNormalState {
                 Ok(())
             }
         }
+    }
+
+    /// The completed state of images read rather than gridded, and the
+    /// samples it stands for: those of the state it refreshed, or none.
+    pub(crate) fn finish_read(mut self) -> Result<(NormalStatePrimitives, u64), NormalStateError> {
+        let samples = self.refreshed_samples.take().unwrap_or(0);
+        Ok((self.finish(samples)?, samples))
     }
 
     /// The completed state of a pass that placed `samples`. Every domain's

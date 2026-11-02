@@ -236,7 +236,9 @@ def main():
     assert casatools.version_string() == "6.7.6-14", casatools.version_string()
     matrix = json.loads(args.cases.read_text())
     cases = {name: case for name, case in matrix["cases"].items() if selected(args, name, case)}
-    args.output = args.output.resolve()
+    # Absolute but unresolved: CASA cannot open a path with spaces, which a
+    # symbolic link (~/ext on the Mac mini) can keep out of the paths given.
+    args.output = Path(os.path.abspath(args.output))
     args.output.mkdir(parents=True)
     needed = set()
     for case in cases.values():

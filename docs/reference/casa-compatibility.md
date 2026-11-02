@@ -37,7 +37,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
-| tclean | tclean | yes | 92 | 92 | 0 | 15 | 22 | 0 |
+| tclean | tclean | yes | 92 | 92 | 0 | 13 | 22 | 0 |
 
 ## Tasks
 
@@ -355,7 +355,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #980: `projection`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `calcres`, `calcpsf`
+- Accepted only at CASA's default until #980: `projection`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`
 - casa-rs parameters CASA lacks: `ddid`, `channel_start`, `channel_count`, `hogbom_iteration_mode`, `write_pb`, `fitspw`, `fitorder`, `save_continuum_residual`, `backend`, `gridprecision`, `aw_cf_source`, `cf_resident_mb`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `stage_timing`, `metal_stage_timing`, `science_trace`
 - Shared parameters: 92, in CASA's order: yes
 - Defaults that differ: none
@@ -364,7 +364,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 15, Implemented: 36, Not implemented: 0, Partial: 41, Unassessed: 0.
+Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 13, Implemented: 36, Not implemented: 0, Partial: 41, Unassessed: 2.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -458,8 +458,8 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `fastnoise` | `True` | `True`; `fastnoise` → `fastnoise` | Default only | Read and ignored; non-default catalog-refused (issue 980). [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `restart` | `True` | `True`; `restart` → `restart` | Partial | True continues bounded same-grid standard unfaceted single-term Stokes-I MFS using raw model and binary CLEAN mask. False is active in owner-approved contract32: a single main image starts fresh at the highest recognized numbered suffix plus1, preserving old files. All20 small public CLI/Python product/naming/preservation rows pass;19/20 selected scalar rows pass raw limits and one exact Metal output is owner-accepted by identity-bound review. Preserving prior image histories is an owner-agreed deviation; new-image history completeness remains unfinished. Outlier numbering, occupied chosen orphan namespaces, embedded/new masks, broader modes and false calc controls remain unfinished (#944). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecycle), [restart-native-current](#tclean-evidence-restart-native-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [numbering-preview](#tclean-evidence-numbering-preview), [numbering-activation](#tclean-evidence-numbering-activation) |
 | `savemodel` | `'none'` | `'none'`; `savemodel` → `savemodel` | Partial | Copied; virtual refused (issue 823); modelcolumn writes MODEL_DATA and request checks a solved or start model exists. [returns](#tclean-behavior-returns)<br>Catalog domain: `modelcolumn`, `none`, `virtual` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `calcres` | `True` | `True`; `calcres` → `calcres` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Default only | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `calcres` | `True` | `True`; `calcres` → `calcres` | Unassessed | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Unassessed | Read and ignored; non-default catalog-refused (issue 980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `psfcutoff` | `0.35` | `0.35`; `psfcutoff` → `psfcutoff` | Implemented | Copied; request requires positive value. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `parallel` | `False` | `False`; `parallel` → `parallel` | Partial | Native local worker resource policy, not CASA MPI launch/partition semantics. Ordinary output equivalence and resource bounds require separate evidence; distributed behavior is unfinished. [accuracy](#tclean-behavior-accuracy)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [adopted-defaults](#tclean-evidence-adopted-defaults) |
 

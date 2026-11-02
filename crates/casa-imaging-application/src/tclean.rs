@@ -809,14 +809,12 @@ impl<'a> Tclean<'a> {
             "psfcutoff",
             "parallel",
             "savemodel",
-        ])?;
-        self.ignore(&[
-            "interactive",
-            "fullsummary",
-            "restart",
             "calcres",
             "calcpsf",
         ])?;
+        // `restart` chooses the output names before the request runs
+        // (`ImagingRequest::with_tclean_output_policy`).
+        self.ignore(&["interactive", "fullsummary", "restart"])?;
         if self.values.get("savemodel").and_then(Value::as_str) == Some("virtual") {
             return Err(TcleanRefusal::not_yet("savemodel", "'virtual'", 823));
         }

@@ -49,6 +49,9 @@ pub(crate) struct NativeInput {
     pub(crate) write_corrected_data: bool,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) start_model: Option<crate::compile::StartModel>,
+    /// What the run reads in place of forming it ([`imaging::Forms`]).
+    pub(crate) existing: Option<crate::restart::ExistingProducts>,
+    pub(crate) forms: imaging::Forms,
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -133,6 +136,8 @@ pub(crate) struct NativeRun {
     products: u64,
     masks: ImageDomainReconstructionMaskPlans,
     start_model: Option<crate::compile::StartModel>,
+    existing: Option<crate::restart::ExistingProducts>,
+    forms: imaging::Forms,
     image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -232,6 +237,8 @@ pub(crate) fn prepare(
         products,
         masks: input.masks,
         start_model: input.start_model,
+        existing: input.existing,
+        forms: input.forms,
         image_response: input.minor_cycle_image_response,
     })
 }
@@ -254,6 +261,8 @@ pub(crate) fn run(
         products,
         masks,
         start_model,
+        existing,
+        forms,
         image_response,
     } = run;
     let teams = OnceCell::new();
@@ -268,6 +277,8 @@ pub(crate) fn run(
             source: &route,
             masks,
             start_model,
+            existing,
+            forms,
             image_response,
             visibility_write,
             products: (products, source.memory()),

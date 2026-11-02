@@ -445,6 +445,18 @@ next block boundary. `casars-imager` turns the first SIGINT into the run's
 removes its staging and paged state, publishes nothing, and exits with status
 130.
 
+A tclean run that continues on an earlier run's products at its prefix
+(`restart=True`, `casa-imaging-application`'s `restart` module) starts from
+that run's model, every Taylor term, channel and Stokes plane of it, and
+reuses its CLEAN mask when no new mask is given. Under `calcpsf=False` or
+`calcres=False` the first normal state is not all formed by the initial pass:
+the earlier PSF, sums of weights and residual are read
+(`restart::ExistingProducts`) and returned as the unnormalized images a pass
+would have formed, so the same minor cycle and products normalize them again.
+A run that reads its PSF forms its residual with a residual pass, one that
+reads its residual forms its PSF with a pass of the PSF alone, and one that
+reads both runs no initial pass; a residual read is not a major cycle.
+
 Accumulation is split among the workers of one `WorkerTeam`.
 `Partition::Planes` gives each worker a disjoint range of channel-local planes,
 so nothing is merged and the result is bitwise independent of the worker count;
