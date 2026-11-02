@@ -379,7 +379,11 @@ mod band_writer;
 mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
+mod selected_tiles;
+use selected_tiles::SelectedTiles;
 mod shape_cube;
+#[cfg(test)]
+mod split_axis0_tests;
 use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
 mod tile_columns;
 use tile_columns::{
@@ -3320,7 +3324,6 @@ fn fill_tiled_column_rows_from_patches_1d_typed(
 #[derive(Debug, Clone, Copy)]
 struct Typed1DCubeShape {
     axis0_count: usize,
-    tile_axis0_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -3336,6 +3339,32 @@ struct TypedSelected1DFillPlan<'a> {
     axis0_count: usize,
 }
 
+impl TypedSelected1DFillPlan<'_> {
+    /// The tiles of cube `cube_idx` this read walks, or `None` for a cube
+    /// that holds no data.
+    fn tiles(&self, cube_idx: usize) -> Result<Option<SelectedTiles<'_>>, StorageError> {
+        let Some(cube) = self.header.cubes.get(cube_idx) else {
+            return Ok(None);
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            return Ok(None);
+        }
+        typed_1d_cube_shape(cube)?;
+        SelectedTiles::new(
+            self.table_path,
+            self.dm_seq_nr,
+            self.header,
+            self.target_col_idx,
+            self.dt,
+            cube_idx,
+            cube,
+        )
+        .map(Some)
+    }
+}
+
+/// The rank-1 cell shape of `cube`. Its axis may lie in several tiles
+/// ([`SelectedTiles`]).
 fn typed_1d_cube_shape(cube: &TsmCubeInfo) -> Result<Typed1DCubeShape, StorageError> {
     let cell_ndim = cube.cube_shape.len().saturating_sub(1);
     let cell_shape = &cube.cube_shape[..cell_ndim];
@@ -3345,165 +3374,65 @@ fn typed_1d_cube_shape(cube: &TsmCubeInfo) -> Result<Typed1DCubeShape, StorageEr
             "typed selected 1-D read requires rank-1 cells, found cell_shape={cell_shape:?}"
         )));
     }
-    if cell_tile_shape[0] < cell_shape[0] {
-        return Err(StorageError::FormatMismatch(format!(
-            "typed selected 1-D read requires a complete axis-0 tile, found cell_shape={cell_shape:?} tile_shape={cell_tile_shape:?}"
-        )));
-    }
     Ok(Typed1DCubeShape {
         axis0_count: cell_shape[0],
-        tile_axis0_count: cell_tile_shape[0],
     })
 }
 
+/// Decode each selected row's cell into `values` (`[row, axis 0]`),
+/// gathering it from every tile along axis 0 that holds a part.
 fn fill_typed_selected_1d_rows<T: Copy>(
     plan: TypedSelected1DFillPlan<'_>,
     session: &mut TileReadSession,
     values: &mut [T],
     decode: fn(&[u8], bool) -> T,
 ) -> Result<(), StorageError> {
+    let elem_size = plan.elem_size;
     for (&cube_idx, patches) in plan.patches_by_cube {
-        let Some(cube) = plan.header.cubes.get(cube_idx) else {
+        let Some(tiles) = plan.tiles(cube_idx)? else {
             continue;
         };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        let shape = typed_1d_cube_shape(cube)?;
-        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-        let row_tile_size = cube.tile_shape[cell_ndim];
-        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
-        let tiles_per_dim: Vec<usize> = cube
-            .cube_shape
-            .iter()
-            .zip(cube.tile_shape.iter())
-            .map(|(&shape, &tile)| shape.div_ceil(tile))
-            .collect();
-        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&plan.header.col_data_types, &cube.tile_shape);
-        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-            std::collections::BTreeMap::new();
-        for &patch in patches {
-            patches_by_row_tile
-                .entry(patch.pos_in_cube / row_tile_size)
-                .or_default()
-                .push(patch);
-        }
-
-        for (row_tile, row_patches) in patches_by_row_tile {
-            let full_tile_pos = [0usize, row_tile];
-            let tile_index: usize = full_tile_pos
-                .iter()
-                .zip(tile_grid_strides.iter())
-                .map(|(pos, stride)| pos * stride)
-                .sum();
-            let tile = load_shared_column_tile(
-                plan.table_path,
-                plan.dm_seq_nr,
-                plan.header,
-                cube_idx,
-                cube,
-                plan.target_col_idx,
-                bucket_size,
-                col_offsets[plan.target_col_idx],
-                plan.dt,
-                tile_index,
-                session,
-            )?;
-
-            for selected in &row_patches {
-                let row_in_tile = selected.pos_in_cube % row_tile_size;
-                let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
-                let src_end = src_start + row_tile_nelem * plan.elem_size;
-                let tile_row = &tile[src_start..src_end];
-                for axis0 in 0..plan.axis0_count {
-                    let src_byte = axis0.saturating_mul(plan.elem_size);
-                    let dst_elem = selected
-                        .out_idx
-                        .saturating_mul(plan.axis0_count)
-                        .saturating_add(axis0);
-                    values[dst_elem] = decode(
-                        &tile_row[src_byte..src_byte + plan.elem_size],
-                        SHARED_TILE_BIG_ENDIAN,
-                    );
+        for (row_tile, row_patches) in tiles.rows_by_tile(patches) {
+            for span in tiles.axis0_spans() {
+                let tile = tiles.shared(tiles.tile_index(&[span.tile, row_tile]), session)?;
+                for &selected in &row_patches {
+                    let src = tiles.row_offset(selected) * elem_size;
+                    let dst = selected.out_idx * plan.axis0_count + span.start;
+                    for (axis0, value) in values[dst..dst + span.len].iter_mut().enumerate() {
+                        let byte = src + axis0 * elem_size;
+                        *value = decode(&tile[byte..byte + elem_size], SHARED_TILE_BIG_ENDIAN);
+                    }
                 }
-                debug_assert!(shape.tile_axis0_count >= plan.axis0_count);
             }
         }
     }
     Ok(())
 }
 
+/// Copy each selected row's cell into `values` (`[row, axis 0]`), a run of
+/// elements from every tile along axis 0 that holds a part.
 fn fill_typed_selected_1d_rows_by_copy<T: TilePixel>(
     plan: TypedSelected1DFillPlan<'_>,
     session: &mut TileReadSession,
     values: &mut [T],
 ) -> Result<(), StorageError> {
     debug_assert_eq!(plan.elem_size, T::ELEM_SIZE);
+    let elem_size = plan.elem_size;
     let values_bytes = tile_values_as_bytes_mut(values);
     for (&cube_idx, patches) in plan.patches_by_cube {
-        let Some(cube) = plan.header.cubes.get(cube_idx) else {
+        let Some(tiles) = plan.tiles(cube_idx)? else {
             continue;
         };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        let shape = typed_1d_cube_shape(cube)?;
-        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-        let row_tile_size = cube.tile_shape[cell_ndim];
-        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
-        let tiles_per_dim: Vec<usize> = cube
-            .cube_shape
-            .iter()
-            .zip(cube.tile_shape.iter())
-            .map(|(&shape, &tile)| shape.div_ceil(tile))
-            .collect();
-        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&plan.header.col_data_types, &cube.tile_shape);
-        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-            std::collections::BTreeMap::new();
-        for &patch in patches {
-            patches_by_row_tile
-                .entry(patch.pos_in_cube / row_tile_size)
-                .or_default()
-                .push(patch);
-        }
-
-        for (row_tile, row_patches) in patches_by_row_tile {
-            let full_tile_pos = [0usize, row_tile];
-            let tile_index: usize = full_tile_pos
-                .iter()
-                .zip(tile_grid_strides.iter())
-                .map(|(pos, stride)| pos * stride)
-                .sum();
-            let tile = load_shared_column_tile(
-                plan.table_path,
-                plan.dm_seq_nr,
-                plan.header,
-                cube_idx,
-                cube,
-                plan.target_col_idx,
-                bucket_size,
-                col_offsets[plan.target_col_idx],
-                plan.dt,
-                tile_index,
-                session,
-            )?;
-
-            for selected in &row_patches {
-                let row_in_tile = selected.pos_in_cube % row_tile_size;
-                let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
-                let src_byte = src_start;
-                let dst_byte = selected
-                    .out_idx
-                    .saturating_mul(plan.axis0_count)
-                    .saturating_mul(plan.elem_size);
-                let copy_bytes = plan.axis0_count.saturating_mul(plan.elem_size);
-                values_bytes[dst_byte..dst_byte + copy_bytes]
-                    .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
-                debug_assert!(shape.tile_axis0_count >= plan.axis0_count);
+        for (row_tile, row_patches) in tiles.rows_by_tile(patches) {
+            for span in tiles.axis0_spans() {
+                let tile = tiles.shared(tiles.tile_index(&[span.tile, row_tile]), session)?;
+                let copy_bytes = span.len * elem_size;
+                for &selected in &row_patches {
+                    let src_byte = tiles.row_offset(selected) * elem_size;
+                    let dst_byte = (selected.out_idx * plan.axis0_count + span.start) * elem_size;
+                    values_bytes[dst_byte..dst_byte + copy_bytes]
+                        .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                }
             }
         }
     }
@@ -3603,24 +3532,9 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
     match dt {
         CasacoreDataType::TpBool => {
             let mut values = vec![false; sample_count];
-            fill_typed_selected_2d_rows(
-                table_path,
-                dm_seq_nr,
-                header,
-                target_col_idx,
-                dt,
-                elem_size,
-                &col_desc.col_name,
-                &patches_by_cube,
-                selected_rows.len(),
-                corr_count,
-                channel_start,
-                channel_count,
-                false,
-                &mut session,
-                &mut values,
-                |bytes, _big_endian| bytes[0] != 0,
-            )?;
+            fill_typed_selected_2d_rows(fill_plan, &mut session, &mut values, |bytes, _| {
+                bytes[0] != 0
+            })?;
             Ok(Some(SelectedArray2DCells::Bool(SelectedArray2D::new(
                 selected_rows.len(),
                 corr_count,
@@ -3784,24 +3698,9 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
                 // contain its packed byte and must be decoded below.
                 fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
             } else {
-                fill_typed_selected_2d_rows(
-                    table_path,
-                    dm_seq_nr,
-                    header,
-                    target_col_idx,
-                    dt,
-                    elem_size,
-                    &col_desc.col_name,
-                    &patches_by_cube,
-                    selected_rows.len(),
-                    corr_count,
-                    channel_start,
-                    channel_count,
-                    fill_plan.row_major,
-                    &mut session,
-                    values,
-                    |bytes, _| bytes[0] != 0,
-                )?;
+                fill_typed_selected_2d_rows(fill_plan, &mut session, values, |bytes, _| {
+                    bytes[0] != 0
+                })?;
             }
         }
         (
@@ -3846,7 +3745,6 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
 #[derive(Debug, Clone, Copy)]
 struct Typed2DCubeShape {
     corr_count: usize,
-    tile_corr_count: usize,
     tile_channel_count: usize,
 }
 
@@ -3867,6 +3765,57 @@ struct TypedSelected2DFillPlan<'a> {
     row_major: bool,
 }
 
+impl TypedSelected2DFillPlan<'_> {
+    /// The tiles of cube `cube_idx` this read walks and the cube's cell
+    /// shape, or `None` for a cube that holds no data.
+    fn tiles(
+        &self,
+        cube_idx: usize,
+    ) -> Result<Option<(SelectedTiles<'_>, Typed2DCubeShape)>, StorageError> {
+        let Some(cube) = self.header.cubes.get(cube_idx) else {
+            return Ok(None);
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            return Ok(None);
+        }
+        let shape = typed_2d_cube_shape(cube, self.channel_start, self.channel_count)?;
+        let tiles = SelectedTiles::new(
+            self.table_path,
+            self.dm_seq_nr,
+            self.header,
+            self.target_col_idx,
+            self.dt,
+            cube_idx,
+            cube,
+        )?;
+        Ok(Some((tiles, shape)))
+    }
+
+    /// The selected channel tiles of a cube whose channel tiles are
+    /// `tile_channel_count` long: first and last.
+    fn channel_tiles(&self, tile_channel_count: usize) -> (usize, usize) {
+        let channel_end = self.channel_start + self.channel_count;
+        (
+            self.channel_start / tile_channel_count,
+            channel_end.saturating_sub(1) / tile_channel_count,
+        )
+    }
+
+    /// The output sample of `out_idx`'s selected channel `channel`, by the
+    /// destination's order (`[channel, row]` or `[row, channel]`).
+    fn output_sample(&self, out_idx: usize, channel: usize) -> usize {
+        let channel = channel - self.channel_start;
+        if self.row_major {
+            out_idx * self.channel_count + channel
+        } else {
+            channel * self.row_count + out_idx
+        }
+    }
+}
+
+/// The rank-2 cell shape of `cube`, whose channel axis holds the selected
+/// `channel_start..channel_start + channel_count`. Its axis 0 may lie in
+/// several tiles ([`SelectedTiles`]).
 fn typed_2d_cube_shape(
     cube: &TsmCubeInfo,
     channel_start: usize,
@@ -3891,11 +3840,6 @@ fn typed_2d_cube_shape(
             cell_shape[1]
         )));
     }
-    if cell_tile_shape[0] < cell_shape[0] {
-        return Err(StorageError::FormatMismatch(format!(
-            "typed selected 2-D read requires a complete axis-0 tile, found cell_shape={cell_shape:?} tile_shape={cell_tile_shape:?}"
-        )));
-    }
     if cell_tile_shape[1] == 0 {
         return Err(StorageError::FormatMismatch(
             "typed selected 2-D read found zero-width channel tile".to_string(),
@@ -3903,26 +3847,14 @@ fn typed_2d_cube_shape(
     }
     Ok(Typed2DCubeShape {
         corr_count: cell_shape[0],
-        tile_corr_count: cell_tile_shape[0],
         tile_channel_count: cell_tile_shape[1],
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Decode each selected row's channel range into `values`, gathering each
+/// channel's correlations from every tile along axis 0 that holds a part.
 fn fill_typed_selected_2d_rows<T: Copy>(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    column_name: &str,
-    patches_by_cube: &std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
-    row_count: usize,
-    corr_count: usize,
-    channel_start: usize,
-    channel_count: usize,
-    row_major: bool,
+    plan: TypedSelected2DFillPlan<'_>,
     session: &mut TileReadSession,
     values: &mut [T],
     decode: fn(&[u8], bool) -> T,
@@ -3934,126 +3866,66 @@ fn fill_typed_selected_2d_rows<T: Copy>(
     let mut profile_read = Duration::ZERO;
     let mut profile_decode = Duration::ZERO;
     let mut streamed_tile = Vec::new();
-    let channel_end = channel_start + channel_count;
-    for (&cube_idx, patches) in patches_by_cube {
-        let Some(cube) = header.cubes.get(cube_idx) else {
+    let elem_size = plan.elem_size;
+    let channel_end = plan.channel_start + plan.channel_count;
+    for (&cube_idx, patches) in plan.patches_by_cube {
+        let Some((tiles, shape)) = plan.tiles(cube_idx)? else {
             continue;
         };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        let shape = typed_2d_cube_shape(cube, channel_start, channel_count)?;
-        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-        let row_tile_size = cube.tile_shape[cell_ndim];
-        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
-        let tiles_per_dim: Vec<usize> = cube
-            .cube_shape
-            .iter()
-            .zip(cube.tile_shape.iter())
-            .map(|(&shape, &tile)| shape.div_ceil(tile))
-            .collect();
-        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-        let first_channel_tile = channel_start / shape.tile_channel_count;
-        let last_channel_tile = (channel_end.saturating_sub(1)) / shape.tile_channel_count;
-        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-            std::collections::BTreeMap::new();
-        for &patch in patches {
-            patches_by_row_tile
-                .entry(patch.pos_in_cube / row_tile_size)
-                .or_default()
-                .push(patch);
-        }
+        let (first_channel_tile, last_channel_tile) = plan.channel_tiles(shape.tile_channel_count);
+        let rows_by_tile = tiles.rows_by_tile(patches);
         let channel_tile_count = last_channel_tile - first_channel_tile + 1;
-        let stream_tiles = patches_by_row_tile.len().saturating_mul(channel_tile_count)
+        let stream_tiles = rows_by_tile
+            .len()
+            .saturating_mul(channel_tile_count)
+            .saturating_mul(tiles.axis0_tiles())
             > TILE_READ_SESSION_RECENT_TILE_COUNT;
 
-        for (row_tile, row_patches) in patches_by_row_tile {
+        for (row_tile, row_patches) in rows_by_tile {
             for channel_tile in first_channel_tile..=last_channel_tile {
                 let tile_channel_start = channel_tile * shape.tile_channel_count;
-                let actual_tile_channels = std::cmp::min(
-                    shape.tile_channel_count,
-                    cube.cube_shape[1] - tile_channel_start,
-                );
-                let overlap_start = std::cmp::max(channel_start, tile_channel_start);
+                let overlap_start = std::cmp::max(plan.channel_start, tile_channel_start);
                 let overlap_end =
-                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                    std::cmp::min(channel_end, tile_channel_start + shape.tile_channel_count);
                 if overlap_start >= overlap_end {
                     continue;
                 }
-
-                let full_tile_pos = [0usize, channel_tile, row_tile];
-                let tile_index: usize = full_tile_pos
-                    .iter()
-                    .zip(tile_grid_strides.iter())
-                    .map(|(pos, stride)| pos * stride)
-                    .sum();
-                let read_started = profile.then(Instant::now);
-                let shared_tile = if stream_tiles {
-                    load_streamed_column_tile(
-                        table_path,
-                        dm_seq_nr,
-                        header,
-                        cube,
-                        bucket_size,
-                        col_offsets[target_col_idx],
-                        dt,
-                        tile_index,
-                        last_channel_tile - channel_tile + 1,
+                for span in tiles.axis0_spans() {
+                    let read_started = profile.then(Instant::now);
+                    let run = stream_tiles
+                        .then(|| tiles.run_from(span, last_channel_tile - channel_tile));
+                    let shared_tile = tiles.load(
+                        tiles.tile_index(&[span.tile, channel_tile, row_tile]),
+                        run,
                         session,
                         &mut streamed_tile,
                     )?;
-                    None
-                } else {
-                    Some(load_shared_column_tile(
-                        table_path,
-                        dm_seq_nr,
-                        header,
-                        cube_idx,
-                        cube,
-                        target_col_idx,
-                        bucket_size,
-                        col_offsets[target_col_idx],
-                        dt,
-                        tile_index,
-                        session,
-                    )?)
-                };
-                let tile = shared_tile.as_deref().unwrap_or(&streamed_tile);
-                if let Some(started) = read_started {
-                    profile_read += started.elapsed();
-                    profile_tile_calls += 1;
-                    profile_tile_bytes = profile_tile_bytes.saturating_add(tile.len());
-                }
+                    let tile = shared_tile.as_deref().unwrap_or(&streamed_tile);
+                    if let Some(started) = read_started {
+                        profile_read += started.elapsed();
+                        profile_tile_calls += 1;
+                        profile_tile_bytes = profile_tile_bytes.saturating_add(tile.len());
+                    }
 
-                let decode_started = profile.then(Instant::now);
-                for selected in &row_patches {
-                    let row_in_tile = selected.pos_in_cube % row_tile_size;
-                    let src_start = row_in_tile * row_tile_nelem * elem_size;
-                    let src_end = src_start + row_tile_nelem * elem_size;
-                    let tile_row = &tile[src_start..src_end];
-                    for channel in overlap_start..overlap_end {
-                        let src_channel = channel - tile_channel_start;
-                        let dst_channel = channel - channel_start;
-                        for corr in 0..corr_count {
-                            let src_elem = corr + src_channel * shape.tile_corr_count;
-                            let dst_elem = if row_major {
-                                selected.out_idx * channel_count + dst_channel
-                            } else {
-                                dst_channel * row_count + selected.out_idx
-                            } * corr_count
-                                + corr;
-                            let src_byte = src_elem * elem_size;
-                            values[dst_elem] = decode(
-                                &tile_row[src_byte..src_byte + elem_size],
-                                SHARED_TILE_BIG_ENDIAN,
-                            );
+                    let decode_started = profile.then(Instant::now);
+                    for &selected in &row_patches {
+                        let row = tiles.row_offset(selected);
+                        for channel in overlap_start..overlap_end {
+                            let src = row + (channel - tile_channel_start) * tiles.tile_axis0_count;
+                            let dst = plan.output_sample(selected.out_idx, channel)
+                                * plan.corr_count
+                                + span.start;
+                            for (corr, value) in values[dst..dst + span.len].iter_mut().enumerate()
+                            {
+                                let byte = (src + corr) * elem_size;
+                                *value =
+                                    decode(&tile[byte..byte + elem_size], SHARED_TILE_BIG_ENDIAN);
+                            }
                         }
                     }
-                }
-                if let Some(started) = decode_started {
-                    profile_decode += started.elapsed();
+                    if let Some(started) = decode_started {
+                        profile_decode += started.elapsed();
+                    }
                 }
             }
         }
@@ -4062,11 +3934,11 @@ fn fill_typed_selected_2d_rows<T: Copy>(
         tracing::debug!(
             target: TYPED_2D_READ_PROFILE,
             "typed_2d_read_profile column={} mode=decode rows={} channels={} corr={} cubes={} tile_calls={} tile_bytes={} value_bytes={} read_ms={:.3} decode_ms={:.3} total_ms={:.3}",
-            column_name,
-            row_count,
-            channel_count,
-            corr_count,
-            patches_by_cube.len(),
+            plan.column_name,
+            plan.row_count,
+            plan.channel_count,
+            plan.corr_count,
+            plan.patches_by_cube.len(),
             profile_tile_calls,
             profile_tile_bytes,
             values.len().saturating_mul(std::mem::size_of::<T>()),
@@ -4078,6 +3950,8 @@ fn fill_typed_selected_2d_rows<T: Copy>(
     Ok(())
 }
 
+/// Copy each selected row's channel range into `values`, each channel's
+/// correlations a run from every tile along axis 0 that holds a part.
 fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
     plan: TypedSelected2DFillPlan<'_>,
     session: &mut TileReadSession,
@@ -4091,163 +3965,91 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
     let mut profile_read = Duration::ZERO;
     let mut profile_copy = Duration::ZERO;
     let mut streamed_tile = Vec::new();
+    let elem_size = plan.elem_size;
     let channel_end = plan.channel_start + plan.channel_count;
     let values_bytes = tile_values_as_bytes_mut(values);
     for (&cube_idx, patches) in plan.patches_by_cube {
-        let Some(cube) = plan.header.cubes.get(cube_idx) else {
+        let Some((tiles, shape)) = plan.tiles(cube_idx)? else {
             continue;
         };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        let shape = typed_2d_cube_shape(cube, plan.channel_start, plan.channel_count)?;
-        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-        let row_tile_size = cube.tile_shape[cell_ndim];
-        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
-        let tiles_per_dim: Vec<usize> = cube
-            .cube_shape
-            .iter()
-            .zip(cube.tile_shape.iter())
-            .map(|(&shape, &tile)| shape.div_ceil(tile))
-            .collect();
-        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&plan.header.col_data_types, &cube.tile_shape);
-        let first_channel_tile = plan.channel_start / shape.tile_channel_count;
-        let last_channel_tile = (channel_end.saturating_sub(1)) / shape.tile_channel_count;
-        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-            std::collections::BTreeMap::new();
-        for &patch in patches {
-            patches_by_row_tile
-                .entry(patch.pos_in_cube / row_tile_size)
-                .or_default()
-                .push(patch);
-        }
+        let (first_channel_tile, last_channel_tile) = plan.channel_tiles(shape.tile_channel_count);
+        let rows_by_tile = tiles.rows_by_tile(patches);
         let channel_tile_count = last_channel_tile - first_channel_tile + 1;
-        let stream_tiles = patches_by_row_tile.len().saturating_mul(channel_tile_count)
+        let stream_tiles = rows_by_tile
+            .len()
+            .saturating_mul(channel_tile_count)
+            .saturating_mul(tiles.axis0_tiles())
             > TILE_READ_SESSION_RECENT_TILE_COUNT;
+        // A tile exactly as long as axis 0 holds a row's channels as one
+        // run of whole cells.
+        let whole_cells = tiles.tile_axis0_count == plan.corr_count;
 
-        for (row_tile, row_patches) in patches_by_row_tile {
+        for (row_tile, row_patches) in rows_by_tile {
             for channel_tile in first_channel_tile..=last_channel_tile {
                 let tile_channel_start = channel_tile * shape.tile_channel_count;
-                let actual_tile_channels = std::cmp::min(
-                    shape.tile_channel_count,
-                    cube.cube_shape[1] - tile_channel_start,
-                );
                 let overlap_start = std::cmp::max(plan.channel_start, tile_channel_start);
                 let overlap_end =
-                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                    std::cmp::min(channel_end, tile_channel_start + shape.tile_channel_count);
                 if overlap_start >= overlap_end {
                     continue;
                 }
-
-                let full_tile_pos = [0usize, channel_tile, row_tile];
-                let tile_index: usize = full_tile_pos
-                    .iter()
-                    .zip(tile_grid_strides.iter())
-                    .map(|(pos, stride)| pos * stride)
-                    .sum();
-                let read_started = profile.then(Instant::now);
-                let shared_tile = if stream_tiles {
-                    load_streamed_column_tile(
-                        plan.table_path,
-                        plan.dm_seq_nr,
-                        plan.header,
-                        cube,
-                        bucket_size,
-                        col_offsets[plan.target_col_idx],
-                        plan.dt,
-                        tile_index,
-                        last_channel_tile - channel_tile + 1,
+                for span in tiles.axis0_spans() {
+                    let read_started = profile.then(Instant::now);
+                    let run = stream_tiles
+                        .then(|| tiles.run_from(span, last_channel_tile - channel_tile));
+                    let shared_tile = tiles.load(
+                        tiles.tile_index(&[span.tile, channel_tile, row_tile]),
+                        run,
                         session,
                         &mut streamed_tile,
                     )?;
-                    None
-                } else {
-                    Some(load_shared_column_tile(
-                        plan.table_path,
-                        plan.dm_seq_nr,
-                        plan.header,
-                        cube_idx,
-                        cube,
-                        plan.target_col_idx,
-                        bucket_size,
-                        col_offsets[plan.target_col_idx],
-                        plan.dt,
-                        tile_index,
-                        session,
-                    )?)
-                };
-                let tile = shared_tile.as_deref().unwrap_or(&streamed_tile);
-                if let Some(started) = read_started {
-                    profile_read += started.elapsed();
-                    profile_tile_calls += 1;
-                    profile_tile_bytes = profile_tile_bytes.saturating_add(tile.len());
-                }
+                    let tile = shared_tile.as_deref().unwrap_or(&streamed_tile);
+                    if let Some(started) = read_started {
+                        profile_read += started.elapsed();
+                        profile_tile_calls += 1;
+                        profile_tile_bytes = profile_tile_bytes.saturating_add(tile.len());
+                    }
 
-                let copy_started = profile.then(Instant::now);
-                if !plan.row_major {
-                    let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
-                    for channel in overlap_start..overlap_end {
-                        let src_channel = channel - tile_channel_start;
-                        let dst_channel = channel - plan.channel_start;
-                        let source_offset = src_channel
-                            .saturating_mul(shape.tile_corr_count)
-                            .saturating_mul(plan.elem_size);
-                        for selected in &row_patches {
-                            let row_in_tile = selected.pos_in_cube % row_tile_size;
-                            let src_byte =
-                                row_in_tile * row_tile_nelem * plan.elem_size + source_offset;
-                            let dst_byte = (dst_channel * plan.row_count + selected.out_idx)
-                                * plan.corr_count
-                                * plan.elem_size;
-                            values_bytes[dst_byte..dst_byte + copy_bytes]
-                                .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                    let copy_started = profile.then(Instant::now);
+                    let copy_bytes = span.len * elem_size;
+                    let channel_bytes = tiles.tile_axis0_count * elem_size;
+                    let byte = |sample: usize| (sample * plan.corr_count + span.start) * elem_size;
+                    if !plan.row_major {
+                        for channel in overlap_start..overlap_end {
+                            let source_offset = (channel - tile_channel_start) * channel_bytes;
+                            for &selected in &row_patches {
+                                let src_byte =
+                                    tiles.row_offset(selected) * elem_size + source_offset;
+                                let dst_byte = byte(plan.output_sample(selected.out_idx, channel));
+                                values_bytes[dst_byte..dst_byte + copy_bytes]
+                                    .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                            }
+                        }
+                    } else if whole_cells {
+                        let run_bytes = (overlap_end - overlap_start) * channel_bytes;
+                        for &selected in &row_patches {
+                            let src_byte = tiles.row_offset(selected) * elem_size
+                                + (overlap_start - tile_channel_start) * channel_bytes;
+                            let dst_byte =
+                                byte(plan.output_sample(selected.out_idx, overlap_start));
+                            values_bytes[dst_byte..dst_byte + run_bytes]
+                                .copy_from_slice(&tile[src_byte..src_byte + run_bytes]);
+                        }
+                    } else {
+                        for &selected in &row_patches {
+                            let row_byte = tiles.row_offset(selected) * elem_size;
+                            for channel in overlap_start..overlap_end {
+                                let src_byte =
+                                    row_byte + (channel - tile_channel_start) * channel_bytes;
+                                let dst_byte = byte(plan.output_sample(selected.out_idx, channel));
+                                values_bytes[dst_byte..dst_byte + copy_bytes]
+                                    .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                            }
                         }
                     }
                     if let Some(started) = copy_started {
                         profile_copy += started.elapsed();
                     }
-                    continue;
-                }
-                for selected in &row_patches {
-                    let row_in_tile = selected.pos_in_cube % row_tile_size;
-                    let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
-                    let src_end = src_start + row_tile_nelem * plan.elem_size;
-                    let tile_row = &tile[src_start..src_end];
-                    if plan.row_major && shape.tile_corr_count == plan.corr_count {
-                        let source_channel = overlap_start - tile_channel_start;
-                        let destination_channel = overlap_start - plan.channel_start;
-                        let copy_bytes =
-                            (overlap_end - overlap_start) * plan.corr_count * plan.elem_size;
-                        let src_byte = source_channel * plan.corr_count * plan.elem_size;
-                        let dst_byte = (selected.out_idx * plan.channel_count
-                            + destination_channel)
-                            * plan.corr_count
-                            * plan.elem_size;
-                        values_bytes[dst_byte..dst_byte + copy_bytes]
-                            .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
-                        continue;
-                    }
-                    for channel in overlap_start..overlap_end {
-                        let src_channel = channel - tile_channel_start;
-                        let dst_channel = channel - plan.channel_start;
-                        let src_byte = src_channel
-                            .saturating_mul(shape.tile_corr_count)
-                            .saturating_mul(plan.elem_size);
-                        let dst_sample = if plan.row_major {
-                            selected.out_idx * plan.channel_count + dst_channel
-                        } else {
-                            dst_channel * plan.row_count + selected.out_idx
-                        };
-                        let dst_byte = dst_sample * plan.corr_count * plan.elem_size;
-                        let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
-                        values_bytes[dst_byte..dst_byte + copy_bytes]
-                            .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
-                    }
-                }
-                if let Some(started) = copy_started {
-                    profile_copy += started.elapsed();
                 }
             }
         }
