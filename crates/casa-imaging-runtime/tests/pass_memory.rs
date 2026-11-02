@@ -669,11 +669,11 @@ fn a_metal_spread_backend_holds_at_most_its_charged_scratch() {
     let (heap, device) = held_in_a_clean_window("Metal spread scratch", || {
         acc.reset();
         let before = casa_imaging_metal::device_bytes();
+        // The backend is released when the closure returns, after the
+        // device bytes are read and inside the measured window.
         let mut backend = casa_imaging_metal::MetalBackend::new(operator.cf(), false).unwrap();
         apply(&mut backend, &mut acc);
-        let device = casa_imaging_metal::device_bytes().saturating_sub(before);
-        drop(backend);
-        device
+        casa_imaging_metal::device_bytes().saturating_sub(before)
     });
     assert!(acc.sumwt().iter().any(|weight| *weight > 0.0));
     eprintln!("Metal spread scratch: heap={heap}, device={device}, admitted={admitted}");
