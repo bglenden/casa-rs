@@ -47,10 +47,10 @@ pub enum Unsupported {
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
     NonSquareAwProjection,
-    /// The mosaic and AW kernel sets key their cells on each row's spectral
-    /// window and dishes, numbered within one MeasurementSet; several wait
-    /// for a numbering across MeasurementSets (#980).
-    SeveralMeasurementSetsKernelSet,
+    /// The AW catalog keys its cells on the first MeasurementSet's
+    /// frequencies and first cross-correlation sample; a list of them waits
+    /// for cells over all of them (#980).
+    SeveralMeasurementSetsAwProjection,
 }
 
 impl fmt::Display for Unsupported {
@@ -88,9 +88,9 @@ impl fmt::Display for Unsupported {
                 "AW projection images a square imsize of square cells; the standard, W and \
                  mosaic gridders image any other",
             ),
-            Self::SeveralMeasurementSetsKernelSet => formatter.write_str(
-                "the mosaic and awproject gridders image one MeasurementSet; the standard and \
-                 wproject gridders image a list of them (#980)",
+            Self::SeveralMeasurementSetsAwProjection => formatter.write_str(
+                "the awproject gridder images one MeasurementSet; the standard, wproject and \
+                 mosaic gridders image a list of them (#980)",
             ),
         }
     }
@@ -236,7 +236,7 @@ pub fn check(
     }
     if problem.observation().sources().len() > 1 && !crate::imaging::multi_store_kernel_set(problem)
     {
-        unsupported.push(Unsupported::SeveralMeasurementSetsKernelSet);
+        unsupported.push(Unsupported::SeveralMeasurementSetsAwProjection);
     }
     if backend == BackendChoice::Metal {
         if !host.metal {

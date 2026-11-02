@@ -21,7 +21,7 @@ pub(crate) use measurement::{
 };
 pub(crate) use observation_source::{
     BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, StoreBatches,
-    StoreRoute, WriteBack, admit_batches, pointing_direction,
+    StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
 };
 pub(crate) use visibility_write::VisibilityWriteTarget;
 

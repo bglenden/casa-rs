@@ -438,9 +438,12 @@ earliest `TIME`), takes the image's coordinates from one of them (CASA's
 band from all, and the snapshot holds one source per MeasurementSet. The
 source then reads each store's partitions in turn, each with its own
 selection and geometry plan, and a final pass writes each one's
-`MODEL_DATA`; weighting density and every pass span them all. The mosaic and
-AW kernel sets, which key cells on per-MeasurementSet window and dish
-numbers, are refused with several. A pass reads
+`MODEL_DATA`; weighting density and every pass span them all. A row's
+spectral window and field are keyed among every MeasurementSet's rows, as if
+they were concatenated (CASA's `msId_spw` and `msId_field`), and its dishes
+among every MeasurementSet's aperture classes, so the mosaic's beams and a
+`mosweight` density keep each MeasurementSet's apart. The AW catalog, keyed
+on the first MeasurementSet's frequencies, is refused with several. A pass reads
 native row blocks, each row projected on every image domain, from the bounded
 source through a two-slot stream (one block filled by a producer thread while
 the caller consumes the other), places each row on every domain with that

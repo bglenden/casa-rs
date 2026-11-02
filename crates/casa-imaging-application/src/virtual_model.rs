@@ -380,7 +380,7 @@ fn write_machine(
         BackendChoice::Cpu,
         Some(GridPrecision::F64),
         None,
-        &[],
+        &imaging::StoreKeys::default(),
         KernelAdmission {
             host: &runtime.host,
             policy: &runtime.resource_policy,

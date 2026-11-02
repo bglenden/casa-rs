@@ -15,6 +15,7 @@ use casa_observation::{Correlation, PartitionEntry, VisibilityBatch};
 use casa_types::measures::MjdHighPrec;
 use num_complex::Complex32;
 
+use super::keys::StoreKeys;
 use super::selection::{PartitionSelection, SelectedPartition};
 use crate::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
 
@@ -131,8 +132,10 @@ pub(super) struct Packer<'p> {
     /// Each chart's direction law when a kernel set ramps each row to its
     /// pointing; empty otherwise.
     pub(super) pointing: Vec<DirectionCoordinateSpec>,
-    /// The aperture classes in dish order.
-    pub(super) dish_classes: Vec<AntennaResponseClass>,
+    /// The keys of the route's stores: the aperture classes a row's
+    /// antenna types index, and the window and field keys its context
+    /// carries.
+    pub(super) keys: StoreKeys,
 }
 
 /// Buffers packing reuses from batch to batch.
@@ -200,12 +203,18 @@ impl<'b> Arrays<'b> {
 
 impl Packer<'_> {
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
-    /// `geometry` applied to those samples. Unread visibilities are zero.
+    /// `geometry` applied to those samples; the rows are keyed as store
+    /// `store`'s ([`StoreKeys`]). Unread visibilities are zero.
     /// A non-finite input fails the run under [`FiniteValuePolicy`], naming
     /// the sample.
     pub(super) fn pack(
         &self,
-        (batch, partition, layout): (&VisibilityBatch<'_>, &SelectedPartition, &Layout),
+        (batch, store, partition, layout): (
+            &VisibilityBatch<'_>,
+            usize,
+            &SelectedPartition,
+            &Layout,
+        ),
         geometry: &BatchGeometry,
         keep: &[bool],
         values: bool,
@@ -280,11 +289,11 @@ impl Packer<'_> {
                     antennas: [baseline.antenna1.0, baseline.antenna2.0],
                     antenna_types: antenna_types(
                         geometry.antenna_responses(sample),
-                        &self.dish_classes,
+                        &self.keys.dish_classes,
                     ),
                     parallactic_angle_rad: geometry.parallactic_angles(sample).unwrap_or([0.0; 2]),
-                    field: field.0,
-                    spectral_window: partition.spectral_window,
+                    field: self.keys.field(store, field.0),
+                    spectral_window: self.keys.window(store, partition.spectral_window),
                 },
                 address: RowAddress::UNADDRESSED,
             };

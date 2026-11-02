@@ -5,7 +5,8 @@
 //! MeasurementSets images as the whole band does in one, sample for sample,
 //! weighting density included, whichever order the list names them in; a
 //! cube on the first one's channels reads the second where it reaches the
-//! cube; and the final model is written into each one's `MODEL_DATA`.
+//! cube; the final model is written into each one's `MODEL_DATA`; and a
+//! mosaic keeps each one's windows and `mosweight` densities apart.
 
 use std::path::Path;
 
@@ -295,4 +296,89 @@ fn a_selector_list_must_match_the_measurement_sets() {
                 .image_stores(&split.halves(), "selected", json!({ "spw": spw.clone() }));
         assert!(run.gridded_samples > 0, "{spw}");
     }
+}
+
+/// The T1 mosaic's three pointings without noise, observed in `windows`
+/// windows of one 2 GHz channel each, at 50 GHz and 25 GHz above it.
+fn mosaic_track(windows: &[usize]) -> Observation {
+    let mut setup = super::mosaic::setup();
+    setup.noise_jy = 0.0;
+    setup.spectral_windows = windows
+        .iter()
+        .map(|window| SyntheticSpectralSetup {
+            name: format!("t1-mosaic-{window}"),
+            start_frequency_hz: 50.0e9 + *window as f64 * 25.0e9,
+            channel_width_hz: 2.0e9,
+            channel_count: 1,
+        })
+        .collect();
+    Observation::synthesise_setup(setup, &[("point", POINT)])
+}
+
+/// The mosaic's controls: a dirty image at the centre pointing, with its
+/// primary beam.
+fn mosaic_controls(weighting: &str) -> serde_json::Value {
+    json!({
+        "gridder": "mosaic",
+        "mosweight": true,
+        "weighting": weighting,
+        "phasecenter": "1",
+        "niter": 0,
+        "write_pb": true,
+    })
+}
+
+/// A mosaic keys each MeasurementSet's windows apart (CASA's `msId_spw`):
+/// one band per MeasurementSet, both numbered window 0, images as the two
+/// windows of one MeasurementSet do, the second band's beams on its own
+/// frequencies.
+#[test]
+fn a_mosaic_over_two_measurement_sets_keeps_each_ones_beams() {
+    let whole = mosaic_track(&[0, 1]);
+    let low = mosaic_track(&[0]);
+    let high = mosaic_track(&[1]);
+    let controls = mosaic_controls("natural");
+    let (whole_run, expected) = whole.image("mosaic-whole", controls.clone());
+    let (run, products) = whole.image_stores(
+        &[low.measurement_set(), high.measurement_set()],
+        "mosaic-halves",
+        controls,
+    );
+    assert_eq!(run.gridded_samples, whole_run.gridded_samples);
+    assert_products(
+        &products,
+        &expected,
+        &[".sumwt", ".weight", ".pb", ".psf", ".residual"],
+        "mosaic",
+    );
+}
+
+/// A `mosweight` density is each MeasurementSet's field's (CASA's
+/// `msId_field`): two copies of one track weigh each sample as the track
+/// alone does, so the PSF and residual are the track's and the sum of
+/// weights twice its; one density over both copies would halve every
+/// uniform weight.
+#[test]
+fn a_mosweight_density_keeps_each_measurement_sets_fields_apart() {
+    let first = mosaic_track(&[0]);
+    let second = mosaic_track(&[0]);
+    let controls = mosaic_controls("uniform");
+    let (_, alone) = first.image("mosweight-alone", controls.clone());
+    let (_, products) = first.image_stores(
+        &[first.measurement_set(), second.measurement_set()],
+        "mosweight-copies",
+        controls,
+    );
+    assert_products(
+        &products,
+        &alone,
+        &[".psf", ".residual", ".pb"],
+        "mosweight",
+    );
+    let [twice, once] =
+        [&products, &alone].map(|products| products.get(".sumwt").channel_values()[0]);
+    assert!(
+        (f64::from(twice) - 2.0 * f64::from(once)).abs() < 1.0e-5 * f64::from(once),
+        "sumwt {twice} over the copies, {once} over one"
+    );
 }

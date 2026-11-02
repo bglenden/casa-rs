@@ -566,7 +566,7 @@ impl<'a> Run<'a> {
         let backend = inputs.backend;
         let correlations = selected_correlations(problem)?;
         let route = inputs.source;
-        let dish_classes = route.dish_classes();
+        let keys = route.keys();
         let (host, policy) = (inputs.host, inputs.policy);
         // The passes' workers hold the kernels: at most the policy's.
         let ceiling = policy.cores(&host);
@@ -588,7 +588,7 @@ impl<'a> Run<'a> {
                     backend,
                     inputs.grid_precision,
                     inputs.aw_catalog.as_ref(),
-                    &dish_classes,
+                    &keys,
                     admission,
                 )
             })

@@ -19,6 +19,7 @@
 //! (`compile::partitions`).
 
 mod admission;
+mod keys;
 mod pack;
 mod pointing;
 mod requests;
@@ -41,6 +42,7 @@ use casa_ms::observation_io::UpdateSession;
 use casa_observation::{AccessRequest, BatchBuffers, Observation, ReadEvent, Traversal};
 
 pub(crate) use admission::{Batching, StoreBatches, admit_batches};
+pub(crate) use keys::StoreKeys;
 use pack::{Layout, PackScratch, Packer, select_samples};
 use pointing::PointingCache;
 pub(crate) use pointing::pointing_direction;
@@ -112,11 +114,19 @@ struct PartitionKey {
 type PartitionWindow = (PartitionKey, Option<Range<usize>>);
 
 impl BatchRoute {
-    /// The aperture classes in dish order
-    /// ([`GeometryPlan::aperture_classes`]) of the first store: the kernel
-    /// sets that key on them read one store (`availability::check`).
-    pub(crate) fn dish_classes(&self) -> Vec<casa_imaging_model::AntennaResponseClass> {
-        self.stores[0].plan.aperture_classes()
+    /// The keys of the route's stores ([`StoreKeys`]): every store's
+    /// aperture classes ([`GeometryPlan::aperture_classes`]) and where its
+    /// windows and fields start.
+    pub(crate) fn keys(&self) -> StoreKeys {
+        StoreKeys::new(
+            self.stores
+                .iter()
+                .map(|store| store.observation().catalogue().as_ref()),
+            self.stores
+                .iter()
+                .flat_map(|store| store.plan.aperture_classes())
+                .collect(),
+        )
     }
 
     /// The write-back of a run that writes visibilities.
@@ -277,7 +287,7 @@ impl<'a> ObservationSource<'a> {
                 problem,
                 charts: layout.domains,
                 pointing,
-                dish_classes: route.dish_classes(),
+                keys: route.keys(),
             },
             planes,
             bounds,
@@ -463,7 +473,7 @@ impl<'a> ObservationSource<'a> {
                 &mut self.geometry,
             )?;
             self.packer.pack(
-                (&batch, partition, layout),
+                (&batch, key.store, partition, layout),
                 &self.geometry,
                 &self.keep,
                 stream.values,
@@ -483,7 +493,10 @@ impl<'a> ObservationSource<'a> {
                 write_back.deliver(Delivered::Block(Provenance {
                     address: batch.address(),
                     samples,
-                    spectral_window: partition.spectral_window,
+                    spectral_window: self
+                        .packer
+                        .keys
+                        .window(key.store, partition.spectral_window),
                 }));
             }
             return Ok(true);

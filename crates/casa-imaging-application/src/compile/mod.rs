@@ -33,7 +33,7 @@ mod time_selection;
 pub(crate) use opening::OpenedStore;
 pub(crate) use start_model::StartModel;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -199,7 +199,13 @@ pub(crate) fn prepare(
         primary_beam,
         primary_beam_centres,
     )?;
-    let instrument = instrument::scientific_instrument_model(&request.gridder, catalogue)?;
+    let instrument = instrument::scientific_instrument_model(
+        &request.gridder,
+        &stores
+            .iter()
+            .map(stores::SurveyedStore::catalogue)
+            .collect::<Vec<_>>(),
+    )?;
     let specification = specification::specification(
         request,
         &spectral,
@@ -492,12 +498,33 @@ fn specification_inputs(
         density_fields: match request.gridder {
             Gridder::Mosaic {
                 mosweight: true, ..
-            } => specification::density_fields(&surveyed.survey.fields),
+            } => specification::density_fields(&density_field_keys(surveyed.stores)),
             _ => None,
         },
         cube_density_padding: cube_density_padding(request, surveyed)?,
         continuum_transform,
     })
+}
+
+/// Every store's selected fields with data under their keys
+/// ([`StoreKeys`](crate::imaging::StoreKeys)): `mosweight` grids a density
+/// for each MeasurementSet's field apart (CASA's `msId_field`).
+fn density_field_keys(stores: &[stores::SurveyedStore]) -> BTreeSet<i32> {
+    let keys = crate::imaging::StoreKeys::new(
+        stores.iter().map(stores::SurveyedStore::catalogue),
+        Vec::new(),
+    );
+    stores
+        .iter()
+        .enumerate()
+        .flat_map(|(index, store)| {
+            let keys = &keys;
+            store.survey.fields.iter().map(move |field| {
+                let field = u32::try_from(*field).expect("a selected FIELD_ID is not negative");
+                i32::try_from(keys.field(index, field)).expect("field keys fit a FIELD_ID")
+            })
+        })
+        .collect()
 }
 
 /// The selected observation's manifest, one source per store, each

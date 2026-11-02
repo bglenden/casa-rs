@@ -19,6 +19,7 @@ use casa_imaging_runtime::{
 use casa_types::Correlation;
 
 use super::ImagingError;
+use super::observation_source::StoreKeys;
 use crate::AwCatalogDeployment;
 
 /// The operator of one image domain and the resampler that places rows on
@@ -230,15 +231,15 @@ fn mosaic_conjugate_beams(problem: &CompiledProblem) -> bool {
 }
 
 /// Whether the problem's kernel set grids several MeasurementSets: the
-/// standard set and the W planes, which key no row on its MeasurementSet.
-/// The mosaic set keys its beams on each row's spectral window and dish
-/// classes, and the AW catalog its cells on the first MeasurementSet's
-/// frequencies and first cross-correlation sample, all numbered within one
-/// MeasurementSet.
+/// standard set and the W planes, which key no row on its MeasurementSet,
+/// and the mosaic set, which keys its beams on each row's window key and
+/// dish classes over every MeasurementSet ([`StoreKeys`]). The AW catalog
+/// keys its cells on the first MeasurementSet's frequencies and first
+/// cross-correlation sample.
 pub(crate) fn multi_store_kernel_set(problem: &CompiledProblem) -> bool {
     matches!(
         kernel_set_kind(problem),
-        KernelSetKind::Standard | KernelSetKind::WPlanes
+        KernelSetKind::Standard | KernelSetKind::WPlanes | KernelSetKind::Mosaic
     )
 }
 
@@ -280,10 +281,11 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
 /// `aw_catalog`, in the requested precision or the one `backend` grids at.
-/// The mosaic set takes one dish per selected aperture class in
-/// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
-/// rows' antenna types index. Mosaic and AW grid without padding (CASA
-/// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
+/// The mosaic set takes one dish per aperture class of `keys`
+/// (`HetArrayConvFunc::findAntennaSizes`), the order the rows' antenna
+/// types index, and the beams of each window under its key. Mosaic and AW
+/// grid without padding (CASA `MosaicFT`, `AWProjectFT`); the others on
+/// CASA's composite-padded grid.
 /// The kernel set is admitted as [`kernel_set`] says, and its charge lives
 /// with the operator.
 #[allow(clippy::too_many_arguments)]
@@ -294,7 +296,7 @@ pub(crate) fn domain_operator(
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
     aw_catalog: Option<&AwCatalogDeployment>,
-    dish_classes: &[AntennaResponseClass],
+    keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
@@ -318,7 +320,7 @@ pub(crate) fn domain_operator(
         kind,
         (&geometry, &polarization),
         aw_catalog,
-        dish_classes,
+        keys,
         admission,
     )?;
     Ok(DomainOperator {
@@ -366,7 +368,7 @@ fn kernel_set(
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
     aw_catalog: Option<&AwCatalogDeployment>,
-    dish_classes: &[AntennaResponseClass],
+    keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
     const PHASE: &str = "convolution functions";
@@ -409,12 +411,13 @@ fn kernel_set(
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
         KernelSetKind::Mosaic => {
-            if dish_classes.is_empty() {
+            if keys.dish_classes.is_empty() {
                 return Err(ImagingError::Unsupported {
                     reason: "the mosaic set needs ALMA, ACA or EVLA dishes in the selection",
                 });
             }
-            let dishes = dish_classes
+            let dishes = keys
+                .dish_classes
                 .iter()
                 .map(|class| match class {
                     AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
@@ -423,7 +426,7 @@ fn kernel_set(
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;
-            let windows = mosaic_windows(problem)?;
+            let windows = mosaic_windows(problem, keys)?;
             let rules = if mosaic_conjugate_beams(problem) {
                 MosaicRules::TcleanConjugateBeams
             } else {
@@ -469,21 +472,20 @@ fn kernel_set(
     })
 }
 
-/// The selected spectral windows as the mosaic set keys them: every
+/// The selected spectral windows of every store under their keys
+/// (`keys`), as the mosaic set keys them (CASA's `msId_spw`): every
 /// channel of the window, its first channel width and the selected
-/// channels' frequencies in LSRK at the window's first visibility buffer,
-/// where `HetArrayConvFunc` evaluates the window's beams
+/// channels' frequencies in LSRK at the window's first visibility buffer
+/// in its store, where `HetArrayConvFunc` evaluates the window's beams
 /// (`interpVisFreq_p`, `FTMachine::matchChannel`).
-fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, ImagingError> {
+fn mosaic_windows(
+    problem: &CompiledProblem,
+    keys: &StoreKeys,
+) -> Result<Vec<MosaicWindow>, ImagingError> {
     let mut windows = Vec::new();
-    for source in problem.observation_transaction().read_set().sources() {
+    let sources = problem.observation_transaction().read_set().sources();
+    for (store, source) in sources.iter().enumerate() {
         for window in source.selection().spectral_windows() {
-            if windows
-                .iter()
-                .any(|known: &MosaicWindow| known.spectral_window == window.spectral_window_id())
-            {
-                continue;
-            }
             let catalog = window
                 .coordinate_catalog()
                 .ok_or(ImagingError::Unsupported {
@@ -507,7 +509,7 @@ fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, Imagin
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             windows.push(MosaicWindow {
-                spectral_window: window.spectral_window_id(),
+                spectral_window: keys.window(store, window.spectral_window_id()),
                 window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
                 channel_width_hz: catalog.first_channel_width_hz(),
                 selected_frequencies_hz: selected,

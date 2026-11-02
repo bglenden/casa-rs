@@ -65,7 +65,7 @@ pub(super) struct Provenance {
     pub(super) address: BatchAddress,
     /// The batch sample of each of its rows.
     pub(super) samples: Vec<u32>,
-    /// The spectral window its rows carry.
+    /// The spectral window key its rows carry ([`super::StoreKeys`]).
     pub(super) spectral_window: u32,
 }
 
@@ -328,6 +328,8 @@ impl<'a> BatchWriter<'a> {
         let columns = u64::from(model) + u64::from(corrected);
         for (row, sample) in samples.iter().enumerate() {
             let context = block.header(row).context;
+            // A continuum transform reads one MeasurementSet (compile
+            // refuses several), whose keys are its own numbers.
             let rule = self.transform.and_then(|transform| {
                 transform.rule(context.field as i32, context.spectral_window)
             });
