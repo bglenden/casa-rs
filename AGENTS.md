@@ -122,9 +122,9 @@ locations are in `docs/agent-reference.md`.
   squash merge, start new work from `main`.
 - Do not commit directly to `main`, except docs-only changes that pass
   `just docs-check`.
-- Remove your own worktrees, branches, scratch and remote copies once their
-  work is merged or pushed, without asking; `just tidy --apply` finds
-  merged and squash-merged leftovers.
+- Remove your own scratch and remote copies once their work is pushed, and
+  your merged branches and worktrees whenever you next tidy, without
+  asking; `just tidy --apply` finds merged and squash-merged leftovers.
 - The repository is public; copying its source to any host is fine. Never
   copy credentials, secrets, or non-public datasets.
 
@@ -134,9 +134,10 @@ Agents do not wait for the owner; the owner steers by reading what was
 decided, afterwards.
 
 - Carry an authorized task, resumed work and PRs taken over included,
-  through implementation, checks, review, CI, merge and cleanup, then take
-  its issue's next item, until no authorized work remains or the end point
-  its issue or plan names. There, report; do not start unnamed work.
+  through implementation, checks, review and a ready PR with auto-merge
+  set, then take its issue's next item, until no authorized work remains
+  or the end point its issue or plan names. There, report; do not start
+  unnamed work.
 - A choice not on the stop list is yours: make it, list it under
   `Decisions:` (what, why, the alternative not taken), add the
   `owner-review` label and continue. An overturned decision becomes
@@ -246,14 +247,17 @@ isolated, strengthen its demonstration test instead of adding a review.
   `-D warnings` and the tests of the touched crates, and `just arch-check`.
   CI runs the whole workspace; run `just quick` locally only for changes
   across many crates. One green run is enough.
-- A PR that needs no review opens ready; one that needs a review stays a
-  draft until its findings are fixed. Ready means merge when green: set
-  `gh pr merge --auto --squash`, report that it is merging, and move on.
-- The agent that opens or takes over a PR watches it to merge (`CLAUDE.md`
-  names the Claude app's monitor). Rerun a job that failed on a known flake
-  (note it on the flake's issue) or a timing gate that missed by about its
-  noise; fix real failures on the branch, or return the PR to draft, saying
-  why, if the fix is not quick.
+- A PR may open as a draft while work continues. Once its checks pass and
+  any review is resolved, mark it ready and set
+  `gh pr merge --auto --squash`: ready means merge when green, and GitHub
+  merges it without anyone watching. That ends the author's part; the
+  session need not stay open for CI.
+- A ready PR whose CI fails stays open, since auto-merge waits. Whoever
+  picks it up (the author's session if its PR monitor wakes it, or a later
+  session) reruns a job that failed on a known flake (noting it on the
+  flake's issue) or a timing gate that missed by about its noise, fixes
+  real failures on the branch, or returns the PR to draft, saying why, if
+  the fix is not quick.
 - Never skip, ignore or loosen a test, or change an expected value to match
   new output, to get green; a changed expected value says why the old one
   was wrong. A failure is not a flake until it is shown to be one.
@@ -264,9 +268,10 @@ isolated, strengthen its demonstration test instead of adding a review.
   description.
 - Missing test data or disk space is an environment problem, not a code
   regression; say so.
-- Done means CI is green, the description says what was run, what it
-  showed, what was not run and what was decided, and the docs match the
-  code.
+- An agent's part is done when the PR is ready with auto-merge set on green
+  local checks, its description says what was run, what it showed, what
+  was not run and what was decided, and the docs match the code. The work
+  is done when it merges.
 
 ## Imaging
 
