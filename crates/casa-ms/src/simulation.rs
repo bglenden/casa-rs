@@ -3798,9 +3798,25 @@ fn predict_analytic_row_values(
         }
     }
 
-    for channel in 0..channel_count {
-        let visibility = values[ms_data_index(0, channel, num_corr)];
-        set_unpolarized_visibility(&mut values, channel, num_corr, visibility);
+    // The first correlation is always a parallel hand; the other parallel
+    // hand, the last ([`corruption::correlation_receptors`]), takes it, and
+    // the cross hands stay zero ([`set_unpolarized_visibility`]), without
+    // the receptor lookup for each channel.
+    match num_corr {
+        4 => {
+            for [first, _, _, last] in values.as_chunks_mut::<4>().0 {
+                *last = *first;
+            }
+        }
+        2 => {
+            for [first, last] in values.as_chunks_mut::<2>().0 {
+                *last = *first;
+            }
+        }
+        1 => {}
+        other => {
+            unreachable!("a synthetic polarization setup holds 1, 2 or 4 correlations, not {other}")
+        }
     }
     values
 }
@@ -3818,7 +3834,8 @@ fn set_unpolarized_visibility(
     visibility: Complex32,
 ) {
     let start = ms_data_index(0, channel, num_corr);
-    let receptors = corruption::correlation_receptors(num_corr).unwrap_or(&[]);
+    let receptors = corruption::correlation_receptors(num_corr)
+        .expect("a synthetic polarization setup holds 1, 2 or 4 correlations");
     for (value, [first, second]) in values[start..start + num_corr].iter_mut().zip(receptors) {
         if first == second {
             *value = visibility;
@@ -5110,7 +5127,7 @@ mod tests {
                     assert_eq!(channel[3], channel[0], "{context}");
                     assert_eq!([channel[1], channel[2]], [zero, zero], "{context}");
                 }
-                // Two correlations are both parallel hands.
+                // Two correlations are both parallel hands, and one is.
                 let two = predicted_data_values_for_rows_with_workers(
                     Some(predictor),
                     &spectral_setup,
@@ -5122,6 +5139,17 @@ mod tests {
                     let context = format!("{name}, {workers} workers: {channel:?}");
                     assert!(channel[0].norm() > 0.1, "{context}");
                     assert_eq!(channel[1], channel[0], "{context}");
+                }
+                let one = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    1,
+                    workers,
+                );
+                for (row, four_row) in one.iter().zip(&four) {
+                    let parallel = four_row.iter().step_by(4).copied().collect::<Vec<_>>();
+                    assert_eq!(row, &parallel, "{name}, {workers} workers");
                 }
             }
         }
