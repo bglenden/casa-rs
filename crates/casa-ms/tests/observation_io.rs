@@ -29,6 +29,9 @@ mod metadata;
 #[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
+#[cfg(unix)]
+#[path = "observation_io/receptors.rs"]
+mod receptors;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[cfg(unix)]

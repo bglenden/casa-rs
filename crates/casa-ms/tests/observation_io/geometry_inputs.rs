@@ -741,14 +741,16 @@ fn feed_rows(path: &Path) -> Vec<(i32, i32)> {
     rows
 }
 
-/// Each partition states its antennas' receptors in its own window, read
-/// as casacore's `MSIter` and XRADIO's converter read `FEED`: a window's
-/// own rows once any row names a window, else the rows for every window
-/// (-1). A conversion carries them both ways; where one antenna's windows
-/// differ, the MSv2 written has a row per window for every antenna, since a
-/// row for every window would then be ignored. Of rows of one antenna,
-/// feed and window that differ in time, the last is taken, as casacore's
-/// `MSIter` takes it, and a conversion reports the others as lost.
+/// Each partition states its antennas' receptors in its own window: an
+/// antenna and feed's rows in that window, else its rows for every window
+/// (-1), as the MeasurementSet definition gives them (casacore's `MSIter`
+/// and XRADIO's converter ignore rows for every window beside rows that
+/// name a window). A conversion carries them both ways; where one
+/// antenna's windows differ, the MSv2 written has a row per window for
+/// every antenna and none for every window, which casacore and XRADIO
+/// read alike. Of rows of one antenna, feed and window that differ in
+/// time, the last is taken, as casacore's `MSIter` takes it, and a
+/// conversion reports the others as lost.
 #[test]
 fn receptors_are_each_partitions_own() {
     let root = tempfile::tempdir().expect("root");
@@ -782,8 +784,10 @@ fn receptors_are_each_partitions_own() {
         "a row per window for every antenna, none for every window"
     );
 
-    // Rows for every window serve both; with a window-1 row beside them,
-    // casacore ignores them, so window 0 has no receptors.
+    // Rows for every window serve both; a window-1 row beside them serves
+    // its antenna in window 1, and they still serve the rest (casacore's
+    // MSIter and XRADIO would ignore them in both windows). A conversion
+    // carries that both ways, written back as a row per window.
     let v2 = variant("every");
     edit_feed(&v2, Some(-1), &[]);
     let every = open(&v2, &OpenOptions::default()).expect("every");
@@ -791,7 +795,17 @@ fn receptors_are_each_partitions_own() {
     let v2 = variant("override");
     edit_feed(&v2, Some(-1), &[(0, 1, 0.25, 0.0)]);
     let overridden = open(&v2, &OpenOptions::default()).expect("override");
-    assert_eq!(angles(overridden.as_ref()), [vec![], vec![0.25, 0.25]]);
+    assert_eq!(angles(overridden.as_ref()), mixed);
+    let v4 = root.path().join("override.ps.zarr");
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    let back = root.path().join("override.ms");
+    casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
+    let again = open(&back, &OpenOptions::default()).expect("back");
+    assert_eq!(angles(again.as_ref()), mixed);
+    assert_eq!(
+        feed_rows(&back),
+        [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
+    );
 
     // Antenna 0's window-0 receptors change 10 s later: the later row,
     // last in the table, is the one read; a conversion refuses the change
@@ -828,15 +842,51 @@ fn receptors_are_each_partitions_own() {
     let earlier = open(&v2, &OpenOptions::default()).expect("earlier");
     assert_eq!(angles(earlier.as_ref()), last);
 
-    // Rows for every window are not read beside window rows, so their
-    // changing in time is no loss.
+    // An antenna's rows for every window are not read where it has a row
+    // in every window, so their changing in time is no loss.
     let v2 = variant("unread");
-    edit_feed(&v2, None, &[(0, -1, 0.5, 0.0), (0, -1, 0.75, 10.0)]);
+    edit_feed(
+        &v2,
+        None,
+        &[
+            (0, 1, 0.0, 0.0),
+            (1, 1, 0.0, 0.0),
+            (2, 1, 0.0, 0.0),
+            (0, -1, 0.5, 0.0),
+            (0, -1, 0.75, 10.0),
+        ],
+    );
     let unread = open(&v2, &OpenOptions::default()).expect("unread");
-    assert_eq!(angles(unread.as_ref()), [vec![0.0; 6], vec![]]);
+    assert_eq!(angles(unread.as_ref()), [vec![0.0; 6], vec![0.0; 6]]);
     let v4 = root.path().join("unread.ps.zarr");
     casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion())
         .expect("no FEED loss to accept");
+
+    // Where they serve a window without rows of its own they are read, the
+    // last taken, and their changing in time is a loss.
+    let v2 = variant("read");
+    edit_feed(
+        &v2,
+        None,
+        &[
+            (0, -1, 0.0, 0.0),
+            (1, -1, 0.0, 0.0),
+            (2, -1, 0.0, 0.0),
+            (0, -1, 0.75, 10.0),
+        ],
+    );
+    let read = open(&v2, &OpenOptions::default()).expect("read");
+    let served = [vec![0.0; 6], vec![0.75, 0.75, 0.0, 0.0, 0.0, 0.0]];
+    assert_eq!(angles(read.as_ref()), served);
+    let v4 = root.path().join("read.ps.zarr");
+    let refused = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion());
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("FEED")),
+        "{refused:?}"
+    );
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &accepting).expect("to msv4");
+    let converted = open(&v4, &OpenOptions::default()).expect("msv4");
+    assert_eq!(angles(converted.as_ref()), served);
 }
 
 /// #937: a store says whether it holds any pointing at all, whatever the
