@@ -120,6 +120,11 @@ Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
 [a FITS date's time scale](#importfits-reads-every-fits-date-as-utc),
 [`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
+MeasurementSet selection behaviours casa-rs follows:
+[later `timerange` terms' defaults](#later-timerange-terms-take-their-defaults-from-row-0),
+[`FLAG_ROW` beside other selections](#the-timerange-defaults-ignore-flag_row-when-other-selections-are-set).
+MeasurementSet selection behaviours casa-rs does not follow:
+[the state a refused bracketed range leaves](#a-refused-bracketed-timerange-makes-later-ranges-edge-inclusive).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -2815,3 +2820,55 @@ does not fit the output column's type is wrapped as a C cast does (a `Short`
 `putcell` above. casa-rs raises `RuntimeError: a value is out of range for a
 column of ...`, before the output is touched, rather than store a wrong
 number.
+
+## Later `timerange` terms take their defaults from row 0
+
+- Date noted: 2026-11-02
+- Status: CASA quirk casa-rs follows for parity (#980,
+  `casa-ms` `selection::time_expr`)
+- Affected code: casacore `ms/MSSel/MSTimeParse.cc` (`getDefaults`)
+
+A `timerange` time with missing fields (`09:00:00`, `*`, `2017/03/01`) takes
+them, and a single time's tolerance and a bracketed range's edge width take
+the `EXPOSURE`, from the "first logical row". `getDefaults` sets
+`firstLogicalRow = 0` and searches for the first logical row only while the
+static `defaultTimeComputed` is false, which its first call makes true. Every
+comma-separated term calls it once, so the first term reads the first logical
+row and every later term reads row 0. With `field='1'` on an MS whose FIELD 1
+rows start a day after row 0, CASA 6.7.6.14 selects `10:30:00.5` on FIELD 1's
+day in `10:30:00.5,10:40:00.5` but looks for `10:40:00.5` on row 0's day
+(`fields` cases of
+`resources/casa-compat/evidence/msselection-time-casa-20261102.json`).
+casa-rs resolves the terms the same way (`TimeSelectorDefaults`).
+
+## The `timerange` defaults ignore `FLAG_ROW` when other selections are set
+
+- Date noted: 2026-11-02
+- Status: CASA quirk casa-rs follows for parity (#980)
+- Affected code: casacore `ms/MSSel/MSTimeParse.cc` (`getDefaults`)
+
+`MSSelection` builds its time parser with `honourRowFlags` true. With no other
+selection expression, the first logical row is the first row whose `FLAG_ROW`
+is false. With one, `getDefaults` tests `FLAG_ROW` but both branches of the
+test read the other expressions' condition the same way, so the first logical
+row is the first row they select, flagged or not. casa-rs follows both
+(`msselection_first_logical_row`).
+
+## A refused bracketed `timerange` makes later ranges edge-inclusive
+
+- Date noted: 2026-11-02
+- Status: CASA bug casa-rs does not follow (#980)
+- Affected code: casacore `ms/MSSel/MSTimeGram.yy` (`brangetimeexpr`)
+
+The grammar keeps a bracketed range's state in the process globals
+`MSTimeEdgeInclusiveRange` and `MSTimeEdgeBuffer`, set when `[` (or `N[`) is
+read and cleared only when a range completes. A bracketed range that is
+refused (`[09:00:00]`, `10.25[09:00:00~08:00:00]`) leaves them set, so the
+next unbracketed range anywhere in the process is edge-inclusive with that
+width until a range completes. In CASA 6.7.6.14, `09:00:00~09:01:00` after
+`10.25[09:00:00~08:00:00]` selects 35 rows of a 2 s MS instead of 30, and
+`09:00:00.5+00:00:30` after `0.0[09:00:10~09:00:00]` loses both end rows
+(`bracket_state_leaks` in
+`resources/casa-compat/evidence/msselection-time-casa-20261102.json`, whose
+other cases each run after a completed range clears the state). casa-rs keeps
+no state between parses.

@@ -35,10 +35,15 @@ pub mod antenna_expr;
 mod edit;
 pub(crate) mod parser;
 pub mod syntax;
+pub mod time_expr;
 
 pub use antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
 pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
+pub use time_expr::{
+    LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
+    TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
+};
 
 /// Builder for MS row selection criteria.
 ///

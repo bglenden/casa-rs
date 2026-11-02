@@ -150,10 +150,13 @@ pub use selection::syntax::{
     parse_numeric_id_selector, parse_numeric_row_id_ranges, parse_spw_selector,
 };
 pub use selection::{
-    AntennaRow, BaselineSelection, FieldSelectorRow, MsReadPlan, MsSelection, MsSelectionError,
-    MsSelectionIoBudget, MsSelectionRowBlock, MsSelectorEditContext, ResolvedMsSelection,
-    ResolvedMsSelectionRow, UvDistanceInterval, UvDistanceLimit, parse_uv_distance_intervals,
-    resolve_antenna_selector, resolve_field_selector_rows, validate_ms_selector_edit,
+    AntennaRow, BaselineSelection, FieldSelectorRow, LogicalRowFilter, MsReadPlan, MsSelection,
+    MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock, MsSelectorEditContext,
+    ResolvedMsSelection, ResolvedMsSelectionRow, TimeCondition, TimeDefaults, TimeListEntry,
+    TimeSelection, TimeSelector, TimeSelectorDefaults, TimeTerm, UvDistanceInterval,
+    UvDistanceLimit, msselection_first_logical_row, parse_uv_distance_intervals,
+    resolve_antenna_selector, resolve_field_selector_rows, resolve_time_selector,
+    validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
