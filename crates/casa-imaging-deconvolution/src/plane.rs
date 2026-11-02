@@ -238,9 +238,10 @@ pub fn beam_patch(maximum_scale_px: f64, shape: PlaneShape) -> usize {
     support
 }
 
-/// CASA's robust noise of one plane (`SIImageStore::calcRobustRMS`): the
-/// median of the supported values and 1.4826 times their median absolute
-/// deviation. `None` when nothing is supported.
+/// CASA's robust noise of one plane (`SIImageStore::calcRobustRMS` with
+/// `fastnoise=True`): casacore's classical median of the supported values
+/// and 1.4826 times their median absolute deviation. `None` when nothing
+/// is supported.
 #[must_use]
 pub fn robust_noise(values: &[f64], support: &Support) -> Option<RobustNoise> {
     let mut samples = values
@@ -249,19 +250,7 @@ pub fn robust_noise(values: &[f64], support: &Support) -> Option<RobustNoise> {
         .filter(|(_, supported)| **supported)
         .map(|(value, _)| *value)
         .collect::<Vec<_>>();
-    if samples.is_empty() {
-        return None;
-    }
-    let middle = samples.len() / 2;
-    let median = *samples.select_nth_unstable_by(middle, f64::total_cmp).1;
-    for sample in &mut samples {
-        *sample = (*sample - median).abs();
-    }
-    let deviation = *samples.select_nth_unstable_by(middle, f64::total_cmp).1;
-    Some(RobustNoise {
-        median,
-        rms: 1.482_602_218_505_602 * deviation,
-    })
+    crate::noise::classical_noise(&mut samples)
 }
 
 /// The robust statistics of one residual plane.
@@ -269,7 +258,8 @@ pub fn robust_noise(values: &[f64], support: &Support) -> Option<RobustNoise> {
 pub struct RobustNoise {
     /// Median of the supported values.
     pub median: f64,
-    /// 1.4826 times the median absolute deviation.
+    /// 1.4826 times the median absolute deviation
+    /// ([`crate::noise::CASA_MAD_TO_RMS`]).
     pub rms: f64,
 }
 
@@ -360,7 +350,7 @@ mod tests {
         let support = Support::new(shape, vec![true, true, true, false, false]);
         let noise = robust_noise(&values, &support).expect("support");
         assert_eq!(noise.median, 2.0);
-        assert!((noise.rms - 1.482_602_218_505_602).abs() < 1e-15);
+        assert_eq!(noise.rms, crate::noise::CASA_MAD_TO_RMS);
         assert_eq!(
             robust_noise(&values, &Support::new(shape, vec![false; 5])),
             None

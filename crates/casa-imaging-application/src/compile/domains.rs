@@ -11,7 +11,8 @@ use casa_coordinates::{
 };
 use casa_images::AnyPagedImage;
 use casa_imaging_deconvolution::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, NoiseEstimate,
+    ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
@@ -180,10 +181,8 @@ fn warn_inefficient_size(image_size: [usize; 2]) {
     }
 }
 
-/// The main domain's mask: CASA auto-multithresh, the user mask image or
-/// boxes, or every pixel. The auto-multithresh controls the catalog does
-/// not carry take CASA's defaults (`smoothfactor = 1`, `cutthreshold =
-/// 0.01`, `minpercentchange = -1`).
+/// The main domain's mask: CASA auto-multithresh with tclean's controls,
+/// the user mask image or boxes, or every pixel.
 fn request_mask(request: &ImagingRequest) -> DomainMask {
     match (request.usemask, &request.mask_image) {
         (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
@@ -192,16 +191,28 @@ fn request_mask(request: &ImagingRequest) -> DomainMask {
             low_noise_factor: request.lownoisethreshold,
             negative_factor: request.negativethreshold,
             minimum_beam_fraction: request.minbeamfrac,
-            smooth_factor: 1.0,
-            cut_threshold: 0.01,
+            smooth_factor: request.smoothfactor,
+            cut_threshold: request.cutthreshold,
             grow_iterations: request.growiterations,
-            minimum_percent_change: -1.0,
+            grow_prune: request.dogrowprune,
+            minimum_percent_change: request.minpercentchange,
+            noise: noise_estimate(request),
+            verbose: request.verbose,
         }),
         (UseMask::User, Some(path)) => DomainMask::Image(path.clone()),
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
         (UseMask::User, None) => DomainMask::Boxes(request.mask_box.clone()),
+    }
+}
+
+/// tclean's noise estimate (`fastnoise`).
+pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
+    if request.fastnoise {
+        NoiseEstimate::Fast
+    } else {
+        NoiseEstimate::Robust
     }
 }
 

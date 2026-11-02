@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! The imaging request's tests, and the helpers other modules' tests use.
+
 use std::path::PathBuf;
 
 use serde_json::json;

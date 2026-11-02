@@ -7,12 +7,16 @@
 //! auto-multithreshold masks are the same closed type, so solvers need no
 //! mask-mode branch.
 
-use std::collections::VecDeque;
+mod auto_multithresh;
 
 use casa_imaging_model::DirectionCoordinateSpec;
 use thiserror::Error;
 
 use crate::FinalNormalState;
+pub use auto_multithresh::{
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold,
+    AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh,
+};
 
 /// Reproject decoded source support onto the target direction grid.
 ///
@@ -260,59 +264,36 @@ impl ReconstructionMaskPlan {
                 previous,
                 evolution_stopped,
             } => {
-                if base.sample_count() != shape[0] * shape[1] {
+                // One plane: a polarization of one channel, or a Taylor
+                // family, whose terms share the mask CASA makes from the
+                // zeroth.
+                if normal.polarization_count() != 1 || normal.domain_count() != 1 {
                     return Err(MaskError::ShapeMismatch);
                 }
-                let valid_support = base
-                    .read_plane(0, 0, 0)?
-                    .iter()
-                    .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
+                // Model samples run x fastest; the support, y fastest.
+                let samples = base.read_plane(0, 0, 0)?;
+                let valid_support = (0..shape[0] * shape[1])
+                    .map(|index| {
+                        let [x, y] = [index / shape[1], index % shape[1]];
+                        samples[y * shape[0] + x].support()
+                            == casa_imaging_model::ModelSupport::Valid
+                    })
                     .collect::<Vec<_>>();
                 let (mask, evidence) = auto_multithresh(
                     *coordinate,
                     normal,
                     previous.as_deref(),
                     &valid_support,
-                    *completed_major_cycles,
-                    *cycle_threshold_reached,
-                    *evolution_stopped,
+                    AutoMaskCycle {
+                        completed_major_cycles: *completed_major_cycles,
+                        threshold_reached: *cycle_threshold_reached,
+                        stopped: *evolution_stopped,
+                    },
                     *controls,
                     beam.ok_or(MaskError::InvalidBeamArea)?,
                 )?;
                 Ok((mask, Some(evidence)))
             }
-        }
-    }
-}
-
-/// The primary PSF's fitted main lobe (pixels) and sidelobe level, measured
-/// once per PSF by the minor cycle, as the automatic mask needs them.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMaskBeam {
-    major_fwhm_pixels: f64,
-    minor_fwhm_pixels: f64,
-    position_angle_rad: f64,
-    area_pixels: f64,
-    sidelobe_fraction: f64,
-}
-
-impl AutoMaskBeam {
-    /// A beam of the given full widths at half maximum (pixels), position
-    /// angle and fitted sidelobe level.
-    #[must_use]
-    pub const fn new(
-        major_fwhm_pixels: f64,
-        minor_fwhm_pixels: f64,
-        position_angle_rad: f64,
-        sidelobe_fraction: f64,
-    ) -> Self {
-        Self {
-            major_fwhm_pixels,
-            minor_fwhm_pixels,
-            position_angle_rad,
-            area_pixels: std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
-                / (4.0 * std::f64::consts::LN_2),
-            sidelobe_fraction,
         }
     }
 }
@@ -355,6 +336,24 @@ pub struct ReconstructionMask {
 #[derive(Debug, Clone)]
 pub struct ImageDomainReconstructionMaskPlans {
     plans: Box<[ReconstructionMaskPlan]>,
+    /// Major cycles completed before the boundary these plans are for.
+    completed_major_cycles: usize,
+}
+
+/// The clean mask tclean's robust noise estimate (`fastnoise=False`)
+/// leaves out of one image domain's statistics at a boundary
+/// (`SDMaskHandler::calcRobustImageStatistics`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoiseMaskExclusion<'a> {
+    /// No mask yet: Chauvenet statistics of the valid pixels. tclean's
+    /// first noise estimate reads the mask image before it is filled.
+    Unmasked,
+    /// The domain's clean mask, in canonical x-major order: the classical
+    /// statistics outside it, or Chauvenet's when it is empty or full.
+    Mask(&'a [bool]),
+    /// A plane whose automatic mask stopped evolving: tclean records its
+    /// statistics as zero.
+    Stopped,
 }
 
 /// Immutable per-image-domain masks of one shared cycle.
@@ -406,7 +405,10 @@ impl ImageDomainReconstructionMaskPlans {
         if plans.is_empty() {
             return Err(MaskError::DomainCardinalityMismatch);
         }
-        Ok(Self { plans })
+        Ok(Self {
+            plans,
+            completed_major_cycles: 0,
+        })
     }
 
     /// Return the number of canonical domain plans.
@@ -462,7 +464,38 @@ impl ImageDomainReconstructionMaskPlans {
                     *stopped,
                 )
             });
-        Self::new(plans)
+        let mut next = Self::new(plans)?;
+        next.completed_major_cycles = completed_major_cycles;
+        Ok(next)
+    }
+
+    /// What tclean's robust noise estimate leaves out of domain
+    /// `ordinal`'s statistics at this boundary, `current` being the masks
+    /// materialized for it: an automatic mask's inherited support, or a
+    /// static mask once the first boundary has passed.
+    #[must_use]
+    pub fn noise_exclusion<'a>(
+        &'a self,
+        ordinal: usize,
+        current: &'a ImageDomainReconstructionMasks,
+    ) -> NoiseMaskExclusion<'a> {
+        match self.plans.get(ordinal) {
+            Some(ReconstructionMaskPlan::AutoMultithresh {
+                evolution_stopped: true,
+                ..
+            }) => NoiseMaskExclusion::Stopped,
+            Some(ReconstructionMaskPlan::AutoMultithresh { previous, .. }) => previous
+                .as_deref()
+                .map_or(NoiseMaskExclusion::Unmasked, |mask| {
+                    NoiseMaskExclusion::Mask(mask.support())
+                }),
+            _ if self.completed_major_cycles == 0 => NoiseMaskExclusion::Unmasked,
+            _ => current
+                .get(ordinal)
+                .map_or(NoiseMaskExclusion::Unmasked, |mask| {
+                    NoiseMaskExclusion::Mask(mask.support())
+                }),
+        }
     }
 
     /// Heap bytes [`Self::materialize`] holds at most against `normal`: each
@@ -702,241 +735,6 @@ impl ReconstructionMask {
     }
 }
 
-/// CASA auto-multithreshold controls.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMultithreshControls {
-    /// Sidelobe threshold multiplier.
-    pub sidelobe_factor: f64,
-    /// Robust-noise threshold multiplier.
-    pub noise_factor: f64,
-    /// Low-noise growth multiplier.
-    pub low_noise_factor: f64,
-    /// Negative-feature threshold multiplier; zero disables negative masks.
-    pub negative_factor: f64,
-    /// Minimum connected-region area as a fraction of the beam area.
-    pub minimum_beam_fraction: f64,
-    /// Gaussian smoothing FWHM as a fraction of the restoring beam.
-    pub smooth_factor: f64,
-    /// Fraction of the smoothed-mask peak retained.
-    pub cut_threshold: f64,
-    /// Four-connected growth iteration bound.
-    pub grow_iterations: usize,
-    /// Percent-change channel-stop threshold.
-    pub minimum_percent_change: f64,
-}
-
-/// Inspectable evidence for one auto-multithreshold generation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMultithreshEvidence {
-    /// Robust residual median.
-    pub median: f64,
-    /// MAD-derived robust RMS.
-    pub robust_rms: f64,
-    /// Positive detection threshold.
-    pub positive_threshold: f64,
-    /// Low-noise growth threshold.
-    pub low_noise_threshold: f64,
-    /// Optional negative detection threshold.
-    pub negative_threshold: Option<f64>,
-    /// Number of support pixels that changed.
-    pub changed_pixels: usize,
-    /// Whether later cycles should stop evolving this plane.
-    pub channel_stopped: bool,
-}
-
-/// Heap bytes per pixel [`auto_multithresh`] holds at most: the normalised
-/// residual, its deviations and one sorted copy for a median (`f64` each);
-/// region pruning's component list and queue, grown by pushes (`usize`
-/// each, twice for growth); the smoothed plane (`f64`); and its five
-/// `bool` planes.
-pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
-    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + size_of::<f64>() as u64 + 5;
-
-/// Generate a new auto-multithreshold mask from immutable Normal State, with
-/// `beam` the PSF's fitted main lobe and sidelobe level.
-#[allow(clippy::too_many_arguments)]
-pub fn auto_multithresh(
-    coordinate: DirectionCoordinateSpec,
-    normal: &FinalNormalState,
-    previous: Option<&ReconstructionMask>,
-    valid_support: &[bool],
-    completed_major_cycles: usize,
-    cycle_threshold_reached: bool,
-    evolution_stopped: bool,
-    controls: AutoMultithreshControls,
-    beam: AutoMaskBeam,
-) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
-    if normal.channel_count() != 1 {
-        return Err(MaskError::ShapeMismatch);
-    }
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    validate_auto_controls(controls, beam.area_pixels)?;
-    let shape = normal.shape();
-    if valid_support.len() != shape[0] * shape[1]
-        || previous.is_some_and(|mask| mask.shape != shape || mask.coordinate != coordinate)
-    {
-        return Err(MaskError::ShapeMismatch);
-    }
-    // `FinalNormalState` retains the unnormalised normal-equation planes. CASA
-    // derives automask thresholds from the displayed residual in model units,
-    // so remove the accumulated normalisation exactly as the minor-cycle
-    // solver does before applying Jy-valued controls.
-    let psf_peak = normal
-        .normal_approximation()
-        .iter()
-        .map(|value| value.re)
-        .fold(f64::NEG_INFINITY, f64::max);
-    if !psf_peak.is_finite() || psf_peak <= 0.0 {
-        return Err(MaskError::InvalidBeamArea);
-    }
-    let residual = normal
-        .residual()
-        .iter()
-        .map(|value| value.re / psf_peak)
-        .collect::<Vec<_>>();
-    if residual.iter().any(|value| !value.is_finite()) {
-        return Err(MaskError::NonfiniteResidual);
-    }
-    let residual_median = median(&residual);
-    let deviations = residual
-        .iter()
-        .map(|value| (value - residual_median).abs())
-        .collect::<Vec<_>>();
-    let robust_rms = 1.482_602_218_505_602 * median(&deviations);
-    let absolute_peak = casa_residual_absolute_peak(&residual);
-    let sidelobe_level = beam.sidelobe_fraction;
-    let positive_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-        .max(controls.noise_factor * robust_rms);
-    let low_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-        .max(controls.low_noise_factor * robust_rms);
-    let positive_threshold = residual_median + positive_offset;
-    let low_noise_threshold = residual_median + low_offset;
-    let negative_threshold = (controls.negative_factor > 0.0).then(|| {
-        residual_median
-            - (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-                .max(controls.negative_factor * robust_rms)
-    });
-    let detected = if evolution_stopped {
-        vec![false; residual.len()]
-    } else {
-        detect_regions(
-            &residual,
-            valid_support,
-            shape,
-            Thresholds {
-                positive: positive_threshold,
-                low_noise: low_noise_threshold,
-                negative: negative_threshold,
-            },
-            completed_major_cycles > 0,
-            controls,
-            beam,
-        )
-    };
-    let mut support =
-        previous.map_or_else(|| vec![false; detected.len()], |mask| mask.support.to_vec());
-    let before = support.clone();
-    for index in 0..support.len() {
-        support[index] = valid_support[index] && (support[index] || detected[index]);
-    }
-    let changed_pixels = support
-        .iter()
-        .zip(&before)
-        .filter(|(left, right)| left != right)
-        .count();
-    let previous_pixels = before.iter().filter(|value| **value).count();
-    let percent_change = if previous_pixels == 0 {
-        if changed_pixels == 0 { 0.0 } else { 100.0 }
-    } else {
-        100.0 * changed_pixels as f64 / previous_pixels as f64
-    };
-    let channel_stopped = evolution_stopped
-        || support.iter().all(|value| !*value)
-        || (controls.minimum_percent_change >= 0.0
-            && cycle_threshold_reached
-            && percent_change <= controls.minimum_percent_change);
-    Ok((
-        ReconstructionMask::new(coordinate, shape, support),
-        AutoMultithreshEvidence {
-            median: residual_median,
-            robust_rms,
-            positive_threshold,
-            low_noise_threshold,
-            negative_threshold,
-            changed_pixels,
-            channel_stopped,
-        },
-    ))
-}
-
-/// One generation's detection thresholds on the residual.
-#[derive(Clone, Copy)]
-struct Thresholds {
-    positive: f64,
-    low_noise: f64,
-    negative: Option<f64>,
-}
-
-/// The regions one generation detects on `residual`'s `valid` pixels
-/// (`SDMaskHandler::autoMaskByMultiThreshold`). The emission mask is the
-/// pixels above the positive threshold, pruned of regions smaller than the
-/// minimum beam fraction, smoothed and cut, and after the first major cycle
-/// grown into the low-noise threshold. The absorption mask is CASA's own:
-/// the pixels below the negative threshold, smoothed and cut at their own
-/// peak, but neither pruned nor grown, and added to the emission mask.
-fn detect_regions(
-    residual: &[f64],
-    valid: &[bool],
-    shape: [usize; 2],
-    thresholds: Thresholds,
-    grow: bool,
-    controls: AutoMultithreshControls,
-    beam: AutoMaskBeam,
-) -> Vec<bool> {
-    let threshold_mask = |selected: &dyn Fn(f64) -> bool| {
-        residual
-            .iter()
-            .zip(valid)
-            .map(|(value, valid)| *valid && selected(*value))
-            .collect::<Vec<_>>()
-    };
-    let mut detected = threshold_mask(&|value| value > thresholds.positive);
-    prune_regions(
-        &mut detected,
-        shape,
-        (controls.minimum_beam_fraction * beam.area_pixels).ceil() as usize,
-    );
-    detected = smooth_and_cut(
-        &detected,
-        shape,
-        controls.smooth_factor,
-        beam,
-        controls.cut_threshold,
-    );
-    if grow {
-        grow_cross(
-            &mut detected,
-            shape,
-            residual,
-            thresholds.low_noise,
-            controls.grow_iterations,
-        );
-    }
-    if let Some(threshold) = thresholds.negative {
-        let absorption = smooth_and_cut(
-            &threshold_mask(&|value| value < threshold),
-            shape,
-            controls.smooth_factor,
-            beam,
-            controls.cut_threshold,
-        );
-        for (pixel, absorbing) in detected.iter_mut().zip(absorption) {
-            *pixel |= absorbing;
-        }
-    }
-    detected
-}
-
 /// Why a reconstruction mask could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
@@ -981,152 +779,6 @@ fn validate_shape(shape: [usize; 2]) -> Result<(), MaskError> {
         Err(MaskError::InvalidShape)
     } else {
         Ok(())
-    }
-}
-
-fn validate_auto_controls(
-    controls: AutoMultithreshControls,
-    beam_area_pixels: f64,
-) -> Result<(), MaskError> {
-    let values = [
-        controls.sidelobe_factor,
-        controls.noise_factor,
-        controls.low_noise_factor,
-        controls.negative_factor,
-        controls.minimum_beam_fraction,
-        controls.smooth_factor,
-        controls.cut_threshold,
-        controls.minimum_percent_change,
-        beam_area_pixels,
-    ];
-    if values.iter().enumerate().any(|(index, value)| {
-        !value.is_finite() || (*value < 0.0 && index != 7) || (index == 7 && *value < -1.0)
-    }) || controls.cut_threshold > 1.0
-        || beam_area_pixels == 0.0
-    {
-        Err(MaskError::InvalidAutoControls)
-    } else {
-        Ok(())
-    }
-}
-
-fn median(values: &[f64]) -> f64 {
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let middle = sorted.len() / 2;
-    if sorted.len().is_multiple_of(2) {
-        (sorted[middle - 1] + sorted[middle]) * 0.5
-    } else {
-        sorted[middle]
-    }
-}
-
-fn casa_residual_absolute_peak(residual: &[f64]) -> f64 {
-    residual.iter().map(|value| value.abs()).fold(0.0, f64::max)
-}
-
-fn prune_regions(mask: &mut [bool], shape: [usize; 2], minimum: usize) {
-    if minimum <= 1 {
-        return;
-    }
-    let mut seen = vec![false; mask.len()];
-    for seed in 0..mask.len() {
-        if !mask[seed] || seen[seed] {
-            continue;
-        }
-        let mut queue = VecDeque::from([seed]);
-        let mut component = Vec::new();
-        seen[seed] = true;
-        while let Some(index) = queue.pop_front() {
-            component.push(index);
-            let pixel = [index / shape[1], index % shape[1]];
-            for offset in [[-1, 0], [1, 0], [0, -1], [0, 1]] {
-                if let Some(neighbor) = offset_mask_pixel(pixel, offset, shape) {
-                    let flat = neighbor[0] * shape[1] + neighbor[1];
-                    if mask[flat] && !seen[flat] {
-                        seen[flat] = true;
-                        queue.push_back(flat);
-                    }
-                }
-            }
-        }
-        if component.len() < minimum {
-            for index in component {
-                mask[index] = false;
-            }
-        }
-    }
-}
-
-fn smooth_and_cut(
-    mask: &[bool],
-    shape: [usize; 2],
-    smooth_factor: f64,
-    beam: AutoMaskBeam,
-    cut: f64,
-) -> Vec<bool> {
-    if smooth_factor == 0.0 || mask.iter().all(|value| !*value) {
-        return mask.to_vec();
-    }
-    let sigma_major = smooth_factor * beam.major_fwhm_pixels / 2.354_820_045_030_949_3;
-    let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
-    // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
-    // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
-    let radius = (5.0 * sigma_major + 0.5) as isize + 1;
-    let cos_pa = beam.position_angle_rad.cos();
-    let sin_pa = beam.position_angle_rad.sin();
-    let mut smoothed = vec![0.0; mask.len()];
-    for x in 0..shape[0] {
-        for y in 0..shape[1] {
-            let mut value = 0.0;
-            for dx in -radius..=radius {
-                for dy in -radius..=radius {
-                    if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
-                        && mask[pixel[0] * shape[1] + pixel[1]]
-                    {
-                        let dx = dx as f64;
-                        let dy = dy as f64;
-                        let u = dx * cos_pa + dy * sin_pa;
-                        let v = -dx * sin_pa + dy * cos_pa;
-                        value +=
-                            (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
-                    }
-                }
-            }
-            smoothed[x * shape[1] + y] = value;
-        }
-    }
-    let peak = smoothed.iter().copied().fold(0.0_f64, f64::max);
-    smoothed
-        .into_iter()
-        .map(|value| value > cut * peak)
-        .collect()
-}
-
-fn grow_cross(
-    mask: &mut [bool],
-    shape: [usize; 2],
-    residual: &[f64],
-    low_threshold: f64,
-    iterations: usize,
-) {
-    for _ in 0..iterations {
-        let previous = mask.to_owned();
-        for index in 0..previous.len() {
-            if previous[index] {
-                continue;
-            }
-            let pixel = [index / shape[1], index % shape[1]];
-            if residual[index] < low_threshold {
-                continue;
-            }
-            mask[index] = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-                .into_iter()
-                .any(|offset| {
-                    offset_mask_pixel(pixel, offset, shape)
-                        .is_some_and(|neighbor| previous[neighbor[0] * shape[1] + neighbor[1]])
-                });
-        }
     }
 }
 
@@ -1187,23 +839,6 @@ mod tests {
     }
 
     #[test]
-    fn automask_sidelobe_peak_is_not_recentred_by_the_residual_median() {
-        let residual = [-41.103_744_5, -1.269_142_15, 128.983_596_8];
-        assert_eq!(casa_residual_absolute_peak(&residual), 128.983_596_8);
-    }
-
-    #[test]
-    fn automask_cut_threshold_is_strict_like_casa() {
-        let beam = AutoMaskBeam {
-            major_fwhm_pixels: 1.0,
-            minor_fwhm_pixels: 1.0,
-            position_angle_rad: 0.0,
-            area_pixels: 1.0,
-            sidelobe_fraction: 0.0,
-        };
-        assert_eq!(smooth_and_cut(&[true], [1, 1], 1.0, beam, 1.0), [false]);
-    }
-    #[test]
     fn reprojected_zero_support_is_a_valid_empty_clean_mask() {
         let grid = coordinate([0.0, 0.0]);
         let mask = ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 6])
@@ -1228,57 +863,5 @@ mod tests {
         assert_eq!(outside.support(), &[false; 6]);
         let empty = ReconstructionMask::from_boxes(grid, [3, 2], []).unwrap();
         assert_eq!(empty.support(), &[false; 6]);
-    }
-
-    /// CASA prunes and grows only the emission mask: an absorption feature
-    /// smaller than the minimum beam fraction is masked where an emission
-    /// feature of the same size is pruned, and the absorption mask does not
-    /// grow into the low-noise residual around it
-    /// (`SDMaskHandler::autoMaskByMultiThreshold`).
-    #[test]
-    fn the_absorption_mask_is_neither_pruned_nor_grown() {
-        let shape = [16, 16];
-        let mut residual = vec![0.0; 256];
-        // One-pixel emission and absorption, each in a collar above the
-        // low-noise threshold.
-        let [emission, absorption] = [4 * 16 + 4, 11 * 16 + 11];
-        residual[emission] = 1.0;
-        residual[absorption] = -1.0;
-        for index in [emission, absorption] {
-            for neighbour in [index - 16, index + 16, index - 1, index + 1] {
-                residual[neighbour] = 0.3;
-            }
-        }
-        let controls = AutoMultithreshControls {
-            sidelobe_factor: 0.0,
-            noise_factor: 0.0,
-            low_noise_factor: 0.0,
-            negative_factor: 1.0,
-            minimum_beam_fraction: 0.3,
-            smooth_factor: 0.0,
-            cut_threshold: 0.0,
-            grow_iterations: 4,
-            minimum_percent_change: -1.0,
-        };
-        let detected = detect_regions(
-            &residual,
-            &[true; 256],
-            shape,
-            Thresholds {
-                positive: 0.5,
-                low_noise: 0.2,
-                negative: Some(-0.5),
-            },
-            true,
-            controls,
-            AutoMaskBeam::new(3.0, 3.0, 0.0, 0.1),
-        );
-        let masked = detected
-            .iter()
-            .enumerate()
-            .filter(|(_, masked)| **masked)
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        assert_eq!(masked, [absorption]);
     }
 }

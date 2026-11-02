@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 36,
+      "contract_version": 37,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9273,8 +9273,7 @@
             "provider": {"field": "smoothfactor"},
             "python": {"name": "smoothfactor"},
             "presentation": {"label": "Smooth Factor", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "minbeamfrac",
@@ -9302,8 +9301,7 @@
             "provider": {"field": "cutthreshold"},
             "python": {"name": "cutthreshold"},
             "presentation": {"label": "Cut Threshold", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "growiterations",
@@ -9331,8 +9329,7 @@
             "provider": {"field": "dogrowprune"},
             "python": {"name": "dogrowprune"},
             "presentation": {"label": "Grow Prune", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "minpercentchange",
@@ -9346,8 +9343,7 @@
             "provider": {"field": "minpercentchange"},
             "python": {"name": "minpercentchange"},
             "presentation": {"label": "Min Percent Change", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "verbose",
@@ -9361,8 +9357,7 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "fastnoise",
@@ -9376,8 +9371,7 @@
             "provider": {"field": "fastnoise"},
             "python": {"name": "fastnoise"},
             "presentation": {"label": "Fast Noise", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "restart",
@@ -9867,6 +9861,12 @@
         {
           "from_contract": 35,
           "to_contract": 36,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 36,
+          "to_contract": 37,
           "steps": [],
           "changed_defaults": []
         }
