@@ -256,13 +256,6 @@ impl Msv2Observation {
         grant(2 * tables)?;
         let antennas = catalogue::read_antennas(&ms)?;
         let feeds = catalogue::read_feeds(&ms)?;
-        if let Some((antenna, feed, window)) = feeds.varying() {
-            tracing::warn!(
-                "FEED states receptors that vary in time (first for antenna {antenna}, feed \
-                 {feed}, window {window}); the last row of each antenna, feed and window is \
-                 used, as casacore's MSIter uses it"
-            );
-        }
         let windows = metadata::read_windows(&ms)?;
         let sources = metadata::read_sources(&ms, windows.len())?;
         let states = metadata::read_states(&ms)?;
@@ -386,6 +379,13 @@ impl Msv2Observation {
                 spectral_window_id: setup.spectral_window_id,
                 spectral_weights,
             });
+        }
+        if let Some((antenna, feed, window)) = feeds.varying(&catalogue::feed_reads(&entries)) {
+            tracing::warn!(
+                "FEED states receptors that vary in time (first for antenna {antenna}, feed \
+                 {feed}, window {window}); the last row of each antenna, feed and window is \
+                 used, as casacore's MSIter uses it"
+            );
         }
         Ok(Self {
             catalogue: Arc::new(Catalogue {
@@ -620,11 +620,16 @@ impl Msv2Observation {
     }
 
     /// Antenna `antenna`'s receptors through feed `feed` in spectral window
-    /// `window`, as casacore's `MSIter::setFeedInfo` gives them to its
-    /// iterator (`receptorAngles`; the last row where `FEED` varies in
-    /// time), whatever feeds MAIN's rows name; `None` without a row. CASA's
-    /// AW projection reads feed 0's (`feed_pa`: `receptorAngles().xyPlane(0)`),
-    /// where a partition's receptors are those of the feeds its rows name.
+    /// `window`, whatever feeds MAIN's rows name: the window's own `FEED`
+    /// rows, else the rows for every window (-1), the last where `FEED`
+    /// varies in time; `None` without either. These are what casacore's
+    /// `MSIter::setFeedInfo` gives its iterator (`receptorAngles`) wherever
+    /// `FEED`'s rows are all for every window or all name windows; where
+    /// the two kinds stand together, a window without its own row keeps
+    /// `MSIter`'s previous window's angles, and here takes the rows for
+    /// every window (`docs/CASA (C++) bugs.md`). CASA's AW projection reads
+    /// feed 0's (`feed_pa`: `receptorAngles().xyPlane(0)`), where a
+    /// partition's receptors are those of the feeds its rows name.
     #[must_use]
     pub fn feed_receptors(
         &self,
