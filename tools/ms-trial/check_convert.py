@@ -19,6 +19,12 @@ oracle.
         not mismatches.
 
 Each prints a JSON report and exits non-zero on any mismatch.
+
+Both channel orders are allowed (#1014): casa-rs keeps an MSv2 window's
+stored order, where XRADIO writes every window in ascending frequency. A
+dataset whose frequencies are XRADIO's reversed (a window whose channels
+descend in the MSv2) is compared with its frequency axis reversed, and the
+report lists it under "frequency_reversed".
 """
 
 import argparse
@@ -99,6 +105,13 @@ def compare_names(name, node, expected_name, expected, mismatches):
     return unknown
 
 
+def reversed_frequency(ds, expected):
+    """Whether `ds` holds `expected`'s channels in the opposite order: its
+    frequencies are `expected`'s reversed and not the same."""
+    a, b = ds.frequency.values, expected.frequency.values
+    return a.size > 1 and a.shape == b.shape and np.array_equal(a[::-1], b) and not np.array_equal(a, b)
+
+
 def compare(ours, theirs):
     results = []
 
@@ -117,6 +130,7 @@ def compare(ours, theirs):
            {"ours": len(mine.children), "theirs": len(reference.children)})
     mismatches = []
     unknown = 0
+    reversed_windows = []
     for name in sorted(mine.children):
         node = mine[name]
         match = by_key.get(key(node))
@@ -126,6 +140,9 @@ def compare(ours, theirs):
         unknown += compare_names(name, node, match[0], reference[match[0]], mismatches)
         ds = node.ds.load()
         expected = reference[match[0]].ds.load()
+        if reversed_frequency(ds, expected):
+            ds = ds.isel(frequency=slice(None, None, -1))
+            reversed_windows.append(name)
         for coord in COORDINATES:
             if not np.array_equal(ds[coord].values, expected[coord].values):
                 mismatches.append({"dataset": name, "coordinate": coord})
@@ -135,7 +152,8 @@ def compare(ours, theirs):
             if not same or ds[var].dims != expected[var].dims or ds[var].dtype != expected[var].dtype:
                 mismatches.append({"dataset": name, "variable": var})
     record("every dataset equals XRADIO's, names and variables", not mismatches, {"mismatches": mismatches[:20]} if mismatches else None)
-    print(json.dumps({"datasets": len(mine.children), "sources_xradio_calls_unknown": unknown, "results": results}, indent=1))
+    print(json.dumps({"datasets": len(mine.children), "sources_xradio_calls_unknown": unknown,
+                      "frequency_reversed": reversed_windows, "results": results}, indent=1))
     return all(r["ok"] for r in results)
 
 
