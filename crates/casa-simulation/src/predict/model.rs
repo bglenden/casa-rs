@@ -25,13 +25,14 @@ const MODEL_CACHE_BYTES: usize = 64 << 20;
 ///
 /// Opening reads the header; the pixels are read a plane at a time while
 /// the model is prepared, so preparing a cube holds one plane per worker
-/// rather than the cube. The image is never written: CASA's `predict`
-/// rewrites the model's spectral units and frame in place, casa-rs reads
-/// them as they are.
+/// rather than the cube. A model prepared again later, for each field
+/// under a primary beam, is read once and holds its planes instead. The
+/// image is never written: CASA's `predict` rewrites the model's spectral
+/// units and frame in place, casa-rs reads them as they are.
 pub struct SkyModel {
     path: PathBuf,
-    /// The open image; planes are read under the lock, one reader at a time.
-    image: Mutex<PagedImage<f32>>,
+    /// Where the planes are read from.
+    pixels: Pixels,
     /// `[nx, ny]` pixels.
     shape: [usize; 2],
     /// Model planes.
@@ -52,6 +53,15 @@ pub struct SkyModel {
     /// The most the image's tile cache holds once a plane is read
     /// ([`Self::cache_bytes`]).
     cache_bytes: u64,
+}
+
+/// Where a model's planes come from.
+enum Pixels {
+    /// The open image; planes are read under the lock, one reader at a
+    /// time.
+    Image(Box<Mutex<PagedImage<f32>>>),
+    /// Every plane, `[y][x]`, read once ([`SkyModel::held`]).
+    Held(Vec<Array2<f32>>),
 }
 
 impl std::fmt::Debug for SkyModel {
@@ -137,7 +147,7 @@ impl SkyModel {
         let centre = coordinates.to_world(&[(nx / 2) as f64, (ny / 2) as f64, 0.0, 0.0])?;
         Ok(Self {
             path: path.to_path_buf(),
-            image: Mutex::new(image),
+            pixels: Pixels::Image(Box::new(Mutex::new(image))),
             shape: [nx, ny],
             planes,
             increment_rad: [increment[0], increment[1]],
@@ -154,7 +164,7 @@ impl SkyModel {
     /// bytes, until the model is dropped. casa-tables keeps every tile when
     /// they all fit the cache, and otherwise as many as fit, at least one;
     /// a cube tiled across many planes caches far more than a plane.
-    pub(super) fn cache_bytes(&self) -> u64 {
+    pub(crate) fn cache_bytes(&self) -> u64 {
         self.cache_bytes
     }
 
@@ -218,15 +228,20 @@ impl SkyModel {
         ]))
     }
 
-    /// Model plane `plane`, `[y][x]`, read from the image.
+    /// Model plane `plane`, `[y][x]`, read from the image, or a copy of the
+    /// plane held.
     ///
     /// # Errors
     ///
     /// The pixels could not be read.
     pub(super) fn read_plane(&self, plane: usize) -> Result<Array2<f32>, PredictError> {
+        let image = match &self.pixels {
+            Pixels::Image(image) => image,
+            Pixels::Held(planes) => return Ok(planes[plane].clone()),
+        };
         let [nx, ny] = self.shape;
         let pixels = {
-            let image = self.image.lock().unwrap_or_else(PoisonError::into_inner);
+            let image = image.lock().unwrap_or_else(PoisonError::into_inner);
             image.get_slice(&[0, 0, 0, plane], &[nx, ny, 1, 1])
         }
         .map_err(|source| PredictError::Image {
@@ -240,9 +255,44 @@ impl SkyModel {
 
     /// Bytes [`Self::read_plane`] holds while it reads one plane: the slice
     /// read and the plane returned.
-    pub(super) fn plane_bytes(&self) -> u64 {
+    pub(crate) fn plane_bytes(&self) -> u64 {
         let [nx, ny] = self.shape;
         2 * (nx * ny * size_of::<f32>()) as u64
+    }
+
+    /// The model with every plane read and held, and no image open: what
+    /// it predicts no longer depends on the image, which may change or go
+    /// once it is read, as CASA's `predict` reads the model when it is
+    /// called. It holds [`Self::held_bytes`]; reading holds one plane's
+    /// [`Self::plane_bytes`] beside them, and this model's tile cache.
+    ///
+    /// # Errors
+    ///
+    /// A plane could not be read.
+    pub(crate) fn held(&self) -> Result<Self, PredictError> {
+        let mut planes = Vec::with_capacity(self.planes);
+        for plane in 0..self.planes {
+            planes.push(self.read_plane(plane)?);
+        }
+        Ok(Self {
+            path: self.path.clone(),
+            pixels: Pixels::Held(planes),
+            shape: self.shape,
+            planes: self.planes,
+            increment_rad: self.increment_rad,
+            centre_rad: self.centre_rad,
+            first_frequency_hz: self.first_frequency_hz,
+            frequency_increment_hz: self.frequency_increment_hz,
+            coordinates: self.coordinates.clone(),
+            first_spectral_world: self.first_spectral_world,
+            cache_bytes: 0,
+        })
+    }
+
+    /// Bytes the planes of [`Self::held`] hold.
+    pub(crate) fn held_bytes(&self) -> u64 {
+        let [nx, ny] = self.shape;
+        (self.planes * (size_of::<Array2<f32>>() + nx * ny * size_of::<f32>())) as u64
     }
 }
 

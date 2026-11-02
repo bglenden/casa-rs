@@ -179,9 +179,14 @@ fn parse_parameter_text_inner(
                     .map(ParameterValue::Array);
             }
             if value.contains(',') {
+                // A blank item names no path, as when a path list's string
+                // is split during normalization.
+                let is_path = matches!(**element, ParameterType::Path { .. });
                 return value
                     .split(',')
-                    .map(|value| parse_parameter_text_inner(value.trim(), element))
+                    .map(str::trim)
+                    .filter(|value| !(is_path && value.is_empty()))
+                    .map(|value| parse_parameter_text_inner(value, element))
                     .collect::<Result<Vec<_>, _>>()
                     .map(ParameterValue::Array);
             }
@@ -270,7 +275,7 @@ mod tests {
     fn missing_last_is_not_replaced_with_defaults() {
         let workspace = tempfile::tempdir().unwrap();
         let request = OpenSessionRequest {
-            bundle: builtin_surface_bundle("imager").unwrap(),
+            bundle: builtin_surface_bundle("tclean").unwrap(),
             workspace: workspace.path().to_path_buf(),
             source: BaseSource::Last,
             profile_text: None,

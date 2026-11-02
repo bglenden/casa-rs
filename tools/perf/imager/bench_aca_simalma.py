@@ -33,7 +33,8 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
+# The native generator: casa-ms's synthetic-ms developer binary.
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_IMAGER_BINARY = REPO_ROOT / "target" / "release" / "casars-imager"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("simulation-breadth", "aca-simalma")
 CASA_SCENARIO_PROGRAM = (
@@ -777,7 +778,7 @@ def run_native_section(
             },
         }
     if not args.casars_binary.exists():
-        raise AcaSimalmaError(f"native simobserve binary does not exist: {args.casars_binary}")
+        raise AcaSimalmaError(f"native generator binary does not exist: {args.casars_binary}")
     results = {}
     for scenario in scenarios:
         results[scenario] = run_native_scenario(
@@ -1256,33 +1257,28 @@ def run_native_imager_product(
 ) -> dict[str, Any]:
     ms_paths = [run_by_name[name]["output_ms"] for name in spec["run_names"]]
     prefix = image_dir / spec["name"]
-    command = [
-        str(imager_binary),
-        "--managed-output",
-        "true",
-        "--ms",
-        ",".join(ms_paths),
-        "--imagename",
-        str(prefix),
-        "--imsize",
-        str(spec["imsize"]),
-        "--cell-arcsec",
-        str(spec["cell_arcsec"]),
-        "--specmode",
-        "mfs",
-        "--weighting",
-        "natural",
-        "--deconvolver",
-        "hogbom",
-        "--niter",
-        "0",
-        "--dirty-only",
-        "--write-pb",
-        "--pblimit",
-        "0.2",
-    ]
+    # One front-end tclean request (#931): niter=0 is a dirty run, and the
+    # binary replies with the run's result.
+    values: dict[str, Any] = {
+        "vis": ms_paths,
+        "imagename": str(prefix),
+        "imsize": spec["imsize"],
+        "cell": f"{spec['cell_arcsec']}arcsec",
+        "specmode": "mfs",
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 0,
+        "write_pb": True,
+        "pblimit": 0.2,
+    }
     if spec.get("phasecenter"):
-        command.extend(["--phasecenter", spec["phasecenter"]])
+        values["phasecenter"] = spec["phasecenter"]
+    request_path = image_dir / f"{spec['name']}.request.json"
+    request_path.write_text(
+        json.dumps({"surface": "tclean", "values": values}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    command = [str(imager_binary), "--json-run", str(request_path)]
     started = time.perf_counter()
     completed = run_command(
         command,
@@ -1304,13 +1300,14 @@ def run_native_imager_product(
             "stdout_tail": completed.stdout[-4000:],
             "stderr_tail": completed.stderr[-4000:],
         }
-    payload = bench_simobserve.parse_json_from_stdout(
+    reply = bench_simobserve.parse_json_from_stdout(
         completed.stdout, f"native image product {spec['name']}"
     )
+    payload = reply.get("result", reply)
     product_paths = sorted(
         str(path)
         for path in prefix.parent.glob(prefix.name + ".*")
-        if path != stdout_path and path != stderr_path
+        if path not in (stdout_path, stderr_path, request_path)
     )
     size_bytes = sum(directory_size_or_zero(pathlib.Path(path)) for path in product_paths)
     return {

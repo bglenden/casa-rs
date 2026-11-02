@@ -11,12 +11,21 @@
 //!   the telescope of the first `observe` (OBSERVATION row 0), centred on
 //!   each field.
 //!
-//! The model is prepared when `predict` is called (read, multiplied by the
-//! beam and transformed, one set of grids per field when the beam is on), so
-//! a model changed or deleted afterwards predicts as in CASA and errors
-//! surface at the call. The grids are admitted against the session's memory
-//! budget and held until the step is replaced or the session closes; `close`
-//! degrids them into the rows it writes.
+//! The model is read when `predict` is called, so a model changed or
+//! deleted afterwards predicts as in CASA and errors surface at the call:
+//! - Without the beam, or under it with one field observed, it is prepared
+//!   then (multiplied by the beam and transformed into one set of grids).
+//!   The grids are admitted against the session's memory budget and held
+//!   until the step is replaced or the session closes.
+//! - Under the beam with several fields, each field's grids have the beam
+//!   centred on that field, and one set per field may not fit the budget
+//!   (a 106-pointing mosaic of a 1873² model needed 5.3 GB). The step holds
+//!   the model's planes instead, and `close` prepares each field's grids as
+//!   its write reaches the field, keeping as many as its budget allows and
+//!   preparing a field again when it returns, as CASA's `GridFT` transforms
+//!   the model again whenever the field changes.
+//!
+//! `close` degrids the grids into the rows it writes.
 //!
 //! Divergences: CASA rewrites the model image's spectral units and frame in
 //! place; casa-rs never writes it (`docs/CASA (C++) bugs.md`). MODEL_DATA
@@ -28,13 +37,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_components::ComponentList;
-use casa_imaging_model::CorrelationType;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, MosaicPb, MosaicRules, OperatorError,
     PaddingFactor, PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
+use casa_types::Correlation;
 
 use super::error::{SimulatorError, SimulatorResult};
 use super::resources::SessionResources;
@@ -78,8 +87,11 @@ pub struct PredictSpec {
     /// `imagename`: the model images; empty names are skipped, as CASA skips
     /// them.
     pub images: Vec<PathBuf>,
-    /// `complist`: a component list, or `None` for `''`.
-    pub component_list: Option<PathBuf>,
+    /// `complist`: the component lists, predicted together; empty names are
+    /// skipped. CASA's binding takes one list, `''` for none. `simobserve`
+    /// predicts its model's list and its calibrator's at once, which CASA
+    /// cannot (`docs/CASA (C++) bugs.md`).
+    pub component_lists: Vec<PathBuf>,
     /// `incremental`: add the prediction to DATA rather than replace it.
     pub incremental: bool,
 }
@@ -87,11 +99,12 @@ pub struct PredictSpec {
 impl PredictSpec {
     /// The model images named, without the empty names.
     fn named_images(&self) -> Vec<&Path> {
-        self.images
-            .iter()
-            .map(PathBuf::as_path)
-            .filter(|path| !path.as_os_str().is_empty())
-            .collect()
+        named(&self.images)
+    }
+
+    /// The component lists named, without the empty names.
+    fn named_lists(&self) -> Vec<&Path> {
+        named(&self.component_lists)
     }
 
     /// The check casatools' binding makes before `Simulator::predict`, even
@@ -194,9 +207,8 @@ pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
     /// The model's tangent point (pixel `(nx/2, ny/2)`), J2000 radians.
     pub(crate) tangent_rad: [f64; 2],
-    /// The grids: one set for every field without a beam, else one set per
-    /// field, the beam centred on it.
-    grids: Vec<(Option<usize>, PreparedModelGrids)>,
+    /// The grids, or what `close` prepares each field's from.
+    grids: StepGrids,
     /// The mosaic machine's pointing offsets, from the model's pixel
     /// `(nx/2, ny/2)`, by phase centre (its bits), sorted by the bits; empty
     /// for the others.
@@ -204,7 +216,8 @@ pub(crate) struct Prediction {
     /// The mosaic machine's dish class of each antenna; empty for the
     /// others.
     antenna_types: Vec<u8>,
-    /// The grids' memory, admitted at `predict` and released with them.
+    /// The memory of the grids, or of the planes held, admitted at
+    /// `predict` and released with them.
     _reservation: Reservation,
     /// What the operator's kernels keep, and the mosaic machine's pointings
     /// and dish classes, admitted as they were built and released with
@@ -212,35 +225,131 @@ pub(crate) struct Prediction {
     _kernels: Reservation,
 }
 
+/// The grids a step predicts from.
+enum StepGrids {
+    /// Prepared at `predict`: one set for every field without a beam
+    /// (`None`), or for the one field observed under it.
+    Prepared(Option<usize>, Box<PreparedModelGrids>),
+    /// One set per observed field under the beam, centred on the field,
+    /// which `close` prepares ([`Prediction::prepare_field`]).
+    PerField(Box<FieldModel>),
+}
+
+/// What `close` prepares a field's grids from: the model with its planes
+/// held, the beam's power pattern, and each observed field's beam centre
+/// on the model's pixels, by field.
+struct FieldModel {
+    model: SkyModel,
+    pattern: BeamPattern,
+    centres: Vec<(usize, [f64; 2])>,
+}
+
+/// Where the grids of a field come from: a set prepared at `predict`, or
+/// one `close` prepares ([`Prediction::prepare_field`]).
+pub(crate) enum FieldGrids<'p> {
+    Prepared(&'p PreparedModelGrids),
+    PerField,
+}
+
 impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fields: Vec<Option<usize>> = match &self.grids {
+            StepGrids::Prepared(field, _) => vec![*field],
+            StepGrids::PerField(held) => {
+                held.centres.iter().map(|(field, _)| Some(*field)).collect()
+            }
+        };
         formatter
             .debug_struct("Prediction")
             .field("tangent_rad", &self.tangent_rad)
-            .field(
-                "fields",
-                &self
-                    .grids
-                    .iter()
-                    .map(|(field, _)| *field)
-                    .collect::<Vec<_>>(),
-            )
+            .field("fields", &fields)
+            .field("per_field", &matches!(self.grids, StepGrids::PerField(_)))
             .finish_non_exhaustive()
     }
 }
 
 impl Prediction {
-    /// The grids rows of `field` are predicted from.
-    pub(crate) fn grids_for(&self, field: usize) -> Option<&PreparedModelGrids> {
-        self.grids
-            .iter()
-            .find(|(grid_field, _)| grid_field.is_none_or(|grid_field| grid_field == field))
-            .map(|(_, grids)| grids)
+    /// Where the grids rows of `field` are predicted from come from; `None`
+    /// for a field the step did not observe.
+    pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
+        match &self.grids {
+            StepGrids::Prepared(grid_field, grids) => grid_field
+                .is_none_or(|grid_field| grid_field == field)
+                .then_some(FieldGrids::Prepared(grids)),
+            StepGrids::PerField(held) => held
+                .centres
+                .iter()
+                .any(|(observed, _)| *observed == field)
+                .then_some(FieldGrids::PerField),
+        }
     }
 
-    /// Bytes every set of grids holds.
-    pub(crate) fn grid_bytes(&self) -> u64 {
-        self.grids.iter().map(|(_, grids)| grids.bytes()).sum()
+    /// Bytes the grids prepared at `predict` hold: one set, or none when
+    /// `close` prepares each field's.
+    pub(crate) fn prepared_bytes(&self) -> u64 {
+        match &self.grids {
+            StepGrids::Prepared(_, grids) => grids.bytes(),
+            StepGrids::PerField(_) => 0,
+        }
+    }
+
+    /// Whether `close` prepares each field's grids
+    /// ([`Self::prepare_field`]).
+    pub(crate) fn per_field(&self) -> bool {
+        matches!(self.grids, StepGrids::PerField(_))
+    }
+
+    /// Bytes one set of grids holds ([`PreparedModelGrids::bytes`]).
+    pub(crate) fn set_bytes(&self) -> u64 {
+        self.model.grid_bytes()
+    }
+
+    /// Bytes preparing a field's grids holds beside them on `workers`
+    /// workers: a plane's scratch for each worker that has a plane
+    /// ([`ModelOperator::plane_scratch_bytes`]); none when `close` prepares
+    /// no grids.
+    pub(crate) fn preparation_bytes(&self, workers: usize) -> u64 {
+        match &self.grids {
+            StepGrids::Prepared(..) => 0,
+            StepGrids::PerField(held) => {
+                workers.clamp(1, held.model.planes().max(1)) as u64
+                    * self.model.plane_scratch_bytes(&held.model)
+            }
+        }
+    }
+
+    /// Prepare the grids of `field`, which the step observed under the
+    /// beam, on `team`: the planes held, multiplied by the beam's power
+    /// centred on the field and transformed, as `predict` prepares one
+    /// field's ([`ModelOperator::prepare`]); the same grids whatever the
+    /// workers.
+    ///
+    /// # Errors
+    ///
+    /// A raised error for a field the step did not observe or a step whose
+    /// grids were prepared at `predict`, and the operator's refusal, which
+    /// for a model `predict` read is only a transform's failure.
+    pub(crate) fn prepare_field(
+        &self,
+        field: usize,
+        team: &WorkerTeam,
+    ) -> SimulatorResult<PreparedModelGrids> {
+        let StepGrids::PerField(held) = &self.grids else {
+            return Err(SimulatorError::raised(
+                "the step's grids were prepared at predict",
+            ));
+        };
+        let centre = held
+            .centres
+            .iter()
+            .find(|(observed, _)| *observed == field)
+            .map(|(_, centre)| *centre)
+            .ok_or_else(|| {
+                SimulatorError::raised(format!("predict did not observe field {field}"))
+            })?;
+        self.model
+            .prepare(&held.model, Some((&held.pattern, centre)), Some(team))
+            .map_err(model_error)
     }
 
     /// The offset of rows pointed at `centre_rad`, which the mosaic
@@ -424,11 +533,10 @@ impl Simulator {
     pub fn predict(&mut self, spec: &PredictSpec) -> SimulatorResult<()> {
         spec.check_images()?;
         let images = spec.named_images();
+        let lists = spec.named_lists();
         tracing::info!(
             "Predicting visibilities using model: {images:?} and componentList: {}",
-            spec.component_list
-                .as_deref()
-                .map_or(String::new(), |path| path.display().to_string())
+            list_label(&lists)
         );
         if spec.incremental {
             tracing::info!("The data column will be incremented");
@@ -450,11 +558,7 @@ impl Simulator {
                  yet implemented in casa-rs (simulation Phase 3)",
             ));
         }
-        let list = spec
-            .component_list
-            .as_deref()
-            .filter(|path| !path.as_os_str().is_empty());
-        if images.is_empty() && list.is_none() {
+        if images.is_empty() && lists.is_empty() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
@@ -469,9 +573,7 @@ impl Simulator {
             )));
         }
         // `createSkyEquation` reads the component list before the images.
-        let list = list
-            .map(|path| read_component_list(path, &self.options.resources))
-            .transpose()?;
+        let list = read_component_lists(&lists, &self.options.resources)?;
         let model = images
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
@@ -517,10 +619,10 @@ impl Simulator {
             return self.predict_single_dish(model, kernel, beam, spec.incremental);
         }
         let components = list
-            .map(|(path, list, held)| self.prepare_components(&path, (list, held), beam))
+            .map(|(label, list, held)| self.prepare_components(&label, (list, held), beam))
             .transpose()?;
         let prediction = model
-            .map(|model| self.prepare_image(&model, &correlations, beam))
+            .map(|model| self.prepare_image(model, &correlations, beam))
             .transpose()?;
         if !spec.incremental {
             // Every step so far covers a prefix of the scans this one covers.
@@ -541,11 +643,12 @@ impl Simulator {
     /// the FTMachine `setoptions` chose: its kernels, then its grids, with
     /// `beam` in the image plane except through the mosaic machine, whose
     /// kernels carry the beams and which keeps each scan's pointing and
-    /// each antenna's dish class.
+    /// each antenna's dish class. The model, with its image's tile cache,
+    /// is dropped once it is read ([`Self::prepare`]).
     fn prepare_image(
         &self,
-        model: &SkyModel,
-        correlations: &[CorrelationType],
+        model: SkyModel,
+        correlations: &[Correlation],
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<Prediction> {
         let machine = self.ft_machine()?;
@@ -568,7 +671,7 @@ impl Simulator {
                 .map_err(SimulatorError::admission)?;
                 mosaic_state = Some((reservation, kept));
                 let (beams, antenna_types) = self.mosaic_beams()?;
-                (Some(beams), antenna_types, self.mosaic_pointings(model)?)
+                (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
             }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
                 if self
@@ -584,7 +687,7 @@ impl Simulator {
                 (None, Vec::new(), Vec::new())
             }
         };
-        let layout = ModelLayout::new(model, correlations, machine, beams)
+        let layout = ModelLayout::new(&model, correlations, machine, beams)
             .map_err(|error| correlation_error(error, correlations))?;
         let (kernels, mut kernel_reservation) = self.admitted_kernels(&layout)?;
         // The operator drops the layout's beams.
@@ -613,7 +716,7 @@ impl Simulator {
     /// admission, `held_list`, is released when the list is dropped here.
     fn prepare_components(
         &self,
-        path: &Path,
+        label: &str,
         (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<ComponentPrediction> {
@@ -623,10 +726,9 @@ impl Simulator {
             && let Some(beam) = beam.filter(|beam| beam.squints())
         {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{}') under the {beam:?} primary beam with beam squint is \
-                 not yet implemented in casa-rs (#841): CASA squints the RR and LL beams for \
-                 components; setvp(dosquint=False) predicts them unsquinted",
-                path.display()
+                "predict(complist='{label}') under the {beam:?} primary beam with beam squint \
+                 is not yet implemented in casa-rs (#841): CASA squints the RR and LL beams \
+                 for components; setvp(dosquint=False) predicts them unsquinted"
             )));
         }
         if self
@@ -690,8 +792,7 @@ impl Simulator {
         let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
             |ComponentRefusal::NotYetImplemented(reason)| {
                 SimulatorError::not_yet_implemented(format!(
-                    "predict(complist='{}'): {reason} (#841)",
-                    path.display()
+                    "predict(complist='{label}'): {reason} (#841)"
                 ))
             },
         )?;
@@ -699,8 +800,7 @@ impl Simulator {
         tracing::info!(
             components = list.len(),
             bytes = prediction.bytes(),
-            "prepared the component list {}",
-            path.display()
+            "prepared the component list {label}"
         );
         drop(list);
         drop(held_list);
@@ -709,7 +809,7 @@ impl Simulator {
 
     /// The correlations of the scans observed so far, which one operator
     /// predicts.
-    fn predicted_correlations(&self) -> SimulatorResult<Vec<CorrelationType>> {
+    fn predicted_correlations(&self) -> SimulatorResult<Vec<Correlation>> {
         self.check_visibility_correlations("predicted")?;
         let window = |scan: &super::observe::Scan| &self.spectral_windows[scan.spectral_window_id];
         let first = &window(&self.scans[0]).correlations;
@@ -726,7 +826,7 @@ impl Simulator {
         first
             .iter()
             .map(|&code| {
-                CorrelationType::from_casa_code(code).ok_or_else(|| {
+                Correlation::from_casacore_code(code).ok_or_else(|| {
                     SimulatorError::not_yet_implemented(format!(
                         "predicting correlation code {code} is not yet implemented in casa-rs \
                          (#841)"
@@ -878,14 +978,17 @@ impl Simulator {
         })
     }
 
-    /// Admit and prepare `model`'s grids: one set, or one per observed field
-    /// with `beam` centred on it. The planes are prepared on as many of the
-    /// policy's workers as fit their scratch beside the grids. The
+    /// Admit and prepare `model`'s grids: one set, without `beam` or with
+    /// one field observed (the beam centred on it). With several fields
+    /// under the beam, the model's planes are held for `close` to prepare
+    /// each field's grids ([`Self::hold_for_fields`]). The model, and with
+    /// it its image's tile cache, which the preparation's or the read's
+    /// admission covers, is dropped before that admission is released. The
     /// prediction keeps `kernels`, the reservation of the operator's
     /// kernels.
     fn prepare(
         &self,
-        model: &SkyModel,
+        model: SkyModel,
         operator: ModelOperator,
         beam: Option<PrimaryBeam>,
         kernels: Reservation,
@@ -893,67 +996,68 @@ impl Simulator {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
         charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
-        let fields: Vec<Option<usize>> = match beam {
-            Some(_) => self.observed_fields().into_iter().map(Some).collect(),
-            None => vec![None],
-        };
-        let pattern_bytes = if beam.is_some() {
-            BeamPattern::BYTES
-        } else {
-            0
-        };
-        let reservation = admit(
-            host,
-            policy,
-            &Demand {
-                phase: MODEL_PHASE,
-                memory: operator.grid_bytes() * fields.len() as u64 + pattern_bytes,
-            },
-        )
-        .map_err(SimulatorError::admission)?;
-        let scratch = operator.plane_scratch_bytes(model);
-        let free = free_memory(host, policy);
-        let workers = (1..=resources.cores().workers.max(1))
-            .rev()
-            .find(|workers| *workers as u64 * scratch <= free)
-            .unwrap_or(1);
-        let _preparation = admit(
-            host,
-            policy,
-            &Demand {
-                phase: PREPARATION_PHASE,
-                memory: workers as u64 * scratch,
-            },
-        )
-        .map_err(SimulatorError::admission)?;
-        let team = WorkerTeam::new(workers)
-            .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
+        let fields = self.observed_fields();
         let pattern = beam.map(PrimaryBeam::pattern);
-        let mut grids = Vec::with_capacity(fields.len());
-        for field in fields {
-            let centre = match (&pattern, field) {
-                (Some(pattern), Some(field)) => {
-                    let pointing = self.fields[field].direction_rad;
-                    Some((pattern, model.pixel_of(pointing).map_err(model_error)?))
-                }
-                _ => None,
-            };
-            let prepared = operator
-                .prepare(model, centre, Some(&team))
-                .map_err(model_error)?;
-            grids.push((field, prepared));
-        }
-        tracing::info!(
-            planes = model.planes(),
-            grids = grids.len(),
-            workers,
-            bytes = operator.grid_bytes() * grids.len() as u64,
-            "prepared the model {}",
-            model.path().display()
-        );
+        let tangent_rad = model.centre_rad();
+        let (grids, reservation) = match pattern {
+            Some(pattern) if fields.len() > 1 => {
+                self.hold_for_fields(model, &operator, pattern, &fields)?
+            }
+            pattern => {
+                let field = pattern.as_ref().map(|_| fields[0]);
+                let reservation = admit(
+                    host,
+                    policy,
+                    &Demand {
+                        phase: MODEL_PHASE,
+                        memory: operator.grid_bytes()
+                            + pattern.as_ref().map_or(0, |_| BeamPattern::BYTES),
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+                let scratch = operator.plane_scratch_bytes(&model);
+                let free = free_memory(host, policy);
+                let workers = (1..=resources.cores().workers.max(1))
+                    .rev()
+                    .find(|workers| *workers as u64 * scratch <= free)
+                    .unwrap_or(1);
+                let preparation = admit(
+                    host,
+                    policy,
+                    &Demand {
+                        phase: PREPARATION_PHASE,
+                        memory: workers as u64 * scratch,
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+                let team = WorkerTeam::new(workers)
+                    .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
+                let centre = match (&pattern, field) {
+                    (Some(pattern), Some(field)) => {
+                        let pointing = self.fields[field].direction_rad;
+                        Some((pattern, model.pixel_of(pointing).map_err(model_error)?))
+                    }
+                    _ => None,
+                };
+                let prepared = operator
+                    .prepare(&model, centre, Some(&team))
+                    .map_err(model_error)?;
+                tracing::info!(
+                    planes = model.planes(),
+                    grids = 1,
+                    workers,
+                    bytes = operator.grid_bytes(),
+                    "prepared the model {}",
+                    model.path().display()
+                );
+                drop(model);
+                drop(preparation);
+                (StepGrids::Prepared(field, Box::new(prepared)), reservation)
+            }
+        };
         Ok(Prediction {
             model: operator,
-            tangent_rad: model.centre_rad(),
+            tangent_rad,
             grids,
             pointings: Vec::new(),
             antenna_types: Vec::new(),
@@ -961,6 +1065,106 @@ impl Simulator {
             _kernels: kernels,
         })
     }
+
+    /// `model`'s planes read and held for `close` to prepare the grids of
+    /// each of `fields` with `pattern` centred on it, each field's centre
+    /// placed on the model's pixels: the planes and the pattern admitted
+    /// and kept, the read's scratch (a plane, and the image's tile cache)
+    /// admitted while it reads. One field's grids and their preparation on
+    /// one worker, the least `close` holds, are admitted and released
+    /// again, so a model too large for the budget is refused here, as when
+    /// `predict` prepared every field's grids.
+    fn hold_for_fields(
+        &self,
+        model: SkyModel,
+        operator: &ModelOperator,
+        pattern: BeamPattern,
+        fields: &[usize],
+    ) -> SimulatorResult<(StepGrids, Reservation)> {
+        let resources = &self.options.resources;
+        let (host, policy) = (resources.host(), resources.policy());
+        let admitted = |phase, memory| {
+            admit(host, policy, &Demand { phase, memory }).map_err(SimulatorError::admission)
+        };
+        let centres = fields
+            .iter()
+            .map(|&field| {
+                let pointing = self.fields[field].direction_rad;
+                Ok((field, model.pixel_of(pointing).map_err(model_error)?))
+            })
+            .collect::<SimulatorResult<Vec<_>>>()?;
+        let kept = model.held_bytes()
+            + BeamPattern::BYTES
+            + (size_of::<FieldModel>() + centres.capacity() * size_of::<(usize, [f64; 2])>())
+                as u64;
+        let reservation = admitted(MODEL_PHASE, kept)?;
+        drop(admitted(
+            MODEL_PHASE,
+            operator.grid_bytes() + operator.plane_scratch_bytes(&model),
+        )?);
+        let reading = admitted(PREPARATION_PHASE, model.plane_bytes() + model.cache_bytes())?;
+        let held = model.held().map_err(model_error)?;
+        drop(model);
+        drop(reading);
+        tracing::info!(
+            planes = held.planes(),
+            fields = fields.len(),
+            bytes = held.held_bytes(),
+            grid_bytes = operator.grid_bytes(),
+            "held the model {} for each field's grids",
+            held.path().display()
+        );
+        Ok((
+            StepGrids::PerField(Box::new(FieldModel {
+                model: held,
+                pattern,
+                centres,
+            })),
+            reservation,
+        ))
+    }
+}
+
+/// The names in `paths` that are not empty.
+fn named(paths: &[PathBuf]) -> Vec<&Path> {
+    paths
+        .iter()
+        .map(PathBuf::as_path)
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect()
+}
+
+/// Component list names as one label, comma-separated as CASA's
+/// `simobserve` joins them.
+fn list_label(paths: &[&Path]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The component lists at `paths` as one list, their components in order,
+/// with the label naming them and what [`read_component_list`] holds for
+/// each; `None` for no lists.
+fn read_component_lists(
+    paths: &[&Path],
+    resources: &SessionResources,
+) -> SimulatorResult<Option<(String, ComponentList, Reservation)>> {
+    let mut joined: Option<(ComponentList, Reservation)> = None;
+    for path in paths {
+        let (list, held) = read_component_list(path, resources)?;
+        match &mut joined {
+            None => joined = Some((list, held)),
+            Some((components, reservation)) => {
+                for component in list.into_components() {
+                    components.push(component);
+                }
+                reservation.join(held);
+            }
+        }
+    }
+    Ok(joined.map(|(list, held)| (list_label(paths), list, held)))
 }
 
 /// The component list at `path`, as `createSkyEquation` reads it: CASA's
@@ -973,7 +1177,7 @@ impl Simulator {
 fn read_component_list(
     path: &Path,
     resources: &SessionResources,
-) -> SimulatorResult<(PathBuf, ComponentList, Reservation)> {
+) -> SimulatorResult<(ComponentList, Reservation)> {
     if !path.join("table.dat").is_file() {
         return Err(SimulatorError::refused(format!(
             "Failed to create SkyEquation: ComponentList {} not readable",
@@ -993,7 +1197,7 @@ fn read_component_list(
     .map_err(SimulatorError::admission)?;
     let list = ComponentList::read_table(path).map_err(refused)?;
     let held = reading.split(list.bytes().min(reading_bytes));
-    Ok((path.to_path_buf(), list, held))
+    Ok((list, held))
 }
 
 /// A model that cannot be read or prepared, as CASA reports it: a layout
@@ -1013,7 +1217,7 @@ fn model_error(error: PredictError) -> SimulatorError {
 
 /// An operator refusal for `correlations`: a correlation set the Stokes I
 /// model cannot feed is not yet implemented; the rest is raised.
-fn correlation_error(error: PredictError, correlations: &[CorrelationType]) -> SimulatorError {
+fn correlation_error(error: PredictError, correlations: &[Correlation]) -> SimulatorError {
     match error {
         PredictError::Operator(OperatorError::Polarization { reason }) => {
             SimulatorError::not_yet_implemented(format!(

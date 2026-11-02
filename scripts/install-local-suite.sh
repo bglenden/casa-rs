@@ -14,7 +14,7 @@ Options:
                             (default: repo resolver for Python >=3.10)
   --install-root <dir>      Suite install root passed to install-suite.sh
                             (default: ~/.local/opt/casa-rs)
-  --bin-dir <dir>           PATH-facing launcher directory
+  --bin-dir <dir>           PATH-facing command directory
                             (default: ~/.local/bin)
   --activate                Update current/bin links to this install
   --no-activate             Do not update current/bin links

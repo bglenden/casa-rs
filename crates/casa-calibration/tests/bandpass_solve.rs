@@ -124,6 +124,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve bandpass");
@@ -173,6 +174,67 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             );
         }
     }
+}
+
+#[test]
+fn solve_bandpass_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
+    // CASA flags every sample of a FLAG_ROW row before solving
+    // (`VisEquation::divideCorrByModel`), for B as for G and T.
+    let dir = TempDir::new().expect("tempdir");
+    let unit_gains = [[Complex32::new(1.0, 0.0); 2]; 3];
+    let bandpass_gains = [
+        [[Complex32::new(1.0, 0.0); 2]; 2],
+        [
+            [Complex32::new(1.1, 0.15), Complex32::new(0.8, -0.2)],
+            [Complex32::new(0.95, -0.1), Complex32::new(1.2, 0.25)],
+        ],
+        [
+            [Complex32::new(0.9, -0.05), Complex32::new(1.15, 0.18)],
+            [Complex32::new(1.05, 0.12), Complex32::new(0.88, -0.14)],
+        ],
+    ];
+    let clusters = [100.0, 101.0].map(|time_seconds| common::SyntheticBandpassTimeCluster {
+        field_id: 0,
+        time_seconds,
+        scan_number: 1,
+        prior_gains: unit_gains,
+        bandpass_gains,
+    });
+    let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
+    common::make_row_flag_only_outlier(&ms_path, 0, Complex32::from_polar(3.0, 0.6));
+    let bandpass_table = dir.path().join("row-flagged.bcal");
+
+    let report = run_bandpass_solve(
+        &ms_path,
+        &BandpassSolveRequest {
+            selection: MsSelection::new().field(&[0]).spw(&[0]),
+            output_table: bandpass_table.clone(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            combine: BandpassSolveCombine::default(),
+            band_type: BandpassType::B,
+            normalize_average_amplitude: false,
+            amplitude_degree: 3,
+            phase_degree: 3,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
+        },
+    )
+    .expect("solve bandpass around a FLAG_ROW outlier");
+
+    assert_eq!(report.solution_row_count, 3);
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().field(&[0]).spw(&[0]),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&bandpass_table)],
+        },
+    )
+    .expect("apply solved bandpass");
+    common::assert_corrected_rows_are_unit_model_except(&ms_path, &[0]);
 }
 
 #[test]
@@ -260,6 +322,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve dense bandpass");
@@ -425,6 +488,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve combined-scan bandpass");
@@ -566,6 +630,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve combined-field bandpass");
@@ -671,6 +736,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve normalized bandpass");
@@ -793,6 +859,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("solve BPOLY bandpass");

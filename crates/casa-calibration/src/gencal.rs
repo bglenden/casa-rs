@@ -295,22 +295,28 @@ fn opacity_rows(
         })?
         .row_count();
     let selected_spws = parse_spw_selector(ms, &request.spw)?;
-    if request.parameter.len() != selected_spws.len() {
-        return Err(GencalError::InvalidRequest(format!(
-            "opac requires one parameter per selected SPW (got {} parameters for {} SPWs)",
-            request.parameter.len(),
-            selected_spws.len()
-        )));
-    }
+    // One opacity holds for every selected window, as in CASA's
+    // specifycal; otherwise there is one for each.
+    let opacity = match request.parameter.as_slice() {
+        [one] => vec![*one; selected_spws.len()],
+        values if values.len() == selected_spws.len() => values.to_vec(),
+        values => {
+            return Err(GencalError::InvalidRequest(format!(
+                "opac takes one opacity, or one for each selected SPW (got {} for {} SPWs)",
+                values.len(),
+                selected_spws.len()
+            )));
+        }
+    };
     let mut rows = Vec::with_capacity(antenna_count * selected_spws.len());
-    for (index, spw_id) in selected_spws.iter().copied().enumerate() {
+    for (spw_id, opacity) in selected_spws.iter().copied().zip(opacity) {
         for antenna_id in 0..antenna_count {
             rows.push(PriorCalRow {
                 field_id: -1,
                 spw_id,
                 antenna_id: antenna_id as i32,
                 observation_id: 0,
-                fparam: vec![request.parameter[index] as f32],
+                fparam: vec![opacity as f32],
                 snr_value: 1.0,
             });
         }

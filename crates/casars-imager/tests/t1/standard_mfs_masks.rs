@@ -60,7 +60,7 @@ fn box_mask_confines_the_model_and_leaves_the_masked_out_source() {
             "deconvolver": "hogbom",
             "niter": 500,
             "threshold": THRESHOLD,
-            "mask_box": format!(
+            "mask": format!(
                 "{},{},{},{}",
                 px - half_width,
                 py - half_width,

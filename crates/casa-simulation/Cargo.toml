@@ -15,6 +15,7 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-atmosphere = { path = "../casa-atmosphere" }
 casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
@@ -23,6 +24,8 @@ casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
+casa-imaging-singledish = { path = "../casa-imaging-singledish" }
+casa-lattices = { path = "../casa-lattices" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
@@ -34,6 +37,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
-serde_json = "1"
+flate2 = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tar = "0.4"
 tempfile = "3"
 tracing-subscriber.workspace = true

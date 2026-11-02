@@ -2,10 +2,25 @@
 //! Visibility-domain continuum subtraction of each selected row before it
 //! is imaged (the compiled `fitspw` transform, CASA `uvcontsub`).
 
-use casa_imaging_model::{ContinuumFitRule, SelectedNumericRow};
+use casa_imaging_model::ContinuumFitRule;
 use casa_imaging_operator::{ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum};
 use casa_imaging_runtime::pass::SourceError;
 use num_complex::{Complex32, Complex64};
+
+/// What the continuum transform reads of one row besides its samples.
+pub(crate) struct ContinuumRow<'r> {
+    /// The native index of each selected channel.
+    pub(crate) channels: &'r [u32],
+    /// Their stored frequencies, the fit's abscissae.
+    pub(crate) frequencies_hz: &'r [f64],
+    /// Whether each selected correlation enters Stokes I (the fit's flag
+    /// group).
+    pub(crate) parallel: &'r [bool],
+    /// Whether the stored visibilities are real (`FLOAT_DATA`).
+    pub(crate) real: bool,
+    /// The row's flag.
+    pub(crate) row_flag: bool,
+}
 
 /// Replace one row's visibilities, `[channel][correlation]` like `values`,
 /// `weights` and `flags`, with the residual of `rule`'s polynomial
@@ -18,39 +33,27 @@ use num_complex::{Complex32, Complex64};
 /// keep the stored precision: a `FLOAT_DATA` residual stays real.
 pub(crate) fn subtract_continuum(
     rule: &ContinuumFitRule,
-    row: &SelectedNumericRow<'_>,
+    row: &ContinuumRow<'_>,
     values: &mut [Complex32],
     weights: &[f32],
     flags: &mut [bool],
 ) -> Result<(), SourceError> {
-    let correlations = row.correlations.len();
-    let frequencies_hz = row
-        .channels
-        .iter()
-        .map(|channel| channel.frequency_centre_hz)
-        .collect::<Vec<_>>();
+    let correlations = row.parallel.len();
     let roles = row
         .channels
         .iter()
         .map(|channel| {
-            rule.channel_use(channel.channel_index)
+            rule.channel_use(*channel)
                 .ok_or("a selected channel has no continuum fit or application role")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let parallel = row
-        .correlations
-        .iter()
-        .map(|product| product.correlation_type().contributes_to_stokes_i())
-        .collect::<Vec<_>>();
+    let parallel = row.parallel;
     let group_flags = (0..row.channels.len())
         .map(|channel| {
             (0..correlations).any(|pol| parallel[pol] && flags[channel * correlations + pol])
         })
         .collect::<Vec<_>>();
-    let real = matches!(
-        row.visibility,
-        casa_imaging_model::SelectedNumericVisibility::Float32(_)
-    );
+    let real = row.real;
     let mut samples = Vec::with_capacity(row.channels.len());
     for pol in 0..correlations {
         samples.clear();
@@ -59,13 +62,13 @@ pub(crate) fn subtract_continuum(
             let value = values[index];
             ContinuumSample::new(
                 Complex64::new(f64::from(value.re), f64::from(value.im)),
-                flags[index] || (parallel[pol] && group_flags[channel]) || row.row.row_flag,
+                flags[index] || (parallel[pol] && group_flags[channel]) || row.row_flag,
                 f64::from(weights[index]),
                 *role,
             )
         }));
         let result = fit_and_subtract_continuum(ContinuumRowInput::new(
-            &frequencies_hz,
+            row.frequencies_hz,
             &samples,
             rule.requested_order(),
         ))?;
@@ -83,13 +86,13 @@ pub(crate) fn subtract_continuum(
 /// `[channel][correlation]`.
 pub(crate) fn flag_unimaged_channels(
     rule: &ContinuumFitRule,
-    row: &SelectedNumericRow<'_>,
+    row: &ContinuumRow<'_>,
     flags: &mut [bool],
 ) -> Result<(), SourceError> {
-    let correlations = row.correlations.len();
+    let correlations = row.parallel.len();
     for (channel, selected) in row.channels.iter().enumerate() {
         let role = rule
-            .channel_use(selected.channel_index)
+            .channel_use(*selected)
             .ok_or("a selected channel has no continuum fit or application role")?;
         if !role.contributes_to_output() {
             flags[channel * correlations..(channel + 1) * correlations].fill(true);

@@ -701,11 +701,12 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+    use casa_imaging_model::PolarizationCoordinate;
     use casa_imaging_operator::{
         Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PaddingFactor,
         PolarizationRouting, Spheroidal,
     };
+    use casa_types::Correlation;
 
     fn spheroidal_operator() -> MeasurementOperator {
         let geometry = GridGeometry::new(
@@ -718,7 +719,7 @@ mod tests {
         )
         .expect("geometry");
         let polarization = PolarizationRouting::compile(
-            &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+            &[Correlation::XX, Correlation::YY],
             &[PolarizationCoordinate::StokesI],
         )
         .expect("routing");

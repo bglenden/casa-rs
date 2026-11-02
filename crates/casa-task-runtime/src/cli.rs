@@ -1,124 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+//! The command-line pieces the task front end shares: reading a
+//! `--json-run` request, and parsing a surface's declared parameter flags.
 
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
-use std::marker::PhantomData;
 use std::path::Path;
 
 use casa_provider_contracts::{
     ParameterType, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
-    TaskProviderContract,
 };
-use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
 
-/// Machine-readable task action handled by the shared CLI host.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskCliAction {
-    JsonSchema,
-    ProtocolInfo,
-    JsonRun(String),
-}
-
-/// Shared task CLI failure with stable user-facing wording.
+/// Why a `--json-run` request could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum TaskCliError {
-    #[error("missing value for --json-run")]
-    MissingJsonRunSource,
-    #[error("task CLI argument is not valid UTF-8")]
-    NonUtf8Argument,
     #[error("failed to read JSON request from stdin: {0}")]
     ReadStdin(io::Error),
     #[error("failed to read JSON request from {path}: {source}")]
     ReadFile { path: String, source: io::Error },
     #[error("failed to parse task request: {0}")]
     ParseRequest(serde_json::Error),
-    #[error("task execution failed: {0}")]
-    Execute(String),
-    #[error("invalid task provider contract: {0}")]
-    InvalidContract(String),
-    #[error("failed to serialize task output: {0}")]
-    Serialize(serde_json::Error),
 }
 
-impl TaskCliError {
-    /// Stable process classification shared by every hosted provider.
-    pub fn exit_code(&self) -> i32 {
-        1
-    }
-}
-
-/// Reusable host for the common machine-readable shell around a typed task.
-pub struct TaskCliHost<E, R, O, F> {
-    bundle: TaskProviderContract<E>,
-    execute: F,
-    marker: PhantomData<fn(R) -> O>,
-}
-
-impl<E, R, O, F> TaskCliHost<E, R, O, F>
-where
-    E: Serialize,
-    R: DeserializeOwned,
-    O: Serialize,
-    F: Fn(R) -> Result<O, String>,
-{
-    pub fn new(bundle: TaskProviderContract<E>, execute: F) -> Self {
-        Self {
-            bundle,
-            execute,
-            marker: PhantomData,
-        }
-    }
-
-    /// Handle a common machine action, returning `None` for domain arguments.
-    pub fn dispatch(&self, args: &[OsString]) -> Result<Option<String>, TaskCliError> {
-        self.bundle.validate().map_err(|errors| {
-            TaskCliError::InvalidContract(
-                errors
-                    .into_iter()
-                    .map(|error| format!("{}: {}", error.code, error.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
-        let Some(action) = parse_task_cli_action(args)? else {
-            return Ok(None);
-        };
-        match action {
-            TaskCliAction::JsonSchema => pretty_json(&self.bundle).map(Some),
-            TaskCliAction::ProtocolInfo => pretty_json(&self.bundle.protocol).map(Some),
-            TaskCliAction::JsonRun(source) => {
-                let payload = read_task_request(&source)?;
-                let request = serde_json::from_str(&payload).map_err(TaskCliError::ParseRequest)?;
-                let result = (self.execute)(request).map_err(TaskCliError::Execute)?;
-                pretty_json(&result).map(Some)
-            }
-        }
-    }
-}
-
-pub fn parse_task_cli_action(args: &[OsString]) -> Result<Option<TaskCliAction>, TaskCliError> {
-    let mut strings = Vec::with_capacity(args.len());
-    for arg in args {
-        strings.push(arg.to_str().ok_or(TaskCliError::NonUtf8Argument)?);
-    }
-    if strings.contains(&"--json-schema") {
-        return Ok(Some(TaskCliAction::JsonSchema));
-    }
-    if strings.contains(&"--protocol-info") {
-        return Ok(Some(TaskCliAction::ProtocolInfo));
-    }
-    if let Some(index) = strings.iter().position(|arg| *arg == "--json-run") {
-        let source = strings
-            .get(index + 1)
-            .ok_or(TaskCliError::MissingJsonRunSource)?;
-        return Ok(Some(TaskCliAction::JsonRun((*source).to_string())));
-    }
-    Ok(None)
-}
-
+/// The text of a `--json-run` request: from stdin for `-`, or from the
+/// file `source` names.
 pub fn read_task_request(source: &str) -> Result<String, TaskCliError> {
     if source == "-" {
         let mut payload = String::new();
@@ -176,7 +83,11 @@ pub fn parse_parameter_cli_overrides(
             index += 2;
             continue;
         }
-        if raw.starts_with("--") {
+        // A surface may declare a short spelling too, such as msexplore's `-o`.
+        let declared_short = !raw.starts_with("--")
+            && raw.starts_with('-')
+            && cli_flag_binding(bundle, raw).is_some();
+        if raw.starts_with("--") || declared_short {
             let (flag, inline) = raw
                 .split_once('=')
                 .map_or((raw, None), |(flag, value)| (flag, Some(value)));
@@ -210,6 +121,18 @@ pub fn parse_parameter_cli_overrides(
                     if inline.is_some() { 1 } else { 2 },
                 )
             };
+            // A list without a fixed size gathers what each occurrence
+            // names, as `--archivefile a.exp --archivefile b.exp` names two
+            // archives; any other value takes its last occurrence.
+            let value = match (patch.values.remove(&binding.name), value) {
+                (Some(ParameterValue::Array(mut earlier)), ParameterValue::Array(more))
+                    if is_open_list_domain(&concept.value_domain) =>
+                {
+                    earlier.extend(more);
+                    checked_value(bundle, binding, &ParameterValue::Array(earlier))?
+                }
+                (_, value) => value,
+            };
             patch.unset.remove(&binding.name);
             patch.values.insert(binding.name.clone(), value);
             index += consumed;
@@ -230,11 +153,23 @@ pub fn parse_parameter_cli_overrides(
     Ok(patch)
 }
 
+/// Whether `flag` is one of `bundle`'s own parameter spellings, which win
+/// over the front end's flags of the same spelling (imregrid's `--template`).
+pub(crate) fn surface_declares_flag(bundle: &SurfaceContractBundle, flag: &str) -> bool {
+    cli_flag_binding(bundle, flag).is_some()
+}
+
+/// The binding a flag names, and whether it is a false flag.
+///
+/// The surface's declared flags win. Every parameter is also reachable by its
+/// own name, `--vis` or `--gaintable` (#931), and a binding that declares no
+/// spelling by its dashed name.
 fn cli_flag_binding<'a>(
     bundle: &'a SurfaceContractBundle,
     flag: &str,
 ) -> Option<(&'a SurfaceParameterBinding, bool)> {
-    bundle.surface.bindings().iter().find_map(|binding| {
+    let bindings = bundle.surface.bindings();
+    let declared = bindings.iter().find_map(|binding| {
         let projection = binding.projections.cli.as_ref()?;
         if projection.flags.iter().any(|candidate| candidate == flag) {
             Some((binding, false))
@@ -244,15 +179,23 @@ fn cli_flag_binding<'a>(
             .any(|candidate| candidate == flag)
         {
             Some((binding, true))
-        } else if projection.flags.is_empty()
-            && projection.false_flags.is_empty()
-            && projection.positional.is_none()
-            && flag == format!("--{}", binding.name.replace('_', "-"))
-        {
-            Some((binding, false))
         } else {
             None
         }
+    });
+    declared.or_else(|| {
+        let name = flag.strip_prefix("--")?;
+        bindings
+            .iter()
+            .find(|binding| {
+                binding.name == name
+                    || (binding.projections.cli.as_ref().is_some_and(|projection| {
+                        projection.flags.is_empty()
+                            && projection.false_flags.is_empty()
+                            && projection.positional.is_none()
+                    }) && binding.name.replace('_', "-") == name)
+            })
+            .map(|binding| (binding, false))
     })
 }
 
@@ -282,11 +225,28 @@ fn validated_cli_value(
     if text.trim().is_empty() {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
-    let parsed =
-        parse_parameter_text(text, &concept.value_domain).map_err(|error| error.to_string())?;
-    let normalized = normalize_value(&parsed, concept).map_err(|error| error.to_string())?;
-    validate_value(&normalized, concept, &binding.refinements)
-        .map_err(|error| error.to_string())?;
+    let parsed = parse_parameter_text(text, &concept.value_domain)
+        .map_err(|error| format!("parameter {:?}: {error}", binding.name))?;
+    checked_value(bundle, binding, &parsed)
+}
+
+/// `value` normalized and validated through `binding`'s concept and
+/// refinements; a refusal names the parameter.
+pub(crate) fn checked_value(
+    bundle: &SurfaceContractBundle,
+    binding: &SurfaceParameterBinding,
+    value: &ParameterValue,
+) -> Result<ParameterValue, String> {
+    let named = |error: crate::NormalizationError| {
+        let note = error.binding_note(binding);
+        format!("parameter {:?}: {error}{note}", binding.name)
+    };
+    let concept = bundle
+        .catalog
+        .concept(&binding.concept)
+        .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
+    let normalized = normalize_value(value, concept).map_err(named)?;
+    validate_value(&normalized, concept, &binding.refinements).map_err(named)?;
     Ok(normalized)
 }
 
@@ -298,110 +258,37 @@ fn is_bool_domain(domain: &ParameterType) -> bool {
     }
 }
 
-/// Render the common machine-action help block once for every hosted task.
-pub fn task_cli_machine_help(request_type: &str) -> String {
-    format!(
-        "Machine-readable:\n  --json-schema            Emit the canonical task schema bundle\n  --protocol-info          Emit the task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON {request_type} from SOURCE or - for stdin"
-    )
-}
-
-fn pretty_json(value: &impl Serialize) -> Result<String, TaskCliError> {
-    serde_json::to_string_pretty(value).map_err(TaskCliError::Serialize)
+/// Whether `domain` is a list with no fixed size, which a repeated flag
+/// extends.
+fn is_open_list_domain(domain: &ParameterType) -> bool {
+    match domain {
+        ParameterType::Array { max_items, .. } => max_items.is_none(),
+        ParameterType::Optional { value, .. } => is_open_list_domain(value),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use casa_provider_contracts::ParameterValue;
-    use serde::{Deserialize, Serialize, Serializer};
-
-    #[derive(Deserialize, schemars::JsonSchema)]
-    struct Request {
-        value: u32,
-    }
-
-    #[derive(Serialize, schemars::JsonSchema)]
-    struct ResultValue {
-        value: u32,
-    }
-
-    struct SerializationFailure;
-
-    impl Serialize for SerializationFailure {
-        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            Err(serde::ser::Error::custom(
-                "deliberate serialization failure",
-            ))
-        }
-    }
-
-    fn contract() -> casa_provider_contracts::TaskProviderContract {
-        let request_schema = schemars::schema_for!(Request);
-        let result_schema = schemars::schema_for!(ResultValue);
-        casa_provider_contracts::TaskProviderContract {
-            protocol: casa_provider_contracts::ProviderProtocolDescriptor::new(
-                "test",
-                1,
-                casa_provider_contracts::ProviderSurfaceKind::Task,
-                "1",
-            ),
-            semantic: casa_provider_contracts::TaskSemanticContract {
-                request_schema: request_schema.clone(),
-                result_schema: result_schema.clone(),
-                operations: vec![casa_provider_contracts::TaskOperationDescriptor {
-                    name: "run".into(),
-                    request_kind: "run".into(),
-                    result_kind: Some("run".into()),
-                }],
-            },
-            components: casa_provider_contracts::merged_components([
-                &request_schema,
-                &result_schema,
-            ]),
-            annotations: serde_json::json!({}),
-            projections: casa_provider_contracts::ProviderProjectionMetadata {
-                cli: Some(casa_provider_contracts::ProviderCliProjection {
-                    machine_actions: casa_provider_contracts::ProviderCliMachineActions {
-                        json_schema: Some("--json-schema".into()),
-                        protocol_info: Some("--protocol-info".into()),
-                        json_run: Some("--json-run <SOURCE>".into()),
-                    },
-                }),
-                python: None,
-            },
-            parameter_surfaces: vec![
-                casa_provider_contracts::builtin_surface_bundle("imager").unwrap(),
-            ],
-            domain_schemas: casa_provider_contracts::TaskProviderSchemas {
-                request_schema,
-                result_schema,
-                additional: casa_provider_contracts::NoAdditionalProviderSchemas {},
-            },
-        }
-    }
 
     #[test]
-    fn parses_common_actions_and_rejects_missing_source() {
+    fn a_request_is_read_from_a_file_or_reports_the_path() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), r#"{"surface": "imstat"}"#).unwrap();
         assert_eq!(
-            parse_task_cli_action(&["--json-schema".into()]).unwrap(),
-            Some(TaskCliAction::JsonSchema)
+            read_task_request(temp.path().to_str().unwrap()).unwrap(),
+            r#"{"surface": "imstat"}"#
         );
-        assert_eq!(
-            parse_task_cli_action(&["--json-run".into(), "request.json".into()]).unwrap(),
-            Some(TaskCliAction::JsonRun("request.json".into()))
-        );
-        assert!(matches!(
-            parse_task_cli_action(&["--json-run".into()]),
-            Err(TaskCliError::MissingJsonRunSource)
-        ));
+        let missing = read_task_request("/definitely/missing/request.json").unwrap_err();
+        assert!(matches!(missing, TaskCliError::ReadFile { .. }));
+        assert!(missing.to_string().contains("failed to read JSON request"));
     }
 
     #[test]
     fn catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -425,11 +312,11 @@ mod tests {
         );
         assert_eq!(
             patch.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
+            ParameterValue::Array(vec![ParameterValue::Integer(1024)])
         );
         assert_eq!(
             patch.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
+            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into())])
         );
         assert_eq!(patch.values["parallel"], ParameterValue::Bool(false));
         assert_eq!(
@@ -437,14 +324,90 @@ mod tests {
             ParameterValue::String("f64".into())
         );
 
-        let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])
-            .unwrap_err();
-        assert!(alias.contains("unknown imager parameter flag --threshold"));
+        // The parameter's own name reaches the same binding and value.
+        let named =
+            parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()]).unwrap();
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--threshold-jy".into(), "1Jy".into()])
+                .unwrap();
+        assert_eq!(named, declared);
+        let unknown =
+            parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
+        assert!(unknown.contains("unknown tclean parameter flag --thresh"));
+    }
+
+    #[test]
+    fn every_parameter_is_reachable_by_its_own_name() {
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let flag = format!("--{}", binding.name);
+                let (found, _) = cli_flag_binding(&bundle, &flag)
+                    .unwrap_or_else(|| panic!("{}: {flag} names nothing", surface.id()));
+                assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+            }
+        }
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("applycal").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["--vis".into(), "target.ms".into(), "--no-flagbackup".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("target.ms".into())])
+        );
+        let declared =
+            parse_parameter_cli_overrides(&bundle, &["--ms".into(), "target.ms".into()]).unwrap();
+        assert_eq!(declared.values["vis"], patch.values["vis"]);
+        assert_eq!(patch.values["flagbackup"], ParameterValue::Bool(false));
+    }
+
+    #[test]
+    fn every_declared_spelling_reaches_its_parameter_short_ones_included() {
+        // msexplore's `-o` was read as a positional before.
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let mut short = 0;
+        for surface in &catalog.surfaces {
+            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            for binding in bundle.surface.bindings() {
+                let Some(cli) = binding.projections.cli.as_ref() else {
+                    continue;
+                };
+                for flag in cli.flags.iter().chain(&cli.false_flags) {
+                    let Some((found, _)) = cli_flag_binding(&bundle, flag) else {
+                        panic!("{}: {flag} names nothing", surface.id());
+                    };
+                    assert_eq!(found.name, binding.name, "{}: {flag}", surface.id());
+                    if !flag.starts_with("--") {
+                        short += 1;
+                    }
+                }
+            }
+        }
+        assert!(short > 0, "the catalog declares no short spelling to test");
+
+        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &["-o".into(), "summary.txt".into(), "in.ms".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            patch.values["output"],
+            ParameterValue::String("summary.txt".into())
+        );
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("in.ms".into())])
+        );
     }
 
     #[test]
     fn catalog_cli_parser_applies_unsets_in_argument_order() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -461,75 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn host_renders_discovery_and_executes_file_requests() {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(temp.path(), r#"{"value": 4}"#).unwrap();
-        let host = TaskCliHost::new(contract(), |request: Request| {
-            Ok(ResultValue {
-                value: request.value + 1,
-            })
-        });
-        let output = host
-            .dispatch(&["--json-run".into(), temp.path().as_os_str().to_owned()])
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&output).unwrap()["value"],
-            5
-        );
-    }
-
-    #[test]
-    fn host_classifies_common_failure_corpus() {
-        let malformed = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(malformed.path(), "not-json").unwrap();
-        let host = TaskCliHost::new(contract(), |_request: Request| Ok(ResultValue { value: 1 }));
-        assert!(matches!(
-            host.dispatch(&["--json-run".into(), malformed.path().into()]),
-            Err(TaskCliError::ParseRequest(_))
-        ));
-        assert!(matches!(
-            host.dispatch(&[
-                "--json-run".into(),
-                "/definitely/missing/request.json".into()
-            ]),
-            Err(TaskCliError::ReadFile { .. })
-        ));
-
-        let request = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(request.path(), r#"{"value": 4}"#).unwrap();
-        let execution_failure = TaskCliHost::new(contract(), |_request: Request| {
-            Err::<ResultValue, _>("deliberate execution failure".into())
-        });
-        assert!(matches!(
-            execution_failure.dispatch(&["--json-run".into(), request.path().into()]),
-            Err(TaskCliError::Execute(_))
-        ));
-
-        let serialization_failure =
-            TaskCliHost::new(contract(), |_request: Request| Ok(SerializationFailure));
-        assert!(matches!(
-            serialization_failure.dispatch(&["--json-run".into(), request.path().into()]),
-            Err(TaskCliError::Serialize(_))
-        ));
-
-        let mut invalid = contract();
-        invalid.protocol.protocol_name.clear();
-        let invalid_host =
-            TaskCliHost::new(invalid, |_request: Request| Ok(ResultValue { value: 1 }));
-        assert!(matches!(
-            invalid_host.dispatch(&["--protocol-info".into()]),
-            Err(TaskCliError::InvalidContract(_))
-        ));
-    }
-
-    #[test]
-    fn exit_code_preserves_the_shared_provider_contract() {
-        assert_eq!(TaskCliError::MissingJsonRunSource.exit_code(), 1);
-        assert_eq!(TaskCliError::Execute("failed".into()).exit_code(), 1);
-    }
-
-    #[test]
     fn cli_values_are_normalized_through_the_binding_concept() {
         let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
         let field = ensure_parameter_binding(&bundle, "field").unwrap();
@@ -543,5 +437,12 @@ mod tests {
                 .contains("no typed value")
         );
         assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
+        // A value the concept refuses names its parameter.
+        let imager = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let imsize = ensure_parameter_binding(&imager, "imsize").unwrap();
+        let refused = validated_cli_value(&imager, imsize, "abc").unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
+        let refused = checked_value(&imager, imsize, &ParameterValue::Bool(true)).unwrap_err();
+        assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
     }
 }

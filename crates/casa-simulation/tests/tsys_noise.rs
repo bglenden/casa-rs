@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `sm.setnoise(mode='tsys-manual')` (#841 Phase 3): thermal noise whose σ
-//! comes from each row's system temperature, read back from the
-//! MeasurementSets `close` writes.
+//! `sm.setnoise(mode='tsys-manual')` (#841 Phase 3) and
+//! `sm.setnoise(mode='tsys-atm')` (Phase 4c): thermal noise whose σ comes
+//! from each row's system temperature, read back from the MeasurementSets
+//! `close` writes. The `tsys-atm` laws, which take each channel's Tsys from
+//! the ATM atmosphere, follow the `tsys-manual` ones.
 //!
 //! The expected σ is CASA 6.7.6's (`AtmosCorruptor`, probed for Phase 3 and
 //! documented in the crate's `corrupt::tsys`):
@@ -19,11 +21,15 @@
 //! different frequency and channel width, two integration times, dishes of
 //! 12 m and 7 m, and elevations from below the horizon to 26°.
 
+mod pass_summary;
 mod predict_support;
 
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_atmosphere::{
+    AbsorptionProfile, AtmosphereProfile, ChannelTotals, ProfileParameters, Sky, SpectralGrid,
+};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
@@ -33,9 +39,9 @@ use casa_ms::columns::main_ids::{antenna1, antenna2, data_desc_id};
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::{SigmaColumn, WeightColumn};
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, NoiseSpec, ObserveSpec,
-    SessionResources, Simulator, SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
-    TsysParameters,
+    ArrayConfig, AtmosphereSpec, BackendRequest, CasaOutcome, CoordinateSystem, NoiseSpec,
+    ObserveSpec, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
+    SpectralWindowSpec, StateSpec, TsysParameters,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -43,6 +49,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 use ndarray::IxDyn;
 use num_complex::Complex32;
+use pass_summary::capture;
 
 /// 2024-06-01 00:00 UTC.
 const REFERENCE_MJD: f64 = 60_462.0;
@@ -56,6 +63,10 @@ const CHANNELS: usize = 16;
 /// The windows: name, first channel's frequency and channel width (one
 /// decreasing), Hz.
 const WINDOWS: [(&str, f64, f64); 2] = [("a", 230.0e9, 15.625e6), ("b", 100.0e9, -62.5e6)];
+
+/// A budget that writes the sessions in several batches: the writer's
+/// streaming buffers take most of it.
+const SMALL_BUDGET: u64 = 96 << 20;
 
 /// The field, J2000 radians: at declination −30° it transits the VLA's
 /// latitude at 26° elevation and sets about 4.5 h from transit.
@@ -91,6 +102,11 @@ fn simple(seed: i32, sigma_jy: f64) -> impl Fn(&mut Simulator) -> SimulatorResul
 /// A pinned eight-thread host, with this host's Metal device when it has
 /// one, and a policy of `workers` workers and 2 GiB asking for `backend`.
 fn resources(workers: usize, backend: BackendRequest) -> SessionResources {
+    resources_within(workers, backend, 2 << 30)
+}
+
+/// [`resources`] with a budget of `memory` bytes.
+fn resources_within(workers: usize, backend: BackendRequest, memory: u64) -> SessionResources {
     SessionResources::pinned(
         HostResources {
             threads: 8,
@@ -98,19 +114,20 @@ fn resources(workers: usize, backend: BackendRequest) -> SessionResources {
             available_memory: 8 << 30,
             metal: HostResources::detect().expect("host").metal,
         },
-        ResourcePolicy::Explicit {
-            workers,
-            memory: 2 << 30,
-        },
+        ResourcePolicy::Explicit { workers, memory },
         backend,
     )
     .expect("resources")
 }
 
 fn options(workers: usize, backend: BackendRequest) -> SimulatorOptions {
+    options_within(resources(workers, backend))
+}
+
+fn options_within(resources: SessionResources) -> SimulatorOptions {
     SimulatorOptions {
         measures: casa_test_support::deterministic_measures_provider(),
-        resources: resources(workers, backend),
+        resources,
         now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
     }
 }
@@ -155,7 +172,12 @@ fn scan(window: &str, start_s: f64, stop_s: f64) -> ObserveSpec {
 /// during it), then window `b` in 20 s integrations in the hour before
 /// transit; autocorrelations written, the elevation limit at the horizon.
 fn observed(path: &Path, workers: usize, backend: BackendRequest) -> Simulator {
-    let mut sm = Simulator::open(path, options(workers, backend));
+    observed_within(path, options(workers, backend))
+}
+
+/// [`observed`] with `options`.
+fn observed_within(path: &Path, options: SimulatorOptions) -> Simulator {
+    let mut sm = Simulator::open(path, options);
     let positions = positions();
     sm.set_config(&ArrayConfig {
         telescope: "ALMA".to_string(),
@@ -546,10 +568,10 @@ fn outcome(result: SimulatorResult<()>) -> (CasaOutcome, String) {
     (error.outcome(), error.message().to_string())
 }
 
-/// What CASA refuses, or casa-rs does not yet do, adds no term: `tsys-atm`
-/// (Phase 4), a `table` (CASA writes the `T` term's), `OTF=False`, a water
-/// vapour above 100 mm and an undefined zenith Tsys, which CASA refuses
-/// after adding a unit-σ term (`docs/CASA (C++) bugs.md`).
+/// What CASA refuses, or casa-rs does not yet do, adds no term: a `table`
+/// (CASA writes the `T` term's), `OTF=False`, a water vapour above 100 mm
+/// and an undefined zenith Tsys, which CASA refuses after adding a unit-σ
+/// term (`docs/CASA (C++) bugs.md`).
 #[test]
 fn refusals_add_no_term() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -560,9 +582,6 @@ fn refusals_add_no_term() {
         change(&mut spec);
         spec
     };
-    let atm = spec(&|spec| spec.mode = "tsys-atm".to_string());
-    let (refused, message) = outcome(sm.set_noise(&atm));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented, "{message}");
     let table = spec(&|spec| spec.table = "noisy.cal".to_string());
     let (refused, message) = outcome(sm.set_noise(&table));
     assert_eq!(refused, CasaOutcome::NotYetImplemented);
@@ -612,6 +631,329 @@ fn refusals_add_no_term() {
     let (refused, message) = outcome(empty.set_noise(&NoiseSpec::tsys_manual(tsys_parameters())));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
     assert!(message.contains("create_corrupt"), "{message}");
+}
+
+/// The `tsys-atm` term of the tests: 2 mm of water vapour, a site moved
+/// from CASA's defaults, a 60 K receiver and CASA's other defaults.
+fn atm_spec() -> NoiseSpec {
+    NoiseSpec::tsys_atm(
+        TsysParameters {
+            receiver_k: 60.0,
+            ..TsysParameters::default()
+        },
+        2.0,
+        AtmosphereSpec {
+            ground_pressure_hpa: 555.0,
+            relative_humidity_percent: 25.0,
+            altitude_m: 5050.0,
+            water_scale_height_m: 1800.0,
+        },
+    )
+}
+
+fn tsys_atm(seed: i32) -> impl Fn(&mut Simulator) -> SimulatorResult<()> {
+    move |sm: &mut Simulator| {
+        sm.set_seed(seed);
+        sm.set_noise(&atm_spec())?;
+        sm.corrupt()
+    }
+}
+
+/// The atmosphere of [`atm_spec`] over the test windows, through
+/// `casa-atmosphere`'s `SkyStatus` (`tebb_sky`) rather than the
+/// simulator's: each window's profile and channel frequencies.
+struct Atmosphere {
+    windows: Vec<(AbsorptionProfile<ChannelTotals>, Vec<f64>)>,
+}
+
+impl Atmosphere {
+    fn new() -> Self {
+        let parameters = ProfileParameters {
+            altitude_m: 5050.0,
+            ground_pressure_hpa: 555.0,
+            ground_temperature_k: 270.0,
+            relative_humidity_percent: 25.0,
+            water_vapour_scale_height_km: 1.8,
+            ..ProfileParameters::default()
+        };
+        let atmosphere = AtmosphereProfile::new(&parameters).expect("atmosphere");
+        let windows = WINDOWS
+            .iter()
+            .map(|&(_, first_hz, width_hz)| {
+                let frequencies: Vec<f64> = (0..CHANNELS)
+                    .map(|channel| first_hz + channel as f64 * width_hz)
+                    .collect();
+                let mut grid = SpectralGrid::new();
+                grid.add_channels(&frequencies, 0).expect("grid");
+                let profile = AbsorptionProfile::new_totals(atmosphere.clone(), grid);
+                (profile, frequencies)
+            })
+            .collect();
+        Self { windows }
+    }
+
+    /// Tsys of `channel` of `window` at `elevation`, K, in double
+    /// precision: the formula of the crate's `corrupt::tsys_atm`.
+    fn tsys(&self, window: usize, channel: usize, elevation: f64) -> f64 {
+        let spec = atm_spec();
+        let (profile, frequencies) = &self.windows[window];
+        let airmass = if elevation > 0.0 {
+            1.0 / elevation.sin()
+        } else {
+            1000.0
+        };
+        let pwv_m = spec.water_vapour_mm * 1e-3;
+        let sky = Sky {
+            water_column_m: pwv_m,
+            airmass,
+            sky_coupling: spec.tsys.spillover_efficiency,
+            spill_temperature_k: spec.tsys.ground_k,
+            background_temperature_k: 2.73,
+        };
+        let tebb = profile.tebb_sky(channel, &sky).expect("Tebb");
+        let tau = profile.dry_opacity(channel) + profile.wet_opacity(channel, pwv_m);
+        let h_nu_k = 4.80145e-11 * frequencies[channel];
+        h_nu_k
+            * (tau * airmass).exp()
+            * (1.0 / ((h_nu_k / tebb).exp() - 1.0) + spec.tsys.receiver_k / h_nu_k)
+    }
+
+    /// CASA's σ of `row`'s draws in `channel`: as `expected_sigma`'s, with
+    /// each antenna's Tsys in the channel.
+    fn sigma(&self, row: &Row, channel: usize, elevations: &[f64]) -> f64 {
+        let parameters = atm_spec().tsys;
+        let (_, _, width_hz) = WINDOWS[row.window];
+        let jansky_per_kelvin = std::f64::consts::FRAC_1_SQRT_2 * 8.0 * 1.38062e-16 * 1e23 * 1e-4
+            / (parameters.antenna_efficiency
+                * parameters.correlator_efficiency
+                * std::f64::consts::PI);
+        let factor = jansky_per_kelvin / (width_hz.abs() * row.exposure_s).sqrt();
+        let scale = |antenna: usize| {
+            let t = self.tsys(row.window, channel, elevations[antenna]);
+            if t > f64::from(f32::MAX) {
+                1.0
+            } else {
+                factor.sqrt() * t.sqrt() / DISHES[antenna]
+            }
+        };
+        scale(row.antennas[0]) * scale(row.antennas[1])
+    }
+}
+
+/// The σ `row`'s samples in `channel` were scaled by from `unit`'s, as
+/// [`measured_sigma`] over the channel's correlations.
+fn measured_channel_sigma(row: &Row, unit: &Row, channel: usize) -> f64 {
+    let correlations = row.data.len() / CHANNELS;
+    let samples = channel * correlations..(channel + 1) * correlations;
+    let (mut cross, mut norm) = (0.0, 0.0);
+    for (a, b) in row.data[samples.clone()].iter().zip(&unit.data[samples]) {
+        cross += f64::from(a.re) * f64::from(b.re);
+        norm += f64::from(b.re) * f64::from(b.re);
+        if !row.autocorrelation() {
+            cross += f64::from(a.im) * f64::from(b.im);
+            norm += f64::from(b.im) * f64::from(b.im);
+        }
+    }
+    cross / norm
+}
+
+/// Each sample of a `tsys-atm` term is the unit draw of a `simplenoise`
+/// term of the same seed scaled by CASA's σ for its row and channel, the
+/// atmosphere computed independently through ATM's `SkyStatus` at each
+/// channel's frequency: every row, flagged or not, cross or auto, both
+/// windows (one decreasing), both integration times, both dish sizes, and
+/// antennas below the horizon, to 10⁻⁵ of σ. Tsys varies across each
+/// window by more than that, so a σ taken from the wrong channel fails.
+#[test]
+fn each_channel_is_scaled_by_the_atmospheres_tsys_sigma() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let noisy = write(&directory.path().join("atm.ms"), &tsys_atm(4321));
+    let unit = write(&directory.path().join("unit.ms"), &simple(4321, 1.0));
+    let atmosphere = Atmosphere::new();
+    let mut by_time: HashMap<u64, Vec<f64>> = HashMap::new();
+    let (mut below_horizon, mut spread) = (0, [0.0_f64; 2]);
+    for (index, (row, unit)) in noisy.iter().zip(&unit).enumerate() {
+        let elevations = by_time
+            .entry(row.time_s.to_bits())
+            .or_insert_with(|| elevations(row.time_s));
+        let expected: Vec<f64> = (0..CHANNELS)
+            .map(|channel| atmosphere.sigma(row, channel, elevations))
+            .collect();
+        for (channel, expected) in expected.iter().enumerate() {
+            let measured = measured_channel_sigma(row, unit, channel);
+            assert!(
+                (measured / expected - 1.0).abs() < 1e-5,
+                "row {index} (antennas {:?}, window {}, exposure {} s, elevations {:.2}°, \
+                 {:.2}°), channel {channel}: σ {measured} against {expected}",
+                row.antennas,
+                row.window,
+                row.exposure_s,
+                elevations[row.antennas[0]].to_degrees(),
+                elevations[row.antennas[1]].to_degrees(),
+            );
+        }
+        let elevation = elevations[row.antennas[0]].min(elevations[row.antennas[1]]);
+        if elevation > 0.0 {
+            let (low, high) = expected
+                .iter()
+                .fold((f64::INFINITY, 0.0_f64), |(low, high), &s| {
+                    (low.min(s), high.max(s))
+                });
+            spread[row.window] = spread[row.window].max(high / low - 1.0);
+        } else {
+            below_horizon += 1;
+        }
+    }
+    println!(
+        "{} rows, {below_horizon} below the horizon; σ spread across the windows {spread:?}",
+        noisy.len()
+    );
+    assert!(below_horizon > 0);
+    assert!(spread.iter().all(|&spread| spread > 1e-4), "{spread:?}");
+}
+
+/// A `tsys-atm` term draws the same for any worker count (the atmosphere
+/// is built on the session's workers too), and adds its own noise beside a
+/// `tsys-manual` term's; two `tsys-atm` terms of one seed add coherently.
+#[test]
+fn tsys_atm_draws_are_the_same_for_any_worker_count_and_add_to_other_terms() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = |name: &str| directory.path().join(name);
+    let one = write_with(&path("one.ms"), 1, BackendRequest::Cpu, &tsys_atm(9));
+    let three = write_with(&path("three.ms"), 3, BackendRequest::Cpu, &tsys_atm(9));
+    assert_eq!(bits(&one), bits(&three));
+    let two = write(&path("two.ms"), &|sm: &mut Simulator| {
+        sm.set_seed(9);
+        sm.set_noise(&atm_spec())?;
+        sm.set_noise(&atm_spec())?;
+        sm.corrupt()
+    });
+    let doubled: Vec<(u32, u32)> = one
+        .iter()
+        .flat_map(|row| row.data.iter())
+        .map(|sample| ((2.0 * sample.re).to_bits(), (2.0 * sample.im).to_bits()))
+        .collect();
+    assert_eq!(bits(&two), doubled);
+    let manual = write(&path("manual.ms"), &tsys(10));
+    let both = write(&path("both.ms"), &|sm: &mut Simulator| {
+        sm.set_seed(9);
+        sm.set_noise(&atm_spec())?;
+        sm.set_seed(10);
+        sm.set_noise(&NoiseSpec::tsys_manual(tsys_parameters()))?;
+        sm.corrupt()
+    });
+    let summed: Vec<(u32, u32)> = one
+        .iter()
+        .zip(&manual)
+        .flat_map(|(a, b)| a.data.iter().zip(&b.data))
+        .map(|(a, b)| ((a.re + b.re).to_bits(), (a.im + b.im).to_bits()))
+        .collect();
+    assert_eq!(bits(&both), summed);
+}
+
+/// A `tsys-atm` term draws the same whatever batches the memory budget
+/// makes: an integration two batches share gets the same antenna scales in
+/// both, as they are keyed by what they depend on, not by the batch.
+#[test]
+fn tsys_atm_draws_are_the_same_for_any_memory_budget() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let run = |name: &str, memory: u64| {
+        let path = directory.path().join(name);
+        let resources = resources_within(3, BackendRequest::Cpu, memory);
+        let mut sm = observed_within(&path, options_within(resources));
+        tsys_atm(9)(&mut sm).expect("tsys-atm");
+        let ((), pass) = capture(|| sm.close().expect("close"));
+        (read_main(&path), pass.expect("the pass summary"))
+    };
+    let (ample, whole) = run("ample.ms", 2 << 30);
+    let (small, split) = run("small.ms", SMALL_BUDGET);
+    // Integrations have 21 rows; the small budget's batches split some.
+    println!(
+        "{} rows in {} batches of {}, and in {} of {}",
+        whole.rows, whole.batches, whole.batch_rows, split.batches, split.batch_rows
+    );
+    assert!(split.batches > whole.batches && split.batch_rows % 21 != 0);
+    assert_eq!(bits(&ample), bits(&small));
+}
+
+/// A `tsys-atm` `corrupt` after `openfromms` writes the DATA the observing
+/// session writes, bit for bit: CHAN_FREQ read back is what the atmosphere
+/// takes.
+#[test]
+fn a_tsys_atm_corrupt_after_openfromms_writes_the_same_data() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let one = directory.path().join("one.ms");
+    let session = write(&one, &tsys_atm(11));
+    let two = directory.path().join("two.ms");
+    write(&two, &|_| Ok(()));
+    let mut sm =
+        Simulator::open_from_ms(&two, options(2, BackendRequest::Cpu)).expect("openfromms");
+    tsys_atm(11)(&mut sm).expect("tsys-atm after openfromms");
+    sm.close().expect("close the opened MeasurementSet");
+    assert_eq!(bits(&session), bits(&read_main(&two)));
+}
+
+/// What CASA refuses in `tsys-atm`, or casa-rs does not yet do, adds no
+/// term: a water vapour above 100 mm, a `table`, a site ATM cannot build
+/// (above its 48 km top), and a zenith Tsys above 10⁶ K. A window defined
+/// after the term was set cannot be corrupted by it.
+#[test]
+fn tsys_atm_refusals_add_no_term() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("refused.ms");
+    let mut sm = observed(&path, 2, BackendRequest::Cpu);
+    let spec = |change: &dyn Fn(&mut NoiseSpec)| {
+        let mut spec = atm_spec();
+        change(&mut spec);
+        spec
+    };
+    let wet = spec(&|spec| spec.water_vapour_mm = 200.0);
+    let (refused, message) = outcome(sm.set_noise(&wet));
+    assert_eq!(refused, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("you input PWV=200mm"), "{message}");
+    let table = spec(&|spec| spec.table = "noisy.cal".to_string());
+    let (refused, message) = outcome(sm.set_noise(&table));
+    assert_eq!(refused, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("noisy.T.cal"), "{message}");
+    let high = spec(&|spec| spec.atmosphere.altitude_m = 50_000.0);
+    let (refused, message) = outcome(sm.set_noise(&high));
+    assert_eq!(refused, CasaOutcome::ReturnsFalse);
+    assert!(message.contains("error in ATM setup"), "{message}");
+    // A zenith Tsys too hot, or not a number at all (which CASA's check lets
+    // through).
+    for receiver_k in [2e6, f64::NAN] {
+        let bad = spec(&|spec| spec.tsys.receiver_k = receiver_k);
+        let (refused, message) = outcome(sm.set_noise(&bad));
+        assert_eq!(refused, CasaOutcome::ReturnsFalse, "Trx {receiver_k}");
+        assert!(
+            message.contains("Tsys") && message.ends_with("poorly defined - check inputs"),
+            "{message}"
+        );
+    }
+    sm.corrupt().expect("corrupt");
+    sm.close().expect("close");
+    assert!(
+        read_main(&path)
+            .iter()
+            .all(|row| row.data.iter().all(|sample| sample.norm_sqr() == 0.0))
+    );
+    // A window defined after the term: the term has no atmosphere for it.
+    let mut late = observed(&directory.path().join("late.ms"), 1, BackendRequest::Cpu);
+    late.set_noise(&atm_spec()).expect("setnoise");
+    late.set_spectral_window(&SpectralWindowSpec {
+        name: "c".to_string(),
+        start_frequency_hz: 345e9,
+        channel_width_hz: 1e6,
+        resolution_hz: 1e6,
+        frame: FrequencyRef::TOPO,
+        channel_count: 4,
+        stokes: "XX YY".to_string(),
+    })
+    .expect("setspwindow");
+    late.observe(&scan("c", -1800.0, -1700.0)).expect("observe");
+    let (refused, message) = outcome(late.corrupt());
+    assert_eq!(refused, CasaOutcome::NotYetImplemented);
+    assert!(message.contains("spectral window c"), "{message}");
 }
 
 /// Whether this host has a Metal device, saying so when it has none.

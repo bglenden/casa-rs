@@ -1,109 +1,97 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `immoments` - CASA-style image moment maps.
+//! `immoments` - CASA-style spectral moment maps, on the shared task front
+//! end.
 
-use std::env;
-use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 
 use casa_images::{
-    ImageAnalysisTaskResult, ImmomentsRequest, dispatch_image_analysis_task_cli, immoments,
+    ImageAnalysisTaskResult, ImmomentsRequest, image_task_front_end, image_task_success, immoments,
 };
+use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-fn main() {
-    match run() {
-        Ok(()) => {}
-        Err(error) => {
-            eprintln!("Error: {error}");
-            process::exit(1);
-        }
+fn main() -> ExitCode {
+    image_task_front_end("immoments", &["immoments"], run).main(
+        std::env::args_os().skip(1),
+        casa_task_runtime::CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
+}
+
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let request = ImmomentsRequest {
+        imagename: task.input_path("imagename")?,
+        outfile: task.path("outfile")?,
+        moments: one_moment(&task.integers("moments")?)?,
+        chans: task.text("chans")?,
+        includepix: include_range(&task.numbers("includepix")?)?,
+        mask: task.text("mask")?,
+        overwrite: task.flag("overwrite")?,
+    };
+    image_task_success(immoments(&request).map(ImageAnalysisTaskResult::Immoments))
+}
+
+/// The one moment casa-rs computes per run: CASA's `moments` takes several,
+/// each written beside `outfile`, which is #977.
+fn one_moment(moments: &[i64]) -> Result<i32, TaskFailure> {
+    let refused = |message: String| TaskFailure::validation(message).at("moments");
+    match moments {
+        [moment @ -1..=3] => Ok(*moment as i32),
+        [moment] => Err(refused(format!(
+            "moment {moment} is not implemented by casa-rs yet (#977); it computes -1 through 3"
+        ))),
+        _ => Err(refused(format!(
+            "{} moments in one run are not implemented by casa-rs yet (#977); give one",
+            moments.len()
+        ))),
     }
 }
 
-fn run() -> Result<(), String> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    if let Some(output) = dispatch_image_analysis_task_cli(&args, &usage())? {
-        println!("{output}");
-        return Ok(());
+/// CASA's `includepix`, an inclusive range of the pixel values a moment
+/// reads: `-1` (or `[]`) includes every pixel; one value `b` is
+/// `[-|b|, |b|]`; two values are the range's ends, in either order
+/// (casacore's `MomentsBase::setInExCludeRange`; CASA 6.7.6.14 runs
+/// `includepix=-2` as `[-2, 2]` and `[5, 2]` as `[2, 5]`).
+fn include_range(values: &[f64]) -> Result<Option<[f64; 2]>, TaskFailure> {
+    match *values {
+        [] => Ok(None),
+        [-1.0] => Ok(None),
+        [value] => Ok(Some([-value.abs(), value.abs()])),
+        [a, b] => Ok(Some([a.min(b), a.max(b)])),
+        _ => Err(TaskFailure::validation(format!(
+            "includepix {values:?}: give -1 for every pixel, one value b for [-|b|, |b|], or two \
+             for a range, as CASA takes it"
+        ))
+        .at("includepix")),
     }
-    let request = parse_request(&args)?;
-    let result = immoments(&request).map_err(|error| error.to_string())?;
-    print_json(&ImageAnalysisTaskResult::Immoments(result))
 }
 
-fn parse_request(args: &[String]) -> Result<ImmomentsRequest, String> {
-    let imagename = args.first().ok_or_else(usage)?.as_str().to_string();
-    let mut outfile = None;
-    let mut moments = 0;
-    let mut chans = None;
-    let mut includepix = None;
-    let mut mask = None;
-    let mut overwrite = false;
-    let mut idx = 1;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--outfile" => {
-                idx += 1;
-                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(usage)?));
-            }
-            "--moments" => {
-                idx += 1;
-                moments = args
-                    .get(idx)
-                    .ok_or_else(usage)?
-                    .parse::<i32>()
-                    .map_err(|error| format!("invalid --moments: {error}"))?;
-            }
-            "--chans" => {
-                idx += 1;
-                chans = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--includepix" => {
-                idx += 1;
-                includepix = Some(parse_range(args.get(idx).ok_or_else(usage)?)?);
-            }
-            "--mask" => {
-                idx += 1;
-                mask = Some(args.get(idx).ok_or_else(usage)?.clone());
-            }
-            "--overwrite" => overwrite = true,
-            other => return Err(format!("unknown argument {other:?}\n{}", usage())),
-        }
-        idx += 1;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_moment_from_minus_one_to_three_is_computed() {
+        assert_eq!(one_moment(&[0]).unwrap(), 0);
+        assert_eq!(one_moment(&[-1]).unwrap(), -1);
+        assert!(one_moment(&[8]).unwrap_err().message.contains("#977"));
+        assert!(one_moment(&[0, 1]).unwrap_err().message.contains("#977"));
     }
-    Ok(ImmomentsRequest {
-        imagename: PathBuf::from(imagename),
-        outfile: outfile.ok_or_else(usage)?,
-        moments,
-        chans,
-        includepix,
-        mask,
-        overwrite,
-    })
-}
 
-fn parse_range(text: &str) -> Result<[f64; 2], String> {
-    let values = text
-        .split(',')
-        .map(|part| {
-            part.trim()
-                .parse::<f64>()
-                .map_err(|error| format!("invalid range {text:?}: {error}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if values.len() != 2 {
-        return Err(format!("range must be min,max, got {text:?}"));
+    #[test]
+    fn includepix_reads_as_casa_does() {
+        // Only -1 is CASA's "every pixel".
+        assert_eq!(include_range(&[]).unwrap(), None);
+        assert_eq!(include_range(&[-1.0]).unwrap(), None);
+        // Any other single value b is [-|b|, |b|].
+        assert_eq!(include_range(&[-2.0]).unwrap(), Some([-2.0, 2.0]));
+        assert_eq!(include_range(&[2.0]).unwrap(), Some([-2.0, 2.0]));
+        assert_eq!(include_range(&[-1.5]).unwrap(), Some([-1.5, 1.5]));
+        assert_eq!(include_range(&[0.0]).unwrap(), Some([0.0, 0.0]));
+        // Two values are the ends, in either order.
+        assert_eq!(include_range(&[0.1, 10.0]).unwrap(), Some([0.1, 10.0]));
+        assert_eq!(include_range(&[5.0, 2.0]).unwrap(), Some([2.0, 5.0]));
+        assert!(include_range(&[1.0, 2.0, 3.0]).is_err());
     }
-    Ok([values[0], values[1]])
-}
-
-fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
-fn usage() -> String {
-    "usage: immoments <imagename> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite] | immoments --json-run <SOURCE>".to_string()
 }

@@ -29,7 +29,7 @@ pub(super) fn predict(
 ) -> PyResult<bool> {
     let spec = PredictSpec {
         images: images.into_iter().map(PathBuf::from).collect(),
-        component_list: (!component_list.is_empty()).then(|| PathBuf::from(component_list)),
+        component_lists: vec![PathBuf::from(component_list)],
         incremental,
     };
     py.detach(|| spec.check_images())

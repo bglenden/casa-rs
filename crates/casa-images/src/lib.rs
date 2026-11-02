@@ -61,15 +61,20 @@
 
 pub mod analysis;
 pub mod beam;
+mod casa_return;
+pub mod convolve2d;
 pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
+pub mod fits_read;
 pub mod image;
 pub mod image_expr;
 mod image_expr_ops;
 pub mod image_info;
+pub mod regrid;
 pub mod saved_region;
 pub mod subimage;
+mod task_front_end;
 pub mod temp_image;
 
 #[cfg(test)]
@@ -81,14 +86,17 @@ pub use analysis::{
     ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageHeaderSummary, ImageMathSummary,
     ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
     ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
-    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary,
-    dispatch_image_analysis_task_cli, export_fits, feather, image_analysis_protocol_descriptor,
-    image_analysis_task_schema_bundle, imhead, imhead_put, immath, immoments, impbcor, import_fits,
-    impv, imregrid, imstat, imsubimage, parse_image_channel_selection, run_image_analysis_task,
+    ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits,
+    feather, image_analysis_protocol_descriptor, image_analysis_task_schema_bundle, imhead,
+    imhead_put, immath, immoments, impbcor, import_fits, impv, imregrid, imstat, imsubimage,
+    parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
+pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
+pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
+pub use fits_read::{FitsImage, read_fits_image};
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     PagedImage, image_pixel_type,
@@ -98,6 +106,8 @@ pub use image_expr::{
     MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
+pub use regrid::{RegridMethod, RegridTemplate, Regridded, check_regrid, regrid};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
+pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};
 pub use temp_image::TempImage;

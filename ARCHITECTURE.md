@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-10-21
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 ## System purpose
@@ -16,15 +16,17 @@ coordinates, measures, and related workflows.
 |---|---|---|
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
-| shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
+| shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners, and CASA's common primary-beam patterns (`PBMath`'s Airy and EVLA beams by telescope) | Rust numerical ecosystem crates only |
+| atmosphere (`casa-atmosphere`) | The native port of ATM, CASA's atmospheric transmission model: layered profiles from ground weather, gas refractivities (absorption and phase), spectral grids, zenith opacities, phase delays and path lengths over a grid (full or compact, buildable channel by channel on a caller's threads), and forward radiative transfer for sky brightness; tested against CASA's ATM C++ and `at` tool through `tools/atmosphere` | Rust ecosystem crates only (a science-layer leaf in the dependency policy) |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The dependency-free request science and compiled problem; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: `casa-imaging-model` has no workspace dependencies; the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`, `casa-coordinates` and `casa-types`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends only on the operator |
-| imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
-| simulation (`casa-simulation`) | CASA's `sm` tool: the session the setters and `observe` describe, the deferred plan of `predict` and `corrupt` steps, model preparation through the measurement operator, thermal noise and antenna-based corruption (gains and leakage), and one streamed MeasurementSet write at `close`, admitted against the imaging runtime's resource policy and predicting through its block predictor on the CPU or Metal | An application in the ADR-0016 layering (the dependency policy lists its exact set): the imaging model, operator and runtime (Metal only through the runtime), `casa-ms`, `casa-tables`, `casa-images`, `casa-coordinates`, `casa-components` (component lists for `predict`), `casa-fft` (the gains' fractional-Brownian-motion screens), `casa-calibration` (the calibration tables of simulated gains and leakage), `casa-numerics` and `casa-types` |
+| native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The request science and compiled problem, over the definitional crates, and the geometry of observation batches over the observation boundary; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: every imaging crate may use the definitional crates (`casa-values`, `casa-types`, `casa-coordinates`); beyond them, `casa-imaging-model` depends only on `casa-observation`, whose catalogue, batches and pointing samples its batch geometry reads (imaging port decision 1, #932); the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends on the operator and `casa-numerics` |
+| single-dish imaging (`casa-imaging-singledish`) | CASA's `SDGrid` as its own operator family (ADR-0016 decision 13): the single-dish kernels (`BOX`, `SF`, `GAUSS`, `GJINC`, `PB`), the image-plane gridder over in-memory spectra and the degridder the simulator's total-power prediction uses, the spectra's Stokes weights and `tsdimaging`'s weight mask, the raster-sampling estimate and `sdbeamutil`'s theoretical beam; tested against CASA's `tsdimaging` through `tools/singledish` | An execution-layer crate of the ADR-0016 layering: the operator (`grdsf`), the runtime (admission and the worker team) and `casa-numerics` (CASA's primary-beam patterns); reading MeasurementSets is the task's, through `casa-observation` (#938) |
+| imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners, `casa-ms` and the observation boundary (`casa-observation`); unavailable requests invoke no execution implementation |
+| simulation (`casa-simulation`) | CASA's `sm` tool: the session the setters and `observe` describe, the deferred plan of `predict` and `corrupt` steps, model preparation through the measurement operator, thermal noise and antenna-based corruption (gains and leakage), and one streamed MeasurementSet write at `close`, admitted against the imaging runtime's resource policy and predicting through its block predictor on the CPU or Metal; `simutil` and the `simobserve` task (`casa_simulation::simobserve`), which take CASA's data directories and measures as request fields | An application in the ADR-0016 layering (the dependency policy lists its exact set): the imaging model, operator and runtime (Metal only through the runtime), `casa-imaging-singledish` (the total-power kernels), `casa-ms`, `casa-tables`, `casa-images`, `casa-components` (component lists for `predict`), `casa-fft` (the gains' fractional-Brownian-motion screens), `casa-calibration` (the calibration tables of simulated gains and leakage) and `casa-numerics`, plus the definitional crates |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation; `casa-components` owns CASA component lists (sky components with their flux, shape and spectral model) and reads and writes their `ComponentList` tables as CASA does | foundation crates, `casa-tables`, selected peer domain crates where documented; `casa-components` depends only on `casa-tables` and `casa-types` |
-| boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, and protocol surfaces between providers, the task host, and Python | domain libraries and foundation crates; must not become a second source of truth |
-| parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
-| apps and runtimes (`casars`, `casars-imager`, `casars-python`, `casars-frontend-services`) | The headless `casars` task host (`casars run`, `casars params`) and the `imexplore`/`casars-plotcal` providers, the imager application, the Python package, and its UniFFI service layer | boundary contracts, domain libraries, foundation crates |
+| boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, the one resolver of a task's executable (`resolve_task_executable`), and protocol surfaces between providers and Python | domain libraries and foundation crates; must not become a second source of truth |
+| parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, the shared task front end with its typed replies (#931), on which every task binary runs, and the one `--json-run` invocation a run is projected to | boundary contracts, `casa-types` and `casa-logging` (the front end installs a run's logging from the configuration and stderr the binary's `main` passes); must not implement provider science behavior |
+| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-simulation`, `casars-python`) | The task executables that are not binaries of a domain crate (as `calibrate`, `msexplore` and `immoments` are), each on the shared task front end: the imager application (`casars-imager`), the image-inspection family `imexplore` (`imhead`, `imstat`) and the simulation tasks' host (`simobserve`; `simanalyze` and `simalma` to come); and the Python package with its PyO3 extension `casars._core`, which starts each task's executable directly | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -37,8 +39,20 @@ Native imaging follows its stricter accepted direction:
 
 `science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
 
-`casa-imaging-model` owns the dependency-free science, reconstruction, and
-product schemas and commitments introduced by ADR-0009.
+Beneath every layer sit the definitional crates, `casa-values`, `casa-types`
+and `casa-coordinates`: they define values, units, quanta, measures and
+coordinate systems and the pure functions on them, do no file, network,
+process or environment I/O, start no threads, use no device and depend only on
+one another, so any crate in the layering may use them (ADR-0016 decision 10,
+amended 2026-10-25). The dependency policy names them and lists each crate's
+other workspace dependencies exactly; adding a crate to the set is the
+owner's decision.
+
+`casa-imaging-model` owns the science, reconstruction, and product schemas and
+commitments introduced by ADR-0009, over the definitional crates alone, and
+the row geometry of observation batches, which reads the observation
+boundary (`casa-observation`; ADR-0016 decision 10, amended 2026-10-28, and
+imaging port decision 1, #932).
 `casa-imaging-operator` owns the measurement operator A and its adjoint
 (plan section 5.3): the kernel sets (`Spheroidal`, `WPlanes`, `AwCatalog`,
 `MosaicPb`), the `GridBackend` contract and its CPU implementation, the
@@ -111,11 +125,12 @@ installed in the build, and either invokes that implementation or returns a
 typed unavailable result before planning. A selected production failure is
 terminal; there is no alternate
 implementation, retry path, or stage-level delegation. Its input is one
-`ImagingRequest`, deserialized from the imager parameters the provider
-catalog resolves and validated once. Every route (command line,
-`--json-run`, `casars run` and Python) reaches it through the same
+`ImagingRequest`, read from the `tclean` parameters the provider catalog
+resolves (CASA's, then casa-rs's own controls) and validated once. Every
+route (command line, `--json-run` and Python) reaches it through the same
 catalog resolution, so the catalog is the only source of defaults and refuses
-a parameter its gridder does not read. `casars-imager` is a thin frontend over
+a casa-rs control its gridder does not read; a CASA parameter its mode does
+not use is ignored, as CASA's tclean ignores it. `casars-imager` is a thin frontend over
 this interface: it resolves its parameters through the catalog and presents
 the result. Unsupported capabilities remain typed unavailable until their
 ticket adds one final-owner implementation.
@@ -174,10 +189,15 @@ Additional constraints:
 - Versioned provider bundles are boundary contracts; CLI parser projections
   are derived views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application
-  inventory and launch-metadata owner. The `casars` task host, Python,
-  packaging, and generators project it directly. Installed-suite
-  and development-workspace launch modes resolve exact paths and never fall
-  back to each other, PATH discovery, or repository probing.
+  inventory and launch-metadata owner; every entry is a task. Python,
+  packaging, and generators project it directly. One resolver,
+  `casa_provider_contracts::resolve_task_executable`, finds a task's
+  executable: the task's catalog override (`CASARS_<APP>_BIN`), else a suite
+  root's `bin/` (`CASARS_SUITE_ROOT`, or the installed suite the Python
+  package belongs to), else the newest `debug` or `release` build in the
+  development checkout the package was built from. The first step that
+  applies decides; one that lacks the file is an error naming the fix, never
+  a fall-through to a later step, `PATH` or `cargo run`.
 - Parameter concepts live in the checked aggregate `ParameterCatalog` in
   `casa-provider-contracts`. Each provider bundle embeds the exact referenced
   concepts so the boundary remains self-contained. Task
@@ -194,11 +214,17 @@ Additional constraints:
   classification, and the generated common help block. Providers retain typed
   science adapters and domain-specific human parsing; apps may not add
   alternate lifecycle maps, writers, CLI hosts, or launch fallbacks.
-- `casars-frontend-services` is the UniFFI service layer of the Python
-  package (ADR-0017). It projects the parameter runtime, task completion, the
-  application catalog and MeasurementSet plot documents for
-  `casars.parameters`, `casars.tasks` and `casars.data`, and must not become a
-  second implementation of persistence, task semantics, or provider contracts.
+- `casars-python` binds Rust to Python through PyO3 alone, in the extension
+  `casars._core` (ADR-0017 item 4). Beside the `casars.data` objects and the
+  `casars.tools` classes, it projects the parameter runtime, task completion,
+  the application catalog, the task-executable resolver and `casa-ms` plot
+  documents for `casars.parameters`, `casars.tasks` and `casars.data`, and
+  must not become a second implementation of persistence, task semantics, or
+  provider contracts. A task call starts the task's own executable as a child
+  process (ADR-0017 item 4); no crate spawns task executables on Python's
+  behalf.
+  Plot documents are `casa_ms::plot_document` serde types, which depend on no
+  binding crate.
 - Native frontends select a versioned request and `ResourcePolicy`; they do not
   inspect hosts or devices, select imaging implementations, allocate work
   buffers, or define scientific products. Native model code depends on no
@@ -217,57 +243,48 @@ centres and N+1 boundaries, or a linear WCS law that derives both exactly;
 spectral transforms remain unevaluated. `compile_observation` builds the
 Observation Snapshot, which is its sources in request order. Each source holds
 its position (`input_ordinal`), a provenance that is only the MeasurementSet
-locator, the canonical field, UV-distance and intent predicate, the DDID,
-SPW/channel and correlation selection, the selected data, flag and weight
-columns, and whether MAIN has `CORRECTED_DATA`. Selected MAIN rows are kept as
-the MAIN row count, the selected row count and the used-DDID set, not as a
-row list. Neither the snapshot nor its sources carry an identity. Each pass
-re-evaluates the row predicate in physical MAIN order and keeps only the
-current bounded block, so a sparse selection reads but never materializes the
-intervening rows.
+locator, the canonical field, UV-distance and intent predicate, the selected
+partitions of the observation boundary (`PartitionSelection`: each one's
+spectral window and correlation products), the windows' selected channels,
+the selected data, flag and weight columns, whether the store holds the
+corrected data, and how many samples the selection holds. Neither the
+snapshot nor its sources carry an identity, and no sample list is kept: each
+pass binds the selected partitions' fields and channels on the boundary,
+which delivers whole times of them, and tests the UV distance per sample.
 
-`casa-ms` owns the bounded Selected Observation read path. A run opens one
-`BoundSelectedObservation`, which holds a casacore read lock on each source's
-tables. Each pass turns it into one block stream (`into_block_stream`):
-`SelectedObservationBlockSource::fill_next` walks MAIN in physical order,
-applies the row predicate, and fills one reusable block with consecutive
-selected rows of one DDID: it keeps the row metadata the walk read, reads
-their visibility, flag and weight columns over the selected channel span and
-evaluates each row's geometry. `complete` refuses a stream that is
-not exhausted and returns the access for the next pass. For a channel-local
-cube with a linear spectral WCS and no continuum transform, a wave that covers
-only part of the cube and need not read whole rows streams through
-`into_windowed_block_stream` instead: it reads only the channels whose
-output-frame frequencies reach the wave, keeping the straddling channel at
-each edge, and skips a block that reaches none.
+The run reads its observation through the observation boundary
+(`casa-observation`, `docs/measurement-set/contracts.md`), from either store:
+an MSv4 processing set (XRADIO's schema on local Zarr v3) images as a
+MeasurementSet does (imaging port step 6c, owner decision 5). Compile opens
+the store once, a MeasurementSet as an `Msv2Observation`, whose opening grids
+MAIN's key columns into partitions in bounded row chunks, or a processing set
+as an `Msv4Observation`; reads the request's windows, fields, sources,
+observations, intents and antennas from its catalogue and its frames from
+`MsCalEngine::from_catalogue`; and surveys the partitions the
+request selects with one traversal that reads no visibilities (UVW only when
+a UV-distance interval or a W-projecting gridder needs it): their selected
+samples, fields, times, observations, W range and the epochs at which each
+window's frequencies are converted. The run's `ObservationSource` binds one
+`AccessRequest` per partition and wave, admitted from the observation's
+estimate, and packs each `VisibilityBatch` into the runtime's native rows.
 
-Each source's content plan prices the retained table
-metadata, geometry engine, selection, predicate and coordinate catalogs, the
-Measures provider and ephemeris (charged once, to the first source), the
-POINTING catalog or AW pointing-epoch plan when the geometry needs one, one
-block over the selected channel span, and `CONSTRUCTION_SLACK_BYTES` for
-construction scratch. The block's row count is the largest whose envelope fits
-the source budget.
+The application opens one Measures provider (`open_measures_runtime`) for
+compile and the run; the batch geometry receives it, and neither the
+boundary's adapters nor the geometry discover runtime data (the dependency
+policy's `observation-geometry-provider-injection`).
 
-The application passes a Measures provider in the
-`SelectedObservationResolutionRequest`; it supplies EOP values, TAI-UTC, IGRF
-coefficients, observatory positions, named-source directions and rest-line
-frequencies. Resolution wraps it in a `SelectedObservationMeasures`, whose
-constructor calls the provider's `prepare_bounded_state` (for
-`MeasuresRuntime`, eager materialization of all six catalogs) and refuses a
-provider that cannot report its retained bytes. The bound sources' geometry
-engines receive that provider and never discover runtime data inside the
-selected-observation path.
+`casa-imaging-model` owns the geometry over the observation boundary's
+batches (imaging port step 3b, #932): `GeometryPlan` compiles once
+from a problem and a `casa_observation::Catalogue` and evaluates each
+`VisibilityBatch` into a `BatchGeometry` (per row sample and chart the
+reprojected UVW and phase shift, pointing, parallactic angles, AW pointing
+pixels and aperture classes; per time the output-frame frequencies). Its
+arithmetic is casacore's `UVWMachine`, the prepared frequency conversion and
+the position angle in `casa-types`, and CASA's `FTMachine` reprojections
+(`GridFtProjection`), the pointing law and the AW pointing groups in
+`casa-imaging-model`.
 
-`casa-imaging-model` owns the backend-free values a block lends to its
-consumers: per-row metadata, sample coordinates, per-domain UVW and
-phase-shift projections, pointing directions and antenna response classes
-(`SelectedObservationRunRow`, `SelectedObservationRunChannel`), and the
-borrowed visibility, flag and weight columns of a row (`SelectedNumericRow`).
-`casa-ms` fills them from MAIN and the compiled geometry; the application's
-`MeasurementSetSource` converts each block into the runtime's native rows.
-
-`casa-imaging-model` carries the dependency-free model-state schemas and the
+`casa-imaging-model` carries the model-state schemas and the
 compiler-owned lifecycle commitment: the target shape, the bounds and the
 arithmetic precision. `casa_imaging_deconvolution::ModelLifecycle` owns a
 run's model: every run starts from the empty generation, and each major cycle's
@@ -283,8 +300,8 @@ The Compiled Problem also derives one Observation Transaction: the canonical
 read set of every consumed per-MS selection and selected columns, and the
 exact selected-cell scope of an optional `MODEL_DATA` or `CORRECTED_DATA`
 write. No
-runtime plan binds it: the application resolves the selected observation once, every pass reads it
-through the bounded source, and the final major-cycle pass writes the
+runtime plan binds it: the application opens the observation once, every pass reads it
+through the batch source, and the final major-cycle pass writes the
 visibilities (see Imaging execution). Conventional image members and
 `MODEL_DATA` are separate side effects: failure of one never rolls back or
 hides a result already completed by the other. Every product member is
@@ -294,13 +311,17 @@ removes the staging and publishes nothing, and a failure while moving leaves an
 incomplete set that must be regenerated, without rollback or a resumable
 per-member recovery ledger.
 `MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
-pass writes selected cells in place through casa-ms's selected-visibility
-writer under casacore's table lock, creating `MODEL_DATA` when MAIN lacks it,
-as CASA does. The writer saves in bounded batches by patching the written
-rows' tiles, so it accepts only destinations in `TiledShapeStMan` or
-`TiledColumnStMan`, the managers CASA and casa-rs store visibilities in. It
-refuses any other manager, whose save would rewrite every row of MAIN, when
-the writing pass is admitted, before anything changes. Interruption may leave
+pass writes selected cells in place through the observation boundary's
+update session (`casa_ms::observation_io`) under casacore's table lock,
+creating `MODEL_DATA` when MAIN lacks it, as CASA does. An MSv4's session
+replaces whole chunks of its `model` and `corrected` groups and cannot add a
+group, so a run that saves the model into an MSv4 without one is refused
+before it images. Each batch is a
+bounded mutation of its rows that patches their tiles, so the session
+accepts only destinations in `TiledShapeStMan` or `TiledColumnStMan`, the
+managers CASA and casa-rs store visibilities in. It refuses any other
+manager, whose save would rewrite every row of MAIN, when the writing pass
+binds, before anything changes. Interruption may leave
 partial derived values, as in CASA; the next run recomputes them. No
 backup column, full-column staging copy, content digest, rollback, snapshot, or
 copy-on-write generation is part of this path. Users may retain or delete
@@ -340,11 +361,25 @@ shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
 
 ADR-0006 adds one synchronous parameter lifecycle shared by every task
-consumer (`casars run` and Python). `casa-task-runtime` is the sole lifecycle
-owner: a task resolves sparse user intent, records its attempted state, and
-applies the completion transition around one provider invocation. Parameter
+consumer (a task executable's command line and Python). `casa-task-runtime`
+is the sole lifecycle owner: a task resolves sparse user intent, records its
+attempted state, and applies the completion transition around one provider
+invocation. Last has one owner, the task front end, which records Last and
+Last Successful for a command-line run of the executable; `--json-run`, the
+path Python's task calls take, reads and writes no Last, so a Python call
+writes none (#931). Parameter
 resolution and Last persistence do not introduce a provider daemon or
 repo-wide async runtime.
+
+A Python task call is one child process. Python resolves the parameters
+through the parameter runtime, starts the executable the resolver names with
+its surface's fixed arguments and `--json-run -`, writes the CASA-named
+values the call set to its stdin, passes its log lines to `sys.stderr` as
+they arrive, and classifies the typed reply on its stdout. The task runs in
+the current directory, or in the workspace `casars.tasks.run` is given. An
+interrupt (`KeyboardInterrupt`) is forwarded to the task as SIGINT; the task
+has ten seconds to stop before it is killed, and the interrupt is then
+re-raised.
 
 ### Imaging execution
 
@@ -456,8 +491,9 @@ the host's next access wait, and a wave calls `MetalBackend::complete`, which
 waits for every dispatch and reports the first failure, on each Metal owner
 and predictor before it reads an accumulator.
 
-Imager task protocol v12 carries the resolved imager parameters by catalog
-name, on stdin for `--json-run`; the result echoes them. The imager emits no
+Imager task protocol v13 carries the resolved `tclean` parameters by catalog
+name, on stdin for `--json-run`; the result echoes them, and the reply's
+value is CASA's tclean summary record. The imager emits no
 progress events; the cycle loop logs worker counts and cycle records through
 `tracing`, and the run summary records each phase. The request's
 diagnostics (`stage_timing`, `metal_stage_timing`, `science_trace`, plan
@@ -540,11 +576,10 @@ never makes a route available.
 ## Public interfaces
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
-- the headless `casars` task host (`casars run`, `casars params`) and the
-  catalog's task providers, such as `msexplore`, `imexplore` (`imhead`,
-  `imstat`), `calibrate`, `importvla`, and `casars-imager`
-- Python package `casars-python`, including the generated UniFFI module
-  `casars._frontend` built from `casars-frontend-services`
+- the task executables that serve the catalog's 26 tasks, each run directly
+  on the shared task front end, such as `msexplore`, `imexplore` (`imhead`,
+  `imstat`), `calibrate`, `importvla`, `casars-imager` and `simobserve`
+- Python package `casars-python`, with its one native module `casars._core`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
 - versioned sparse TOML task parameter profiles
@@ -570,7 +605,8 @@ never makes a route available.
   `casa-imaging-application` before planning; production never enters a
   displaced implementation. `scripts/check-imaging-dependencies.py` (in `just
   arch-check`) rejects crate edges outside the ADR-0016 layering, non-exact
-  native dependency sets, device APIs outside `casa-imaging-metal`, and
+  native dependency sets, definitional crates that reach beyond one another or
+  do I/O, device APIs outside `casa-imaging-metal`, and
   environment reads, `eprintln!` and content hashing in imaging crates. Its
   only grandfathered files are three environment readers outside the imaging
   crates (`casa-measures-data`, `casa-ms`'s simulation task and

@@ -16,7 +16,7 @@ pub enum ModelColumnWrite {
     /// Do not mutate any MeasurementSet.
     Disabled,
     /// Replace the selected `MODEL_DATA` cells for every snapshot source.
-    SelectedRows,
+    SelectedSamples,
 }
 
 /// Whether a compiled imaging run persists transformed observations to `CORRECTED_DATA`.
@@ -109,8 +109,10 @@ impl ObservationReadSet {
 
 /// Exact selected visibility-column cells written in place for one MeasurementSet.
 ///
-/// The writer creates `MODEL_DATA` when MAIN lacks it, as CASA does;
-/// `CORRECTED_DATA` must already exist.
+/// The writer creates `MODEL_DATA` when MAIN lacks it, filled with CASA's
+/// initial model as tclean creates it (1, and 0 in the cross hands), so
+/// cells the run does not predict hold that model; `CORRECTED_DATA` must
+/// already exist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedVisibilityWriteAccess {
     measurement_set: usize,
@@ -202,7 +204,7 @@ pub fn compile_observation_transaction(
         };
     let mut visibility_columns = Vec::new();
     for source in snapshot.sources() {
-        if requirements.model_column_write == ModelColumnWrite::SelectedRows {
+        if requirements.model_column_write == ModelColumnWrite::SelectedSamples {
             visibility_columns.push(SelectedVisibilityWriteAccess {
                 measurement_set: source.input_ordinal(),
                 column: MsColumnKind::ModelData,
@@ -259,11 +261,10 @@ fn output_role_selection(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ObservationSelection::new(
-        selected.rows().clone(),
+        selected.samples(),
         selected.rows_filter().clone(),
-        selected.data_descriptions().to_vec(),
+        selected.partitions().to_vec(),
         spectral_windows,
-        selected.correlations().to_vec(),
     ))
 }
 

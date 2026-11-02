@@ -8,6 +8,7 @@
 //! The [`SubtableId`] enum identifies the 17 MS subtables (12 required,
 //! 5 optional) and provides `name()` / `is_required()` accessors.
 
+pub(crate) mod casacore_order;
 mod subtable_id;
 
 pub mod antenna;
@@ -54,6 +55,15 @@ pub fn required_columns(id: SubtableId) -> &'static [ColumnDef] {
         SubtableId::SysCal => syscal::REQUIRED_COLUMNS,
         SubtableId::Weather => weather::REQUIRED_COLUMNS,
     }
+}
+
+/// The required columns of subtable `id` in the order casacore lays them
+/// out ([`casacore_order`]), the order a created subtable has.
+pub(crate) fn required_columns_in_casacore_order(id: SubtableId) -> Vec<ColumnDef> {
+    let order = casacore_order::column_order(id);
+    let mut columns = required_columns(id).to_vec();
+    columns.sort_by_key(|column| order.iter().position(|name| *name == column.name));
+    columns
 }
 
 /// Return the optional columns for a given subtable.

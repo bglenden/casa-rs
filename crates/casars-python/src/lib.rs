@@ -2,11 +2,15 @@
 
 mod convert;
 mod object_contract;
+mod parameters;
+mod plot;
+mod tasks;
 mod tools;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use casa_coordinates::{CoordinateType, FitsValue, fits::to_fits_header};
 use casa_images::{AnyPagedImage, ImageError, ImagePixelType};
 use casa_tables::{RowRange, Table as CasaTable, TableError, TableOptions};
 use casa_types::{
@@ -105,6 +109,60 @@ impl PyImage {
             AnyPagedImage::Complex64(image) => image.coordinates(),
         };
         record_to_py(py, &coordinates.to_record())
+    }
+
+    /// The pixel axes of the image's direction and its FITS WCS keywords, as
+    /// `(longitude_axis, latitude_axis, keywords)`, for `casars.imexplore`'s
+    /// WCSAxes plots; `None` without a direction coordinate, or when the
+    /// coordinate system does not describe every pixel axis.
+    ///
+    /// The keywords are those `exportfits` writes
+    /// (`casa_coordinates::fits::to_fits_header`) for every axis, without
+    /// its observation metadata, so a plot's WCS is the one a FITS export
+    /// carries. Not part of the data-object surface.
+    #[pyo3(name = "_direction_wcs")]
+    fn direction_wcs(&self, py: Python<'_>) -> PyResult<Option<(usize, usize, Py<PyAny>)>> {
+        let (coordinates, direction) = match &self.inner {
+            AnyPagedImage::Float32(image) => (
+                image.coordinates(),
+                image.find_axis(CoordinateType::Direction),
+            ),
+            AnyPagedImage::Float64(image) => (
+                image.coordinates(),
+                image.find_axis(CoordinateType::Direction),
+            ),
+            AnyPagedImage::Complex32(image) => (
+                image.coordinates(),
+                image.find_axis(CoordinateType::Direction),
+            ),
+            AnyPagedImage::Complex64(image) => (
+                image.coordinates(),
+                image.find_axis(CoordinateType::Direction),
+            ),
+        };
+        let shape = self.inner.shape();
+        let Some(longitude) = direction.filter(|_| coordinates.n_pixel_axes() == shape.len())
+        else {
+            return Ok(None);
+        };
+        let keywords = PyDict::new(py);
+        for keyword in to_fits_header(coordinates, shape).iter() {
+            if matches!(keyword.name.as_str(), "TELESCOP" | "OBSERVER" | "DATE-OBS") {
+                continue;
+            }
+            let value = match &keyword.value {
+                FitsValue::String(text) => text.into_py_any(py)?,
+                FitsValue::Integer(value) => value.into_py_any(py)?,
+                FitsValue::Float(value) => value.into_py_any(py)?,
+                FitsValue::Logical(value) => value.into_py_any(py)?,
+            };
+            keywords.set_item(&keyword.name, value)?;
+        }
+        Ok(Some((
+            longitude,
+            longitude + 1,
+            keywords.into_any().unbind(),
+        )))
     }
 
     #[getter]
@@ -935,22 +993,53 @@ fn data_schema_bundle_json() -> PyResult<String> {
         .map_err(|error| PyRuntimeError::new_err(format!("serialize data schema bundle: {error}")))
 }
 
+/// The extension module: the `casars.data` image and table objects, the
+/// CASA tools of `casars.tools` (ADR-0019), and the parameter, plot and task
+/// functions that `casars.parameters`, `casars.data` and `casars.tasks` call.
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Keep the generated UniFFI frontend boundary in this extension module so
-    // Python wheels need only one native library. The Python package loads
-    // these exported symbols through its generated UniFFI module; PyO3 carries
-    // the NumPy-oriented Image and Table object API and the CASA tools of
-    // `casars.tools` (ADR-0019) below.
-    let _ = casars_frontend_services::application_catalog();
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
     module.add_class::<tools::simulator::PySimulator>()?;
     module.add_class::<tools::measures::PyMeasures>()?;
     module.add_class::<tools::quanta::PyQuanta>()?;
     module.add_class::<tools::componentlist::PyComponentList>()?;
+    module.add_class::<tools::image::PyImageTool>()?;
+    module.add_class::<tools::coordsys::PyCoordsys>()?;
+    module.add_class::<tools::table::PyTableTool>()?;
+    module.add_class::<tools::msmetadata::PyMsMetadata>()?;
+    module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::simutil::PySimutil>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
+    module.add_function(wrap_pyfunction!(parameters::parameter_catalog, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        parameters::parameter_surface_bundle,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        parameters::parameter_profile_surface,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        parameters::parameter_template_toml,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(parameters::parameter_last, module)?)?;
+    module.add_function(wrap_pyfunction!(parameters::parameter_resolve, module)?)?;
+    module.add_function(wrap_pyfunction!(parameters::parameter_render_toml, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        parameters::parameter_provider_invocation,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(parameters::parameter_save, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        parameters::parameter_write_managed,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(tasks::application_catalog, module)?)?;
+    module.add_function(wrap_pyfunction!(tasks::task_executable, module)?)?;
+    module.add_function(wrap_pyfunction!(tasks::task_outcome, module)?)?;
+    module.add_function(wrap_pyfunction!(plot::build_measurement_set_plot, module)?)?;
     Ok(())
 }

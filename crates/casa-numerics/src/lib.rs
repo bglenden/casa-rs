@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Shared numerical algorithms without astronomy-domain ownership.
+//! Shared numerical algorithms, and CASA's common primary-beam patterns
+//! (`PBMath`'s Airy and EVLA beams, chosen by telescope name: [`PrimaryBeam`]),
+//! which the simulator's prediction and single-dish gridding both use.
 
 mod annular_aperture;
 pub mod cell_noise;
 mod elliptical_gaussian;
+mod primary_beam;
 mod vla_beams;
 
 pub use annular_aperture::AnnularApertureVoltageTable;
@@ -12,6 +15,7 @@ pub use elliptical_gaussian::{
     EllipticalGaussian, EllipticalGaussianError, common_enclosing_gaussian, deconvolving_gaussian,
     gaussian_covariance, normalize_position_angle,
 };
+pub use primary_beam::{BeamPattern, FrequencyPattern, PrimaryBeam};
 pub use vla_beams::{EvlaBand, EvlaPowerPattern, VlaBand};
 
 use nalgebra::{DMatrix, DVector};

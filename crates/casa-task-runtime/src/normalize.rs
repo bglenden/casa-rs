@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use casa_provider_contracts::{
-    Constraint, NarrowingConstraint, NormalizationRule, ParameterConcept, ParameterType,
-    ParameterValue, validate_parameter_value, validate_selector_capabilities,
+    Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
+    ParameterType, ParameterValue, SurfaceParameterBinding, validate_parameter_value,
+    validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -15,8 +16,13 @@ pub fn normalize_value(
     value: &ParameterValue,
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(value)?;
-    let typed = normalize_domain(value, &concept.value_domain)?;
+    reject_forbidden_strings(value, names_project(&concept.normalization))?;
+    let value = if reads_numbers_as_text(&concept.normalization) {
+        number_as_text(value)
+    } else {
+        value.clone()
+    };
+    let typed = normalize_domain(&value, &concept.value_domain)?;
     let normalized = apply_rule(typed, &concept.normalization)?;
     validate_parameter_value(&normalized, &concept.value_domain)
         .map_err(NormalizationError::Type)?;
@@ -24,24 +30,64 @@ pub fn normalize_value(
     Ok(normalized)
 }
 
-fn reject_forbidden_strings(value: &ParameterValue) -> Result<(), NormalizationError> {
+/// Whether `rule` reads a number given for text as its text.
+fn reads_numbers_as_text(rule: &NormalizationRule) -> bool {
+    match rule {
+        NormalizationRule::NumberAsText => true,
+        NormalizationRule::Sequence { rules } => rules.iter().any(reads_numbers_as_text),
+        _ => false,
+    }
+}
+
+/// `value` with each number, alone or in a list, as its text: `3` as `"3"`.
+fn number_as_text(value: &ParameterValue) -> ParameterValue {
+    match value {
+        ParameterValue::Integer(number) => ParameterValue::String(number.to_string()),
+        ParameterValue::Float(number) => ParameterValue::String(number.to_string()),
+        ParameterValue::Array(values) => {
+            ParameterValue::Array(values.iter().map(number_as_text).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Whether `rule` lets a value name the project as [`PROJECT_TOKEN`].
+fn names_project(rule: &NormalizationRule) -> bool {
+    match rule {
+        NormalizationRule::ProjectPath => true,
+        NormalizationRule::Sequence { rules } => rules.iter().any(names_project),
+        _ => false,
+    }
+}
+
+/// Refuse URLs and shell expressions; `project` lets a value hold
+/// [`PROJECT_TOKEN`].
+fn reject_forbidden_strings(
+    value: &ParameterValue,
+    project: bool,
+) -> Result<(), NormalizationError> {
     match value {
         ParameterValue::String(value) => {
             if value.contains("://") {
                 return Err(NormalizationError::Url(value.clone()));
             }
-            if value.contains('$') || value.contains('`') {
+            let checked = if project {
+                value.replace(PROJECT_TOKEN, "")
+            } else {
+                value.clone()
+            };
+            if checked.contains('$') || checked.contains('`') {
                 return Err(NormalizationError::EnvironmentExpression(value.clone()));
             }
         }
         ParameterValue::Array(values) => {
             for value in values {
-                reject_forbidden_strings(value)?;
+                reject_forbidden_strings(value, project)?;
             }
         }
         ParameterValue::Table(values) => {
             for value in values.values() {
-                reject_forbidden_strings(value)?;
+                reject_forbidden_strings(value, project)?;
             }
         }
         ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
@@ -116,6 +162,15 @@ fn normalize_domain(
             ParameterValue::String(value) => {
                 normalize_quantity(value, canonical_unit).map(ParameterValue::String)
             }
+            // A bare number is in the canonical unit, as a bare numeric
+            // text is: CASA's `threshold=0.001` is 1 mJy, `cell=2.0` 2
+            // arcsec.
+            ParameterValue::Integer(number) => {
+                normalize_quantity(&number.to_string(), canonical_unit).map(ParameterValue::String)
+            }
+            ParameterValue::Float(number) if number.is_finite() => {
+                normalize_quantity(&number.to_string(), canonical_unit).map(ParameterValue::String)
+            }
             _ => type_error(value, domain),
         },
         ParameterType::Array {
@@ -124,15 +179,43 @@ fn normalize_domain(
             max_items,
             allow_scalar,
         } => {
+            // A fixed pair whose scalar is one value for every item (`imsize`,
+            // `cell`) takes a one-element list the same way, as CASA does.
+            let pair = match max_items {
+                Some(max) if *allow_scalar && *max == *min_items && *min_items > 1 => *min_items,
+                _ => 0,
+            };
             let source = match value {
-                ParameterValue::Array(values) => values.clone(),
-                _ if *allow_scalar => {
-                    let repeat = match max_items {
-                        Some(max) if *max == *min_items && *min_items > 1 => *min_items,
-                        _ => 1,
-                    };
-                    vec![value.clone(); repeat]
+                ParameterValue::Array(values) if pair > 0 && values.len() == 1 => {
+                    vec![values[0].clone(); pair]
                 }
+                // CASA's list of lists (`spwmap`) takes a flat list as its
+                // one item: `[0, 0, 1]` is the first table's map (#931).
+                ParameterValue::Array(values)
+                    if matches!(**element, ParameterType::Array { .. })
+                        && !values.is_empty()
+                        && !values
+                            .iter()
+                            .any(|value| matches!(value, ParameterValue::Array(_))) =>
+                {
+                    vec![value.clone()]
+                }
+                ParameterValue::Array(values) => values.clone(),
+                // A path list given as one string is comma-separated, as on
+                // the command line; it is split before any path is
+                // normalized, so `a.exp,sub/../b.exp` names two archives.
+                ParameterValue::String(text)
+                    if *allow_scalar
+                        && matches!(**element, ParameterType::Path { .. })
+                        && text.contains(',') =>
+                {
+                    text.split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(|item| ParameterValue::String(item.to_string()))
+                        .collect()
+                }
+                _ if *allow_scalar => vec![value.clone(); pair.max(1)],
                 _ => return type_error(value, domain),
             };
             if source.len() < *min_items || max_items.is_some_and(|max| source.len() > max) {
@@ -171,6 +254,14 @@ fn normalize_domain(
             ParameterValue::String(value) if states.contains(value) => {
                 Ok(ParameterValue::String(value.clone()))
             }
+            // CASA spells the empty value of a parameter of several types
+            // both '' and [] (flagdata's timedev): where '' is an absence
+            // state, [] is that state (#931).
+            ParameterValue::Array(items)
+                if items.is_empty() && states.iter().any(String::is_empty) =>
+            {
+                Ok(ParameterValue::String(String::new()))
+            }
             value => normalize_domain(value, inner),
         },
     }
@@ -193,6 +284,7 @@ fn apply_rule(
             map_strings(value, |value| Ok(value.trim().to_ascii_lowercase()))
         }
         NormalizationRule::Path => map_strings(value, normalize_path),
+        NormalizationRule::ProjectPath => map_strings(value, normalize_project_path),
         NormalizationRule::CasaSelector {
             grammar,
             capabilities,
@@ -205,6 +297,7 @@ fn apply_rule(
         NormalizationRule::Quantity { canonical_unit } => {
             map_strings(value, |value| normalize_quantity(value, canonical_unit))
         }
+        NormalizationRule::NumberAsText => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Sequence { rules } => {
             let mut value = value;
             for rule in rules {
@@ -234,8 +327,38 @@ pub(crate) fn normalize_quantity_unit(
     value: ParameterValue,
     canonical_unit: &str,
 ) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(&value)?;
+    reject_forbidden_strings(&value, false)?;
     map_strings(value, |value| normalize_quantity(value, canonical_unit))
+}
+
+/// A profile's old comma-separated numbers (`"0.1,10"`) as a list of
+/// numbers, and its old explicit absence (`"none"` or empty) as CASA's
+/// `-1`: the `number_list` migration transform (#931). Any other value is
+/// kept.
+pub(crate) fn number_list(
+    value: ParameterValue,
+    parameter: &str,
+) -> Result<ParameterValue, crate::profile::ProfileError> {
+    let ParameterValue::String(text) = value else {
+        return Ok(value);
+    };
+    let text = text.trim();
+    if text.is_empty() || text.eq_ignore_ascii_case("none") {
+        return Ok(ParameterValue::Integer(-1));
+    }
+    text.split(',')
+        .map(|part| {
+            part.trim()
+                .parse::<f64>()
+                .map(ParameterValue::Float)
+                .map_err(|error| {
+                    crate::profile::ProfileError::Contract(format!(
+                        "migration expected numbers for {parameter:?}, got {text:?}: {error}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(ParameterValue::Array)
 }
 
 fn normalize_quantity(value: &str, canonical_unit: &str) -> Result<String, NormalizationError> {
@@ -317,6 +440,24 @@ fn normalize_path(value: &str) -> Result<String, NormalizationError> {
     } else {
         Ok(joined)
     }
+}
+
+/// [`normalize_path`] of a path that may hold [`PROJECT_TOKEN`], kept as
+/// it is.
+fn normalize_project_path(value: &str) -> Result<String, NormalizationError> {
+    // A stand-in no path part can hold, and with no `$` for the check.
+    const STAND_IN: &str = "\0project\0";
+    if value.contains(STAND_IN) {
+        return Err(NormalizationError::EnvironmentExpression(value.to_string()));
+    }
+    normalize_path(&value.replace(PROJECT_TOKEN, STAND_IN))
+        .map(|path| path.replace(STAND_IN, PROJECT_TOKEN))
+        .map_err(|error| match error {
+            NormalizationError::EnvironmentExpression(_) => {
+                NormalizationError::EnvironmentExpression(value.to_string())
+            }
+            other => other,
+        })
 }
 
 fn normalize_selector(value: &str) -> String {
@@ -432,15 +573,6 @@ fn validate_refinements(
                 validate_selector_capabilities(*grammar, value, capabilities)
                     .map_err(NormalizationError::Constraint)?;
             }
-            NarrowingConstraint::SquarePair => match value {
-                ParameterValue::Array(values)
-                    if values.len() == 2 && values_semantically_equal(&values[0], &values[1]) => {}
-                _ => {
-                    return Err(NormalizationError::Constraint(
-                        "two-axis value must be square/equal".into(),
-                    ));
-                }
-            },
         }
     }
     Ok(())
@@ -593,6 +725,22 @@ pub enum NormalizationError {
     Constraint(String),
 }
 
+impl NormalizationError {
+    /// What a refusal of a value for `binding` ends with: for a value of a
+    /// type, or a list of a length, the binding does not take, the CASA
+    /// forms it does not take yet and their issue (flagdata's per-field
+    /// `timedev`, #978; tclean's list of MeasurementSets, #980); otherwise
+    /// nothing.
+    pub fn binding_note(&self, binding: &SurfaceParameterBinding) -> String {
+        match (self, &binding.unimplemented_forms) {
+            (Self::Type(_) | Self::Cardinality { .. }, Some(forms)) => {
+                format!("; {}", forms.refusal())
+            }
+            _ => String::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use casa_provider_contracts::{
@@ -602,6 +750,27 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn an_old_number_text_migrates_to_a_list_of_numbers() {
+        let text = |text: &str| ParameterValue::String(text.into());
+        assert_eq!(
+            number_list(text(" 0.1, 10 "), "includepix").unwrap(),
+            ParameterValue::Array(vec![
+                ParameterValue::Float(0.1),
+                ParameterValue::Float(10.0)
+            ])
+        );
+        assert_eq!(
+            number_list(text("none"), "includepix").unwrap(),
+            ParameterValue::Integer(-1)
+        );
+        assert_eq!(
+            number_list(ParameterValue::Integer(-1), "includepix").unwrap(),
+            ParameterValue::Integer(-1)
+        );
+        assert!(number_list(text("0.1,lots"), "includepix").is_err());
+    }
 
     fn concept(domain: ParameterType, rule: NormalizationRule) -> ParameterConcept {
         ParameterConcept {
@@ -623,7 +792,47 @@ mod tests {
     }
 
     #[test]
-    fn scalar_imsize_normalizes_to_square_pair() {
+    fn a_flat_list_is_the_one_item_of_a_list_of_lists() {
+        // CASA's spwmap (#931): [0, 0, 1] maps the first table's windows,
+        // [[0, 0], [1, 1]] maps two tables'.
+        let concept = concept(
+            ParameterType::Array {
+                element: Box::new(ParameterType::Array {
+                    element: Box::new(ParameterType::Integer),
+                    min_items: 0,
+                    max_items: None,
+                    allow_scalar: false,
+                }),
+                min_items: 0,
+                max_items: None,
+                allow_scalar: false,
+            },
+            NormalizationRule::Identity,
+        );
+        let ints = |values: &[i64]| {
+            ParameterValue::Array(
+                values
+                    .iter()
+                    .copied()
+                    .map(ParameterValue::Integer)
+                    .collect(),
+            )
+        };
+        let lists = |values: Vec<ParameterValue>| ParameterValue::Array(values);
+        assert_eq!(
+            normalize_value(&ints(&[0, 0, 1]), &concept).unwrap(),
+            lists(vec![ints(&[0, 0, 1])])
+        );
+        let two = lists(vec![ints(&[0, 0]), ints(&[1, 1])]);
+        assert_eq!(normalize_value(&two, &concept).unwrap(), two);
+        assert_eq!(
+            normalize_value(&lists(vec![]), &concept).unwrap(),
+            lists(vec![])
+        );
+    }
+
+    #[test]
+    fn a_scalar_pair_value_normalizes_to_both_axes() {
         let concept = concept(
             ParameterType::Array {
                 element: Box::new(ParameterType::Integer),
@@ -637,10 +846,78 @@ mod tests {
             normalize_value(&ParameterValue::Integer(512), &concept).unwrap(),
             ParameterValue::Array(vec![ParameterValue::Integer(512); 2])
         );
+        // CASA's one-element list is one value for both (#970 review).
+        assert_eq!(
+            normalize_value(
+                &ParameterValue::Array(vec![ParameterValue::Integer(120)]),
+                &concept
+            )
+            .unwrap(),
+            ParameterValue::Array(vec![ParameterValue::Integer(120); 2])
+        );
+        assert!(
+            normalize_value(
+                &ParameterValue::Array(vec![ParameterValue::Integer(1); 3]),
+                &concept
+            )
+            .is_err()
+        );
     }
 
     #[test]
-    fn every_builtin_imsize_binding_normalizes_scalar_to_the_same_pair() {
+    fn a_path_list_string_is_split_before_its_paths_are_normalized() {
+        // Astra's #962 F2: `a.exp,sub/../b.exp` was normalized as one path,
+        // which collapsed to b.exp, before importvla split it.
+        let concept = concept(
+            ParameterType::Array {
+                element: Box::new(ParameterType::Path {
+                    resource_kind: None,
+                }),
+                min_items: 1,
+                max_items: None,
+                allow_scalar: true,
+            },
+            NormalizationRule::Path,
+        );
+        let paths = |items: &[&str]| {
+            ParameterValue::Array(
+                items
+                    .iter()
+                    .map(|item| ParameterValue::String((*item).into()))
+                    .collect(),
+            )
+        };
+        let both = paths(&["a.exp", "b.exp"]);
+        for given in [
+            ParameterValue::String("a.exp,sub/../b.exp".into()),
+            ParameterValue::String(" a.exp , ,sub/../b.exp".into()),
+            paths(&["a.exp", "sub/../b.exp"]),
+        ] {
+            assert_eq!(
+                normalize_value(&given, &concept).unwrap(),
+                both,
+                "{given:?}"
+            );
+        }
+        // A string without a comma is one path.
+        assert_eq!(
+            normalize_value(&ParameterValue::String("sub/../a.exp".into()), &concept).unwrap(),
+            paths(&["a.exp"])
+        );
+    }
+
+    /// `value` normalized and validated as `concept` with no refinements.
+    fn accepted(
+        value: ParameterValue,
+        concept: &ParameterConcept,
+    ) -> Result<ParameterValue, NormalizationError> {
+        let normalized = normalize_value(&value, concept)?;
+        validate_value(&normalized, concept, &[])?;
+        Ok(normalized)
+    }
+
+    #[test]
+    fn every_builtin_imsize_binding_takes_casas_forms() {
         let catalog = builtin_surface_catalog().unwrap();
         let mut surfaces = Vec::new();
         for surface in &catalog.surfaces {
@@ -651,21 +928,28 @@ mod tests {
             {
                 assert_eq!(binding.concept.id.as_str(), IMSIZE_CONCEPT_ID);
                 let concept = catalog.catalog.concept(&binding.concept).unwrap();
+                // tclean's `imsize=1024` is its one-element list, and both
+                // mean a square image.
                 let normalized = normalize_value(&ParameterValue::Integer(1024), concept).unwrap();
                 assert_eq!(
                     normalized,
-                    ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
+                    ParameterValue::Array(vec![ParameterValue::Integer(1024)])
                 );
                 validate_value(&normalized, concept, &binding.refinements).unwrap();
+                let pair = ParameterValue::Array(vec![
+                    ParameterValue::Integer(192),
+                    ParameterValue::Integer(128),
+                ]);
+                assert_eq!(normalize_value(&pair, concept).unwrap(), pair);
                 surfaces.push(surface.id().to_string());
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["imager"]);
+        assert_eq!(surfaces, ["tclean"]);
     }
 
     #[test]
-    fn builtin_imsize_rejects_a_nonpositive_element_and_accepts_auto() {
+    fn builtin_imsize_rejects_a_nonpositive_element_and_auto() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -673,10 +957,10 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == IMSIZE_CONCEPT_ID)
             .unwrap();
-        assert!(normalize_value(&ParameterValue::Integer(0), concept).is_err());
+        assert!(accepted(ParameterValue::Integer(0), concept).is_err());
         assert!(
-            normalize_value(
-                &ParameterValue::Array(vec![
+            accepted(
+                ParameterValue::Array(vec![
                     ParameterValue::Integer(512),
                     ParameterValue::Integer(0),
                 ]),
@@ -684,10 +968,8 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(
-            normalize_value(&ParameterValue::String("auto".into()), concept).unwrap(),
-            ParameterValue::String("auto".into())
-        );
+        // casa-rs's "auto" is not CASA's: tclean takes no automatic size.
+        assert!(accepted(ParameterValue::String("auto".into()), concept).is_err());
     }
 
     #[test]
@@ -722,25 +1004,35 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
+        // tclean's `cell='1arcsec'` is its one-element list.
         let scalar = ParameterValue::String("1arcsec".into());
+        let degrees = ParameterValue::Array(vec![ParameterValue::String(
+            "0.0002777777777777778deg".into(),
+        )]);
+        let one = ParameterValue::Array(vec![ParameterValue::String("1arcsec".into())]);
+        assert_eq!(normalize_value(&scalar, concept).unwrap(), one);
+        assert_eq!(normalize_value(&degrees, concept).unwrap(), one);
+        assert!(semantic_eq(&scalar, &degrees, concept).unwrap());
         let mixed_unit_pair = ParameterValue::Array(vec![
             ParameterValue::String("0.0002777777777777778deg".into()),
-            ParameterValue::String("1arcsec".into()),
+            ParameterValue::String("2arcsec".into()),
         ]);
-        let expected = ParameterValue::Array(vec![
-            ParameterValue::String("1arcsec".into()),
-            ParameterValue::String("1arcsec".into()),
-        ]);
-        assert_eq!(normalize_value(&scalar, concept).unwrap(), expected);
         assert_eq!(
             normalize_value(&mixed_unit_pair, concept).unwrap(),
-            expected
+            ParameterValue::Array(vec![
+                ParameterValue::String("1arcsec".into()),
+                ParameterValue::String("2arcsec".into()),
+            ])
         );
-        assert!(semantic_eq(&scalar, &mixed_unit_pair, concept).unwrap());
+        // A CASA float cell is in arcseconds.
+        assert_eq!(
+            normalize_value(&ParameterValue::Float(0.5), concept).unwrap(),
+            ParameterValue::Array(vec![ParameterValue::String("0.5arcsec".into())])
+        );
     }
 
     #[test]
-    fn builtin_cell_requires_positive_quantity_magnitudes_but_allows_auto() {
+    fn builtin_cell_requires_positive_quantity_magnitudes_and_refuses_auto() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -748,10 +1040,10 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
-        assert!(normalize_value(&ParameterValue::String("-1arcsec".into()), concept).is_err());
+        assert!(accepted(ParameterValue::String("-1arcsec".into()), concept).is_err());
         assert!(
-            normalize_value(
-                &ParameterValue::Array(vec![
+            accepted(
+                ParameterValue::Array(vec![
                     ParameterValue::String("1arcsec".into()),
                     ParameterValue::String("-0.1deg".into()),
                 ]),
@@ -760,13 +1052,10 @@ mod tests {
             .is_err()
         );
         assert_eq!(
-            normalize_value(&ParameterValue::String("0.1deg".into()), concept).unwrap(),
-            ParameterValue::Array(vec![ParameterValue::String("360arcsec".into()); 2])
+            accepted(ParameterValue::String("0.1deg".into()), concept).unwrap(),
+            ParameterValue::Array(vec![ParameterValue::String("360arcsec".into())])
         );
-        assert_eq!(
-            normalize_value(&ParameterValue::String("auto".into()), concept).unwrap(),
-            ParameterValue::Array(vec![ParameterValue::String("auto".into()); 2])
-        );
+        assert!(accepted(ParameterValue::String("auto".into()), concept).is_err());
     }
 
     #[test]
@@ -784,6 +1073,44 @@ mod tests {
         assert!(normalize_value(&"https://example.invalid/a".into(), &concept).is_err());
         assert!(normalize_value(&"${HOME}/a".into(), &concept).is_err());
         assert!(normalize_value(&"$HOME/a".into(), &concept).is_err());
+        // `$project` is a path's own token only where the rule allows it.
+        assert!(normalize_value(&"$project.ptg.txt".into(), &concept).is_err());
+    }
+
+    #[test]
+    fn project_paths_keep_the_project_token_and_nothing_else() {
+        let concept = concept(
+            ParameterType::Path {
+                resource_kind: None,
+            },
+            NormalizationRule::ProjectPath,
+        );
+        for (given, normalized) in [
+            ("$project.ptg.txt", "$project.ptg.txt"),
+            ("./sims/../$project.skymodel", "$project.skymodel"),
+            ("data/model.fits", "data/model.fits"),
+            // CASA replaces the token as a string.
+            ("$projects/a", "$projects/a"),
+            ("", ""),
+        ] {
+            assert_eq!(
+                normalize_value(&given.into(), &concept).unwrap(),
+                ParameterValue::String(normalized.into()),
+                "{given}"
+            );
+        }
+        for forbidden in [
+            "$HOME/a",
+            "${project}.ptg.txt",
+            "`date`.txt",
+            "https://example.invalid/$project",
+            "a\0project\0b",
+        ] {
+            assert!(
+                normalize_value(&forbidden.into(), &concept).is_err(),
+                "{forbidden:?}"
+            );
+        }
     }
 
     #[test]

@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
-    SyntheticSkyModel, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticField,
+    SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 
 /// Cell of every image of the observation; the natural beam spans about
@@ -23,6 +23,21 @@ pub fn observation(root: &Path, channels: usize) -> PathBuf {
 /// [`observation`] recorded as `telescope`'s, the ALMA one with 12 m dishes
 /// on the VLA-A pads: the mosaic gridder's beams are ALMA's.
 pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
+    synthesise(root, channels, telescope, false)
+}
+
+/// [`observation_as`] with a `POINTING` row per antenna and integration,
+/// towards its one field at the same phase centre, so `usepointing` finds
+/// every time covered.
+#[allow(
+    dead_code,
+    reason = "not every law that shares this fixture reads pointing"
+)]
+pub fn pointed_observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
+    synthesise(root, channels, telescope, true)
+}
+
+fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> PathBuf {
     let measurement_set = root.join(format!("admission-{telescope}.ms"));
     let mut antennas = tutorial_vla_a_antennas();
     if telescope == "ALMA" {
@@ -36,6 +51,12 @@ pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf 
         antennas,
     );
     request.telescope_name = telescope.to_string();
+    if pointed {
+        request.fields = vec![SyntheticField {
+            name: request.field_name.clone(),
+            phase_center_rad: request.phase_center_rad,
+        }];
+    }
     request.duration_seconds = 600.0;
     request.integration_seconds = 60.0;
     request.spectral_windows = vec![SyntheticSpectralSetup {

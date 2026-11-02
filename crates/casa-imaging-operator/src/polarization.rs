@@ -3,7 +3,8 @@
 //! basis, pinned to CASA (`FTMachine::initMaps`, `StokesImageUtil`,
 //! `CStokesVector`).
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
+use casa_types::Correlation;
 use num_complex::Complex64;
 
 use crate::error::OperatorError;
@@ -23,7 +24,7 @@ pub enum FeedBasis {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridPolarization {
     /// One correlation (or one Stokes parameter when the data are Stokes).
-    Correlation(CorrelationType),
+    Correlation(Correlation),
     /// Stokes I gridded directly: both parallel hands feed one plane and
     /// their weights both count in its `sumwt` (CASA `isIOnly`).
     StokesI,
@@ -41,7 +42,7 @@ pub enum GridPolarization {
 /// grid plane 0 (`StokesImageUtil::ToStokesSumWt`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolarizationRouting {
-    correlations: Vec<CorrelationType>,
+    correlations: Vec<Correlation>,
     requested: Vec<PolarizationCoordinate>,
     grid: Vec<GridPolarization>,
     pol_map: Vec<Option<u8>>,
@@ -61,7 +62,7 @@ impl PolarizationRouting {
     /// representation needs receives at least one selected correlation, and
     /// requested correlations must be selected.
     pub fn compile(
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         requested: &[PolarizationCoordinate],
     ) -> Result<Self, OperatorError> {
         let feed = feed_basis(correlations)?;
@@ -120,7 +121,7 @@ impl PolarizationRouting {
                 grid.iter()
                     .position(|plane| match plane {
                         GridPolarization::Correlation(target) => target == correlation,
-                        GridPolarization::StokesI => is_parallel_hand(*correlation),
+                        GridPolarization::StokesI => correlation.is_parallel_hand(),
                     })
                     .map(|index| index as u8)
             })
@@ -181,7 +182,7 @@ impl PolarizationRouting {
 
     /// Selected correlations in block order.
     #[must_use]
-    pub fn correlations(&self) -> &[CorrelationType] {
+    pub fn correlations(&self) -> &[Correlation] {
         &self.correlations
     }
 
@@ -251,7 +252,7 @@ impl PolarizationRouting {
     }
 }
 
-fn feed_basis(correlations: &[CorrelationType]) -> Result<FeedBasis, OperatorError> {
+fn feed_basis(correlations: &[Correlation]) -> Result<FeedBasis, OperatorError> {
     let Some(first) = correlations.first() else {
         return Err(OperatorError::Polarization {
             reason: "no correlation selected",
@@ -273,20 +274,15 @@ fn feed_basis(correlations: &[CorrelationType]) -> Result<FeedBasis, OperatorErr
     Ok(feed)
 }
 
-fn basis_of(correlation: CorrelationType) -> Result<FeedBasis, OperatorError> {
+fn basis_of(correlation: Correlation) -> Result<FeedBasis, OperatorError> {
     match correlation {
-        CorrelationType::StokesI
-        | CorrelationType::StokesQ
-        | CorrelationType::StokesU
-        | CorrelationType::StokesV => Ok(FeedBasis::Stokes),
-        CorrelationType::LinearXx
-        | CorrelationType::LinearXy
-        | CorrelationType::LinearYx
-        | CorrelationType::LinearYy => Ok(FeedBasis::Linear),
-        CorrelationType::CircularRr
-        | CorrelationType::CircularRl
-        | CorrelationType::CircularLr
-        | CorrelationType::CircularLl => Ok(FeedBasis::Circular),
+        Correlation::I | Correlation::Q | Correlation::U | Correlation::V => Ok(FeedBasis::Stokes),
+        Correlation::XX | Correlation::XY | Correlation::YX | Correlation::YY => {
+            Ok(FeedBasis::Linear)
+        }
+        Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL => {
+            Ok(FeedBasis::Circular)
+        }
         _ => Err(OperatorError::Polarization {
             reason: "selected correlation is not a Stokes, linear or circular product",
         }),
@@ -303,30 +299,20 @@ const fn is_stokes(coordinate: PolarizationCoordinate) -> bool {
     )
 }
 
-const fn is_parallel_hand(correlation: CorrelationType) -> bool {
-    matches!(
-        correlation,
-        CorrelationType::LinearXx
-            | CorrelationType::LinearYy
-            | CorrelationType::CircularRr
-            | CorrelationType::CircularLl
-    )
-}
-
-const fn correlation_of(coordinate: PolarizationCoordinate) -> CorrelationType {
+const fn correlation_of(coordinate: PolarizationCoordinate) -> Correlation {
     match coordinate {
-        PolarizationCoordinate::StokesI => CorrelationType::StokesI,
-        PolarizationCoordinate::StokesQ => CorrelationType::StokesQ,
-        PolarizationCoordinate::StokesU => CorrelationType::StokesU,
-        PolarizationCoordinate::StokesV => CorrelationType::StokesV,
-        PolarizationCoordinate::LinearXx => CorrelationType::LinearXx,
-        PolarizationCoordinate::LinearXy => CorrelationType::LinearXy,
-        PolarizationCoordinate::LinearYx => CorrelationType::LinearYx,
-        PolarizationCoordinate::LinearYy => CorrelationType::LinearYy,
-        PolarizationCoordinate::CircularRr => CorrelationType::CircularRr,
-        PolarizationCoordinate::CircularRl => CorrelationType::CircularRl,
-        PolarizationCoordinate::CircularLr => CorrelationType::CircularLr,
-        PolarizationCoordinate::CircularLl => CorrelationType::CircularLl,
+        PolarizationCoordinate::StokesI => Correlation::I,
+        PolarizationCoordinate::StokesQ => Correlation::Q,
+        PolarizationCoordinate::StokesU => Correlation::U,
+        PolarizationCoordinate::StokesV => Correlation::V,
+        PolarizationCoordinate::LinearXx => Correlation::XX,
+        PolarizationCoordinate::LinearXy => Correlation::XY,
+        PolarizationCoordinate::LinearYx => Correlation::YX,
+        PolarizationCoordinate::LinearYy => Correlation::YY,
+        PolarizationCoordinate::CircularRr => Correlation::RR,
+        PolarizationCoordinate::CircularRl => Correlation::RL,
+        PolarizationCoordinate::CircularLr => Correlation::LR,
+        PolarizationCoordinate::CircularLl => Correlation::LL,
     }
 }
 
@@ -336,31 +322,23 @@ fn casa_correlation_representation(
     feed: FeedBasis,
     requested: &[PolarizationCoordinate],
 ) -> Vec<GridPolarization> {
-    use CorrelationType::{
-        CircularLl, CircularLr, CircularRl, CircularRr, LinearXx, LinearXy, LinearYx, LinearYy,
-    };
+    use Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
     use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
-    let planes = |list: &[CorrelationType]| {
+    let planes = |list: &[Correlation]| {
         list.iter()
             .map(|correlation| GridPolarization::Correlation(*correlation))
             .collect::<Vec<_>>()
     };
     let all = match feed {
-        FeedBasis::Linear => planes(&[LinearXx, LinearXy, LinearYx, LinearYy]),
-        FeedBasis::Circular | FeedBasis::Stokes => {
-            planes(&[CircularRr, CircularRl, CircularLr, CircularLl])
-        }
+        FeedBasis::Linear => planes(&[XX, XY, YX, YY]),
+        FeedBasis::Circular | FeedBasis::Stokes => planes(&[RR, RL, LR, LL]),
     };
     match (feed, requested) {
         (_, [StokesI]) => vec![GridPolarization::StokesI],
-        (FeedBasis::Circular, [StokesQ] | [StokesU] | [StokesQ, StokesU]) => {
-            planes(&[CircularRl, CircularLr])
-        }
-        (FeedBasis::Circular, [StokesV] | [StokesI, StokesV]) => planes(&[CircularRr, CircularLl]),
-        (FeedBasis::Linear, [StokesQ] | [StokesI, StokesQ]) => planes(&[LinearXx, LinearYy]),
-        (FeedBasis::Linear, [StokesU] | [StokesV] | [StokesU, StokesV]) => {
-            planes(&[LinearXy, LinearYx])
-        }
+        (FeedBasis::Circular, [StokesQ] | [StokesU] | [StokesQ, StokesU]) => planes(&[RL, LR]),
+        (FeedBasis::Circular, [StokesV] | [StokesI, StokesV]) => planes(&[RR, LL]),
+        (FeedBasis::Linear, [StokesQ] | [StokesI, StokesQ]) => planes(&[XX, YY]),
+        (FeedBasis::Linear, [StokesU] | [StokesV] | [StokesU, StokesV]) => planes(&[XY, YX]),
         _ => all,
     }
 }
@@ -372,9 +350,7 @@ fn to_coefficient(
     requested: PolarizationCoordinate,
     plane: GridPolarization,
 ) -> Complex64 {
-    use CorrelationType::{
-        CircularLl, CircularLr, CircularRl, CircularRr, LinearXx, LinearXy, LinearYx, LinearYy,
-    };
+    use Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
     use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
     let one = Complex64::new(1.0, 0.0);
     let half = Complex64::new(0.5, 0.0);
@@ -397,21 +373,15 @@ fn to_coefficient(
         };
     }
     match (feed, requested, correlation) {
-        (FeedBasis::Linear, StokesI, LinearXx | LinearYy)
-        | (FeedBasis::Linear, StokesQ, LinearXx)
-        | (FeedBasis::Linear, StokesU, LinearXy | LinearYx)
-        | (FeedBasis::Circular, StokesI, CircularRr | CircularLl)
-        | (FeedBasis::Circular, StokesQ, CircularRl | CircularLr)
-        | (FeedBasis::Circular, StokesV, CircularRr) => half,
-        (FeedBasis::Linear, StokesQ, LinearYy) | (FeedBasis::Circular, StokesV, CircularLl) => {
-            -half
-        }
-        (FeedBasis::Linear, StokesV, LinearYx) | (FeedBasis::Circular, StokesU, CircularLr) => {
-            half_i
-        }
-        (FeedBasis::Linear, StokesV, LinearXy) | (FeedBasis::Circular, StokesU, CircularRl) => {
-            -half_i
-        }
+        (FeedBasis::Linear, StokesI, XX | YY)
+        | (FeedBasis::Linear, StokesQ, XX)
+        | (FeedBasis::Linear, StokesU, XY | YX)
+        | (FeedBasis::Circular, StokesI, RR | LL)
+        | (FeedBasis::Circular, StokesQ, RL | LR)
+        | (FeedBasis::Circular, StokesV, RR) => half,
+        (FeedBasis::Linear, StokesQ, YY) | (FeedBasis::Circular, StokesV, LL) => -half,
+        (FeedBasis::Linear, StokesV, YX) | (FeedBasis::Circular, StokesU, LR) => half_i,
+        (FeedBasis::Linear, StokesV, XY) | (FeedBasis::Circular, StokesU, RL) => -half_i,
         _ => Complex64::default(),
     }
 }
@@ -462,9 +432,7 @@ fn from_coefficient(
     plane: GridPolarization,
     requested: PolarizationCoordinate,
 ) -> Complex64 {
-    use CorrelationType::{
-        CircularLl, CircularLr, CircularRl, CircularRr, LinearXx, LinearXy, LinearYx, LinearYy,
-    };
+    use Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
     use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
     let one = Complex64::new(1.0, 0.0);
     let i = Complex64::new(0.0, 1.0);
@@ -486,15 +454,15 @@ fn from_coefficient(
         };
     }
     match (feed, correlation, requested) {
-        (FeedBasis::Linear, LinearXx, StokesI | StokesQ)
-        | (FeedBasis::Linear, LinearYy, StokesI)
-        | (FeedBasis::Linear, LinearXy | LinearYx, StokesU)
-        | (FeedBasis::Circular, CircularRr, StokesI | StokesV)
-        | (FeedBasis::Circular, CircularLl, StokesI)
-        | (FeedBasis::Circular, CircularRl | CircularLr, StokesQ) => one,
-        (FeedBasis::Linear, LinearYy, StokesQ) | (FeedBasis::Circular, CircularLl, StokesV) => -one,
-        (FeedBasis::Linear, LinearXy, StokesV) | (FeedBasis::Circular, CircularRl, StokesU) => i,
-        (FeedBasis::Linear, LinearYx, StokesV) | (FeedBasis::Circular, CircularLr, StokesU) => -i,
+        (FeedBasis::Linear, XX, StokesI | StokesQ)
+        | (FeedBasis::Linear, YY, StokesI)
+        | (FeedBasis::Linear, XY | YX, StokesU)
+        | (FeedBasis::Circular, RR, StokesI | StokesV)
+        | (FeedBasis::Circular, LL, StokesI)
+        | (FeedBasis::Circular, RL | LR, StokesQ) => one,
+        (FeedBasis::Linear, YY, StokesQ) | (FeedBasis::Circular, LL, StokesV) => -one,
+        (FeedBasis::Linear, XY, StokesV) | (FeedBasis::Circular, RL, StokesU) => i,
+        (FeedBasis::Linear, YX, StokesV) | (FeedBasis::Circular, LR, StokesU) => -i,
         _ => Complex64::default(),
     }
 }

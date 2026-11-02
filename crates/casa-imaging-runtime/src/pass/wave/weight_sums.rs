@@ -382,11 +382,12 @@ mod tests {
     fn mosaic_operator(
         precision: casa_imaging_operator::GridPrecision,
     ) -> casa_imaging_operator::MeasurementOperator {
-        use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+        use casa_imaging_model::PolarizationCoordinate;
         use casa_imaging_operator::{
             AiryDish, Basis, GridGeometry, GridPadding, ImageExtent, MeasurementOperator, MosaicPb,
             MosaicRules, MosaicWindow, PolarizationRouting,
         };
+        use casa_types::Correlation;
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [64, 64],
@@ -397,7 +398,7 @@ mod tests {
         )
         .expect("geometry");
         let routing = PolarizationRouting::compile(
-            &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+            &[Correlation::XX, Correlation::YY],
             &[PolarizationCoordinate::StokesI],
         )
         .expect("routing");
@@ -777,16 +778,17 @@ mod tests {
     /// The four linear correlations, imaged as themselves, on a two-term
     /// Taylor basis with `kernels`, gridding in f64.
     fn aw_routed_operator(kernels: AwRouted) -> casa_imaging_operator::MeasurementOperator {
-        use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+        use casa_imaging_model::PolarizationCoordinate;
         use casa_imaging_operator::{
             Basis, GridPrecision, MeasurementOperator, PolarizationRouting,
         };
+        use casa_types::Correlation;
         let routing = PolarizationRouting::compile(
             &[
-                CorrelationType::LinearXx,
-                CorrelationType::LinearXy,
-                CorrelationType::LinearYx,
-                CorrelationType::LinearYy,
+                Correlation::XX,
+                Correlation::XY,
+                Correlation::YX,
+                Correlation::YY,
             ],
             &[
                 PolarizationCoordinate::LinearXx,

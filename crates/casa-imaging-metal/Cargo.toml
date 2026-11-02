@@ -36,5 +36,6 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
 
 [dev-dependencies]
 casa-imaging-model = { path = "../casa-imaging-model" }
+casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true

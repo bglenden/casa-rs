@@ -8,6 +8,21 @@ use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[path = "casa_signature.rs"]
+mod casa_signature;
+#[path = "migration.rs"]
+mod migration;
+#[path = "migration_list.rs"]
+mod migration_list;
+#[path = "migration_set.rs"]
+mod migration_set;
+
+use migration::validate_migrations;
+pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
+pub use migration_list::ListElement;
+
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
+
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
 
@@ -17,6 +32,11 @@ pub const CELL_CONCEPT_ID: &str = "image.geometry.cell";
 pub const FIELD_CONCEPT_ID: &str = "ms.selection.field";
 pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
+
+/// The surfaces whose `overwrite` defaults to true, as CASA's do: CASA's
+/// `simobserve` replaces only the files it writes inside its own project
+/// directory. Every other `overwrite` defaults to false (#931).
+pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 1] = ["simobserve"];
 
 /// Stable semantic identity of a parameter concept.
 #[derive(
@@ -259,6 +279,10 @@ pub enum SelectorGrammar {
     Stokes,
 }
 
+/// The token a [`NormalizationRule::ProjectPath`] value may hold for the
+/// task's project.
+pub const PROJECT_TOKEN: &str = "$project";
+
 /// Invariant canonicalization and semantic-equality rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -267,6 +291,11 @@ pub enum NormalizationRule {
     Trim,
     Lowercase,
     Path,
+    /// A path that may name the task's project as [`PROJECT_TOKEN`], which
+    /// the task replaces (CASA's `simobserve` names `$project.ptg.txt`):
+    /// cleaned as a [`Path`](Self::Path), the token kept. Any other `$` or
+    /// backtick is refused, as everywhere.
+    ProjectPath,
     CasaSelector {
         grammar: SelectorGrammar,
         #[serde(default)]
@@ -275,6 +304,10 @@ pub enum NormalizationRule {
     Quantity {
         canonical_unit: String,
     },
+    /// A number given for a text value is read as its text, as CASA's
+    /// variant parameters take one: `tclean`'s `phasecenter=3` names field
+    /// 3 and `width=2` two channels (#931).
+    NumberAsText,
     Sequence {
         rules: Vec<NormalizationRule>,
     },
@@ -542,31 +575,6 @@ impl Predicate {
     }
 }
 
-/// Durable task risk described by the canonical surface contract.
-///
-/// Frontends keep the actual confirmation gesture outside parameter profiles,
-/// but they consume these classes instead of inferring safety from task or
-/// parameter names.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSafetyClass {
-    /// The task creates one or more persistent products.
-    ProductWrite,
-    /// The resolved invocation authorizes replacement of an existing product.
-    Overwrite,
-    /// The resolved invocation mutates an existing input dataset in place.
-    InputMutation,
-}
-
-/// One catalog-owned safety predicate for a one-shot task.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct TaskSafetyRule {
-    pub class: RunSafetyClass,
-    pub when: Predicate,
-}
-
 /// One branch of a deterministic conditional default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ConditionalDefault {
@@ -613,8 +621,6 @@ pub enum NarrowingConstraint {
     SelectorCapabilities {
         capabilities: Vec<String>,
     },
-    /// Two-axis value must use the same value on both axes.
-    SquarePair,
 }
 
 /// Surface-specific role for project context and suggestions.
@@ -678,6 +684,10 @@ pub struct PythonParameterProjection {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
+    /// A casa-rs-only control on a surface that mimics a CASA task: it
+    /// follows CASA's parameters as a keyword-only argument (#931).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keyword_only: bool,
 }
 
 /// Presentation hints; they do not define meaning or defaults.
@@ -730,6 +740,13 @@ pub struct SurfaceParameterBinding {
     pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_homonym: Option<ReviewedHomonym>,
+    /// Set for a CASA parameter casa-rs accepts only at its default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimplemented: Option<UnimplementedParameter>,
+    /// Set for a CASA parameter whose other CASA forms casa-rs does not
+    /// take yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimplemented_forms: Option<UnimplementedForms>,
 }
 
 /// Profile kind pinned in the TOML header.
@@ -747,18 +764,6 @@ impl fmt::Display for SurfaceKind {
     }
 }
 
-/// Ordered migration between consecutive surface-contract versions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct SurfaceMigration {
-    pub from_contract: u32,
-    pub to_contract: u32,
-    #[serde(default)]
-    pub steps: Vec<MigrationStep>,
-    /// Omitted values whose meaning changes because the current default changed.
-    #[serde(default)]
-    pub changed_defaults: Vec<String>,
-}
-
 /// Machine-readable stdout format produced by a managed task invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -773,23 +778,17 @@ pub enum ManagedResultDecoder {
     CalibrationReportV1,
     #[serde(rename = "imager-run-v1")]
     ImagerRunV1,
+    #[serde(rename = "simobserve-run-v1")]
+    SimobserveRunV1,
 }
 
-/// One argument injected to select a provider's managed result representation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ManagedOutputArgument {
-    pub flag: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-}
-
-/// Typed contract for a provider's structured task result.
+/// Typed contract for a provider's structured task result: the result a
+/// front-end binary's reply carries, and the decoder that reads its
+/// products and summary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ManagedOutputContract {
     pub decoder: ManagedResultDecoder,
     pub stdout_format: ManagedOutputFormat,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub inject_arguments: Vec<ManagedOutputArgument>,
     pub raw_stdout_available: bool,
     pub raw_stderr_available: bool,
 }
@@ -886,64 +885,6 @@ pub struct ProviderInvocation {
     pub stdin: Option<String>,
 }
 
-impl ProviderInvocation {
-    pub fn direct(args: Vec<String>) -> Self {
-        Self { args, stdin: None }
-    }
-}
-
-/// Provider-owned adaptation result used to prove that active parameters with
-/// no direct CLI spelling were consumed rather than silently dropped.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ProviderInvocationAdaptation {
-    pub invocation: ProviderInvocation,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub consumed_parameters: BTreeSet<String>,
-}
-
-impl ProviderInvocationAdaptation {
-    pub fn direct(invocation: ProviderInvocation) -> Self {
-        Self {
-            invocation,
-            consumed_parameters: BTreeSet::new(),
-        }
-    }
-}
-
-/// Migration of explicit sparse overrides only.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MigrationStep {
-    Rename {
-        from: String,
-        to: String,
-    },
-    Remove {
-        parameter: String,
-    },
-    ReplaceValue {
-        parameter: String,
-        from: ParameterValue,
-        to: ParameterValue,
-    },
-    Transform {
-        parameter: String,
-        transform: MigrationTransform,
-    },
-}
-
-/// Closed set of safe deterministic migration transforms.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MigrationTransform {
-    ScalarToArray { length: usize },
-    SingletonArrayToScalar,
-    IntegerToString,
-    QuantityUnit { canonical_unit: String },
-    Lowercase,
-    Trim,
-}
-
 /// One-shot surface definition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskDefinition {
@@ -953,10 +894,17 @@ pub struct TaskDefinition {
     pub category: String,
     pub summary: String,
     pub provider_family: String,
+    /// The CASA task this surface mimics, whose signature it presents
+    /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casa_task: Option<String>,
+    /// The ids this surface had before it was renamed, which a saved
+    /// profile may still name: `imager`, re-surfaced as CASA's `tclean`
+    /// (#931). Its migrations carry such a profile to the current contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub former_ids: Vec<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub safety_rules: Vec<TaskSafetyRule>,
     pub bindings: Vec<SurfaceParameterBinding>,
     #[serde(default)]
     pub migrations: Vec<SurfaceMigration>,
@@ -992,16 +940,27 @@ impl SurfaceDefinition {
         &self.task().provider_family
     }
 
+    /// The CASA task the surface mimics, when it presents CASA's signature.
+    pub fn casa_task(&self) -> Option<&str> {
+        self.task().casa_task.as_deref()
+    }
+
+    /// The ids the surface had before it was renamed.
+    pub fn former_ids(&self) -> &[String] {
+        &self.task().former_ids
+    }
+
+    /// Whether `id` names this surface, now or before it was renamed.
+    pub fn answers_to(&self, id: &str) -> bool {
+        self.id() == id || self.former_ids().iter().any(|former| former == id)
+    }
+
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
         &self.task().bindings
     }
 
     pub fn execution(&self) -> &SurfaceExecutionProjection {
         &self.task().execution
-    }
-
-    pub fn safety_rules(&self) -> &[TaskSafetyRule] {
-        &self.task().safety_rules
     }
 
     pub fn migrations(&self) -> &[SurfaceMigration] {
@@ -1044,8 +1003,13 @@ pub struct SurfaceCatalogBundle {
 }
 
 impl SurfaceCatalogBundle {
+    /// The surface `id` names, now or, for a saved profile's header, before
+    /// it was renamed.
     pub fn surface(&self, id: &str) -> Option<&SurfaceDefinition> {
-        self.surfaces.iter().find(|surface| surface.id() == id)
+        self.surfaces
+            .iter()
+            .find(|surface| surface.id() == id)
+            .or_else(|| self.surfaces.iter().find(|surface| surface.answers_to(id)))
     }
 
     pub fn embedded_surface(&self, id: &str) -> Option<SurfaceContractBundle> {
@@ -1144,11 +1108,17 @@ fn validate_surface_bundles_internal(
                 ),
             ));
         }
-        if !surface_ids.insert(bundle.surface.id().to_string()) {
-            errors.push(ContractValidationError::new(
-                "duplicate_surface",
-                format!("duplicate surface {}", bundle.surface.id()),
-            ));
+        // A former id names the surface in saved profiles, so it may name no
+        // other surface, now or before.
+        for id in std::iter::once(bundle.surface.id())
+            .chain(bundle.surface.former_ids().iter().map(String::as_str))
+        {
+            if !surface_ids.insert(id.to_string()) {
+                errors.push(ContractValidationError::new(
+                    "duplicate_surface",
+                    format!("duplicate surface {id}"),
+                ));
+            }
         }
         for concept in &bundle.catalog.concepts {
             let key = (concept.id.clone(), concept.semantic_revision);
@@ -1216,7 +1186,9 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
         );
     }
 
-    validate_safety_rules(bundle, &known, errors);
+    validate_overwrite_defaults(bundle, errors);
+    casa_signature::validate_casa_signature(surface, errors);
+    casa_signature::validate_unimplemented(bundle, &known, errors);
 
     for binding in surface.bindings() {
         if !names.insert(binding.name.clone()) {
@@ -1464,121 +1436,33 @@ fn validate_profile_parameter_name(
     }
 }
 
-fn validate_safety_rules(
+/// An overwrite binding defaults to `false`, as CASA's tasks do, so a task
+/// replaces a product only when asked. A surface that writes only inside its
+/// own project directory keeps CASA's `true`
+/// ([`PROJECT_DIRECTORY_OVERWRITE_SURFACES`]).
+fn validate_overwrite_defaults(
     bundle: &SurfaceContractBundle,
-    known: &BTreeSet<String>,
     errors: &mut Vec<ContractValidationError>,
 ) {
     let surface = &bundle.surface;
-    let mut classes = BTreeSet::new();
-    for rule in surface.safety_rules() {
-        if !classes.insert(rule.class) {
-            errors.push(
-                ContractValidationError::new(
-                    "duplicate_safety_class",
-                    format!("duplicate {:?} task safety rule", rule.class),
-                )
-                .at(surface.id(), None),
-            );
-        }
-
-        let mut refs = BTreeSet::new();
-        rule.when.referenced_parameters(&mut refs);
-        for reference in refs.difference(known) {
-            errors.push(
-                ContractValidationError::new(
-                    "unknown_safety_parameter",
-                    format!(
-                        "{:?} safety predicate references unknown parameter {reference}",
-                        rule.class
-                    ),
-                )
-                .at(surface.id(), None),
-            );
-        }
-        validate_safety_predicate_values(&rule.when, bundle, rule.class, errors);
-    }
-
-    let overwrite_bindings = surface
+    let expected = PROJECT_DIRECTORY_OVERWRITE_SURFACES.contains(&surface.id());
+    for binding in surface
         .bindings()
         .iter()
         .filter(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
-        .collect::<Vec<_>>();
-    if overwrite_bindings.is_empty() {
-        return;
-    }
-
-    let Some(rule) = surface
-        .safety_rules()
-        .iter()
-        .find(|rule| rule.class == RunSafetyClass::Overwrite)
-    else {
-        errors.push(
-            ContractValidationError::new(
-                "missing_overwrite_safety",
-                "an output.overwrite binding requires an overwrite safety rule",
-            )
-            .at(surface.id(), None),
+    {
+        let matches = matches!(
+            &binding.default,
+            DefaultSpec::Literal { value: ParameterValue::Bool(value) } if *value == expected
         );
-        return;
-    };
-    for binding in overwrite_bindings {
-        let expected = Predicate::Equals {
-            parameter: binding.name.clone(),
-            value: ParameterValue::Bool(true),
-        };
-        if rule.when != expected {
+        if !matches {
             errors.push(
                 ContractValidationError::new(
-                    "unsafe_overwrite_predicate",
-                    format!("overwrite safety must be exactly {} == true", binding.name),
+                    "overwrite_default",
+                    format!("{} must default to {expected}", binding.name),
                 )
                 .at(surface.id(), Some(&binding.name)),
             );
-        }
-    }
-}
-
-fn validate_safety_predicate_values(
-    predicate: &Predicate,
-    bundle: &SurfaceContractBundle,
-    class: RunSafetyClass,
-    errors: &mut Vec<ContractValidationError>,
-) {
-    match predicate {
-        Predicate::Always | Predicate::Never | Predicate::IsSet { .. } => {}
-        Predicate::Equals { parameter, value } => {
-            let Some(binding) = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == *parameter)
-            else {
-                return;
-            };
-            let Some(concept) = bundle.catalog.concept(&binding.concept) else {
-                return;
-            };
-            if let Err(reason) = validate_parameter_value(value, &concept.value_domain) {
-                errors.push(
-                    ContractValidationError::new(
-                        "invalid_safety_value",
-                        format!(
-                            "{:?} safety predicate value does not match {parameter}: {reason}",
-                            class
-                        ),
-                    )
-                    .at(bundle.surface.id(), Some(parameter)),
-                );
-            }
-        }
-        Predicate::Not { predicate } => {
-            validate_safety_predicate_values(predicate, bundle, class, errors);
-        }
-        Predicate::All { predicates } | Predicate::Any { predicates } => {
-            for predicate in predicates {
-                validate_safety_predicate_values(predicate, bundle, class, errors);
-            }
         }
     }
 }
@@ -1661,6 +1545,12 @@ pub fn validate_parameter_value(
                 special_values,
             },
         ) => validate_quantity_value(value, *dimension, canonical_unit, special_values),
+        // A bare number is a quantity in its canonical unit, as CASA's
+        // `threshold=0.0` is in Jy (#931).
+        (ParameterValue::Integer(_), ParameterType::Quantity { .. }) => Ok(()),
+        (ParameterValue::Float(value), ParameterType::Quantity { .. }) if value.is_finite() => {
+            Ok(())
+        }
         (ParameterValue::Integer(_), ParameterType::Float)
         | (ParameterValue::Float(_), ParameterType::Float) => Ok(()),
         (ParameterValue::String(value), ParameterType::Choice { values }) => {
@@ -1924,16 +1814,6 @@ fn validate_refinement_value(
                 }
                 _ => false,
             },
-            NarrowingConstraint::SquarePair => match value {
-                ParameterValue::Array(values) if values.len() == 2 => values[0] == values[1],
-                // A scalar accepted by an allow-scalar pair domain normalizes to
-                // the same value on both axes and is therefore square.
-                ParameterValue::Bool(_)
-                | ParameterValue::Integer(_)
-                | ParameterValue::Float(_)
-                | ParameterValue::String(_) => true,
-                _ => false,
-            },
         };
         if !valid {
             errors.push(
@@ -2010,7 +1890,6 @@ fn validate_refinements(
                     _ => false,
                 }
             }
-            NarrowingConstraint::SquarePair => domain_is_two_axis_pair(&concept.value_domain),
         };
         if !narrowing {
             errors.push(
@@ -2029,18 +1908,6 @@ fn domain_is_numeric(domain: &ParameterType) -> bool {
         ParameterType::Integer | ParameterType::Float | ParameterType::Quantity { .. } => true,
         ParameterType::Array { element, .. } => domain_is_numeric(element),
         ParameterType::Optional { value, .. } => domain_is_numeric(value),
-        _ => false,
-    }
-}
-
-fn domain_is_two_axis_pair(domain: &ParameterType) -> bool {
-    match domain {
-        ParameterType::Array {
-            min_items: 2,
-            max_items: Some(2),
-            ..
-        } => true,
-        ParameterType::Optional { value, .. } => domain_is_two_axis_pair(value),
         _ => false,
     }
 }
@@ -2135,84 +2002,6 @@ fn detects_cycle(
     visiting.remove(name);
     visited.insert(name.to_string());
     false
-}
-
-fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractValidationError>) {
-    // An empty migration set is an explicit current-only contract: readers
-    // accept exactly `contract_version` and retain no compatibility path.
-    if surface.migrations().is_empty() {
-        for binding in surface.bindings() {
-            if !binding.aliases.is_empty() {
-                errors.push(
-                    ContractValidationError::new(
-                        "current_only_alias",
-                        "current-only surfaces cannot retain compatibility aliases",
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-        }
-        return;
-    }
-    let mut expected = 1;
-    let known = surface
-        .bindings()
-        .iter()
-        .map(|binding| binding.name.as_str())
-        .collect::<BTreeSet<_>>();
-    for migration in surface.migrations() {
-        if migration.from_contract != expected
-            || migration.to_contract != migration.from_contract.saturating_add(1)
-        {
-            errors.push(
-                ContractValidationError::new(
-                    "migration_chain",
-                    "migrations must be ordered and advance exactly one contract version",
-                )
-                .at(surface.id(), None),
-            );
-        }
-        for name in &migration.changed_defaults {
-            if !known.contains(name.as_str()) {
-                errors.push(
-                    ContractValidationError::new(
-                        "unknown_changed_default",
-                        format!("migration names unknown changed-default parameter {name:?}"),
-                    )
-                    .at(surface.id(), Some(name)),
-                );
-            }
-        }
-        for step in &migration.steps {
-            let current_name = match step {
-                MigrationStep::Rename { to, .. } => Some(to),
-                MigrationStep::ReplaceValue { parameter, .. }
-                | MigrationStep::Transform { parameter, .. } => Some(parameter),
-                MigrationStep::Remove { .. } => None,
-            };
-            if let Some(name) = current_name
-                && !known.contains(name.as_str())
-            {
-                errors.push(
-                    ContractValidationError::new(
-                        "unknown_migration_target",
-                        format!("migration targets unknown current parameter {name:?}"),
-                    )
-                    .at(surface.id(), Some(name)),
-                );
-            }
-        }
-        expected = migration.to_contract;
-    }
-    if expected != surface.contract_version() {
-        errors.push(
-            ContractValidationError::new(
-                "migration_target",
-                "migration chain must end at the current contract version",
-            )
-            .at(surface.id(), None),
-        );
-    }
 }
 
 fn validate_repeated_names(
@@ -2322,6 +2111,8 @@ mod tests {
             },
             aliases: Vec::new(),
             reviewed_homonym: None,
+            unimplemented: None,
+            unimplemented_forms: None,
         }
     }
 
@@ -2338,8 +2129,9 @@ mod tests {
                 category: "Test".to_string(),
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
+                casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![binding],
                 migrations: Vec::new(),
             }),
@@ -2440,74 +2232,34 @@ mod tests {
         assert!(errors.iter().any(|error| error.code == "duplicate_alias"));
     }
 
-    #[test]
-    fn overwrite_concepts_require_an_exact_true_predicate() {
+    fn overwrite_bundle(default: bool) -> SurfaceContractBundle {
         let concept = concept(OVERWRITE_CONCEPT_ID, "overwrite", ParameterType::Bool);
         let binding = binding(
             &concept,
             DefaultSpec::Literal {
-                value: ParameterValue::Bool(false),
+                value: ParameterValue::Bool(default),
             },
         );
-        let mut bundle = bundle(concept, binding);
-        let errors = bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "missing_overwrite_safety")
-        );
-
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.safety_rules.push(TaskSafetyRule {
-            class: RunSafetyClass::Overwrite,
-            when: Predicate::Equals {
-                parameter: "overwrite".to_string(),
-                value: ParameterValue::Bool(true),
-            },
-        });
-        bundle.validate().unwrap();
+        bundle(concept, binding)
     }
 
     #[test]
-    fn safety_rules_reject_duplicate_classes_unknown_parameters_and_bad_types() {
-        let concept = concept("example.mode", "mode", ParameterType::String);
-        let binding = binding(
-            &concept,
-            DefaultSpec::Literal {
-                value: ParameterValue::String("safe".to_string()),
-            },
+    fn overwrite_defaults_to_false() {
+        overwrite_bundle(false).validate().unwrap();
+        let errors = overwrite_bundle(true).validate().unwrap_err();
+        assert!(
+            errors.iter().any(|error| error.code == "overwrite_default"),
+            "{errors:?}"
         );
-        let mut bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.safety_rules = vec![
-            TaskSafetyRule {
-                class: RunSafetyClass::InputMutation,
-                when: Predicate::Equals {
-                    parameter: "mode".to_string(),
-                    value: ParameterValue::Bool(true),
-                },
-            },
-            TaskSafetyRule {
-                class: RunSafetyClass::ProductWrite,
-                when: Predicate::IsSet {
-                    parameter: "missing".to_string(),
-                },
-            },
-            TaskSafetyRule {
-                class: RunSafetyClass::ProductWrite,
-                when: Predicate::Always,
-            },
-        ];
-        let errors = bundle.validate().unwrap_err();
-        for expected in [
-            "invalid_safety_value",
-            "unknown_safety_parameter",
-            "duplicate_safety_class",
-        ] {
-            assert!(
-                errors.iter().any(|error| error.code == expected),
-                "missing {expected}: {errors:?}"
-            );
+    }
+
+    #[test]
+    fn a_project_directory_surface_keeps_casas_overwrite_default() {
+        for (default, valid) in [(true, true), (false, false)] {
+            let mut bundle = overwrite_bundle(default);
+            let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+            definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
+            assert_eq!(bundle.validate().is_ok(), valid, "default {default}");
         }
     }
 
@@ -3008,8 +2760,9 @@ mod tests {
                 category: "Test".to_string(),
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
+                casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![first_binding, second_binding],
                 migrations: Vec::new(),
             }),

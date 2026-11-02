@@ -125,6 +125,14 @@ pub enum MsTransformError {
         path: String,
     },
 
+    /// The output MeasurementSet exists. CASA's `mstransform` and `split` have
+    /// no overwrite and refuse it with this message (#931).
+    #[error("Output MS {path} already exists - will not overwrite it.")]
+    OutputExists {
+        /// Output MS path.
+        path: String,
+    },
+
     /// The requested source column is absent.
     #[error("MeasurementSet {path} does not contain {column}")]
     MissingDataColumn {
@@ -215,8 +223,13 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             path: request.input_ms.display().to_string(),
         });
     }
+    if request.output_ms.exists() {
+        return Err(MsTransformError::OutputExists {
+            path: request.output_ms.display().to_string(),
+        });
+    }
     let target =
-        MeasurementSetCreateTarget::prepare(&request.output_ms, true).map_err(|error| {
+        MeasurementSetCreateTarget::prepare(&request.output_ms, false).map_err(|error| {
             MsTransformError::PrepareOutput {
                 path: request.output_ms.display().to_string(),
                 reason: error.to_string(),

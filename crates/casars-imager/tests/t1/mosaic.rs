@@ -32,10 +32,7 @@ const MOSAIC_INVENTORY: [&str; 9] = [
 /// 50 GHz: a 119″ beam (CASA's 10.7 m ALMA aperture) over 4″ resolution.
 const FREQUENCY_HZ: f64 = 50.0e9;
 /// 1″ cells, four per synthesised beam of the 290 m spiral; ±256″ field.
-const GEOMETRY: Geometry = Geometry {
-    image_size: 512,
-    cell_arcsec: 1.0,
-};
+const GEOMETRY: Geometry = Geometry::square(512, 1.0);
 /// Pointing spacing in cells: 80″, two thirds of the beam FWHM.
 const SPACING_PX: i32 = 80;
 const CENTRE: Component = Component {
@@ -104,7 +101,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
 
 /// West, centre and east pointings [`SPACING_PX`] cells apart along `l`.
 fn setup() -> Setup {
-    let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad();
+    let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad()[0];
     Setup {
         telescope: "ALMA".to_string(),
         antennas: alma_antennas(),
@@ -132,7 +129,7 @@ fn beam_power(radius_px: f64, frequency_hz: f64) -> f64 {
         ALMA_BLOCKAGE_M,
         ALMA_TABLE_RADIUS_ARCMIN_GHZ,
     );
-    let radius = radius_px * GEOMETRY.cell_arcsec / 60.0 * frequency_hz / 1.0e9;
+    let radius = radius_px * GEOMETRY.cell_arcsec[0] / 60.0 * frequency_hz / 1.0e9;
     f64::from(table.evaluate(radius)).powi(2)
 }
 
@@ -182,7 +179,7 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
         "niter": 3000,
         "threshold": THRESHOLD,
         "field": "0,1,2",
-        "phasecenter_field": "1",
+        "phasecenter": "1",
         "gridder": "mosaic",
         "pbcor": true,
         "write_pb": true,
@@ -191,6 +188,15 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
         controls["specmode"] = json!("cube");
     }
     (observation, controls)
+}
+
+/// Under `usepointing` each row's pointing comes from the POINTING table
+/// (#932 step 3b).
+#[test]
+fn a_mosaic_images_on_its_pointing_table() {
+    let (observation, mut controls) = mosaic_run(false);
+    controls["usepointing"] = json!(true);
+    observation.image("mosaic-pointing-image", controls);
 }
 
 #[test]
@@ -370,7 +376,7 @@ fn mosaic_flat_noise_is_flat_sky_times_the_pb() {
                 "weighting": "natural",
                 "niter": 0,
                 "field": "0,1,2",
-                "phasecenter_field": "1",
+                "phasecenter": "1",
                 "gridder": "mosaic",
                 "normtype": normtype,
                 "pblimit": pblimit,
@@ -446,7 +452,7 @@ fn standard_gridder_pb_follows_the_pointings() {
         );
         products.get(".pb").pixels.clone()
     };
-    let reference = GEOMETRY.image_size / 2;
+    let reference = GEOMETRY.centre()[0];
     let spacing = SPACING_PX as usize;
     let fields = ["0", "1", "2"].map(|field| pb(&format!("standard-pb-{field}"), field));
 
@@ -496,7 +502,7 @@ fn standard_gridder_pb_follows_the_pointings() {
 fn an_outlier_pb_is_the_main_beams_tail() {
     let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE)]);
     let offset_px = 60;
-    let outlier_centre = Setup::pointing([f64::from(offset_px) * GEOMETRY.cell_rad(), 0.0]);
+    let outlier_centre = Setup::pointing([f64::from(offset_px) * GEOMETRY.cell_rad()[0], 0.0]);
     let outlier = observation.scratch("outlier-pb");
     let outlier_file = observation.scratch("pb.outlier");
     std::fs::write(
@@ -504,8 +510,8 @@ fn an_outlier_pb_is_the_main_beams_tail() {
         format!(
             "imagename={}\nimsize=[64,64]\ncell=[{}arcsec,{}arcsec]\nphasecenter=J2000 {}rad {}rad\n",
             outlier.display(),
-            GEOMETRY.cell_arcsec,
-            GEOMETRY.cell_arcsec,
+            GEOMETRY.cell_arcsec[0],
+            GEOMETRY.cell_arcsec[1],
             outlier_centre[0],
             outlier_centre[1],
         ),
@@ -523,7 +529,7 @@ fn an_outlier_pb_is_the_main_beams_tail() {
             "outlierfile": outlier_file,
         }),
     );
-    let reference = GEOMETRY.image_size / 2;
+    let reference = GEOMETRY.centre()[0];
     let main = products.get(".pb").pixels[[reference - offset_px as usize, reference]];
     let outlier_pb = casa_images::PagedImage::<f32>::open(format!("{}.pb", outlier.display()))
         .expect("outlier .pb")
@@ -551,12 +557,15 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
         let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("reopen");
         let pointing = Setup::pointing([0.0, 0.0]);
         // [2, NUM_POLY + 1] in Fortran order: the constant pointing, then
-        // a right-ascension rate of 1e-9 rad/s.
-        let polynomial = ndarray::ArrayD::from_shape_vec(
-            ndarray::IxDyn(&[2, 2]).f(),
-            vec![pointing[0], pointing[1], 1.0e-9, 0.0],
-        )
-        .expect("PHASE_DIR shape");
+        // a right-ascension rate. `NUM_POLY` orders every direction column,
+        // so the delay and reference centres take the shape too, at rest.
+        let polynomial = |rate: f64| {
+            ndarray::ArrayD::from_shape_vec(
+                ndarray::IxDyn(&[2, 2]).f(),
+                vec![pointing[0], pointing[1], rate, 0.0],
+            )
+            .expect("direction polynomial shape")
+        };
         let mut field = ms
             .subtable_mut(casa_ms::SubtableId::Field)
             .expect("FIELD")
@@ -568,13 +577,19 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
                 casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)),
             )
             .expect("NUM_POLY");
-        field
-            .set_cell(
-                1,
-                "PHASE_DIR",
-                casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial)),
-            )
-            .expect("PHASE_DIR");
+        for (column, rate) in [
+            ("DELAY_DIR", 0.0),
+            ("PHASE_DIR", 1.0e-9),
+            ("REFERENCE_DIR", 0.0),
+        ] {
+            field
+                .set_cell(
+                    1,
+                    column,
+                    casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial(rate))),
+                )
+                .expect(column);
+        }
         ms.save().expect("save");
     }
     let Err(error) = observation.try_image(

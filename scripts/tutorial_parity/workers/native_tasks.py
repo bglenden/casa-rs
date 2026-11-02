@@ -4,43 +4,30 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 
-TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "imager", "split", "impbcor"}
-BINARY_BY_TASK = {
-    "imhead": "casars",
-    "imstat": "casars",
-    "immoments": "casars",
-    "exportfits": "casars",
-    "msexplore": "casars",
-    "imager": "casars",
-    "split": "casars",
-    "impbcor": "casars",
-}
+TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "tclean", "split", "impbcor"}
+
+
+def use_binaries(binary_dir: Path) -> None:
+    """Start each task from ``binary_dir``, through its catalog override."""
+    from casars.parameters import _native
+
+    for application in _native().application_catalog():
+        os.environ[application["override_env"]] = str(binary_dir / application["executable"])
 
 
 def python_parameters(task: str, raw: dict[str, Any]) -> dict[str, Any]:
-    """Project provider CLI values into the generated CASA-named Python API."""
+    """Project provider CLI values into the generated CASA-named Python API.
+
+    The tasks, tclean among them, take CASA's values as they are (#931)."""
     parameters = dict(raw)
     parameters.pop("json", None)
-    if task == "immoments":
-        if isinstance(parameters.get("moments"), int):
-            parameters["moments"] = str(parameters["moments"])
-        if isinstance(parameters.get("includepix"), list):
-            parameters["includepix"] = ",".join(str(value) for value in parameters["includepix"])
-    if task == "imager":
-        if "cell_arcsec" in parameters:
-            parameters["cell"] = f"{parameters.pop('cell_arcsec')}arcsec"
-        if "threshold_jy" in parameters:
-            parameters["threshold"] = f"{parameters.pop('threshold_jy')}Jy"
-        for name in ("field", "phasecenter_field"):
-            if name in parameters:
-                parameters[name] = str(parameters[name])
-        parameters.pop("overwrite", None)
     return parameters
 
 
@@ -59,6 +46,9 @@ def json_safe(value: Any) -> Any:
             return {str(key): json_safe(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
             return [json_safe(item) for item in value]
+        if hasattr(value, "tolist"):
+            # CASA's return values hold NumPy arrays and scalars.
+            return json_safe(value.tolist())
         if hasattr(value, "as_dict"):
             return json_safe(value.as_dict())
         if hasattr(value, "__dict__"):
@@ -77,13 +67,13 @@ def main() -> int:
         raise ValueError("unsupported native worker request")
     from casars import tasks
 
+    use_binaries(binary_dir)
     results = []
     for operation in operations:
         task = operation["task"]
         if task not in TASKS:
             raise ValueError(f"unsupported native Python task: {task}")
         parameters = python_parameters(task, operation["parameters"])
-        parameters["binary"] = str(binary_dir / BINARY_BY_TASK[task])
         started = time.perf_counter()
         result = getattr(tasks, task)(**parameters)
         capture = operation.get("capture")

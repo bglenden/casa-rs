@@ -33,8 +33,8 @@ def load(path: Path) -> dict[str, object]:
 def main() -> int:
     applications = load(APPLICATIONS_PATH)
     surfaces = load(SURFACES_PATH)
-    if applications.get("schema_version") != 1:
-        fail("application catalog schema_version must be 1")
+    if applications.get("schema_version") != 2:
+        fail("application catalog schema_version must be 2")
     if surfaces.get("schema_version") != 1:
         fail("parameter surface schema_version must be 1")
 
@@ -48,16 +48,17 @@ def main() -> int:
     if duplicates:
         fail(f"duplicate application IDs: {duplicates}")
 
-    task_ids = {
-        entry["id"]
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("kind") == "task"
-    }
-    launcher_ids = {
-        entry["id"]
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("kind") == "launcher"
-    }
+    # Every application is a task: Python starts each one directly, and the
+    # casars launcher is retired (#931). Version 2 keeps only what a launch
+    # and the suite read (#972).
+    task_ids = {entry["id"] for entry in entries if isinstance(entry, dict)}
+    fields = {"id", "launch", "dataset_kinds", "include_in_suite"}
+    for entry in entries:
+        if isinstance(entry, dict) and set(entry) != fields:
+            fail(
+                f"application {entry.get('id')!r} fields {sorted(entry)} "
+                f"are not {sorted(fields)}"
+            )
     surface_ids = {
         surface["id"] for surface in definitions if isinstance(surface, dict)
     }
@@ -66,9 +67,6 @@ def main() -> int:
             f"task/surface mismatch: missing={sorted(surface_ids - task_ids)}, "
             f"extra={sorted(task_ids - surface_ids)}"
         )
-    if launcher_ids != {"casars"}:
-        fail(f"expected only the casars launcher, found {sorted(launcher_ids)}")
-
     for entry in entries:
         if not isinstance(entry, dict):
             fail("application entries must be objects")
@@ -79,10 +77,7 @@ def main() -> int:
         ):
             fail(f"application {entry.get('id')!r} has an incomplete launch descriptor")
 
-    print(
-        f"parameter-surface-catalog: {len(task_ids)} task applications and "
-        f"{len(launcher_ids)} launcher validated"
-    )
+    print(f"parameter-surface-catalog: {len(task_ids)} task applications validated")
     return 0
 
 

@@ -8,7 +8,7 @@ use casa_test_support::table_element_arrays::{
     ElementStorage, element_arrays_fixture, save_generated_element_arrays,
 };
 use casa_test_support::table_interop::{
-    ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
+    ManagerKind, TableFixture, read_and_verify, run_endian_cross_matrix, run_full_cross_matrix,
     run_table_cross_matrix,
 };
 use casa_test_support::{CppTableFixture, TableOracle};
@@ -16,6 +16,7 @@ use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
 use ndarray::ShapeBuilder;
+use std::path::Path;
 
 fn ssm_scalar_primitives_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
@@ -680,6 +681,251 @@ fn ssm_string_array_fixture() -> TableFixture {
 fn ssm_string_array_cross_matrix() {
     let fixture = ssm_string_array_fixture();
     assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+// --- Strings longer than a string bucket ---
+
+/// About `bytes` bytes of text, a run of one- and two-byte characters
+/// starting at character `seed`; the C++ fixture's `text`.
+fn text(bytes: usize, seed: usize) -> String {
+    let characters = ['a', 'é', 'b', 'ç', 'c', '-', 'ü', 'd'];
+    let mut text = String::with_capacity(bytes + 2);
+    let mut index = seed;
+    while text.len() < bytes {
+        text.push(characters[index % characters.len()]);
+        index += 1;
+    }
+    text
+}
+
+/// A scalar string, a fixed `String[3]` and a variable string vector whose
+/// strings reach 100 kB: casa-rs's 32 KiB buckets and casacore's smaller
+/// default ones both continue them in linked buckets, splitting
+/// two-byte characters.
+fn ssm_long_strings_fixture() -> TableFixture {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("NAME", PrimitiveType::String),
+        ColumnSchema::array_fixed("FIXED", PrimitiveType::String, vec![3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .expect("direct fixed array column"),
+        ColumnSchema::array_variable("VARIABLE", PrimitiveType::String, Some(1)),
+    ])
+    .expect("schema");
+    let strings = |values: Vec<String>| {
+        let count = values.len();
+        Value::Array(ArrayValue::String(
+            ndarray::Array::from_shape_vec(ndarray::IxDyn(&[count]), values).unwrap(),
+        ))
+    };
+    let row = |name: String, fixed: Vec<String>, variable: Vec<String>| {
+        RecordValue::new(vec![
+            RecordField::new("NAME", Value::Scalar(ScalarValue::String(name))),
+            RecordField::new("FIXED", strings(fixed)),
+            RecordField::new("VARIABLE", strings(variable)),
+        ])
+    };
+    let rows = vec![
+        row(
+            text(100_000, 0),
+            vec![text(70_000, 1), "x".to_string(), text(40_000, 2)],
+            vec![text(33_000, 3), text(5, 4)],
+        ),
+        row(
+            "short".to_string(),
+            vec![String::new(), String::new(), String::new()],
+            vec!["a".to_string()],
+        ),
+        row(
+            text(32_800, 5),
+            vec!["fixed".to_string(), text(32_769, 6), String::new()],
+            vec![text(65_536, 7), String::new(), text(1_000, 8)],
+        ),
+    ];
+
+    TableFixture {
+        schema,
+        rows,
+        table_keywords: RecordValue::default(),
+        column_keywords: vec![],
+        cpp_fixture: Some(CppTableFixture::SsmLongStrings),
+        tile_shape: None,
+        column_bindings: Vec::new(),
+    }
+}
+
+#[test]
+fn ssm_long_strings_cross_matrix() {
+    let fixture = ssm_long_strings_fixture();
+    assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StandardStMan));
+}
+
+#[test]
+fn ssm_long_strings_endian_cross_matrix() {
+    let fixture = ssm_long_strings_fixture();
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::StandardStMan,
+    ));
+}
+
+/// Bytes of a StandardStMan bucket of casa-rs's long-string table, and of
+/// the file header before the buckets.
+const SSM_BUCKET_BYTES: usize = 32_768;
+const SSM_HEADER_BYTES: usize = 512;
+
+/// The long-string rows after [`TableOracle::update_ssm_long_strings`].
+fn updated_long_string_rows() -> Vec<RecordValue> {
+    let strings = |values: Vec<String>| {
+        let count = values.len();
+        Value::Array(ArrayValue::String(
+            ndarray::Array::from_shape_vec(ndarray::IxDyn(&[count]), values).unwrap(),
+        ))
+    };
+    let row = |name: String, fixed: Vec<String>, variable: Vec<String>| {
+        RecordValue::new(vec![
+            RecordField::new("NAME", Value::Scalar(ScalarValue::String(name))),
+            RecordField::new("FIXED", strings(fixed)),
+            RecordField::new("VARIABLE", strings(variable)),
+        ])
+    };
+    vec![
+        row(
+            "n".repeat(1_700),
+            vec!["f".repeat(13), "g".repeat(111), "h".repeat(25)],
+            vec![text(33_000, 3), text(5, 4)],
+        ),
+        row(
+            "short".to_string(),
+            vec![String::new(), String::new(), String::new()],
+            vec!["a".to_string()],
+        ),
+        row(
+            text(32_800, 5),
+            vec!["fixed".to_string(), text(32_769, 6), String::new()],
+            vec!["v".repeat(250_000), "w".repeat(20)],
+        ),
+        row(
+            "m".repeat(50_000),
+            vec!["p".to_string(), "q".to_string(), "r".to_string()],
+            vec!["s".to_string()],
+        ),
+    ]
+}
+
+/// Check that the string buckets of the StandardStMan files of the tables
+/// at `ours` and `theirs`, the buckets after their one data bucket up to
+/// the last string bucket, hold the same header and the same bytes in use.
+/// casacore's unused bytes are not compared: `SSMStringHandler` copies its
+/// whole working buffer into each bucket, so a new bucket's unused bytes
+/// hold what the one before it held there.
+fn assert_same_string_buckets(ours: &Path, theirs: &Path, last_string_bucket: usize, what: &str) {
+    let read = |path: &Path| std::fs::read(path.join("table.f0")).expect("the SSM file");
+    let (ours, theirs) = (read(ours), read(theirs));
+    for bucket in 1..=last_string_bucket {
+        let start = SSM_HEADER_BYTES + bucket * SSM_BUCKET_BYTES;
+        let used = i32::from_be_bytes(ours[start + 4..start + 8].try_into().expect("four bytes"));
+        let range = start..start + 16 + usize::try_from(used).expect("a used length");
+        if let Some(at) = ours[range.clone()]
+            .iter()
+            .zip(&theirs[range])
+            .position(|(our, their)| our != their)
+        {
+            let near = start + at.saturating_sub(at % 4)..start + at.saturating_sub(at % 4) + 16;
+            panic!(
+                "{what}: string bucket {bucket} differs from casacore's at byte {at}: \
+                 {:02x?} against {:02x?}",
+                &ours[near.clone()],
+                &theirs[near]
+            );
+        }
+    }
+}
+
+/// casacore updates a table of long strings casa-rs wrote as it updates its
+/// own. Written column by column in buckets of 32 KiB, casacore lays the
+/// strings out in the same string buckets as casa-rs, byte for byte:
+/// placement, links, used and deleted counts. casacore then shrinks a
+/// scalar and a fixed array that span several buckets, grows a variable
+/// array into the buckets that frees and appends a long scalar, in each
+/// table. Its account of the buckets (total, free, first free, the last
+/// string bucket and where the index lies) is the same for both, as written
+/// and as updated, and both libraries read every cell of both.
+#[test]
+fn ssm_long_strings_update_in_casacore_as_casacores_own() {
+    if !casa_test_support::casacore_oracle_available() {
+        return;
+    }
+    let fixture = ssm_long_strings_fixture();
+    let updated = TableFixture {
+        rows: updated_long_string_rows(),
+        cpp_fixture: None,
+        ..fixture.clone()
+    };
+    for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+        let directory = tempfile::tempdir().expect("directory");
+        let ours = directory.path().join("casa-rs");
+        let theirs = directory.path().join("casacore");
+        let mut table = Table::with_schema(fixture.schema.clone());
+        for row in &fixture.rows {
+            table.add_row(row.clone()).expect("row");
+        }
+        table
+            .save(
+                TableOptions::new(&ours)
+                    .with_data_manager(DataManagerKind::StandardStMan)
+                    .with_endian_format(endian),
+            )
+            .expect("save");
+        TableOracle::write_ssm_long_strings_by_column(&theirs, endian == EndianFormat::BigEndian)
+            .expect("casacore writes the rows");
+
+        let statistics = |path: &Path| TableOracle::ssm_statistics(path).expect("statistics");
+        let written = statistics(&ours);
+        println!("{endian:?} as written: {written:?}");
+        assert_eq!(written, statistics(&theirs), "{endian:?}: as written");
+        assert_eq!(written.free_buckets, 0, "{endian:?}: as written");
+        // The small index starts after its chain header, which names no
+        // next bucket twice.
+        assert_eq!(written.index_bucket_offset, 8, "{endian:?}: as written");
+        assert_same_string_buckets(
+            &ours,
+            &theirs,
+            written.last_string_bucket as usize,
+            &format!("{endian:?}"),
+        );
+        let chain = |path: &Path| {
+            let file = std::fs::read(path.join("table.f0")).expect("the SSM file");
+            let start = SSM_HEADER_BYTES + written.first_index_bucket as usize * SSM_BUCKET_BYTES;
+            file[start..start + 8].to_vec()
+        };
+        assert_eq!(chain(&ours), chain(&theirs), "{endian:?}: index chain");
+
+        for path in [&ours, &theirs] {
+            TableOracle::update_ssm_long_strings(path).expect("casacore updates and reads");
+        }
+        let rewritten = statistics(&ours);
+        println!("{endian:?} as updated: {rewritten:?}");
+        assert_eq!(rewritten, statistics(&theirs), "{endian:?}: as updated");
+        // casacore rewrote the index into the other half of its bucket.
+        assert_eq!(
+            rewritten.first_index_bucket, written.first_index_bucket,
+            "{endian:?}: the index moved"
+        );
+        // The new strings, over 300,000 bytes, need at least nine buckets
+        // beyond the room the last one had; the file grew by fewer, so
+        // casacore reused the buckets the shrinking freed.
+        assert!(
+            rewritten.buckets < written.buckets + 9,
+            "{endian:?}: no buckets reused"
+        );
+        for path in [&ours, &theirs] {
+            read_and_verify(&updated, ManagerKind::StandardStMan, path)
+                .unwrap_or_else(|error| panic!("{endian:?} {}: {error}", path.display()));
+        }
+    }
 }
 
 // --- Complex64 2D arrays (Task 1.3) ---

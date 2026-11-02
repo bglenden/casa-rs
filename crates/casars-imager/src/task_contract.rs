@@ -2,7 +2,6 @@
 //! The imager's task contract over the shared provider envelope: the
 //! catalog-named parameters of one run in, its report and products out.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,10 +9,10 @@ use casa_imaging_application::{
     CleanStop, ImagingOutcome, ImagingRequest, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
 };
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
+    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
+    builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -34,7 +33,7 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 }
 
 /// The imager's schema bundle in the shared envelope; the catalog's
-/// `imager` surface defines the request's parameters.
+/// `tclean` surface defines the request's parameters.
 pub fn imager_task_schema_bundle() -> TaskProviderContract {
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
@@ -48,6 +47,7 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
                 request_kind: "run".to_string(),
                 result_kind: Some("run".to_string()),
             }],
+            front_end: None,
         },
         components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
@@ -62,8 +62,8 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
             python: None,
         },
         parameter_surfaces: vec![
-            builtin_surface_bundle("imager")
-                .expect("built-in imager parameter surface must remain valid"),
+            builtin_surface_bundle("tclean")
+                .expect("built-in tclean parameter surface must remain valid"),
         ],
         domain_schemas: TaskProviderSchemas {
             request_schema,
@@ -73,76 +73,20 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract {
     }
 }
 
-/// Project one resolved parameter set into the imager's invocation: the
-/// parameters, as JSON on stdin, run with `--json-run -`.
-pub fn imager_provider_invocation(
-    values: &BTreeMap<String, ParameterValue>,
-    direct_args: Vec<String>,
-) -> Result<ProviderInvocationAdaptation, String> {
-    let mut args = managed_output_args(direct_args)?;
-    args.extend(["--json-run".to_string(), "-".to_string()]);
-    let request = ImagerTaskRequest::Run(ImagingParameters(
-        values
-            .iter()
-            .map(|(name, value)| (name.clone(), value.to_plain_json()))
-            .collect(),
-    ));
-    let mut stdin = serde_json::to_string(&request)
-        .map_err(|error| format!("serialize the imager request: {error}"))?;
-    stdin.push('\n');
-    Ok(ProviderInvocationAdaptation {
-        invocation: ProviderInvocation {
-            args,
-            stdin: Some(stdin),
-        },
-        consumed_parameters: values.keys().cloned().collect(),
-    })
-}
-
-/// The `--managed-output <bool>` pair of the direct arguments; the task's
-/// own parameters travel on stdin.
-fn managed_output_args(args: Vec<String>) -> Result<Vec<String>, String> {
-    let mut managed = Vec::new();
-    let mut args = args.into_iter();
-    while let Some(argument) = args.next() {
-        if argument != "--managed-output" {
-            continue;
-        }
-        let value = args
-            .next()
-            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
-        if !matches!(value.as_str(), "true" | "false") {
-            return Err(format!(
-                "--managed-output expects true or false, found {value:?}"
-            ));
-        }
-        managed.extend([argument, value]);
-    }
-    Ok(managed)
-}
-
-/// Catalog-named imager parameters as plain JSON: sparse in a request,
+/// Catalog-named `tclean` parameters as plain JSON: sparse in a request,
 /// every active parameter once resolved (the run's request echo).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ImagingParameters(pub serde_json::Map<String, serde_json::Value>);
 
-/// The imager's request envelope.
+/// The imager's domain request: the catalog-named parameters of one run.
+/// The binary takes a front-end `TaskRunRequest` of the same parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "request", rename_all = "snake_case")]
 pub enum ImagerTaskRequest {
     /// Image one MeasurementSet; the parameters are resolved over the
     /// catalog's defaults exactly as the command line's are.
     Run(ImagingParameters),
-}
-
-impl ImagerTaskRequest {
-    /// Resolve and run the request.
-    pub fn execute(&self) -> Result<ImagerTaskResult, String> {
-        let Self::Run(parameters) = self;
-        let (parameters, request) = crate::resolve_request(parameters)?;
-        crate::run(parameters, &request).map(ImagerTaskResult::Run)
-    }
 }
 
 /// The imager's result envelope.
@@ -194,6 +138,7 @@ impl ImagerRunTaskResult {
                     }
                 }),
                 elapsed_ns: u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+                planes: outcome.plane_layout(),
             },
         }
     }
@@ -218,6 +163,16 @@ pub struct ImagerRunReport {
     pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
     /// Wall time of the run.
     pub elapsed_ns: u64,
+    /// The deconvolved planes, `[fields, channels, stokes]`: the main image
+    /// and each outlier, each with its channels and Stokes planes. The
+    /// minor cycles report their sums over every plane.
+    #[serde(default = "one_plane")]
+    pub planes: [usize; 3],
+}
+
+/// The planes of a report that names none: one image of one plane.
+const fn one_plane() -> [usize; 3] {
+    [1, 1, 1]
 }
 
 /// The visibilities a run predicted and wrote.
@@ -241,8 +196,13 @@ pub enum ImagerCleanStopReason {
     MajorCycleLimitReached,
     /// No pixel could be cleaned.
     NoCleanablePixels,
-    /// The residual peak rose after earlier progress.
-    DivergenceDetected,
+    /// The peak residual did not change across the last major cycle.
+    NoChange,
+    /// The unmasked peak residual grew to more than four times its value at
+    /// the previous major cycle.
+    DivergedFromPrevious,
+    /// The unmasked peak residual grew to more than four times its minimum.
+    DivergedFromMinimum,
 }
 
 impl From<CleanStop> for ImagerCleanStopReason {
@@ -253,9 +213,9 @@ impl From<CleanStop> for ImagerCleanStopReason {
             CleanStop::NSigma => Self::NsigmaThresholdReached,
             CleanStop::ZeroMask => Self::NoCleanablePixels,
             CleanStop::MajorCycles => Self::MajorCycleLimitReached,
-            CleanStop::NoChange
-            | CleanStop::DivergedFromPrevious
-            | CleanStop::DivergedFromMinimum => Self::DivergenceDetected,
+            CleanStop::NoChange => Self::NoChange,
+            CleanStop::DivergedFromPrevious => Self::DivergedFromPrevious,
+            CleanStop::DivergedFromMinimum => Self::DivergedFromMinimum,
         }
     }
 }
@@ -329,6 +289,9 @@ pub struct ImagerMinorCycleDiagnostic {
     pub total_actual_iterations: usize,
     /// Absolute component flux accepted in the cycle.
     pub total_flux: f64,
+    /// Signed first-term component flux the cycle added to the model.
+    #[serde(default)]
+    pub model_flux: f64,
     /// Normalized residual peak at the cycle's start.
     pub initial_peak_flux: f64,
     /// Normalized residual peak at its end.
@@ -365,6 +328,7 @@ fn project_minor_cycle(cycle: &NativeMinorCycleOutcome) -> ImagerMinorCycleDiagn
         actual_iterations: cycle.actual_iterations,
         total_actual_iterations: cycle.total_actual_iterations,
         total_flux: cycle.total_flux,
+        model_flux: cycle.model_flux,
         initial_peak_flux: cycle.initial_peak_flux,
         final_peak_flux: cycle.final_peak_flux,
         noise_rms: cycle.noise_rms,
@@ -549,39 +513,6 @@ mod tests {
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert_eq!(bundle.parameter_surfaces.len(), 1);
-    }
-
-    #[test]
-    fn the_invocation_carries_every_resolved_parameter_on_stdin() {
-        let values = BTreeMap::from([
-            (
-                "vis".to_string(),
-                ParameterValue::Array(vec![ParameterValue::String("in.ms".to_string())]),
-            ),
-            ("niter".to_string(), ParameterValue::Integer(100)),
-            ("gain".to_string(), ParameterValue::Float(0.1)),
-        ]);
-        let adaptation = imager_provider_invocation(
-            &values,
-            vec!["--managed-output".to_string(), "true".to_string()],
-        )
-        .expect("invocation");
-        assert_eq!(
-            adaptation.invocation.args,
-            ["--managed-output", "true", "--json-run", "-"]
-        );
-        let request: ImagerTaskRequest =
-            serde_json::from_str(adaptation.invocation.stdin.as_deref().expect("stdin"))
-                .expect("request");
-        let ImagerTaskRequest::Run(parameters) = request;
-        assert_eq!(
-            serde_json::Value::Object(parameters.0),
-            serde_json::json!({ "vis": ["in.ms"], "niter": 100, "gain": 0.1 })
-        );
-        assert_eq!(
-            adaptation.consumed_parameters,
-            values.keys().cloned().collect()
-        );
     }
 
     #[test]

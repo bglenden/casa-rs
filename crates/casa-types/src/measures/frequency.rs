@@ -594,7 +594,7 @@ fn freq_ref_index(r: FrequencyRef) -> usize {
     }
 }
 
-fn find_freq_path(
+pub(super) fn find_freq_path(
     source: FrequencyRef,
     target: FrequencyRef,
 ) -> Result<Vec<FrequencyRef>, MeasureError> {

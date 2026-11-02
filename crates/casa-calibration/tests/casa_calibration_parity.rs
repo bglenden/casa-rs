@@ -1143,7 +1143,9 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
-            min_baselines_per_antenna: 4,
+            // Each of the fixture's three antennas has two baselines; CASA's
+            // default minblperant=4 would fail every solve, as CASA's does.
+            min_baselines_per_antenna: 2,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -1425,6 +1427,7 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve");
@@ -1533,6 +1536,7 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-field bandpass solve");
@@ -1641,6 +1645,7 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-scan bandpass solve");
@@ -1749,6 +1754,7 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust combine-scan-field bandpass solve");
@@ -1854,6 +1860,7 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve with parang");
@@ -1959,6 +1966,7 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust bandpass solve with solnorm");
@@ -2061,6 +2069,7 @@ fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
             amplitude_degree: 3,
             phase_degree: 3,
             smodel: [1.0, 0.0, 0.0, 0.0],
+            cuts: None,
         },
     )
     .expect("run Rust BPOLY bandpass solve");

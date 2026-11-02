@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run and aggregate counterbalanced baseline/candidate imaging comparisons."""
+"""Run and aggregate counterbalanced baseline/candidate imaging comparisons.
+
+Each role runs its own casa-rs checkout (``--baseline-repo``,
+``--candidate-repo``; both default to this one). The slowdown gate judges wall
+time alone; the blocking gate (``docs/measurement-set/imaging-port.md``
+decision 4) also judges peak RSS and the image products.
+"""
 
 from __future__ import annotations
 
@@ -27,8 +33,11 @@ from perf_harness import (
     nested_value,
     validate_run_result,
 )
-from perf_harness.provenance import capture_provenance
+from perf_harness.image_compare import compare_products as compare_image_products
+from perf_harness.provenance import capture_provenance, executable_path
 from perf_harness.subprocesses import run_command as run_shared_command
+import two_build_comparison as two_build
+from two_build_comparison import ComparisonError
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -52,10 +61,11 @@ BACKEND_IDENTITY_TERMS = (
     "tile_anchor",
     "worker",
 )
-
-
-class ComparisonError(Exception):
-    """Error that should be shown without a traceback."""
+REUSED_PREFIX_ENVIRONMENT = (
+    "CASA_RS_BENCH_REUSE_CASA_PREFIX",
+    "CASA_RS_BENCH_REUSE_RUST_PREFIX",
+    "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX",
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,35 @@ class ComparisonConfig:
     run_workload_options: tuple[str, ...] = ()
     baseline_imaging_overrides: tuple[str, ...] = ()
     candidate_imaging_overrides: tuple[str, ...] = ()
+    gate: str = "slowdown"
+    wall_tolerance: float = two_build.DEFAULT_WALL_TOLERANCE
+    noise_sigmas: float = two_build.DEFAULT_NOISE_SIGMAS
+    rss_tolerance: float = two_build.DEFAULT_RSS_TOLERANCE
+    product_nrms: float = two_build.DEFAULT_PRODUCT_NRMS
+    baseline_repo: pathlib.Path = REPO_ROOT
+    candidate_repo: pathlib.Path = REPO_ROOT
+
+    def role_repo(self, role: str) -> pathlib.Path:
+        return self.baseline_repo if role == "baseline" else self.candidate_repo
+
+    def wall_thresholds(self) -> tuple[float, float]:
+        """(wall tolerance, noise sigmas). The slowdown gate is the noise-band
+        check with ``--slowdown-tolerance`` as its tolerance and no band."""
+
+        if self.gate == "slowdown":
+            return self.slowdown_tolerance, 0.0
+        return self.wall_tolerance, self.noise_sigmas
+
+    def thresholds(self) -> dict[str, float]:
+        wall_tolerance, noise_sigmas = self.wall_thresholds()
+        thresholds = {
+            "wall_tolerance_fraction": wall_tolerance,
+            "noise_sigmas": noise_sigmas,
+        }
+        if self.gate == "blocking":
+            thresholds["rss_tolerance_fraction"] = self.rss_tolerance
+            thresholds["product_nrms"] = self.product_nrms
+        return thresholds
 
 
 @dataclass(frozen=True)
@@ -82,12 +121,15 @@ class ScheduleItem:
     workload: str
 
 
-CommandRunner = Callable[[list[str], dict[str, str]], subprocess.CompletedProcess[str]]
+CommandRunner = Callable[
+    [list[str], dict[str, str], pathlib.Path], subprocess.CompletedProcess[str]
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Arguments after -- are passed to run_workload.py. The comparison "
             "owns --repeats, --output-dir, --artifact-root, and --dry-run."
@@ -120,11 +162,69 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="root for run_workload.py products, comparisons, and scratch data",
     )
     parser.add_argument(
+        "--baseline-repo",
+        type=pathlib.Path,
+        default=REPO_ROOT,
+        help="casa-rs checkout that runs the baseline (default: this one)",
+    )
+    parser.add_argument(
+        "--candidate-repo",
+        type=pathlib.Path,
+        default=REPO_ROOT,
+        help="casa-rs checkout that runs the candidate (default: this one)",
+    )
+    parser.add_argument(
+        "--gate",
+        choices=two_build.GATES,
+        default="slowdown",
+        help=(
+            "slowdown (default): wall time within --slowdown-tolerance; "
+            "blocking: wall time within the baseline's noise band, peak RSS, "
+            "and product NRMS"
+        ),
+    )
+    parser.add_argument(
         "--slowdown-tolerance",
         "--tolerance",
         type=float,
-        default=0.0,
-        help="allowed median paired slowdown as a fraction (default: 0.0)",
+        default=None,
+        help="slowdown gate: allowed median paired slowdown as a fraction (default: 0.0)",
+    )
+    parser.add_argument(
+        "--wall-tolerance",
+        type=float,
+        default=None,
+        help=(
+            "blocking gate: smallest allowed median paired slowdown "
+            f"(default: {two_build.DEFAULT_WALL_TOLERANCE})"
+        ),
+    )
+    parser.add_argument(
+        "--noise-sigmas",
+        type=float,
+        default=None,
+        help=(
+            "blocking gate: allowed slowdown in baseline relative standard "
+            f"deviations (default: {two_build.DEFAULT_NOISE_SIGMAS:g})"
+        ),
+    )
+    parser.add_argument(
+        "--rss-tolerance",
+        type=float,
+        default=None,
+        help=(
+            "blocking gate: allowed growth of the median peak RSS as a fraction "
+            f"(default: {two_build.DEFAULT_RSS_TOLERANCE})"
+        ),
+    )
+    parser.add_argument(
+        "--product-nrms",
+        type=float,
+        default=None,
+        help=(
+            "blocking gate: largest RMS(candidate - baseline) / RMS(baseline) "
+            f"per product (default: {two_build.DEFAULT_PRODUCT_NRMS:g})"
+        ),
     )
     parser.add_argument(
         "--baseline-set-imaging",
@@ -157,10 +257,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             measured_pair_count=args.measured_pairs,
             output_root=args.output_root.expanduser().resolve(),
             artifact_root=args.artifact_root.expanduser().resolve(),
-            slowdown_tolerance=args.slowdown_tolerance,
             run_workload_options=tuple(run_workload_options),
             baseline_imaging_overrides=tuple(args.baseline_set_imaging),
             candidate_imaging_overrides=tuple(args.candidate_set_imaging),
+            baseline_repo=args.baseline_repo.expanduser().resolve(),
+            candidate_repo=args.candidate_repo.expanduser().resolve(),
+            **gate_settings(args),
         )
         validate_config(config)
         report_path, report = run_comparison(config)
@@ -185,6 +287,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def gate_settings(args: argparse.Namespace) -> dict[str, Any]:
+    """The gate and its thresholds. A threshold flag of the other gate is an
+    error rather than silently ignored."""
+
+    blocking_flags = {
+        "--wall-tolerance": ("wall_tolerance", args.wall_tolerance),
+        "--noise-sigmas": ("noise_sigmas", args.noise_sigmas),
+        "--rss-tolerance": ("rss_tolerance", args.rss_tolerance),
+        "--product-nrms": ("product_nrms", args.product_nrms),
+    }
+    if args.gate == "slowdown":
+        given = [
+            flag for flag, (_, value) in blocking_flags.items() if value is not None
+        ]
+        if given:
+            raise ComparisonError(f"{', '.join(given)} applies only to --gate blocking")
+        tolerance = args.slowdown_tolerance
+        return {
+            "gate": "slowdown",
+            "slowdown_tolerance": 0.0 if tolerance is None else tolerance,
+        }
+    if args.slowdown_tolerance is not None:
+        raise ComparisonError(
+            "--slowdown-tolerance applies only to --gate slowdown; "
+            "use --wall-tolerance and --noise-sigmas"
+        )
+    return {
+        "gate": "blocking",
+        **{
+            field: value
+            for field, value in blocking_flags.values()
+            if value is not None
+        },
+    }
+
+
 def split_passthrough_args(argv: list[str]) -> tuple[list[str], list[str]]:
     if "--" not in argv:
         return argv, []
@@ -192,7 +330,11 @@ def split_passthrough_args(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv[:separator], argv[separator + 1 :]
 
 
-def validate_config(config: ComparisonConfig) -> None:
+def validate_config(
+    config: ComparisonConfig, environment: dict[str, str] | None = None
+) -> None:
+    if config.gate not in two_build.GATES:
+        raise ComparisonError(f"gate must be one of {', '.join(two_build.GATES)}")
     if config.warmup_pair_count < 0:
         raise ComparisonError("--warmup-pairs must be non-negative")
     if config.measured_pair_count < 3:
@@ -201,6 +343,14 @@ def validate_config(config: ComparisonConfig) -> None:
         raise ComparisonError(
             "--slowdown-tolerance must be a finite non-negative fraction"
         )
+    for flag, value in (
+        ("--wall-tolerance", config.wall_tolerance),
+        ("--noise-sigmas", config.noise_sigmas),
+        ("--rss-tolerance", config.rss_tolerance),
+        ("--product-nrms", config.product_nrms),
+    ):
+        if not math.isfinite(value) or value < 0.0:
+            raise ComparisonError(f"{flag} must be a finite non-negative number")
     for token in config.run_workload_options:
         option = token.split("=", 1)[0]
         if option in MANAGED_RUN_WORKLOAD_OPTIONS:
@@ -217,6 +367,10 @@ def validate_config(config: ComparisonConfig) -> None:
                 raise ComparisonError(
                     f"--{role}-set-imaging requires non-empty KEY=VALUE, got {override!r}"
                 )
+    two_build.validate_role_repos(
+        {role: config.role_repo(role) for role in two_build.ROLES},
+        dict(os.environ) if environment is None else environment,
+    )
 
 
 def build_schedule(
@@ -268,16 +422,31 @@ def build_schedule(
     return schedule
 
 
+def product_run_indexes(schedule: Sequence[ScheduleItem]) -> dict[str, int]:
+    """The sequence index of each role's first measured run: the run whose
+    products the blocking gate keeps and compares."""
+
+    return {
+        role: min(
+            item.sequence_index
+            for item in schedule
+            if item.phase == "measured" and item.role == role
+        )
+        for role in two_build.ROLES
+    }
+
+
 def run_comparison(
     config: ComparisonConfig,
     *,
     command_runner: CommandRunner | None = None,
+    product_comparer: two_build.ProductComparer | None = None,
     comparison_id: str | None = None,
 ) -> tuple[pathlib.Path, dict[str, Any]]:
     validate_config(config)
     runner = command_runner or (
-        lambda argv, environment: run_shared_command(
-            argv, cwd=REPO_ROOT, environment=environment
+        lambda argv, environment, cwd: run_shared_command(
+            argv, cwd=cwd, environment=environment
         )
     )
     comparison_id = comparison_id or new_comparison_id(config)
@@ -287,6 +456,11 @@ def run_comparison(
     run_output_root = output_root / comparison_id / "runs"
     output_root.mkdir(parents=True, exist_ok=True)
     run_output_root.mkdir(parents=True, exist_ok=True)
+    environment = dict(os.environ)
+    roles = {
+        role: two_build.describe_role(config.role_repo(role))
+        for role in two_build.ROLES
+    }
 
     schedule = build_schedule(
         config.baseline_workload,
@@ -294,10 +468,14 @@ def run_comparison(
         warmup_pair_count=config.warmup_pair_count,
         measured_pair_count=config.measured_pair_count,
     )
+    product_indexes = product_run_indexes(schedule)
+    product_runs: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {}
+    binaries: dict[tuple[str, int, int], dict[str, Any]] = {}
     runs: list[dict[str, Any]] = []
     execution_error: str | None = None
     for item in schedule:
         output_dir = run_output_root / run_directory_name(item)
+        repo = config.role_repo(item.role)
         command = build_run_command(
             item,
             output_dir=output_dir,
@@ -308,33 +486,60 @@ def run_comparison(
                 if item.role == "baseline"
                 else config.candidate_imaging_overrides
             ),
+            run_workload=repo / two_build.RUN_WORKLOAD_RELATIVE,
         )
         try:
-            run = execute_run(item, command, runner)
-            runs.append(run)
-            if run["result_status"] != "completed":
-                execution_error = (
-                    f"sequence item {item.sequence_index} produced "
-                    f"run_workload status {run['result_status']!r}"
-                )
-                break
+            run, result = execute_run(
+                item, command, runner, repo=repo, binaries=binaries
+            )
         except ComparisonError as error:
             execution_error = str(error)
-            runs.append(
-                {
-                    **asdict(item),
-                    "command": command,
-                    "result_status": "execution_failed",
-                    "error": execution_error,
-                    "result_path": None,
-                    "recorded_paths": [],
-                    "total_wall_seconds": None,
-                    "stage_timings_ms": {},
-                    "backend_identity": None,
-                }
+            runs.append(failed_run_record(item, command, repo, execution_error))
+            break
+        # The blocking gate keeps one measured run's products per role, and a
+        # failed run's for diagnosis; the slowdown gate keeps every run's.
+        keep = (
+            config.gate == "slowdown"
+            or item.sequence_index in product_indexes.values()
+            or run["result_status"] != "completed"
+        )
+        run["products"] = {
+            "rust_prefix": two_build.rust_prefix(result),
+            "retained": keep,
+            "pruned": (
+                []
+                if keep
+                else two_build.prune_run_products(
+                    result,
+                    owned_root=artifact_root,
+                    protected=protected_prefixes(result, environment),
+                )
+            ),
+        }
+        runs.append(run)
+        if item.sequence_index == product_indexes[item.role]:
+            product_runs[item.role] = (run, result)
+        if run["result_status"] != "completed":
+            execution_error = (
+                f"sequence item {item.sequence_index} produced "
+                f"run_workload status {run['result_status']!r}"
             )
             break
 
+    product_comparison = None
+    if config.gate == "blocking":
+        product_comparison = (
+            two_build.not_compared(f"products were not compared: {execution_error}")
+            if execution_error is not None
+            else two_build.compare_role_products(
+                product_runs,
+                product_nrms=config.product_nrms,
+                artifact_root=artifact_root,
+                report_root=output_root / comparison_id,
+                comparer=product_comparer or compare_products_with_comparator,
+                casa_python=comparison_casa_python(product_runs, environment),
+            )
+        )
     report = build_report(
         config,
         comparison_id=comparison_id,
@@ -343,10 +548,48 @@ def run_comparison(
         schedule=schedule,
         runs=runs,
         execution_error=execution_error,
+        roles=roles,
+        product_comparison=product_comparison,
+        run_environment=two_build.recorded_environment(environment),
     )
     validate_run_result(report, source=str(report_path))
     atomic_write_json(report_path, report)
     return report_path, report
+
+
+def compare_products_with_comparator(
+    *, request: dict[str, Any], artifact_prefix: pathlib.Path, casa_python: str | None
+) -> dict[str, Any]:
+    """The one imaging-product comparator, run under CASA's Python."""
+
+    return compare_image_products(
+        casa_python=casa_python,
+        request=request,
+        artifact_prefix=artifact_prefix,
+        cwd=REPO_ROOT,
+    )
+
+
+def comparison_casa_python(
+    product_runs: dict[str, tuple[dict[str, Any], dict[str, Any] | None]],
+    environment: dict[str, str],
+) -> str | None:
+    _, result = product_runs.get("baseline", ({}, None))
+    recorded = executable_path((result or {}).get("environment") or {}, "casa_python")
+    return recorded or environment.get("CASA_RS_CASA_PYTHON") or None
+
+
+def protected_prefixes(
+    result: dict[str, Any], environment: dict[str, str]
+) -> list[str]:
+    """Product prefixes a run reused from elsewhere; pruning never removes them."""
+
+    reused = [environment.get(name, "") for name in REUSED_PREFIX_ENVIRONMENT]
+    for key in ("reuse_casa_prefix", "reuse_rust_prefix"):
+        value = two_build.lookup(result, "run", key)
+        if isinstance(value, str):
+            reused.append(value)
+    return [value for value in reused if value]
 
 
 def build_run_command(
@@ -356,10 +599,11 @@ def build_run_command(
     artifact_root: pathlib.Path,
     run_workload_options: Sequence[str],
     imaging_overrides: Sequence[str] = (),
+    run_workload: pathlib.Path = RUN_WORKLOAD,
 ) -> list[str]:
     return [
         sys.executable,
-        str(RUN_WORKLOAD),
+        str(run_workload),
         item.workload,
         "--repeats",
         "1",
@@ -380,10 +624,15 @@ def execute_run(
     item: ScheduleItem,
     command: list[str],
     command_runner: CommandRunner,
-) -> dict[str, Any]:
+    *,
+    repo: pathlib.Path = REPO_ROOT,
+    binaries: dict[tuple[str, int, int], dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run one scheduled item in ``repo`` and read its evidence back."""
+
     environment = os.environ.copy()
     environment["CASA_RS_BENCH_PROFILE_REPEATS"] = "1"
-    completed = command_runner(command, environment)
+    completed = command_runner(command, environment, repo)
     stdout = completed.stdout or ""
     if completed.returncode != 0:
         detail = last_nonempty_line(stdout) or "no command output"
@@ -391,27 +640,63 @@ def execute_run(
             f"sequence item {item.sequence_index} exited {completed.returncode}: {detail}"
         )
 
-    result_path = result_path_from_stdout(stdout)
+    result_path = result_path_from_stdout(stdout, repo=repo)
     result = load_run_result(result_path)
-    return {
+    prefix = two_build.rust_prefix(result)
+    run = {
         **asdict(item),
         "command": command,
+        "repo": str(repo),
         "result_status": result.get("status", "missing"),
         "result_path": str(result_path),
         "recorded_paths": collect_recorded_paths(result, result_path),
         "total_wall_seconds": extract_total_wall_seconds(result),
         "stage_timings_ms": extract_stage_timings(result),
         "backend_identity": extract_backend_identity(result),
+        "peak_rss_bytes": two_build.extract_peak_rss_bytes(result),
+        "repository_revision": two_build.lookup(
+            result, "environment", "repository", "revision"
+        ),
+        "run_summary": two_build.read_run_summary(prefix),
+        "casars_imager": two_build.describe_binary(
+            repo / two_build.IMAGER_BINARY_RELATIVE,
+            {} if binaries is None else binaries,
+        ),
+    }
+    return run, result
+
+
+def failed_run_record(
+    item: ScheduleItem, command: list[str], repo: pathlib.Path, error: str
+) -> dict[str, Any]:
+    return {
+        **asdict(item),
+        "command": command,
+        "repo": str(repo),
+        "result_status": "execution_failed",
+        "error": error,
+        "result_path": None,
+        "recorded_paths": [],
+        "total_wall_seconds": None,
+        "stage_timings_ms": {},
+        "backend_identity": None,
+        "peak_rss_bytes": None,
+        "repository_revision": None,
+        "run_summary": None,
+        "casars_imager": None,
+        "products": None,
     }
 
 
-def result_path_from_stdout(stdout: str) -> pathlib.Path:
+def result_path_from_stdout(
+    stdout: str, *, repo: pathlib.Path = REPO_ROOT
+) -> pathlib.Path:
     value = last_nonempty_line(stdout)
     if value is None:
         raise ComparisonError("run_workload.py did not print a result path")
     path = pathlib.Path(value).expanduser()
     if not path.is_absolute():
-        path = REPO_ROOT / path
+        path = repo / path
     path = path.resolve()
     if not path.is_file():
         raise ComparisonError(f"run_workload.py result path does not exist: {path}")
@@ -507,6 +792,9 @@ def build_report(
     schedule: Sequence[ScheduleItem],
     runs: list[dict[str, Any]],
     execution_error: str | None = None,
+    roles: dict[str, dict[str, Any]] | None = None,
+    product_comparison: dict[str, Any] | None = None,
+    run_environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     measured_runs = [run for run in runs if run["phase"] == "measured"]
     summaries = {
@@ -521,11 +809,22 @@ def build_report(
         and all(run.get("total_wall_seconds") is not None for run in measured_runs)
         and len(paired_deltas) == config.measured_pair_count
     )
-    verdict = build_verdict(
-        paired_deltas,
-        tolerance=config.slowdown_tolerance,
+    verdicts = build_gate_verdicts(
+        config,
+        measured_runs=measured_runs,
+        paired_deltas=paired_deltas,
         evidence_complete=evidence_complete,
+        product_comparison=product_comparison,
     )
+    if config.gate == "slowdown":
+        verdict = build_verdict(
+            paired_deltas,
+            tolerance=config.slowdown_tolerance,
+            evidence_complete=evidence_complete,
+        )
+    else:
+        verdict = build_blocking_verdict(verdicts)
+    wall_tolerance, _ = config.wall_thresholds()
     details = {
         "error": execution_error,
         "comparison_id": comparison_id,
@@ -534,7 +833,11 @@ def build_report(
             "candidate_workload": config.candidate_workload,
             "warmup_pair_count": config.warmup_pair_count,
             "measured_pair_count": config.measured_pair_count,
-            "slowdown_tolerance_fraction": config.slowdown_tolerance,
+            "slowdown_tolerance_fraction": wall_tolerance,
+            "gate": config.gate,
+            "thresholds": config.thresholds(),
+            "baseline_repo": str(config.baseline_repo),
+            "candidate_repo": str(config.candidate_repo),
             "output_root": str(config.output_root),
             "artifact_root": str(config.artifact_root),
             "comparison_artifact_root": str(comparison_artifact_root),
@@ -542,7 +845,10 @@ def build_report(
             "baseline_imaging_overrides": list(config.baseline_imaging_overrides),
             "candidate_imaging_overrides": list(config.candidate_imaging_overrides),
             "run_workload_repeats": 1,
+            "run_environment": dict(run_environment or {}),
         },
+        "roles": roles
+        or {role: {"repo": str(config.role_repo(role))} for role in two_build.ROLES},
         "order": {
             "warmup": [item.role for item in schedule if item.phase == "warmup"],
             "measured": [item.role for item in schedule if item.phase == "measured"],
@@ -554,6 +860,8 @@ def build_report(
         "paired_delta_summary": summarize_delta_records(paired_deltas),
         "adjacent_pair_deltas": adjacent_pair_deltas,
         "adjacent_pair_delta_summary": summarize_delta_records(adjacent_pair_deltas),
+        "product_comparison": product_comparison,
+        "verdicts": verdicts,
         "verdict": verdict,
     }
     if execution_error is not None:
@@ -597,6 +905,67 @@ def build_report(
     }
 
 
+def build_gate_verdicts(
+    config: ComparisonConfig,
+    *,
+    measured_runs: list[dict[str, Any]],
+    paired_deltas: list[dict[str, Any]],
+    evidence_complete: bool,
+    product_comparison: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """The wall-time, peak-RSS and product verdicts; those outside the gate
+    are recorded as not evaluated."""
+
+    wall_tolerance, noise_sigmas = config.wall_thresholds()
+    verdicts = {
+        "wall_time": two_build.wall_time_verdict(
+            [record["relative_delta"] for record in paired_deltas],
+            wall_values(measured_runs, "baseline"),
+            wall_tolerance=wall_tolerance,
+            noise_sigmas=noise_sigmas,
+            evidence_complete=evidence_complete,
+        ),
+        "peak_rss": two_build.peak_rss_verdict(
+            role_values(measured_runs, "baseline", "peak_rss_bytes"),
+            role_values(measured_runs, "candidate", "peak_rss_bytes"),
+            rss_tolerance=config.rss_tolerance,
+            evidence_complete=evidence_complete,
+        ),
+        "products": two_build.product_verdict(
+            product_comparison, product_nrms=config.product_nrms
+        ),
+    }
+    required = two_build.GATE_VERDICTS[config.gate]
+    return {
+        name: verdict if name in required else two_build.not_evaluated(config.gate)
+        for name, verdict in verdicts.items()
+    }
+
+
+def build_blocking_verdict(verdicts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The overall blocking verdict, in the slowdown verdict's shape: it
+    passes only when every verdict passes."""
+
+    status, reason = two_build.overall_verdict(
+        verdicts, two_build.GATE_VERDICTS["blocking"]
+    )
+    wall = verdicts["wall_time"]
+    allowed = wall.get("allowed_relative_delta")
+    return {
+        "status": status,
+        "no_slowdown": {"pass": True, "fail": False}.get(wall["status"]),
+        "tolerance_fraction": (
+            allowed if allowed is not None else wall["wall_tolerance_fraction"]
+        ),
+        "observed_median_relative_delta": wall.get("observed_median_relative_delta"),
+        "basis": (
+            "blocking gate: wall time within the baseline noise band, "
+            "peak RSS, and product NRMS all pass"
+        ),
+        "reason": reason,
+    }
+
+
 def summarize_role(runs: list[dict[str, Any]], role: str) -> dict[str, Any]:
     role_runs = [run for run in runs if run["role"] == role]
     walls = [
@@ -609,12 +978,44 @@ def summarize_role(runs: list[dict[str, Any]], role: str) -> dict[str, Any]:
         identity = run.get("backend_identity")
         if isinstance(identity, dict) and identity not in identities:
             identities.append(identity)
+    summaries = [run.get("run_summary") or {} for run in role_runs]
     return {
         "run_count": len(role_runs),
         "total_wall_seconds": robust_summary(walls),
+        "peak_rss_bytes": robust_summary(
+            [value for value in role_values(runs, role, "peak_rss_bytes") if value]
+        ),
+        "peak_reserved_bytes": robust_summary(
+            [
+                value
+                for summary in summaries
+                if (value := summary.get("peak_reserved_bytes")) is not None
+            ]
+        ),
         "stage_timings_ms": summarize_stage_timings(role_runs),
         "backend_identities": identities,
+        "workers": distinct(summary.get("workers") for summary in summaries),
+        "backends": distinct(summary.get("backend") for summary in summaries),
+        "precisions": distinct(summary.get("precision") for summary in summaries),
+        "repository_revisions": distinct(
+            run.get("repository_revision") for run in role_runs
+        ),
+        "casars_imager_sha256": distinct(
+            (run.get("casars_imager") or {}).get("sha256") for run in role_runs
+        ),
     }
+
+
+def role_values(runs: list[dict[str, Any]], role: str, key: str) -> list[Any]:
+    return [run.get(key) for run in runs if run["role"] == role]
+
+
+def distinct(values: Any) -> list[Any]:
+    seen: list[Any] = []
+    for value in values:
+        if value is not None and value not in seen:
+            seen.append(value)
+    return seen
 
 
 def summarize_stage_timings(runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -728,6 +1129,9 @@ def build_verdict(
     tolerance: float,
     evidence_complete: bool,
 ) -> dict[str, Any]:
+    """The slowdown gate's verdict: the median paired relative delta is at
+    most ``tolerance``."""
+
     relative_summary = robust_summary(
         [
             record["relative_delta"]

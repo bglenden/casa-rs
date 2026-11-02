@@ -14,7 +14,6 @@ slow-tests = []
 [dependencies]
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
@@ -28,6 +27,10 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-observation = { path = "../casa-observation" }
+flate2 = "1"
+tar = "0.4"
 casa-test-support = { path = "../casa-test-support" }
 ndarray.workspace = true
 tempfile = "3"

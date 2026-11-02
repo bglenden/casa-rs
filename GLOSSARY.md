@@ -29,9 +29,10 @@ _Avoid_: Gridder configuration, sample coordinate cache
 **Observation Snapshot**:
 The immutable logical description of selected MS data. It is a manifest, not
 a materialized copy of bulk samples. Its compiler canonicalizes exact per-MS
-row, SPW/channel, and correlation semantics plus the selected data, flag, and
-weight columns and whether MAIN has `CORRECTED_DATA`. Selected rows are
-retained only as counts and the DATA_DESCRIPTION identifiers they use.
+sample predicates, partitions, SPW/channel, and correlation semantics plus
+the selected data, flag, and weight columns and whether MAIN has
+`CORRECTED_DATA`. Selected samples are retained only as their count and the
+observation partitions that hold them.
 Sources keep request order and their locations. Nothing of it is stored in
 the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
@@ -41,17 +42,19 @@ The compiler-derived MeasurementSet read and write sets of one imaging run. The
 read set names, for each snapshot source, its exact selection and the data,
 flag and weight columns read. The write set names the selected cells of an
 optional in-place `MODEL_DATA` write (the column is created when MAIN lacks
-it) and, under a Sequential Continuum Transform, the output-role cells of an
-optional `CORRECTED_DATA` write; compile refuses the latter when MAIN has no
-such column. Writes run under casacore's table lock, as in CASA; an interrupted
+it, holding CASA's initial model: 1, and 0 in the cross hands) and, under a
+Sequential Continuum Transform, the output-role cells of an optional
+`CORRECTED_DATA` write; compile refuses the latter when MAIN has no such
+column. Writes run under casacore's table lock, as in CASA; an interrupted
 write may leave partial derived values that the next run recomputes. Image
 products are not part of it: each is staged and replaced on its own.
 _Avoid_: Incremental output write, best-effort model save
 
 **Selected Observation**:
-The bounded stream evaluating an Observation Snapshot and compiled transform
-specifications into visibility samples, flags, weights, and per-row
-coordinates. Chunking has no scientific identity.
+The bounded stream of an Observation Snapshot's selected partitions, read as
+the observation boundary's batches and evaluated with the compiled transform
+specifications into visibility samples, flags, weights, and per-sample
+coordinates. Batching has no scientific identity.
 _Avoid_: Observation snapshot, input rows
 
 **Spectral Coordinate Law**:
@@ -142,6 +145,155 @@ A sparse human parameter contract that accepts exactly the current version and
 canonical names, adopting current defaults for omitted optional values without
 aliases, migrations, or fallback interpretation.
 _Avoid_: Compatibility profile, historical run replay
+
+## Observation access
+
+The vocabulary of the MSv2/MSv4 observation boundary
+(`crates/casa-observation`, `docs/measurement-set/trial/revision-2-design.md`).
+
+**Partition**:
+One store unit of an opened observation, described by its content: spectral
+window, correlation products, intents, observing session and feed pair. An
+MSv4 dataset is one; the MSv2 adapter divides MAIN rows the same way XRADIO's
+converter does, so the same observation opens as the same partition set from
+either store. A batch never spans two. A partition states its antennas'
+receptors (types and angles), since feeds may differ by window.
+_Avoid_: Data description, SPW index, dataset path
+
+**Pointing Series**:
+One partition's antenna pointing over a span of times, read on request
+rather than held in the catalogue: per antenna, samples in time order, each
+a direction polynomial in time about its own origin, with the interval it
+holds for where the store states one (MSv2 `INTERVAL`; MSv4 states none).
+The store's frame is kept; converting it belongs to the geometry owner.
+_Avoid_: Pointing table, pointing catalog (today's per-row MSv2 reader)
+
+**Pointing Bracket**:
+The samples of a Pointing Series around one (antenna, time), each evaluated
+at that time: the sample whose interval covers it (nearest first), the last
+at or before it and the first at or after it. Imaging's pointing law chooses
+among them (covering, nearest, interpolation, hold or refusal).
+_Avoid_: Pointing lookup, nearest pointing
+
+**Batch Geometry**:
+What imaging needs of each row sample of a batch, evaluated from the
+catalogue and the batch rather than per MAIN row: per chart the reprojected
+UVW and phase shift, the antennas' pointing, parallactic angles and aperture
+classes, the AW pointing pixel, and per time the output-frame frequencies.
+A Geometry Plan (`casa_imaging_model::GeometryPlan`) compiles it once per
+problem and observation; each quantity is computed as often as it changes.
+_Avoid_: Row geometry (today's per-MAIN-row evaluation in `casa-ms`)
+
+**Sample**:
+One (time, baseline) point of a partition's time × baseline grid: an MSv4
+`[time, baseline]` cell, or an MSv2 row placed on that grid. Payload arrays are
+`[sample, channel, correlation]`, sample `t × B + b`.
+_Avoid_: Row, visibility (which is one value of a sample)
+
+**Padding**:
+A grid cell no acquisition fills (an antenna that dropped out, a baseline not
+written): delivered flagged in every store, with NaN values, weights and
+auxiliaries (an MSv4 store holds its own padding with NaN weights, as XRADIO
+pads, and the MSv4 adapter folds the non-finite weight into the flag). The
+validity rule excludes it; nothing is read from disk for it.
+_Avoid_: Missing row, absent slot, occupancy
+
+**Batch Shape**:
+What one batch covers: the partition set, the channel window, the time
+selection, the roles read,
+the correlation products delivered, and the number of whole times the byte
+budget admits. The budget counts the batch and the cursor's decode scratch
+for it. The estimate costs a batch shape before anything is read.
+_Avoid_: Cursor shape, chunk size, block size
+
+**Buffer Pool**:
+The bounded set of batch buffers a traversal's owned batches are filled
+into: a buffer is taken only for a batch, the producer waits while none is
+free (or, with a wait limit, is refused), and an owned batch returns its
+buffer when it is dropped. Each buffer has a byte envelope it never exceeds,
+so the pool holds at most its size times that envelope.
+_Avoid_: Buffer cache, free list, lending
+
+**Time Selection**:
+The grid times one traversal reads: every time, or those within one
+half-open range of epochs, stated in the partitions' own time origin and
+scale so that selecting a time rounds nothing. Group keys stay those of the
+grid's field-selected times, whatever the range; a group the selection cuts
+is delivered as its part, marked clipped, and closed within the traversal. Workers that split a partition by
+time plan a Time Split. A Field Selection narrows it to whole times of some
+fields.
+_Avoid_: Time slice (informally fine), row range, time window
+
+**Field Selection**:
+The fields one traversal reads: every field, or the whole times phased to
+some fields in the requested data group. With the time selection it
+resolves to runs of consecutive grid times, and a batch holds times of one
+run. Scientific groups are keyed over the selected fields' times, so a
+field selection cuts no group. Intents are selected by choosing partitions,
+since a partition's samples share theirs.
+_Avoid_: Row predicate, field filter
+
+**Time Split**:
+A request's times cut into consecutive slices that tile them, planned
+together so that the slices' traversals share one completion: a scientific
+group the cuts divide becomes ready once, after every slice's part of it
+and the work on each. Slices aligned to the store's natural time blocks
+decode no unit twice and, on MSv4, write back at once.
+_Avoid_: Partitioning (which divides a store, not a traversal), sharding
+
+**Weight Request**:
+What a traversal's weight role holds: the stored weights, or the weights
+CASA's solvers use, 1/σ² of the stored sigmas (0 where σ is not positive),
+read from the column CASA's rule picks. A store holding no sigmas (MSv4)
+takes the fallback the request names or refuses; the estimate records which
+rule and column each partition's weights came from.
+_Avoid_: Sigma weights (the sigmas themselves, or weights made from them?),
+weight mode
+
+**Persisted Namespace**:
+The `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` rows a calibration table solved
+on a store carries, and the row of each of the store's catalogue entities
+there, for the store opened with given options: an MSv2's own subtables, or
+those an MSv4's MSv2 conversion holds. Catalogue identities are never
+persisted.
+_Avoid_: Caltable IDs, native IDs
+
+**Calibration Binding**:
+A calibration table's rows for each entity of a store's catalogue: stated
+associations first (CASA's `spwmap`), then CASA's own index association
+where the caller states the table's namespace is the store's, then content
+(station and
+position, phase centre, channels), names never binding but an antenna whose
+name disagrees refused, and ambiguity refused.
+_Avoid_: Rebinding by name, antenna mapping
+
+**Traversal Order**:
+The order batches arrive. Within one cursor it is fixed: whole times of one
+channel window of one partition's time selection, in time order. Across the observation it is
+the consumer's, expressed by which cursors it binds and runs, and when.
+_Avoid_: Iteration order, row order
+
+**Payload Order**:
+The element order inside one batch, `[sample, channel, correlation]`,
+correlation fastest, as both stores deliver it without a transpose. A
+channel-major view of the same memory is free; contiguity per plane is not.
+_Avoid_: Layout, memory order
+
+**Update Session**:
+One owner of a store that reads it and writes declared targets back: it
+holds the process's write intent on the store, lends the observation for
+reading and updaters for writing (several at once, each claiming disjoint
+times), and resolves each target's variable and the data groups sharing it
+before any payload is written. An MSv2 session holds casacore's write lock
+on MAIN while any updater is live.
+_Avoid_: Writer (which creates a new store), read-write handle
+
+**Patch**:
+The new values one target receives for the samples of a delivered batch:
+visibilities, a flag change (flags set and cleared, others kept) or weights.
+A store writes it to its own units (MSv2 cells, MSv4 chunks) and reads a unit
+back only when the patch supplies it partly.
+_Avoid_: Mutation batch, write-back buffer
 
 ## Imaging execution
 

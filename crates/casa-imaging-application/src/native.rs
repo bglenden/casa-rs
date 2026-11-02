@@ -3,36 +3,52 @@
 //! worker team, and the products, each phase recorded in the run summary.
 
 use std::cell::OnceCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
 use casa_imaging_model::CompiledProblem;
+use casa_imaging_model::GeometryPlan;
 use casa_imaging_products::{
     ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
     ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
-    Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
-    finalize_source_access, free_memory, run_phase,
+    Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, admit, free_memory, run_phase,
 };
-use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
+use casa_observation::FieldEphemeris;
+use casa_types::measures::MeasuresProvider;
 
+use crate::compile::{OpenedStore, resolve_partitions};
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
-    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome, visibility_write_selection,
+    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome,
 };
+
+/// The observation compile opened, and what its geometry evaluates with.
+pub(crate) struct OpenedObservation {
+    /// The observation, in its store, with the charge of what its opening
+    /// holds while it is open ([`crate::compile::open_observation`]).
+    pub(crate) store: Admitted<OpenedStore>,
+    /// The run's one Measures provider: compile's geometry and the batches'
+    /// evaluate with it.
+    pub(crate) measures: Arc<dyn MeasuresProvider>,
+    /// The ephemeris table a moving phase centre names, read when the
+    /// request compiled.
+    pub(crate) phase_table: Option<Arc<FieldEphemeris>>,
+}
 
 /// What the native run needs besides the compiled problem and its runtime.
 pub(crate) struct NativeInput {
-    pub(crate) observation: SelectedObservationResolutionRequest,
-    pub(crate) initial_access: ResolvedSelectedObservationAccess,
+    pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    pub(crate) start_model: Option<crate::compile::StartModel>,
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
 }
 
@@ -89,15 +105,6 @@ impl From<PassError> for NativeError {
     }
 }
 
-impl From<SourceAccessError> for NativeError {
-    fn from(error: SourceAccessError) -> Self {
-        match error {
-            SourceAccessError::Admission(admission) => Self::Admission(admission),
-            error => Self::Other(Box::new(error)),
-        }
-    }
-}
-
 impl From<ProductsError> for NativeError {
     fn from(error: ProductsError) -> Self {
         Self::Other(Box::new(error))
@@ -116,20 +123,85 @@ pub(crate) struct NativeRun {
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
-    visibility_write: Option<imaging::VisibilityWriteTarget>,
-    access: ResolvedSelectedObservationAccess,
+    /// The observation's batches the passes read, and through whose update
+    /// session a model or corrected column is written.
+    route: Box<imaging::BatchRoute>,
     /// The source's charge, held while it is open.
     source: Reservation,
+    /// What the products hold on one lane, which the run's setup fits
+    /// beside it ([`products_floor`]).
+    products: u64,
     masks: ImageDomainReconstructionMaskPlans,
+    start_model: Option<crate::compile::StartModel>,
     image_response: Option<MinorCycleImageResponse>,
 }
 
-/// The end of a run's preparation: check the products against `problem`,
-/// resolve any visibility write and admit the source, its pass storage
-/// sized for the policy's streaming workers ([`ResourcePolicy::cores`]), the
-/// most the run's setup then chooses.
-///
-/// [`ResourcePolicy::cores`]: casa_imaging_runtime::ResourcePolicy::cores
+/// The batch route of `problem` on `observation`, the observation compile
+/// opened: the selection resolved to its partitions, the geometry compiled
+/// and its batches admitted ([`imaging::admit_batches`]). A run that writes
+/// the model (`model_data`) or the corrected data (`corrected_data`) reads
+/// the observation through the update session that writes them
+/// ([`imaging::WriteBack`]).
+pub(crate) fn batch_route(
+    problem: &CompiledProblem,
+    observation: OpenedObservation,
+    (model_data, corrected_data): (bool, bool),
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
+    let OpenedObservation {
+        store: Admitted {
+            value: opened,
+            reservation: mut opening,
+        },
+        measures,
+        phase_table,
+    } = observation;
+    let selection = resolve_partitions(problem, opened.observation())
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let plan = GeometryPlan::compile(problem, opened.catalogue(), measures, phase_table)
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
+    let pointing_budget = if plan.reads_pointing() {
+        opened
+            .observation()
+            .pointing_bytes()
+            .map_err(|error| NativeError::Other(Box::new(error)))?
+    } else {
+        0
+    };
+    let Admitted {
+        value: batching,
+        reservation,
+    } = imaging::admit_batches(
+        (problem, opened.observation(), &selection, &plan),
+        imaging::row_samples(problem)?,
+        pointing_budget,
+        (&runtime.host, &runtime.resource_policy),
+    )?;
+    opening.join(reservation);
+    let store = if model_data || corrected_data {
+        imaging::RouteStore::Write(Box::new(
+            imaging::WriteBack::open(opened, model_data, corrected_data)
+                .map_err(|error| NativeError::Other(Box::new(error)))?,
+        ))
+    } else {
+        imaging::RouteStore::Read(opened.into_observation())
+    };
+    Ok(Admitted {
+        value: imaging::BatchRoute {
+            store,
+            selection,
+            plan,
+            batching,
+            pointing_budget,
+        },
+        reservation: opening,
+    })
+}
+
+/// The end of a run's preparation: check the products against `problem`
+/// and admit the source, its pass storage sized for the policy's streaming
+/// workers ([`casa_imaging_runtime::ResourcePolicy::cores`]), the most the run's setup then
+/// chooses.
 pub(crate) fn prepare(
     problem: &CompiledProblem,
     input: NativeInput,
@@ -141,34 +213,25 @@ pub(crate) fn prepare(
         aw_catalog,
     } = native;
     publication.controls.validate_for_problem(problem)?;
-    let visibility_write = (input.write_model_column || input.write_corrected_data)
-        .then(|| {
-            Ok::<_, ApplicationError>(imaging::VisibilityWriteTarget {
-                path: PathBuf::from(input.observation.locator()),
-                selection: visibility_write_selection(problem, input.observation.selection())?,
-                model_data: input.write_model_column,
-                corrected_data: input.write_corrected_data,
-            })
-        })
-        .transpose()?;
+    let products = products_floor(problem, &publication)?;
     let Admitted {
-        value: access,
+        value: route,
         reservation: source,
-    } = finalize_source_access(
+    } = batch_route(
         problem,
-        input.initial_access,
-        imaging::row_samples(problem)?,
-        &runtime.host,
-        &runtime.resource_policy,
+        input.observation,
+        (input.write_model_column, input.write_corrected_data),
+        &runtime,
     )?;
     Ok(NativeRun {
         runtime,
         publication,
         aw_catalog,
-        visibility_write,
-        access,
+        route: Box::new(route),
         source,
+        products,
         masks: input.masks,
+        start_model: input.start_model,
         image_response: input.minor_cycle_image_response,
     })
 }
@@ -186,20 +249,28 @@ pub(crate) fn run(
         runtime,
         publication,
         aw_catalog,
-        visibility_write,
-        access,
+        route,
         source,
+        products,
         masks,
+        start_model,
         image_response,
     } = run;
     let teams = OnceCell::new();
+    // The run's source borrows the batch route, which is released with the
+    // source's charge once the run has finished with it.
+    let visibility_write = route
+        .write_back()
+        .map(|_| imaging::VisibilityWriteTarget(&route));
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
-            access,
+            source: &route,
             masks,
+            start_model,
             image_response,
             visibility_write,
+            products: (products, source.memory()),
             host: runtime.host,
             policy: runtime.resource_policy,
             teams: &teams,
@@ -212,6 +283,7 @@ pub(crate) fn run(
         },
         summary,
     )?;
+    drop(route);
     drop(source);
     let team = teams
         .get()
@@ -279,6 +351,20 @@ struct ProductSource {
     facet_sum_weights: FacetSumWeights,
 }
 
+/// What `problem`'s products hold on one lane, before the run
+/// (`PlannedContinuumGeneration::planned_demand`): the least they can run
+/// on, which the run's setup fits beside it.
+fn products_floor(
+    problem: &CompiledProblem,
+    publication: &ApplicationPublication,
+) -> Result<u64, NativeError> {
+    Ok(
+        PlannedContinuumGeneration::for_problem(problem, &publication.controls)?
+            .planned_demand(problem, ProductStoragePlan::new(1, 1)?, &publication.writer)?
+            .peak_residency_bytes(),
+    )
+}
+
 /// Generate every planned product member into the writer's private staging,
 /// one output channel per window on the run's team, and publish them,
 /// adding each image published to `published`; a cancelled run publishes
@@ -326,6 +412,11 @@ fn publish_products(
     };
     let workers = team.workers();
     let (mut window, mut demand) = demand_on(workers)?;
+    debug_assert_eq!(
+        planned.planned_demand(problem, window, &publication.writer)?,
+        demand,
+        "the products' demand before the run is the run's"
+    );
     let needed = demand.peak_residency_bytes();
     if needed > free {
         for count in (1..workers).rev() {

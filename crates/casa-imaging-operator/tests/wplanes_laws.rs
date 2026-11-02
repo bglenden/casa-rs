@@ -6,7 +6,7 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
     KernelNormalisation, MAX_W_PLANES, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
@@ -14,11 +14,12 @@ use casa_imaging_operator::{
     Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
 use casa_imaging_operator::{GridGeometry, GridPadding, ImageExtent, PaddingFactor};
+use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 /// A wide field (3.4 arcmin cells, 3.7° across 64 pixels) so the w-term
 /// phases reach radians within the planes' `0.25/|Δx|` range.

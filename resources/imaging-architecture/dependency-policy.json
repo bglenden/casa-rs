@@ -1,5 +1,5 @@
 {
- "schema_version": 2,
+ "schema_version": 3,
  "decision": "ADR-0016",
  "layers": [
   "frontend",
@@ -49,6 +49,7 @@
  },
  "package_layers": {
   "casa-provider-contracts": "science",
+  "casa-observation": "science",
   "casa-ms": "observation",
   "casa-imaging-application": "application",
   "casa-imaging-model": "science",
@@ -56,23 +57,30 @@
   "casa-imaging-deconvolution": "reconstruction",
   "casa-imaging-products": "product",
   "casa-imaging-runtime": "execution",
+  "casa-imaging-singledish": "execution",
   "casa-imaging-metal": "backend",
   "casa-simulation-synthesis": "science",
   "casa-simulation": "application",
-  "casars": "frontend",
-  "casars-frontend-services": "frontend",
+  "casa-atmosphere": "science",
   "casars-imager": "frontend",
+  "casars-imexplore": "frontend",
   "casars-python": "frontend"
  },
+ "definitional_packages": [
+  "casa-values",
+  "casa-types",
+  "casa-coordinates"
+ ],
  "native_package_workspace_dependencies": {
-  "casa-imaging-model": [],
+  "casa-observation": [],
+  "casa-imaging-model": [
+   "casa-observation"
+  ],
   "casa-imaging-operator": [
-   "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-model",
-   "casa-numerics",
-   "casa-types"
+   "casa-numerics"
   ],
   "casa-imaging-deconvolution": [
    "casa-fft",
@@ -80,13 +88,11 @@
    "casa-numerics"
   ],
   "casa-imaging-products": [
-   "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
-   "casa-numerics",
-   "casa-types"
+   "casa-numerics"
   ],
   "casa-imaging-metal": [
    "casa-imaging-operator",
@@ -102,8 +108,12 @@
    "casa-ms",
    "casa-tables"
   ],
+  "casa-imaging-singledish": [
+   "casa-imaging-operator",
+   "casa-imaging-runtime",
+   "casa-numerics"
+  ],
   "casa-imaging-application": [
-   "casa-coordinates",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
@@ -111,25 +121,27 @@
    "casa-imaging-products",
    "casa-imaging-runtime",
    "casa-ms",
-   "casa-types"
+   "casa-observation"
   ],
   "casa-simulation-synthesis": [
    "casa-fft",
    "casa-numerics"
   ],
+  "casa-atmosphere": [],
   "casa-simulation": [
+   "casa-atmosphere",
    "casa-calibration",
    "casa-components",
-   "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-runtime",
+   "casa-imaging-singledish",
+   "casa-lattices",
    "casa-ms",
    "casa-numerics",
-   "casa-tables",
-   "casa-types"
+   "casa-tables"
   ]
  },
  "device_dependency_prefixes": [
@@ -159,12 +171,12 @@
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
     "crates/casa-provider-contracts/src",
-    "crates/casars/src",
-    "crates/casars-frontend-services/src",
     "crates/casars-imager/src",
+    "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],
    "extensions": [
@@ -181,9 +193,8 @@
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-provider-contracts/src",
-    "crates/casars/src",
-    "crates/casars-frontend-services/src",
     "crates/casars-imager/src",
+    "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],
    "extensions": [
@@ -201,6 +212,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
@@ -220,7 +232,6 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-tables/src/bin",
     "crates/casa-images/src/bin"
    ],
@@ -243,6 +254,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
@@ -262,7 +274,6 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-tables/src/bin",
     "crates/casa-images/src/bin"
    ],
@@ -281,6 +292,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
+    "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src"
@@ -292,15 +304,26 @@
    "grandfathered": []
   },
   {
-   "id": "selected-observation-provider-injection",
-   "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime",
+   "id": "observation-geometry-provider-injection",
+   "message": "the observation boundary's adapters and the batch geometry receive an injected Measures provider and cannot discover MeasuresRuntime",
    "roots": [
-    "crates/casa-ms/src/selected_observation"
+    "crates/casa-ms/src/observation_io",
+    "crates/casa-imaging-model/src/batch_geometry"
    ],
    "extensions": [
     ".rs"
    ],
    "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
+   "grandfathered": []
+  },
+  {
+   "id": "definitional-crates-do-no-io",
+   "message": "definitional crates define values, units, quanta, measures and coordinate systems and the pure functions on them: no file, network or process I/O and no threads (ADR-0016 decision 10); environment reads and eprintln! are refused by the rules above",
+   "roots": "definitional",
+   "extensions": [
+    ".rs"
+   ],
+   "regex": "\\bstd::(?:fs|net|process)\\b|\\buse\\s+std::\\{[^}]*\\b(?:fs|net|process)\\b|\\bthread::(?:spawn|scope|Builder)\\b|\\bFile::(?:open|create)\\s*\\(",
    "grandfathered": []
   }
  ]

@@ -1,0 +1,18 @@
+[package]
+name = "casa-observation"
+description = "Shared observation batch and access contracts for MeasurementSet v2 and v4 (trial)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-types = { path = "../casa-types" }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true

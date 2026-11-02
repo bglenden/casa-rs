@@ -11,14 +11,13 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
-use casa_imaging_model::CorrelationType;
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
 use casa_ms::columns::flag_columns::FlagRowColumn;
 use casa_ms::columns::main_ids::{antenna1, antenna2, field_id};
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_ms::derived::GridFtProjection;
 use casa_simulation::predict::{
     FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,
@@ -28,6 +27,7 @@ use casa_simulation::{
     Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
 use casa_types::ArrayValue;
+use casa_types::Correlation;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
@@ -58,6 +58,16 @@ pub const ANTENNAS: usize = 8;
 /// `(x, y, flux)` points, centred on [`CENTRE_RAD`]: one plane per channel,
 /// or one plane spanning the band.
 pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) -> PathBuf {
+    write_model_of(dir, name, N, planes)
+}
+
+/// [`write_model`] of `n` pixels a side, centred on pixel `n / 2`.
+pub fn write_model_of(
+    dir: &Path,
+    name: &str,
+    n: usize,
+    planes: &[Vec<(usize, usize, f32)>],
+) -> PathBuf {
     let path = dir.join(name);
     let mut coordinates = ImageCoordinates::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
@@ -65,7 +75,7 @@ pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) 
         Projection::new(ProjectionType::SIN),
         CENTRE_RAD,
         [-CELL_RAD, CELL_RAD],
-        [(N / 2) as f64, (N / 2) as f64],
+        [(n / 2) as f64, (n / 2) as f64],
     ));
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     let (first, width) = if planes.len() == 1 {
@@ -84,9 +94,9 @@ pub fn write_model(dir: &Path, name: &str, planes: &[Vec<(usize, usize, f32)>]) 
         first,
     ));
     let count = planes.len();
-    let mut image = PagedImage::<f32>::create(vec![N, N, 1, count], coordinates, &path)
+    let mut image = PagedImage::<f32>::create(vec![n, n, 1, count], coordinates, &path)
         .expect("create model image");
-    let mut pixels = ArrayD::zeros(IxDyn(&[N, N, 1, count]));
+    let mut pixels = ArrayD::zeros(IxDyn(&[n, n, 1, count]));
     for (plane, points) in planes.iter().enumerate() {
         for &(x, y, flux) in points {
             pixels[IxDyn(&[x, y, 0, plane])] = flux;
@@ -261,7 +271,7 @@ pub fn session_with_dishes(
 pub fn predict_spec(image: &Path, incremental: bool) -> PredictSpec {
     PredictSpec {
         images: vec![image.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental,
     }
 }
@@ -353,7 +363,7 @@ pub fn field_direction(field: usize) -> [f64; 2] {
 pub fn reference(
     rows: &[Row],
     model: &Path,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     beam: Option<PrimaryBeam>,
 ) -> Vec<Vec<Complex32>> {
     reference_through(
@@ -369,7 +379,7 @@ pub fn reference(
 pub fn reference_through(
     rows: &[Row],
     model: &Path,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     beam: Option<PrimaryBeam>,
     ft_machine: FtMachine,
 ) -> Vec<Vec<Complex32>> {

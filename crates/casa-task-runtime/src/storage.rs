@@ -51,7 +51,7 @@ pub fn write_parameter_profile_atomic(
         std::process::id(),
         sequence
     ));
-    write_and_replace(&temp, target, contents)?;
+    write_and_replace(parent, &temp, target, contents)?;
     Ok(StateWriteOutcome {
         path: target.to_path_buf(),
         bytes_written: contents.len(),
@@ -197,7 +197,7 @@ impl ManagedStateStore {
             std::process::id(),
             sequence
         ));
-        let write_result = write_and_replace(&temp, &target, contents);
+        let write_result = write_and_replace(&directory, &temp, &target, contents);
         let unlock_result = FileExt::unlock(&lock);
 
         if let Err(source) = unlock_result
@@ -329,7 +329,17 @@ impl TaskLastState {
     }
 }
 
-fn write_and_replace(temp: &Path, target: &Path, contents: &str) -> Result<(), ManagedStateError> {
+/// Write `contents` to `temp`, flush it, rename it over `target` and sync
+/// `directory`, the directory holding both, so the rename is durable.
+///
+/// Callers pass `directory` already resolved: a bare filename's parent is
+/// the empty path, which names the current directory but cannot be opened.
+fn write_and_replace(
+    directory: &Path,
+    temp: &Path,
+    target: &Path,
+    contents: &str,
+) -> Result<(), ManagedStateError> {
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -342,7 +352,7 @@ fn write_and_replace(temp: &Path, target: &Path, contents: &str) -> Result<(), M
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         fs::rename(temp, target)?;
-        sync_parent(target)?;
+        sync_directory(directory)?;
         Ok::<(), io::Error>(())
     })();
     if let Err(source) = operation {
@@ -356,15 +366,12 @@ fn write_and_replace(temp: &Path, target: &Path, contents: &str) -> Result<(), M
 }
 
 #[cfg(unix)]
-fn sync_parent(path: &Path) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "managed profile has no parent")
-    })?;
-    File::open(parent)?.sync_all()
+fn sync_directory(directory: &Path) -> io::Result<()> {
+    File::open(directory)?.sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_parent(_path: &Path) -> io::Result<()> {
+fn sync_directory(_directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -393,10 +400,14 @@ pub enum ManagedStateError {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
     use std::sync::{Arc, Barrier};
     use std::thread;
 
     use super::*;
+
+    /// Set in the child process that saves a profile by bare filename.
+    const BARE_SAVE_CHILD: &str = "CASA_RS_TEST_BARE_PROFILE_SAVE";
 
     #[test]
     fn uses_workspace_convention() {
@@ -450,6 +461,57 @@ mod tests {
                     .to_string_lossy()
                     .contains(".tmp."))
         );
+    }
+
+    /// A bare filename has an empty parent, which names the current
+    /// directory. The save runs in a child process of this binary whose
+    /// current directory is a temporary one, so no other test sees the
+    /// directory change.
+    #[test]
+    fn explicit_profile_save_to_a_bare_filename_lands_in_the_current_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().expect("this test binary"))
+            .args([
+                "storage::tests::save_a_profile_by_bare_filename",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+            ])
+            .current_dir(temp.path())
+            .env(BARE_SAVE_CHILD, "1")
+            .output()
+            .expect("the saving process runs");
+        assert!(
+            output.status.success(),
+            "bare-filename save: {}\n{}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("bare.toml")).unwrap(),
+            "bare\n"
+        );
+        assert!(fs::read_dir(temp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp.")
+        }));
+    }
+
+    /// The child half of the test above; it does nothing unless that test
+    /// started it.
+    #[test]
+    #[ignore = "run by explicit_profile_save_to_a_bare_filename_lands_in_the_current_directory"]
+    fn save_a_profile_by_bare_filename() {
+        if std::env::var_os(BARE_SAVE_CHILD).is_none() {
+            return;
+        }
+        let outcome = write_parameter_profile_atomic("bare.toml", "bare\n").unwrap();
+        assert_eq!(outcome.path, Path::new("bare.toml"));
+        assert_eq!(outcome.bytes_written, 5);
     }
 
     #[test]

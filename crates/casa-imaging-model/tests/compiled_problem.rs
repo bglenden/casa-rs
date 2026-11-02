@@ -714,7 +714,7 @@ fn model_column_side_effects_are_compiled_into_the_problem() {
             reconstruction(),
             weighting(),
             products(false),
-            ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
+            ObservationTransactionRequirements::new(ModelColumnWrite::SelectedSamples),
             numerics(false),
         ),
         observation(),

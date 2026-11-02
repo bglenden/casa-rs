@@ -115,6 +115,23 @@ pub(crate) struct StManColumnInfo {
     pub nrelem: usize,
 }
 
+/// The manager's name (`DataManager::dataManagerName()`), from the header of
+/// its file; `None` when the file is missing, does not parse, or is of the
+/// version before the header held a name. The file is read in whichever byte
+/// order its header parses in.
+pub(crate) fn name_from_file(path: &Path) -> Option<String> {
+    [ByteOrder::BigEndian, ByteOrder::LittleEndian]
+        .into_iter()
+        .find_map(|byte_order| {
+            let mut io = AipsIo::open_with_order(path, AipsOpenOption::Old, byte_order).ok()?;
+            let version = io.getstart("StManAipsIO").ok()?;
+            if version < 2 {
+                return None;
+            }
+            io.get_string().ok()
+        })
+}
+
 pub(crate) fn read_stman_file(
     path: &Path,
     col_info: &[StManColumnInfo],

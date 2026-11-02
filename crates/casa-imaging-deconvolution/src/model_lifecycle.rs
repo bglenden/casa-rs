@@ -144,6 +144,51 @@ impl ModelLifecycle {
         })
     }
 
+    /// A run's first generation from a start model (CASA's `startmodel`,
+    /// `SIImageStore::setModelImage`): `main` is the first image domain's
+    /// samples in canonical order (coefficient, polarization, y, x), and
+    /// every later domain starts at zero, as CASA gives a start model to the
+    /// main field only. Written in bounded chunks, as
+    /// [`Self::initial_empty`] writes its zeros.
+    ///
+    /// # Errors
+    ///
+    /// `main` not the first domain's sample count, a non-finite value or one
+    /// past the compiled bound, and a storage failure.
+    pub fn initial_from_start_model(
+        &self,
+        main: &[f32],
+    ) -> Result<ModelGeneration, ModelLifecycleError> {
+        let target = self.contract.target();
+        let [width, height] = target.domains()[0].pixels();
+        let expected = width * height * target.coefficients() * target.polarizations();
+        if main.len() != expected {
+            return Err(ModelLifecycleError::SampleCountMismatch {
+                expected,
+                actual: main.len(),
+            });
+        }
+        let bound = self.contract.bounds().max_absolute_model_value();
+        let mut samples = self.storage.create(target.sample_count())?;
+        let chunk = samples.window_samples().min(1 << 16);
+        let mut window = Vec::with_capacity(chunk);
+        for start in (0..samples.len()).step_by(chunk) {
+            window.clear();
+            for index in start..(start + chunk).min(samples.len()) {
+                let value = main.get(index).map_or(0.0, |value| f64::from(*value));
+                if value.abs() > bound {
+                    return Err(ModelLifecycleError::ModelValueBoundExceeded);
+                }
+                window.push(ModelSample::valid(ModelValue::new(value)?));
+            }
+            samples.write(start, &window)?;
+        }
+        Ok(ModelGeneration {
+            shape: target.clone(),
+            samples,
+        })
+    }
+
     /// The final model of a major cycle: `base` updated by the minor cycle's
     /// `terms`, with later domains' shared pixels restored into earlier
     /// domains. No terms leave the samples unchanged.

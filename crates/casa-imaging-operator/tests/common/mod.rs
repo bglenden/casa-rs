@@ -4,22 +4,29 @@
 
 #![allow(dead_code)]
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CfKey, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
     PaddingFactor, Placement, PolarizationRouting, SampleBuffer, Spheroidal,
 };
+use casa_types::Correlation;
 use num_complex::{Complex32, Complex64};
 
 pub const IMAGE: usize = 64;
 pub const INCREMENT_RAD: [f64; 2] = [-2.0e-5, 2.0e-5];
 
 pub fn geometry() -> GridGeometry {
+    geometry_of([IMAGE, IMAGE], INCREMENT_RAD)
+}
+
+/// A grid of `shape` (x, y) pixels of `increment_rad`, referenced at its
+/// centre.
+pub fn geometry_of(shape: [usize; 2], increment_rad: [f64; 2]) -> GridGeometry {
     GridGeometry::new(
         ImageExtent {
-            shape: [IMAGE, IMAGE],
-            increment_rad: INCREMENT_RAD,
-            reference_pixel: [IMAGE / 2, IMAGE / 2],
+            shape,
+            increment_rad,
+            reference_pixel: shape.map(|side| side / 2),
         },
         GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
@@ -29,10 +36,20 @@ pub fn geometry() -> GridGeometry {
 pub fn operator(
     precision: GridPrecision,
     basis: Basis,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     requested: &[PolarizationCoordinate],
 ) -> MeasurementOperator {
-    let geometry = geometry();
+    operator_on(geometry(), precision, basis, correlations, requested)
+}
+
+/// [`operator`] on `geometry`.
+pub fn operator_on(
+    geometry: GridGeometry,
+    precision: GridPrecision,
+    basis: Basis,
+    correlations: &[Correlation],
+    requested: &[PolarizationCoordinate],
+) -> MeasurementOperator {
     let polarization = PolarizationRouting::compile(correlations, requested).expect("routing");
     let cf = Spheroidal::new(&geometry, &polarization);
     MeasurementOperator::new(geometry, basis, polarization, Box::new(cf), precision)

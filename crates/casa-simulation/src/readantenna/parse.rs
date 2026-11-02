@@ -115,7 +115,7 @@ fn python_strip(text: &str) -> &str {
 }
 
 /// Python's `str.split()` with no arguments.
-fn python_split(text: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn python_split(text: &str) -> impl Iterator<Item = &str> {
     text.split(is_python_space).filter(|part| !part.is_empty())
 }
 
@@ -141,7 +141,7 @@ fn without_digit_underscores(text: &str) -> Option<String> {
 /// ignored, underscores may separate digits, and `inf`, `infinity` and
 /// `nan` (any case, optionally signed) are accepted. Unlike Python,
 /// non-ASCII decimal digits are rejected.
-pub(super) fn python_float(text: &str) -> Option<f64> {
+pub(crate) fn python_float(text: &str) -> Option<f64> {
     let text = without_digit_underscores(python_strip(text))?;
     text.parse().ok()
 }

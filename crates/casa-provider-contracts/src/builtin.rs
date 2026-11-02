@@ -76,8 +76,8 @@ mod tests {
 
     use crate::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, RunSafetyClass,
-        SemanticRevision, SurfaceKind, SurfaceProductContract, ValueAdapter,
+        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision,
+        SurfaceKind, SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 27);
+        assert_eq!(catalog.surfaces.len(), 26);
         assert!(
             catalog
                 .surfaces
@@ -102,6 +102,8 @@ mod tests {
         assert!(!ids.contains("imexplore"));
         assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
+        // CASA 6 has no plotcal; casa-rs retired its own (#931).
+        assert!(!ids.contains("plotcal"));
     }
 
     #[test]
@@ -113,20 +115,16 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == IMSIZE_CONCEPT_ID)
             .unwrap();
+        // CASA's tclean takes one size for both axes, alone or as a
+        // one-element list (its default `[100]`), or the two sizes.
         assert!(matches!(
             imsize.value_domain,
-            ParameterType::Optional {
-                ref value,
-                ref states,
-            } if states == &["auto".to_string()] && matches!(
-                value.as_ref(),
-                ParameterType::Array {
-                    min_items: 2,
-                    max_items: Some(2),
-                    allow_scalar: true,
-                    ..
-                }
-            )
+            ParameterType::Array {
+                min_items: 1,
+                max_items: Some(2),
+                allow_scalar: true,
+                ..
+            }
         ));
         let cell = catalog
             .catalog
@@ -134,10 +132,11 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == CELL_CONCEPT_ID)
             .unwrap();
+        // Its cell default is `[]`, which the run refuses as CASA does.
         assert!(matches!(
             cell.value_domain,
             ParameterType::Array {
-                min_items: 2,
+                min_items: 0,
                 max_items: Some(2),
                 allow_scalar: true,
                 ..
@@ -181,131 +180,174 @@ mod tests {
                 else {
                     continue;
                 };
-                if default == "none" {
+                // A surface that mimics a CASA task takes CASA's absence,
+                // `''`; the others spell it `none` (#931). Either way the
+                // provider omits it.
+                let absence = if surface.casa_task().is_some() {
+                    ""
+                } else {
+                    "none"
+                };
+                let adapter = binding
+                    .projections
+                    .provider
+                    .as_ref()
+                    .map(|projection| &projection.adapter);
+                if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
-                        binding
-                            .projections
-                            .provider
-                            .as_ref()
-                            .map(|projection| &projection.adapter),
+                        adapter,
                         Some(&crate::ValueAdapter::OmitNone),
                         "{}.{}",
                         surface.id(),
                         binding.name
                     );
                 }
-                assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                if surface.casa_task().is_none() {
+                    assert_ne!(default, "", "{}.{}", surface.id(), binding.name);
+                }
             }
         }
     }
 
+    /// CASA's parameters are the consent (#931): a task replaces a product
+    /// only when `overwrite` is true, so every `overwrite` binding has
+    /// CASA's default. The inventory lists each surface, so adding one is a
+    /// deliberate change.
     #[test]
-    fn every_overwrite_binding_has_the_exact_fail_closed_safety_rule() {
+    fn every_overwrite_binding_has_casas_default() {
+        // CASA 6.7.6 tasks with an `overwrite` parameter, and its default.
+        let casa = BTreeMap::from([
+            ("exportfits", false),
+            ("importfits", false),
+            ("impbcor", false),
+            ("impv", false),
+            ("imregrid", false),
+            ("imsubimage", false),
+            ("simobserve", true),
+        ]);
+        // casa-rs's own `overwrite` on CASA tasks that have none, and on the
+        // casa-rs tasks; CASA's tasks never replace an output unasked.
+        let extras = BTreeSet::from([
+            "applycal",
+            "bandpass",
+            "calibrate",
+            "feather",
+            "fluxscale",
+            "gaincal",
+            "gencal",
+            "immath",
+            "immoments",
+            "msexplore",
+            "plotms",
+        ]);
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        let surfaces = catalog
-            .surfaces
-            .iter()
-            .filter_map(|surface| {
-                surface
-                    .bindings()
-                    .iter()
-                    .find(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
-                    .map(|binding| (surface, binding))
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            surfaces.len(),
-            18,
-            "update the safety inventory intentionally"
-        );
-        for (surface, binding) in surfaces {
-            let rule = surface
-                .safety_rules()
+        let mut found = BTreeSet::new();
+        for surface in &catalog.surfaces {
+            for binding in surface
+                .bindings()
                 .iter()
-                .find(|rule| rule.class == RunSafetyClass::Overwrite)
-                .unwrap_or_else(|| panic!("{} is missing overwrite safety", surface.id()));
-            assert_eq!(
-                rule.when,
-                Predicate::Equals {
-                    parameter: binding.name.clone(),
-                    value: ParameterValue::Bool(true),
-                },
-                "{} must confirm every resolved overwrite=true",
-                surface.id()
-            );
+                .filter(|binding| binding.concept.id.as_str() == OVERWRITE_CONCEPT_ID)
+            {
+                let id = surface.id();
+                assert!(found.insert(id), "{id} has one overwrite binding");
+                let expected = casa.get(id).copied().unwrap_or_else(|| {
+                    assert!(extras.contains(id), "{id} is missing from the inventory");
+                    false
+                });
+                assert_eq!(
+                    binding.default,
+                    crate::DefaultSpec::Literal {
+                        value: ParameterValue::Bool(expected)
+                    },
+                    "{id}.{}",
+                    binding.name
+                );
+            }
         }
+        let listed = casa.keys().copied().chain(extras).collect::<BTreeSet<_>>();
+        assert_eq!(found, listed, "update the inventory intentionally");
     }
 
     #[test]
-    fn simobserve_modes_have_disjoint_provider_inputs_and_shared_worker_controls() {
+    fn simobserve_has_casas_parameters_in_casas_order_for_the_current_contract_only() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
         let surface = catalog.surface("simobserve").unwrap();
-        let predicate = |value: &str| Predicate::Equals {
-            parameter: "request_kind".to_string(),
-            value: ParameterValue::String(value.to_string()),
-        };
-        for name in ["model", "out", "inbright", "duration", "integration"] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, predicate("run"), "{name}");
+        assert_eq!(surface.contract_version(), 8);
+        assert_eq!(surface.casa_task(), Some("simobserve"));
+        let names: Vec<&str> = surface
+            .bindings()
+            .iter()
+            .map(|binding| binding.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "project",
+                "skymodel",
+                "inbright",
+                "indirection",
+                "incell",
+                "incenter",
+                "inwidth",
+                "complist",
+                "compwidth",
+                "comp_nchan",
+                "setpointings",
+                "ptgfile",
+                "integration",
+                "direction",
+                "mapsize",
+                "maptype",
+                "pointingspacing",
+                "caldirection",
+                "calflux",
+                "obsmode",
+                "refdate",
+                "hourangle",
+                "totaltime",
+                "antennalist",
+                "sdantlist",
+                "sdant",
+                "outframe",
+                "thermalnoise",
+                "user_pwv",
+                "t_ground",
+                "t_sky",
+                "tau0",
+                "seed",
+                "leakage",
+                "correlator",
+                "graphics",
+                "verbose",
+                "overwrite",
+            ]
+        );
+        // Every parameter is CASA's and always active, as in CASA's task.
+        for binding in surface.bindings() {
+            assert_eq!(binding.active_when, Predicate::Always, "{}", binding.name);
+            assert!(
+                !matches!(binding.default, crate::DefaultSpec::Required),
+                "{} has CASA's default",
+                binding.name
+            );
         }
-        for name in [
-            "source_model",
-            "telescope",
-            "array_config",
-            "band",
-            "target_ms_size_gib",
-            "output_ms",
-            "ms_channels",
-            "image_channels",
-            "pointing_count",
-            "time_sample_count",
-            "integration_seconds",
-            "start_time_mjd_seconds",
-            "imaging_mode",
-            "observation_mode",
-            "measure_actual_size",
-        ] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, predicate("family"), "{name}");
-        }
-        for name in [
-            "request_kind",
-            "overwrite",
-            "polarizations",
-            "worker_policy",
-            "row_workers",
-            "channel_workers",
-        ] {
-            let binding = surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .unwrap();
-            assert_eq!(binding.active_when, Predicate::Always, "{name}");
-        }
-        assert!(["model", "out"].into_iter().all(|name| {
-            surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == name)
-                .is_some_and(|binding| matches!(binding.default, crate::DefaultSpec::Required))
-        }));
+        // simobserve is current-only (ADR-0012): a profile of any earlier
+        // contract is refused, not migrated. That holds for contract 4's
+        // casa-rs-only profiles and for contract 7's, which differ from 8
+        // only in naming the CASA task (#931 4b).
+        assert!(surface.migrations().is_empty());
     }
 
     #[test]
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
-        let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 25);
-        assert_eq!(surface.bindings().len(), 81);
+        let surface = catalog.surface("tclean").unwrap();
+        // The imager was re-surfaced as CASA's tclean (#931): its former id
+        // still finds the surface, so an old profile can migrate.
+        assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
+        assert_eq!(surface.casa_task(), Some("tclean"));
+        assert_eq!(surface.contract_version(), 29);
+        assert_eq!(surface.bindings().len(), 114);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -334,7 +376,7 @@ mod tests {
             value: ParameterValue::String(name.to_string()),
         };
         let awproject = gridder("awproject");
-        for name in ["aw_cf_source", "cf_resident_mb", "pointingoffsetsigdev"] {
+        for name in ["aw_cf_source", "cf_resident_mb"] {
             let binding = surface
                 .bindings()
                 .iter()
@@ -350,24 +392,23 @@ mod tests {
             assert!(binding.projections.python.is_some(), "{name}");
         }
 
-        // Parameters read by some gridders only are active for those.
-        for (name, gridders) in [
-            ("normtype", ["awproject", "mosaic"]),
-            ("usepointing", ["awproject", "mosaic"]),
-            ("wprojplanes", ["awproject", "wproject"]),
+        // CASA's parameters are always active, as CASA's tclean takes them
+        // whatever the gridder; the request ignores the ones a gridder does
+        // not read.
+        for name in [
+            "normtype",
+            "usepointing",
+            "wprojplanes",
+            "pointingoffsetsigdev",
+            "facets",
+            "cfcache",
         ] {
             let binding = surface
                 .bindings()
                 .iter()
                 .find(|binding| binding.name == name)
                 .unwrap_or_else(|| panic!("missing imager binding {name}"));
-            assert_eq!(
-                binding.active_when,
-                Predicate::Any {
-                    predicates: gridders.map(gridder).to_vec(),
-                },
-                "{name}"
-            );
+            assert_eq!(binding.active_when, Predicate::Always, "{name}");
         }
 
         let precision = surface
@@ -410,9 +451,14 @@ mod tests {
                 .all(|binding| binding.aliases.is_empty()),
             "current imager profiles expose canonical names only"
         );
-        assert!(
-            surface.migrations().is_empty(),
-            "current imager profiles retain no migration reader"
+        // A contract-28 imager profile migrates to tclean's names.
+        assert_eq!(
+            surface
+                .migrations()
+                .iter()
+                .map(|migration| (migration.from_contract, migration.to_contract))
+                .collect::<Vec<_>>(),
+            [(28, 29)]
         );
     }
 
@@ -481,12 +527,7 @@ mod tests {
                 "measurementset.summary.output",
                 Some("msexplore"),
             ),
-            (
-                &["mstransform", "split"][..],
-                "width",
-                "ms.transform.width",
-                Some("mstransform"),
-            ),
+            (&["split"][..], "width", "ms.transform.width", Some("split")),
         ] {
             for surface in surfaces {
                 let binding = binding(surface, name);
@@ -501,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn importvla_archivefiles_preserves_a_nonempty_path_list() {
+    fn importvla_archivefiles_is_a_path_list_required_when_the_task_runs() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -509,26 +550,29 @@ mod tests {
             .iter()
             .find(|concept| concept.id.as_str() == "parameter.archivefiles")
             .unwrap();
-        assert_eq!(concept.semantic_revision, SemanticRevision(2));
+        // CASA's default is the empty list (#931), so the list is required
+        // when the task runs rather than by the domain.
+        assert_eq!(concept.semantic_revision, SemanticRevision(3));
         assert_eq!(
             concept.value_domain,
             ParameterType::Array {
                 element: Box::new(ParameterType::Path {
                     resource_kind: Some(ResourceKind::Archive),
                 }),
-                min_items: 1,
+                min_items: 0,
                 max_items: None,
                 allow_scalar: true,
             }
         );
 
         let surface = catalog.surface("importvla").unwrap();
-        assert_eq!(surface.contract_version(), 3);
+        assert_eq!(surface.contract_version(), 5);
         let archivefiles = surface
             .bindings()
             .iter()
             .find(|binding| binding.name == "archivefiles")
             .unwrap();
+        assert_eq!(archivefiles.required_when, Predicate::Always);
         assert_eq!(
             archivefiles.projections.provider.as_ref().unwrap().adapter,
             ValueAdapter::StringListCsv
@@ -570,10 +614,15 @@ mod tests {
         );
         assert_eq!(
             concept_ids("width"),
-            ["imager.width", "impv.width", "ms.transform.width"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "imager.width",
+                "impv.width",
+                "ms.transform.width",
+                "regridms.width"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("mode"),
@@ -582,7 +631,10 @@ mod tests {
                 "flagdata.mode",
                 "flagmanager.mode",
                 "imhead.mode",
+                "immath.mode",
                 "impbcor.mode",
+                "impv.mode",
+                "regridms.mode",
             ]
             .into_iter()
             .map(str::to_string)
@@ -651,11 +703,18 @@ mod tests {
                             RunProductSource::DecodedArtifacts => None,
                         })
                         .collect::<BTreeSet<_>>();
-                    if surface.id() == "imager" {
-                        assert!(products.iter().any(|product| {
-                            matches!(product.source, RunProductSource::DecodedArtifacts)
-                        }));
-                    } else {
+                    // The imager and simobserve name their products in their
+                    // managed results; the others by their output bindings.
+                    let decoded = products.iter().any(|product| {
+                        matches!(product.source, RunProductSource::DecodedArtifacts)
+                    });
+                    assert_eq!(
+                        decoded,
+                        matches!(surface.id(), "tclean" | "simobserve"),
+                        "{} product sources",
+                        surface.id()
+                    );
+                    if !decoded {
                         assert_eq!(
                             parameter_sources,
                             output_parameters,

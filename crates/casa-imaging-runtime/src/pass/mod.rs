@@ -39,7 +39,7 @@ use casa_imaging_operator::{
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use casa_imaging_metal::{MetalNoiseRow, MetalNoiseTerm};
 pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WEIGHT_SUM_WORK, WaveDemand};
-pub use prediction::{BlockPredictor, DeviceNoise, PredictionDomain};
+pub use prediction::{BlockPredictor, DeviceNoise, DomainModel, PredictionDomain};
 pub use row_work::{
     MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
 };
@@ -47,6 +47,7 @@ pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
 pub use weights::WeightCache;
 
 use stream::stream_blocks;
+pub use stream::{OVERLAPPED_BLOCKS, SLOTS as STREAM_SLOTS};
 use wave::Wave;
 
 /// A failure reported by a [`BoundedSource`] or a pass callback.
@@ -305,12 +306,13 @@ impl MajorCyclePass<'_> {
         native_residuals(self.domains, self.model.is_some())
     }
 
-    /// Whether the pass sums `sumwt`: only without a model. A residual
-    /// pass's sums are not read, since CASA keeps the PSF gridding's
-    /// `.sumwt` through the data passes (`FTMachine::finalizeToSkyNew`), so
-    /// its images carry zero sums.
+    /// Whether the pass sums `sumwt`: without a model, or when it forms the
+    /// PSF, as the initial pass from a start model does. A residual pass's
+    /// sums are not read, since CASA keeps the PSF gridding's `.sumwt`
+    /// through the data passes (`FTMachine::finalizeToSkyNew`), so its
+    /// images carry zero sums.
     fn sums_weights(&self) -> bool {
-        self.model.is_none()
+        self.model.is_none() || self.modes.psf
     }
 
     /// `acc`, summing `sumwt` only when the pass does.
@@ -441,8 +443,7 @@ pub fn run_major_cycle(
 /// Bytes the passes hold for a source whose largest block is `block`: the
 /// native blocks a pass's stream double-buffers and the model visibilities
 /// of one block, which a pass with a model predicts. They grow with the
-/// source's block, so the source's admission holds them
-/// ([`crate::finalize_source_access`]).
+/// source's block, so the source's admission holds them.
 #[must_use]
 pub const fn source_block_bytes(block: BlockShape) -> u64 {
     stream::bytes(block) + wave::prediction_bytes(block)
@@ -509,9 +510,8 @@ pub struct RowSamples {
 /// rather than its placement cap: each owner's buffer and the weight
 /// owner's can take every placement of a row with its native endpoints, and
 /// the chunk's prediction batch every degridded sample and the row's native
-/// terms. The source sizes its blocks with it
-/// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
-/// chunks exactly.
+/// terms. The source sizes its blocks with it; [`WaveDemand::bytes`]
+/// charges the chunks exactly.
 #[must_use]
 pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
     (workers as u64 + 1) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)

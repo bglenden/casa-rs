@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod aipsio_oracle;
+pub mod ephemeris_table;
 pub mod gridder_interop;
 pub mod hogbom_interop;
 mod image_oracle;
@@ -41,7 +42,7 @@ pub use oracle_runtime::OracleError;
 pub use table_oracle::{HeldCppTableReader, TableOracle};
 pub use table_oracle_impl::{
     BulkScalarIoBenchResult, CellSliceBenchParams, CellSliceBenchResult, CppTableFixture,
-    DeepCopyBenchResult, SetAlgebraBenchResult,
+    DeepCopyBenchResult, SetAlgebraBenchResult, SsmStatistics,
 };
 pub use test_data::*;
 

@@ -5,20 +5,45 @@
 //! The index is casacore's `SSMIndex` AipsIO object: for each data bucket
 //! its last row and its number. `SSMBase` keeps it in index buckets after
 //! the data and string buckets, each of which starts with an 8-byte chain
-//! header (a check number and the next index bucket, big-endian, -1 for
-//! the last) before its share of the object's bytes. The writer generates
-//! the object as it streams it into those buckets, holding one bucket
-//! whatever the number of data buckets.
+//! header (the next index bucket twice, big-endian, -1 for the last: a
+//! check number and the link) before its share of the object's bytes. The
+//! writer generates the object as it streams it into those buckets, holding
+//! one bucket whatever the number of data buckets.
+//!
+//! An index that fits half an index bucket's data area is stated to start
+//! at the chain header's end ([`index_bucket_offset`]), as
+//! `SSMBase::writeIndex` states it: casacore then rewrites it into the
+//! other half of that bucket, not into a new one.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use casa_aipsio::{AipsIo, ByteOrder};
 
-use super::{StorageError, bucket_offset, serialize_ssm_header};
+use super::{StorageError, bucket_offset, last_string_bucket, serialize_ssm_header};
 
 /// Bytes of an index bucket's chain header.
 const CHAIN_BYTES: usize = 8;
+
+/// The header's index bucket offset for an index of `index_length` bytes in
+/// buckets of `bucket_bytes` (`SSMBase::itsIdxBucketOffset`): the chain
+/// header's end when the index fits half a bucket's data area, so that
+/// casacore alternates between the halves when it rewrites it, and 0, the
+/// index spanning whole buckets, otherwise.
+pub(super) fn index_bucket_offset(index_length: usize, bucket_bytes: usize) -> u32 {
+    if index_length <= (bucket_bytes - CHAIN_BYTES) / 2 {
+        CHAIN_BYTES as u32
+    } else {
+        0
+    }
+}
+
+/// Write the chain header of an index bucket followed by index bucket
+/// `next` (-1 for none): `next` twice, as casacore writes it.
+pub(super) fn write_chain_header(bucket: &mut [u8], next: i32) {
+    bucket[0..4].copy_from_slice(&next.to_be_bytes());
+    bucket[4..8].copy_from_slice(&next.to_be_bytes());
+}
 
 /// What the index and header of a StandardStMan file describe.
 pub(super) struct IndexLayout {
@@ -60,11 +85,6 @@ pub(super) fn write_index_and_header(
                 big_endian,
             )?
             .finish()?;
-    let first_string_bucket = if nr_string_buckets > 0 {
-        nr_data_buckets as i32
-    } else {
-        -1
-    };
     let nr_buckets = first_idx_bucket + nr_idx_buckets;
     let header = serialize_ssm_header(
         bucket_size,
@@ -73,8 +93,8 @@ pub(super) fn write_index_and_header(
         -1,
         nr_idx_buckets as u32,
         first_idx_bucket as i32,
-        0,
-        first_string_bucket,
+        index_bucket_offset(index_length, bucket_bytes),
+        last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_length as u32,
         1,
         big_endian,
@@ -169,7 +189,7 @@ impl IndexBucketSink {
     fn finish(mut self) -> io::Result<(usize, usize)> {
         let buckets = match &mut self.open {
             Some((bucket, bytes)) => {
-                bytes[4..8].copy_from_slice(&(-1i32).to_be_bytes());
+                write_chain_header(bytes, -1);
                 *bucket + 1
             }
             None => 0,
@@ -205,8 +225,7 @@ impl IndexBucketSink {
         let mut bytes = self.open.take().map_or_else(Vec::new, |(_, bytes)| bytes);
         bytes.clear();
         bytes.resize(self.bucket_bytes, 0);
-        let chained = (self.first_bucket + bucket + 1) as i32;
-        bytes[4..8].copy_from_slice(&chained.to_be_bytes());
+        write_chain_header(&mut bytes, (self.first_bucket + bucket + 1) as i32);
         self.open = Some((bucket, bytes));
         Ok(())
     }
@@ -289,11 +308,27 @@ mod tests {
             } else {
                 -1
             };
+            bucket[0..4].copy_from_slice(&next.to_be_bytes());
             bucket[4..8].copy_from_slice(&next.to_be_bytes());
             bucket[CHAIN_BYTES..CHAIN_BYTES + chunk.len()].copy_from_slice(chunk);
             bytes.extend_from_slice(&bucket);
         }
         bytes
+    }
+
+    /// An index that fits half an index bucket's data area is stated to
+    /// start after the chain header, as `SSMBase::writeIndex` states it; a
+    /// longer one spans whole buckets. A 32 KiB bucket holds 32,760 bytes
+    /// of index.
+    #[test]
+    fn an_index_within_half_a_bucket_starts_after_the_chain_header() {
+        assert_eq!(index_bucket_offset(0, 32_768), 8);
+        assert_eq!(index_bucket_offset(16_380, 32_768), 8);
+        assert_eq!(index_bucket_offset(16_381, 32_768), 0);
+        assert_eq!(index_bucket_offset(40_000, 32_768), 0);
+        // 97-byte buckets: 89 bytes of index, of which half is 44.
+        assert_eq!(index_bucket_offset(44, 97), 8);
+        assert_eq!(index_bucket_offset(45, 97), 0);
     }
 
     #[test]

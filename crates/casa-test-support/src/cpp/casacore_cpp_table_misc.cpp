@@ -146,6 +146,29 @@ void keyword_table_name_impl(const std::string& path, const std::string& column,
     std::memcpy(buf, name.c_str(), name.size() + 1);
 }
 
+// The Double array table keyword `keyword` of the table at `path`: its shape,
+// into `shape` (at most `max_ndim` axes), and its elements in casacore's
+// storage order, the first axis fastest (Array::tovector), into `values` (at
+// most `max_values`).
+void keyword_double_array_impl(const std::string& path, const std::string& keyword,
+                               int64_t* shape, int32_t max_ndim, int32_t* out_ndim,
+                               double* values, int64_t max_values, int64_t* out_count) {
+    casacore::Table table(path, casacore::Table::Old);
+    casacore::Array<casacore::Double> array =
+        table.keywordSet().asArrayDouble(casacore::String(keyword));
+    const casacore::IPosition& arrayShape = array.shape();
+    if (static_cast<int32_t>(arrayShape.size()) > max_ndim)
+        throw std::runtime_error("keyword array has more axes than the output holds");
+    if (static_cast<int64_t>(array.nelements()) > max_values)
+        throw std::runtime_error("keyword array has more elements than the output holds");
+    for (size_t axis = 0; axis < arrayShape.size(); ++axis)
+        shape[axis] = arrayShape[axis];
+    *out_ndim = static_cast<int32_t>(arrayShape.size());
+    std::vector<casacore::Double> stored = array.tovector();
+    std::copy(stored.begin(), stored.end(), values);
+    *out_count = static_cast<int64_t>(stored.size());
+}
+
 // A reader that keeps a table and its Int column "id" open between lock
 // periods, as a casacore session holding a table open does. What it read
 // stays cached in the column; a later lock re-reads the table only when the
@@ -692,6 +715,17 @@ int32_t cpp_table_keyword_table_name(const char* path, const char* column,
                                      const char* keyword, char* buf, int32_t bufsize,
                                      char** out_error) {
     try { keyword_table_name_impl(path, column, keyword, buf, bufsize); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_keyword_double_array(const char* path, const char* keyword,
+                                       int64_t* shape, int32_t max_ndim, int32_t* out_ndim,
+                                       double* values, int64_t max_values,
+                                       int64_t* out_count, char** out_error) {
+    try {
+        keyword_double_array_impl(path, keyword, shape, max_ndim, out_ndim, values,
+                                  max_values, out_count);
+        return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

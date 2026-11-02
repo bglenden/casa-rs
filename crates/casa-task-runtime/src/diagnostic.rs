@@ -27,6 +27,9 @@ pub enum DiagnosticCode {
     FutureContract,
     UnsupportedContract,
     MissingRequired,
+    /// A CASA parameter casa-rs does not implement yet was set to a value
+    /// other than its default (#931).
+    Unimplemented,
     InvalidType,
     InvalidValue,
     UnsafeValue,

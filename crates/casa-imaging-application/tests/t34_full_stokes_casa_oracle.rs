@@ -306,7 +306,7 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
             "spw": "0~3",
             "channel_count": 8,
             "niter": iterations,
-            "minor_cycle_length": 25,
+            "cycleniter": 25,
             "write_pb": true,
         })
     };
@@ -515,7 +515,7 @@ fn run(
         "imagename": image_name,
         "imsize": 64,
         "cell": "8arcsec",
-        "phasecenter_field": "0",
+        "phasecenter": "0",
         "field": "0",
         "spw": "0",
         "channel_start": 0,
@@ -523,7 +523,7 @@ fn run(
         "datacolumn": "DATA",
         "stokes": "IQUV",
         "niter": 20,
-        "minor_cycle_length": 20,
+        "cycleniter": 20,
         "hogbom_iteration_mode": "casa-inclusive",
         "minpsffraction": 0.1,
     });

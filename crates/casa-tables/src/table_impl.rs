@@ -818,17 +818,63 @@ impl TableImpl {
         Ok(values)
     }
 
+    /// Lays over freshly loaded rows the cells written while the table was
+    /// read lazily: those of the scalar and array columns read so far (a
+    /// write updates a column read in place) and the sparse ones written to
+    /// the rest. The disk has not these writes, so the rows loaded from it
+    /// would lose them; and a cell written is defined, whatever the disk had.
+    fn overlay_lazy_writes(&self, loaded: &mut LoadedRows) {
+        let mut defined = |column: &str, row_index: usize| {
+            if let Some(undefined) = loaded.undefined_cells.get_mut(row_index) {
+                undefined.remove(column);
+            }
+        };
+        for (column, cached) in &self.loaded_scalar_columns {
+            if let Some(values) = cached.get() {
+                apply_prepared_scalar_column(&mut loaded.rows, column, values);
+                for (row_index, value) in values.iter().enumerate() {
+                    if value.is_some() {
+                        defined(column, row_index);
+                    }
+                }
+            }
+        }
+        for (column, cached) in &self.loaded_array_columns {
+            if let Some(values) = cached.get() {
+                apply_prepared_array_column(&mut loaded.rows, column, values);
+                for (row_index, value) in values.iter().enumerate() {
+                    if value.is_some() {
+                        defined(column, row_index);
+                    }
+                }
+            }
+        }
+        for (column, overrides) in &self.pending_scalar_cells.by_column {
+            apply_prepared_scalar_overrides(&mut loaded.rows, column, overrides);
+            for row_index in overrides.keys() {
+                defined(column, *row_index);
+            }
+        }
+        for (column, overrides) in &self.pending_array_cells.by_column {
+            apply_prepared_array_overrides(&mut loaded.rows, column, overrides);
+            for (row_index, _) in &overrides.rows {
+                defined(column, *row_index);
+            }
+        }
+    }
+
     fn ensure_loaded(&self) -> Result<&LoadedRows, TableError> {
         if let Some(loaded) = self.loaded_rows.get() {
             return Ok(loaded);
         }
-        let loaded = match &self.lazy_rows {
+        let mut loaded = match &self.lazy_rows {
             Some(source) => Self::load_rows_now(source)?,
             None => LoadedRows {
                 rows: Vec::new(),
                 undefined_cells: Vec::new(),
             },
         };
+        self.overlay_lazy_writes(&mut loaded);
         self.loaded_rows
             .set(loaded)
             .expect("initialize immutable row store");
@@ -840,13 +886,14 @@ impl TableImpl {
 
     fn ensure_loaded_mut(&mut self) -> Result<&mut LoadedRows, TableError> {
         if self.loaded_rows.get().is_none() {
-            let loaded = match &self.lazy_rows {
+            let mut loaded = match &self.lazy_rows {
                 Some(source) => Self::load_rows_now(source)?,
                 None => LoadedRows {
                     rows: Vec::new(),
                     undefined_cells: Vec::new(),
                 },
             };
+            self.overlay_lazy_writes(&mut loaded);
             self.loaded_rows
                 .set(loaded)
                 .expect("initialize mutable row store");
@@ -1742,6 +1789,10 @@ impl TableImpl {
     ) -> Result<Option<ScalarValue>, TableError> {
         self.note_change();
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
+            // Cells written before the rows were loaded are in them now; an
+            // older value must not be saved over this one.
+            self.pending_scalar_cells.by_column.clear();
+            self.pending_array_cells.by_column.clear();
             let Some(row) = loaded_rows.rows.get_mut(row_index) else {
                 return Ok(Some(value));
             };
@@ -1782,6 +1833,9 @@ impl TableImpl {
     ) -> Result<Option<ArrayValue>, TableError> {
         self.note_change();
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
+            // As in `set_cached_scalar_cell`.
+            self.pending_scalar_cells.by_column.clear();
+            self.pending_array_cells.by_column.clear();
             let Some(row) = loaded_rows.rows.get_mut(row_index) else {
                 return Ok(Some(value));
             };

@@ -1407,6 +1407,10 @@ impl AipsIo {
         }
     }
 
+    /// The array's shape, then its elements in logical (row-major) order,
+    /// the order [`get_array_value`](Self::get_array_value) rebuilds: an
+    /// array in C layout straight from memory, any other (a Fortran-layout
+    /// array read from a table, a strided view) element by element.
     fn put_array_value(&mut self, value: &ArrayValue) -> AipsIoObjectResult<()> {
         let ndim = u32::try_from(value.ndim()).map_err(|_| AipsIoObjectError::LengthOverflow)?;
         self.put_u32(ndim)?;
@@ -1417,7 +1421,7 @@ impl AipsIo {
 
         match value {
             ArrayValue::Bool(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_bool_slice(slice, false)
                 } else {
                     let packed: Vec<bool> = values.iter().copied().collect();
@@ -1425,7 +1429,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::UInt8(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_u8_slice(slice, false)
                 } else {
                     let packed: Vec<u8> = values.iter().copied().collect();
@@ -1433,7 +1437,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::UInt16(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_u16_slice(slice, false)
                 } else {
                     let packed: Vec<u16> = values.iter().copied().collect();
@@ -1441,7 +1445,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::UInt32(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_u32_slice(slice, false)
                 } else {
                     let packed: Vec<u32> = values.iter().copied().collect();
@@ -1449,7 +1453,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Int16(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_i16_slice(slice, false)
                 } else {
                     let packed: Vec<i16> = values.iter().copied().collect();
@@ -1457,7 +1461,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Int32(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_i32_slice(slice, false)
                 } else {
                     let packed: Vec<i32> = values.iter().copied().collect();
@@ -1465,7 +1469,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Int64(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_i64_slice(slice, false)
                 } else {
                     let packed: Vec<i64> = values.iter().copied().collect();
@@ -1473,7 +1477,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Float32(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_f32_slice(slice, false)
                 } else {
                     let packed: Vec<f32> = values.iter().copied().collect();
@@ -1481,7 +1485,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Float64(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_f64_slice(slice, false)
                 } else {
                     let packed: Vec<f64> = values.iter().copied().collect();
@@ -1489,7 +1493,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Complex32(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_complex32_slice(slice, false)
                 } else {
                     let packed: Vec<Complex32> = values.iter().copied().collect();
@@ -1497,7 +1501,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::Complex64(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_complex64_slice(slice, false)
                 } else {
                     let packed: Vec<Complex64> = values.iter().copied().collect();
@@ -1505,7 +1509,7 @@ impl AipsIo {
                 }
             }
             ArrayValue::String(values) => {
-                if let Some(slice) = values.as_slice_memory_order() {
+                if let Some(slice) = values.as_slice() {
                     self.put_string_slice(slice, false)
                 } else {
                     let packed: Vec<String> = values.iter().cloned().collect();
@@ -2225,6 +2229,33 @@ mod tests {
         let decoded = reader.get_value().expect("get value");
         assert_eq!(decoded, value);
         reader.getend().expect("getend");
+    }
+
+    /// A Fortran-layout array (as tables read them) and a strided view
+    /// round-trip by logical element, not by memory order.
+    #[test]
+    fn put_get_value_keeps_logical_elements_whatever_the_layout() {
+        use ndarray::{ShapeBuilder, s};
+        let at = |index: IxDyn| (index[0] * 10 + index[1]) as f64;
+        let fortran = ArrayD::from_shape_fn(IxDyn(&[2, 3]).f(), at);
+        let strided = ArrayD::from_shape_fn(IxDyn(&[2, 6]), at)
+            .slice_move(s![.., ..;2])
+            .into_dyn();
+        for array in [fortran, strided] {
+            let value = Value::Array(ArrayValue::Float64(array));
+            let mut writer = AipsIo::new_read_write(Cursor::new(Vec::<u8>::new()));
+            writer.putstart("value", 1).expect("putstart");
+            writer.put_value(&value).expect("put value");
+            writer.putend().expect("putend");
+            let bytes = writer
+                .into_inner_typed::<Cursor<Vec<u8>>>()
+                .expect("writer should be cursor")
+                .into_inner();
+            let mut reader = AipsIo::new_read_only(Cursor::new(bytes));
+            assert_eq!(reader.getstart("value").expect("start"), 1);
+            assert_eq!(reader.get_value().expect("get value"), value);
+            reader.getend().expect("getend");
+        }
     }
 
     #[test]

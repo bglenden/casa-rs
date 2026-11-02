@@ -48,7 +48,8 @@ fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
     let field = report.fields.get(&1).expect("transfer field");
     assert_eq!(field.field_name, "TARGET0");
     assert!((field.fit_fluxd - 4.0).abs() <= 1.0e-9);
-    assert!((field.fit_ref_frequency_hz - 1.0005e9).abs() <= 1.0);
+    // The window's middle channel, CASA's solFreq.
+    assert!((field.fit_ref_frequency_hz - 1.001e9).abs() <= 1.0);
     assert_eq!(field.spw_results.get(&0).expect("spw 0").num_sol[0], 2.0);
 
     let transfer_rows = read_field_cparams(&output_table, 1);

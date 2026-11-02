@@ -404,6 +404,16 @@ impl MEpoch {
         }
     }
 
+    /// Creates a new `MEpoch` from MJD seconds (a MeasurementSet `TIME`).
+    ///
+    /// The seconds are scaled to days as casacore's `Quantity` conversion
+    /// scales them, by the precomputed factor `1 / 86400`: multiplying and
+    /// dividing differ by several ulps at MeasurementSet epochs, which is
+    /// observable in exact frequency coordinates.
+    pub fn from_mjd_seconds(seconds: f64, refer: EpochRef) -> Self {
+        Self::from_mjd(seconds * (1.0 / SECONDS_PER_DAY), refer)
+    }
+
     /// Creates a new `MEpoch` from a [`Quantity`] (expected in time units) and
     /// reference type.
     ///

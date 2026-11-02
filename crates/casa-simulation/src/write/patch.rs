@@ -37,7 +37,7 @@
 //! sessions' steps, bit for bit; an incremental `predict` adds to the DATA
 //! on disk rather than within the predictor, which rounds apart.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
 use casa_imaging_runtime::{
@@ -60,8 +60,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::components::{self, add_components};
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, noise_jobs};
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, batch_scales, noise_jobs};
 use super::prediction::{PredictionStage, device_noise};
+use super::resources::{NoiseScales, admit_field_grids};
 use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
 use crate::session::Simulator;
@@ -87,13 +88,17 @@ struct PatchShape {
     columns: usize,
     /// Antennas of the MeasurementSet.
     antennas: usize,
-    /// Whether the noise needs each row's airmasses and exposure
-    /// (`tsys-manual`).
+    /// Whether the noise needs each row's airmasses and exposure (the Tsys
+    /// modes).
     airmass: bool,
-    /// Whether the corruption needs each row's TIME: gains, leakage or
-    /// `tsys-manual`. (The gain and leakage terms it reads hold their own
+    /// Whether the corruption needs each row's TIME: gains, leakage or the
+    /// Tsys modes. (The gain and leakage terms it reads hold their own
     /// admission, from `setgain` and `setleakage`.)
     times: bool,
+    /// What a batch's `tsys-atm` noise holds beside the cells. The rows on
+    /// disk need not come in whole integrations, so it is bounded by the
+    /// rows alone.
+    noise_scales: NoiseScales,
 }
 
 impl PatchShape {
@@ -109,6 +114,8 @@ struct PatchAdmission {
     plan: MeasurementSetWritePlan,
     cores: CoreAllocation,
     block_rows: usize,
+    /// Bytes the per-field model grids may hold.
+    grid_bytes: u64,
     reservation: Reservation,
 }
 
@@ -157,6 +164,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
         times: noise_varies_by_row(plan) || plan.corrupts_by_jones(),
+        noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
     let mut ms = MeasurementSet::open(session.path())
@@ -170,7 +178,11 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     }
     refuse_partly_flagged_rows(&ms, &shape, admission.plan.batch_rows().max(1))?;
     if let Some(stage) = &mut prediction {
-        stage.start(admission.block_rows, admission.cores.streaming_workers);
+        stage.start(
+            admission.block_rows,
+            admission.cores.streaming_workers,
+            admission.grid_bytes,
+        );
     }
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
@@ -219,6 +231,10 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let written = writer
         .finish_mutation()
         .map_err(write_error("finish the MAIN patch"))?;
+    let (grid_preparations, grid_prepare) = patch
+        .prediction
+        .as_ref()
+        .map_or((0, Duration::ZERO), PredictionStage::grid_preparations);
     tracing::info!(
         rows = shape.rows,
         columns = ?columns,
@@ -227,6 +243,9 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         backend = ?patch.prediction.as_ref().map(PredictionStage::backend),
         workers = admission.cores.streaming_workers,
         block_rows = admission.block_rows,
+        grid_bytes = admission.grid_bytes,
+        grid_preparations,
+        grid_prepare_s = grid_prepare.as_secs_f64(),
         reserved_bytes = admission.reservation.memory(),
         peak_reserved_bytes = window.close(),
         bytes_written = written.bytes_written,
@@ -339,12 +358,18 @@ impl Patch<'_> {
                 .as_ref()
                 .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, reads_data)))
         };
+        let scales = batch_scales(
+            (plan, NoiseContext::of(session), team),
+            (geometry, runs),
+            &noised,
+            &self.shape.noise_scales,
+        )?;
         let mut jobs = noise_jobs(
             (plan, NoiseContext::of(session), team),
             &self.receptors,
             (geometry, runs),
             (first as u64, &mut self.data),
-            samples,
+            (samples, &scales),
             &noised,
         );
         let correlations = self.shape.correlations;
@@ -681,6 +706,9 @@ fn admit_patch(
     let batch_rows = plan.batch_rows().max(1);
     let demand = |cores: CoreAllocation, block_rows: usize| {
         pipeline_bytes(shape, columns.len(), batch_rows)
+            + shape
+                .noise_scales
+                .bytes(batch_rows, cores.streaming_workers)
             + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
     };
     // As `close` admits a new MeasurementSet's pipeline: a batch predicted
@@ -707,10 +735,12 @@ fn admit_patch(
     )
     .map_err(SimulatorError::admission)?;
     reservation.join(pipeline);
+    let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
     Ok(PatchAdmission {
         plan,
         cores,
         block_rows,
+        grid_bytes,
         reservation,
     })
 }

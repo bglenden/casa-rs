@@ -23,11 +23,11 @@ use casa_coordinates::{
     StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
-use casa_imaging_model::CorrelationType;
 use casa_simulation::predict::{
     ModelPredictor, PredictError, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,
 };
+use casa_types::Correlation;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn};
@@ -37,7 +37,7 @@ const N: usize = 32;
 const CELL_RAD: f64 = 1.0e-5;
 const CENTRE_RAD: [f64; 2] = [1.2, -0.4];
 const FREQUENCY_HZ: f64 = 100.0e9;
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 
 /// A one-Stokes CASA model image.
 struct Model {
@@ -106,7 +106,7 @@ impl Model {
     }
 }
 
-fn predictor(model: &SkyModel, correlations: &[CorrelationType]) -> ModelPredictor {
+fn predictor(model: &SkyModel, correlations: &[Correlation]) -> ModelPredictor {
     ModelPredictor::new(model, correlations, CENTRE_RAD, &PredictOptions::default())
         .expect("predictor")
 }
@@ -356,10 +356,10 @@ fn a_stokes_i_model_leaves_the_cross_hands_at_zero() {
         .open(dir.path())
         .expect("model");
     let circular = [
-        CorrelationType::CircularRr,
-        CorrelationType::CircularRl,
-        CorrelationType::CircularLr,
-        CorrelationType::CircularLl,
+        Correlation::RR,
+        Correlation::RL,
+        Correlation::LR,
+        Correlation::LL,
     ];
     let values = predict(
         &predictor(&model, &circular),

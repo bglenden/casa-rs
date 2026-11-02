@@ -201,7 +201,7 @@ fn application_reconciles_between_bounded_minor_cycles() {
         &image_name,
         json!({
             "niter": 3,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": 3,
             "gain": 0.37,
             "threshold": "1e-12Jy",
@@ -263,7 +263,7 @@ fn application_uses_reported_iterations_for_casa_inclusive_continuation() {
         &root.path().join("unlimited-major-cycles"),
         json!({
             "niter": 3,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "hogbom_iteration_mode": "casa-inclusive",
             "nmajor": -1,
             "gain": 0.37,
@@ -300,7 +300,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     let static_result = execute(&request(
         &static_ms,
         &static_image,
-        json!({ "mask_box": "4,4,11,11" }),
+        json!({ "mask": "4,4,11,11" }),
     ))
     .expect("static-mask solve");
     assert!(
@@ -347,7 +347,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     let image_result = execute(&request(
         &image_ms,
         &image_output,
-        json!({ "mask_image": mask_path }),
+        json!({ "mask": mask_path }),
     ))
     .expect("reprojected image-mask solve");
     assert!(!image_result.minor_cycles.is_empty());
@@ -370,7 +370,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
             "minbeamfrac": 0.0,
             "growiterations": 0,
             "niter": 2,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": 2,
             "gain": 0.1,
         }),

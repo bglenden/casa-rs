@@ -193,29 +193,31 @@ impl Table {
         row: usize,
         slicer: &Slicer,
     ) -> Result<Value, TableError> {
+        let array = self.array_cell_to_slice(column, row)?;
+        validate_slicer_bounds(slicer, array.shape(), row, column)?;
+        Ok(Value::Array(slice_array_value(array, slicer)))
+    }
+
+    /// The array cell a slice is read from or written to. Only that cell is
+    /// loaded: a table read lazily keeps the rest of its rows on disk.
+    fn array_cell_to_slice(&self, column: &str, row: usize) -> Result<&ArrayValue, TableError> {
         let row_count = self.row_count();
-        let cell = self
-            .inner
-            .row(row)?
-            .ok_or(TableError::RowOutOfBounds {
+        if row >= row_count {
+            return Err(TableError::RowOutOfBounds {
                 row_index: row,
                 row_count,
-            })?
-            .get(column)
-            .ok_or_else(|| TableError::ColumnNotFound {
-                row_index: row,
-                column: column.to_string(),
-            })?;
-        match cell {
-            Value::Array(av) => {
-                let shape = av.shape();
-                validate_slicer_bounds(slicer, shape, row, column)?;
-                Ok(Value::Array(slice_array_value(av, slicer)))
-            }
-            _ => Err(TableError::CellNotArray {
+            });
+        }
+        match self.get_array_cell(row, column) {
+            Err(TableError::ColumnTypeMismatch { .. }) => Err(TableError::CellNotArray {
                 row,
                 column: column.to_string(),
             }),
+            Err(TableError::SchemaColumnUnknown { .. }) => Err(TableError::ColumnNotFound {
+                row_index: row,
+                column: column.to_string(),
+            }),
+            other => other,
         }
     }
 
@@ -235,32 +237,12 @@ impl Table {
         slicer: &Slicer,
         data: &ArrayValue,
     ) -> Result<(), TableError> {
-        let row_count = self.row_count();
-        let _ = self.inner.row(row)?.ok_or(TableError::RowOutOfBounds {
-            row_index: row,
-            row_count,
-        })?;
-        let cell = self
-            .inner
-            .row_mut(row)?
-            .expect("validated row must exist")
-            .get_mut(column)
-            .ok_or_else(|| TableError::ColumnNotFound {
-                row_index: row,
-                column: column.to_string(),
-            })?;
-        match cell {
-            Value::Array(av) => {
-                let shape = av.shape();
-                validate_slicer_bounds(slicer, shape, row, column)?;
-                put_slice_array_value(av, slicer, data);
-                Ok(())
-            }
-            _ => Err(TableError::CellNotArray {
-                row,
-                column: column.to_string(),
-            }),
-        }
+        let mut array = self.array_cell_to_slice(column, row)?.clone();
+        validate_slicer_bounds(slicer, array.shape(), row, column)?;
+        put_slice_array_value(&mut array, slicer, data);
+        // As a cell write does: the new cell replaces the old one without
+        // loading the table's other rows.
+        self.write_array_cell_bound(row, column, array)
     }
 
     /// Reads a sub-region of an array cell for each row in `row_range`,

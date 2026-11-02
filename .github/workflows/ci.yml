@@ -23,6 +23,9 @@ jobs:
       # Line tables keep file:line in panic backtraces while avoiding full
       # debug info in ~130 linked test binaries.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Make PyO3's cached configuration follow the interpreter installed
+      # below, even when ubuntu-latest changes its system Python.
+      PYO3_PYTHON: python3
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -31,6 +34,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Set up Python for Rust tests
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
@@ -93,9 +101,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-
-      - name: Check generated frontend bindings
-        run: scripts/generate-frontend-bindings.sh --check
 
       - name: Test Python package
         run: scripts/test-python-package.sh
@@ -177,8 +182,9 @@ jobs:
       - name: Run smoke gate
         run: scripts/test-smoke.sh
 
+  # Before merge too (#931): the real release binaries end to end, from the
+  # command line and the suite's Python, with the checkout moved aside.
   suite_install:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -187,13 +193,22 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install FFTW development libraries
+        run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves; pull requests restore main's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
 
       - name: Test suite installer
-        run: scripts/test-install-suite.sh
+        run: scripts/test-install-suite.sh --hide-checkout
 
   coverage:
     if: startsWith(github.ref, 'refs/tags/v')

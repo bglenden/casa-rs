@@ -9,6 +9,7 @@ import json
 import keyword
 from pathlib import Path
 import sys
+import textwrap
 from typing import Any
 
 
@@ -87,9 +88,7 @@ def order_surfaces_by_application_catalog(
     if not isinstance(applications, list):
         raise GenerationError("application-catalog.json must contain an applications array")
     task_ids = [
-        application.get("id")
-        for application in applications
-        if isinstance(application, dict) and application.get("kind") == "task"
+        application.get("id") for application in applications if isinstance(application, dict)
     ]
     if not all(isinstance(surface_id, str) for surface_id in task_ids):
         raise GenerationError("every task application must have a string id")
@@ -268,6 +267,101 @@ def parameters_block(
     ]
 
 
+def python_literal(value: dict[str, Any]) -> str:
+    """A contract parameter value as Python source, as CASA's signatures
+    write their defaults."""
+
+    kind = value.get("kind")
+    payload = value.get("value")
+    if kind == "bool" and isinstance(payload, bool):
+        return repr(payload)
+    if kind == "integer" and isinstance(payload, int) and not isinstance(payload, bool):
+        return repr(payload)
+    if kind == "float" and isinstance(payload, (int, float)) and not isinstance(payload, bool):
+        return repr(float(payload))
+    if kind == "string" and isinstance(payload, str):
+        return repr(payload)
+    if kind == "array" and isinstance(payload, list):
+        return "[" + ", ".join(python_literal(item) for item in payload) + "]"
+    if kind == "table" and isinstance(payload, dict):
+        return "{" + ", ".join(f"{key!r}: {python_literal(item)}" for key, item in payload.items()) + "}"
+    raise GenerationError(f"cannot write the parameter value {value!r} as Python")
+
+
+def casa_parameter(
+    binding: dict[str, Any],
+    concepts: dict[tuple[str, int], dict[str, Any]],
+    *,
+    stub: bool,
+) -> str:
+    """One parameter of a CASA signature: CASA's literal default, or, for a
+    keyword-only casa-rs control without one, the unset marker."""
+
+    default = binding.get("default", {})
+    if default.get("kind") == "literal":
+        text = "..." if stub else python_literal(default["value"])
+        annotation = binding_annotation(binding, concepts)
+    else:
+        text = "..." if stub else "_UNSET"
+        annotation = binding_annotation(binding, concepts) + ("" if stub else " | object")
+    return f"    {binding['name']}: {annotation} = {text},"
+
+
+def casa_signature_lines(
+    surface: dict[str, Any],
+    concepts: dict[tuple[str, int], dict[str, Any]],
+    *,
+    stub: bool,
+) -> list[str]:
+    """A task that mimics a CASA task: CASA's parameters, positional, in
+    CASA's order and with CASA's defaults, then casa-rs's own controls as
+    keyword-only arguments; it returns CASA's value (#931)."""
+
+    surface_id = str(surface["id"])
+    bindings = ordered_bindings(surface)
+    keyword_only = [
+        binding
+        for binding in bindings
+        if binding["projections"]["python"].get("keyword_only", False)
+    ]
+    positional = [binding for binding in bindings if binding not in keyword_only]
+    lines = [f"def {surface_id}("]
+    lines.extend(casa_parameter(binding, concepts, stub=stub) for binding in positional)
+    if keyword_only:
+        lines.append("    *,")
+        lines.extend(casa_parameter(binding, concepts, stub=stub) for binding in keyword_only)
+    lines.append(") -> Any:")
+    if stub:
+        return [*lines, "    ...", ""]
+    summary = str(surface.get("summary", "Run the catalog task.")).replace('"""', "")
+    casa_task = surface["casa_task"]
+    pending: dict[int, list[str]] = {}
+    for binding in bindings:
+        if binding.get("unimplemented"):
+            pending.setdefault(int(binding["unimplemented"]["issue"]), []).append(
+                f"``{binding['name']}``"
+            )
+    notes = [
+        f"Accepted only at CASA's default, where CASA reads them, until #{issue}: "
+        f"{', '.join(names)}."
+        for issue, names in sorted(pending.items())
+    ]
+    return [
+        *lines,
+        f'    """{summary}',
+        "",
+        f"    CASA's ``{casa_task}``: its parameters, defaults and return value.",
+        *(
+            f"    {line}"
+            for note in notes
+            for line in textwrap.wrap(note, width=72, break_on_hyphens=False)
+        ),
+        '    """',
+        f"    return _call_casa({surface_id}, locals())",
+        "",
+    ]
+
+
 def render_task_module(
     surfaces: list[dict[str, Any]],
     concepts: dict[tuple[str, int], dict[str, Any]],
@@ -285,10 +379,10 @@ def render_task_module(
         "",
         "from collections.abc import Mapping",
         "from os import PathLike",
-        "from typing import Literal, TypeAlias",
+        "from typing import Any, Literal, TypeAlias",
         "",
-        "from ..parameters import ParameterData, TaskParameters",
-        "from ._runner import TaskCompletion, run as _run",
+        "from ..parameters import ParameterData",
+        "from ._runner import TaskCompletion, _call_casa, _run",
         "",
         "StrPath: TypeAlias = str | PathLike[str]",
     ]
@@ -304,28 +398,18 @@ def render_task_module(
         )
     lines.extend(["", ""])
     for surface in tasks:
+        if surface.get("casa_task"):
+            lines.extend(casa_signature_lines(surface, concepts, stub=stub))
+            continue
         surface_id = str(surface["id"])
         bindings = ordered_bindings(surface)
         names = [str(binding["name"]) for binding in bindings]
         lines.append(f"def {surface_id}(")
         lines.append("    *,")
+        # CASA's parameters only: the task runs in the current directory,
+        # and a profile is passed as values (`gaincal(**parameters.load(p))`).
         lines.extend(parameters_block(bindings, concepts, stub=stub))
-        lines.extend(
-            [
-                "    parameters: TaskParameters | None = None," if not stub else "    parameters: TaskParameters | None = ...," ,
-                "    profile: StrPath | None = None," if not stub else "    profile: StrPath | None = ... ,",
-                '    base_source: Literal["defaults", "last", "last_successful"] = "defaults",' if not stub else '    base_source: Literal["defaults", "last", "last_successful"] = ... ,',
-                "    workspace: StrPath | None = None," if not stub else "    workspace: StrPath | None = ... ,",
-                "    save_last: bool = True," if not stub else "    save_last: bool = ... ,",
-                "    binary: StrPath | None = None," if not stub else "    binary: StrPath | None = ... ,",
-                "    check: bool = True," if not stub else "    check: bool = ... ,",
-                "    timeout: float | None = None," if not stub else "    timeout: float | None = ... ,",
-                "    env: Mapping[str, str] | None = None," if not stub else "    env: Mapping[str, str] | None = ... ,",
-                "    confirm_overwrite: bool = False," if not stub else "    confirm_overwrite: bool = ... ,",
-                "    confirm_mutation: bool = False," if not stub else "    confirm_mutation: bool = ... ,",
-                ") -> TaskCompletion:",
-            ]
-        )
+        lines.append(") -> TaskCompletion:")
         if stub:
             lines.extend(["    ...", ""])
             continue
@@ -334,22 +418,7 @@ def render_task_module(
         lines.extend(
             [
                 f'    """{summary}"""',
-                f"    overrides = _explicit(locals(), {tuple_text})",
-                "    return _run(",
-                f'        "{surface_id}",',
-                "        parameters=parameters,",
-                "        profile=profile,",
-                "        base_source=base_source,",
-                "        overrides=overrides,",
-                "        workspace=workspace,",
-                "        save_last=save_last,",
-                "        binary=binary,",
-                "        check=check,",
-                "        timeout=timeout,",
-                "        env=env,",
-                "        confirm_overwrite=confirm_overwrite,",
-                "        confirm_mutation=confirm_mutation,",
-                "    )",
+                f'    return _run("{surface_id}", _explicit(locals(), {tuple_text}))',
                 "",
             ]
         )
@@ -385,11 +454,11 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
     names = [str(surface["id"]) for surface in surfaces if surface["kind"] == "task"]
     imports = "\n".join(f"    {name}," for name in names)
     exports = [
-        "CasarsBinaryNotFoundError",
-        "TaskBaseSource",
+        "TaskBinaryNotFoundError",
         "TaskCompletion",
         "TaskExecutionError",
         "TaskInvocationError",
+        "TaskParameterError",
         "TaskResultError",
         "TASK_SURFACES",
         "run",
@@ -404,11 +473,11 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
             imports,
             ")",
             "from ._runner import (",
-            "    CasarsBinaryNotFoundError,",
-            "    TaskBaseSource,",
+            "    TaskBinaryNotFoundError,",
             "    TaskCompletion,",
             "    TaskExecutionError,",
             "    TaskInvocationError,",
+            "    TaskParameterError,",
             "    TaskResultError,",
             "    run,",
             ")",

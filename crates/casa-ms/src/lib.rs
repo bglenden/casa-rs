@@ -42,6 +42,7 @@
 //! ```
 
 pub mod builder;
+mod casa_return;
 pub mod column_def;
 pub mod columns;
 pub mod derived;
@@ -53,15 +54,15 @@ pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
 pub mod msexplore;
-mod observation_owner;
+pub mod observation_io;
 pub mod plot;
 mod plot_data;
+pub mod plot_document;
 mod plot_visibility;
 pub mod presentation;
 mod probes;
 pub mod schema;
-mod selected_observation;
-mod selected_observation_buffer;
+pub mod scratch_columns;
 mod selected_pointing;
 pub mod selection;
 pub mod shadowing;
@@ -69,8 +70,10 @@ pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
 mod subtable_overrides;
+mod subtable_rows;
 pub mod subtables;
 pub mod task_contract;
+mod task_front_end;
 pub mod transform;
 pub mod validate;
 pub mod visibility_buffer;
@@ -80,12 +83,16 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
-pub use ephemeris::{SelectedObservationEphemeris, SelectedObservationEphemerisError};
+pub use casa_return::{
+    FLAGDATA_SUMMARY_NAME, flagdata_empty_record, flagdata_summary_record, flagmanager_list_record,
+};
+pub use ephemeris::{EphemerisBudget, PhaseCentreEphemeris, PhaseCentreEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::{
-    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
-    FlagVersionEntry, FlaggingError, QuackMode, delete_flag_version, flagdata, flagdata_path,
-    list_flag_versions, rename_flag_version, restore_flag_version, save_flag_version,
+    FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
+    FlagMerge, FlagSummaryBreakdown, FlagVersionEntry, FlaggingError, QuackMode,
+    delete_flag_version, flagdata, flagdata_path, list_flag_versions, rename_flag_version,
+    restore_flag_version, save_flag_version, save_next_flag_backup,
 };
 pub use listobs::{
     ListObsOptions as MeasurementSetSummaryOptions,
@@ -95,7 +102,6 @@ pub use listobs::{
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
-pub(crate) use ms::{MainRowSelectionCursor, MainRowWalk};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
@@ -114,12 +120,6 @@ pub use msexplore::{
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request,
 };
-pub use observation_owner::{
-    ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
-    SelectedObservationResolutionRequest, resolve_selected_observation,
-};
-#[cfg(unix)]
-pub use observation_owner::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 pub use plot::{
     ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
     ListObsPlotSpec as MeasurementSetPlotSpec,
@@ -131,44 +131,28 @@ pub use plot_data::{
     MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
     MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
 };
+pub use plot_document::{
+    MeasurementSetPlot, MeasurementSetPlotError, MeasurementSetPlotRequest,
+    PLOT_DOCUMENT_DEFAULT_MAX_POINTS, PlotDocument, build_measurement_set_plot,
+};
 pub use probes::{
     MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
     MeasurementSetSpectralWindowContext, MeasurementSetSubtableContext, MeasurementSetTimeRange,
     MeasurementSetUvRange,
 };
 pub use schema::SubtableId;
-pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
-pub use selected_observation::{
-    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    DeferredSelectedObservationAccess, FilledObservationBlock, ObservationSourceBinding,
-    ProjectedObservationBlock, SPECTRAL_ENVELOPE_KEY_BYTES, SelectedObservationBlock,
-    SelectedObservationBlockSource, SelectedObservationContentBudget,
-    SelectedObservationContentPlan, SelectedObservationContentPlanError,
-    SelectedObservationContentRequirements, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationNumericGeometry,
-    SelectedObservationReferenceDataBudget, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
-};
-pub use selected_observation_buffer::{
-    SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
-};
-pub(crate) use selected_observation_buffer::{
-    SelectedObservationBuffer, SelectedObservationBufferCapacity, SelectedObservationBufferRequest,
-    SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn,
-};
+pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn, initial_model_visibility};
 pub(crate) use selected_pointing::{
-    PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
-    PreparedSelectedPointingCatalog, SelectedPointingCatalogMeasurements,
-    SelectedPointingQueryDomain,
+    PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
-    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
-    parse_spw_selector,
+    ChannelSelection, ChannelSelectionSegment, IntentSelector, SpwSelector, parse_intent_selector,
+    parse_numeric_id_selector, parse_spw_selector,
 };
 pub use selection::{
     MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
-    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, validate_ms_selector_edit,
+    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, UvDistanceInterval,
+    UvDistanceLimit, parse_uv_distance_intervals, validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
@@ -182,10 +166,8 @@ pub use simulation::{
     tutorial_vla_a_antennas,
 };
 pub use simulation_task::{
-    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
-    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveRunTaskRequest,
-    SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
-    simobserve_protocol_descriptor, simobserve_task_schema_bundle,
+    SimobserveFamilyManifest, SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult,
+    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
@@ -208,6 +190,7 @@ pub use task_contract::{
     MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
     mstransform_task_schema_bundle,
 };
+pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
 };

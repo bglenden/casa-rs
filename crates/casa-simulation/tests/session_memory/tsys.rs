@@ -20,6 +20,11 @@ fn a_tsys_session_holds_its_admission_and_no_more_for_more_rows() {
         return;
     }
     TSYS_NOISE.store(true, Ordering::Relaxed);
+    holds_its_admission_and_no_more_for_more_rows("tsys-manual");
+}
+
+/// The law, the noise [`super::noise`] gives being `mode`'s.
+pub(super) fn holds_its_admission_and_no_more_for_more_rows(mode: &str) {
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
@@ -29,7 +34,7 @@ fn a_tsys_session_holds_its_admission_and_no_more_for_more_rows() {
     let held = cases.map(|case| measure(case, root.path(), &measures));
     for ((case, pass), session) in cases.iter().zip(&passes).zip(&held) {
         println!(
-            "{} with tsys-manual: {} rows in {} batches of {}: heap {} to {}, admitted {}",
+            "{} with {mode}: {} rows in {} batches of {}: heap {} to {}, admitted {}",
             case.name,
             pass.rows,
             pass.batches,
@@ -49,12 +54,12 @@ fn a_tsys_session_holds_its_admission_and_no_more_for_more_rows() {
     let ([few, many], [_, many_pass]) = (held, passes);
     let allowance = ROWS_ALLOWANCE_BYTES + write_batch_bytes(cases[1], &many_pass);
     println!(
-        "rows x10 - base with tsys-manual: {} bytes (allowed {allowance})",
+        "rows x10 - base with {mode}: {} bytes (allowed {allowance})",
         many.least as i64 - few.least as i64
     );
     assert!(
         many.least <= few.least + allowance,
-        "rows x10 with tsys-manual: the heap grew {} bytes, against {} for the base",
+        "rows x10 with {mode}: the heap grew {} bytes, against {} for the base",
         many.least,
         few.least
     );

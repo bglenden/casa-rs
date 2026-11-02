@@ -116,6 +116,21 @@ fn metal_mosaics_match_the_cpu() {
     }
 }
 
+/// #841 Phase 6b: a non-square image of non-square cells on Metal matches
+/// the CPU route product by product.
+#[test]
+fn metal_non_square_image_matches_the_cpu() {
+    let (observation, controls) = super::non_square::non_square_run();
+    let mut probe = controls.clone();
+    probe["niter"] = json!(0);
+    if no_device(&observation.try_image("probe-non-square", on_metal(probe))) {
+        return;
+    }
+    let (_, metal) = observation.image("metal-non-square", on_metal(controls.clone()));
+    let (_, cpu) = observation.image("cpu-non-square", controls);
+    assert_products_agree(&metal, &cpu, "non-square");
+}
+
 #[test]
 fn metal_standard_mfs_hogbom_recovers_the_analytic_sky_like_the_cpu() {
     let controls = json!({

@@ -62,7 +62,7 @@ pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDi
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
@@ -71,6 +71,7 @@ use casa_imaging_operator::{
     SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
+use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -166,7 +167,7 @@ impl ModelLayout {
     /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         machine: FtMachine,
         beams: Option<MosaicBeams>,
     ) -> Result<Self, PredictError> {
@@ -364,7 +365,8 @@ impl ModelOperator {
                 return Ok(());
             };
             let images = vec![model.read_plane(plane)?];
-            let factor = beam.map(|(pattern, centre)| pattern.power_plane(model, plane, centre));
+            let factor =
+                beam.map(|(pattern, centre)| beam::power_plane(pattern, model, plane, centre));
             self.operator
                 .fill_model_plane(&ModelPlane { images }, factor.as_ref(), target)?;
             Ok::<_, PredictError>(())
@@ -409,7 +411,7 @@ impl Default for PredictOptions {
 pub struct PredictRow<'a> {
     /// Baseline coordinates in metres towards the model's tangent point, in
     /// GridFT's convention: the row's `UVW` rotated by
-    /// [`casa_ms::derived::GridFtProjection`].
+    /// [`casa_imaging_model::GridFtProjection`].
     pub uvw_m: [f64; 3],
     /// GridFT's phase shift in metres (`−dphase`), from the same rotation.
     pub phase_shift_m: f64,
@@ -452,7 +454,7 @@ impl ModelPredictor {
     /// plane that cannot be read.
     pub fn new(
         model: &SkyModel,
-        correlations: &[CorrelationType],
+        correlations: &[Correlation],
         pointing_rad: [f64; 2],
         options: &PredictOptions,
     ) -> Result<Self, PredictError> {

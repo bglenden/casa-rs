@@ -15,28 +15,40 @@ The public surface is split into three concerns:
 `casars.imexplore` adds NumPy/Matplotlib helpers for reading and drawing image
 planes.
 
-The generated task wrappers render a current-contract TOML draft through the Rust
-runtime and delegate execution, safety controls, and Last persistence to
-`casars run`. Every task draft also exposes the exact versioned Rust provider
-invocation; completions retain that projection, and requests the catalog
-refuses raise `ValueError` before process launch. Python does not own provider
-schemas, parameter defaults, capability interpretation, task-result decoding,
-or a second provider subprocess engine.
+A task call resolves its parameters through the Rust runtime, finds the
+task's executable through the Rust resolver, and starts it directly with
+`--json-run -`: the values the call set go to its stdin, its log lines reach
+`sys.stderr` as they arrive, and its typed reply on stdout says how it ended.
+A Python task call saves no Last. Every task draft also exposes the exact
+versioned Rust provider invocation; completions retain that projection,
+requests the catalog refuses raise `ValueError` (or `TypeError`) before
+anything starts, a task that refuses its parameters raises
+`casars.tasks.TaskParameterError`, a `ValueError`, and one that does not
+succeed raises `casars.tasks.TaskExecutionError`. A task whose surface names
+its CASA task has CASA's signature and returns CASA's value. Python does not
+own provider schemas, parameter defaults, capability interpretation, or
+task-result decoding: the generated signatures carry the contract's
+defaults.
+
+The executable comes from the task's `CASARS_<APP>_BIN` override, a suite
+root (`CASARS_SUITE_ROOT`, or the installed suite this package belongs to),
+or, for a package built from a checkout, that checkout's `debug` or `release`
+build. A wheel installed outside a suite, such as one from PyPI, needs
+`CASARS_SUITE_ROOT` or the override to run tasks; the in-process
+`casars.data`, `casars.tools` and `casars.simutil` need no executables.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
-profile contract shared with the `casars` command line. All 27 catalog tasks
-have generated CASA-named wrappers and concrete typing stubs under the single
-`casars.tasks` namespace; the generated implementation stays private. These
-profile-aware wrappers support Defaults, Last, Last Successful, a named TOML
-file, or an existing typed draft.
+profile contract shared with the task executables' command lines. All 26
+catalog tasks have generated CASA-named wrappers and concrete typing stubs
+under the single `casars.tasks` namespace; the generated implementation stays
+private. The wrappers take CASA's parameters; a draft runs with
+`TaskParameters.run(...)` or `casars.tasks.run(task, draft)`, and a saved
+profile as `tasks.gaincal(**casars.parameters.load(path))`.
 
-Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) is the
-primary Python application binding. The wheel contains one native `_core`
-library that exports both the generated frontend symbols and the deliberately
-retained PyO3 object layer. PyO3 remains only for `Image` and `Table`, where
-high-volume NumPy array transfer is the required exception; tasks, parameters,
-task results, and MeasurementSet plot documents all use the generated Rust
-boundary. See the profile guide for source
+Python binds Rust through PyO3 alone. The wheel contains one native module,
+`casars._core`, which carries the parameter runtime, task results and
+MeasurementSet plot documents as well as the `Image` and `Table` NumPy object
+layer and the `casars.tools` classes. See the profile guide for source
 precedence, versioning, and managed Last paths.
 
 Documentation:

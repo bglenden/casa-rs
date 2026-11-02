@@ -626,6 +626,27 @@ impl Table {
     pub fn is_cell_defined(&self, row_index: usize, column: &str) -> Result<bool, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        // A table read lazily answers from the cell's own store, without
+        // loading its rows (a record cell is always defined, so it is not
+        // asked there).
+        let record_column = matches!(
+            self.schema()
+                .and_then(|schema| schema.column(column))
+                .map(ColumnSchema::column_type),
+            Some(ColumnType::Record)
+        );
+        if !record_column {
+            match self.inner.array_cell(row_index, column)? {
+                crate::table_impl::LazyArrayLookup::Hit(_) => return Ok(true),
+                crate::table_impl::LazyArrayLookup::Missing => return Ok(false),
+                crate::table_impl::LazyArrayLookup::Unknown => {}
+            }
+            match self.inner.scalar_cell(row_index, column)? {
+                crate::table_impl::LazyScalarLookup::Hit(_) => return Ok(true),
+                crate::table_impl::LazyScalarLookup::Missing => return Ok(false),
+                crate::table_impl::LazyScalarLookup::Unknown => {}
+            }
+        }
         if let Some(undefined) = self
             .inner
             .undefined_cells()?
@@ -660,6 +681,14 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        // Ask the lazy store first: `cell` loads every row of the table.
+        match self.inner.array_cell(row_index, column)? {
+            crate::table_impl::LazyArrayLookup::Hit(array) => {
+                return Ok(Some(array.shape().to_vec()));
+            }
+            crate::table_impl::LazyArrayLookup::Missing => return Ok(None),
+            crate::table_impl::LazyArrayLookup::Unknown => {}
+        }
         match self.cell(row_index, column)? {
             None => Ok(None),
             Some(Value::Array(array)) => Ok(Some(array.shape().to_vec())),
@@ -1334,8 +1363,10 @@ impl Table {
         Ok(())
     }
 
+    /// Checks that `row_index` is a row, without loading the rows of a table
+    /// read lazily (`row` does).
     fn require_row(&self, row_index: usize) -> Result<(), TableError> {
-        self.row(row_index).map(|_| ())
+        self.require_row_index_without_loading_rows(row_index)
     }
 }
 

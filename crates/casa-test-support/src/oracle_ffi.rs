@@ -250,6 +250,17 @@ unsafe extern "C" {
         bufsize: i32,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_keyword_double_array(
+        path: *const std::ffi::c_char,
+        keyword: *const std::ffi::c_char,
+        shape: *mut i64,
+        max_ndim: i32,
+        out_ndim: *mut i32,
+        values: *mut f64,
+        max_values: i64,
+        out_count: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     pub(crate) fn cpp_table_held_reader_open(
         path: *const std::ffi::c_char,
         out_reader: *mut *mut std::ffi::c_void,
@@ -490,6 +501,28 @@ unsafe extern "C" {
     ) -> i32;
     pub(crate) fn cpp_table_verify_ssm_string_array(
         path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_ssm_long_strings(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_ssm_long_strings(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_ssm_long_strings_by_column(
+        path: *const std::ffi::c_char,
+        big_endian: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_update_ssm_long_strings(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_ssm_statistics(
+        path: *const std::ffi::c_char,
+        out_statistics: *mut i64,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     pub(crate) fn cpp_table_write_aipsio_complex64_2d_array(

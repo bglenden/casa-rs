@@ -36,8 +36,8 @@ TASK_PARAMETERS: dict[str, set[str]] = {
     "listobs": {"vis", "listfile", "overwrite", "verbose", "listunfl", "cachesize", "json"},
     "msexplore": {"vis", "format", "output", "preset", "avgchannel", "avgspw", "avgtime", "avgscan", "color_by", "iteraxis", "plot_output", "plot_format", "overwrite", "json"},
     "plotms": {"vis", "field", "xaxis", "yaxis", "avgchannel", "avgspw", "avgtime", "avgscan", "coloraxis", "iteraxis", "plotfile", "expformat", "exprange", "overwrite", "showgui"},
-    "imager": {"vis", "imagename", "imsize", "cell_arcsec", "cell", "field", "phasecenter_field", "spw", "specmode", "gridder", "deconvolver", "weighting", "robust", "niter", "threshold_jy", "threshold", "mask_box", "mask", "pblimit", "write_pb", "pbcor", "dirty_only", "interactive", "overwrite"},
-    "tclean": {"vis", "imagename", "imsize", "cell", "field", "spw", "specmode", "gridder", "deconvolver", "weighting", "robust", "niter", "threshold", "mask", "pblimit", "pbcor", "interactive"},
+    # CASA's tclean, which casars-imager runs too, with its write_pb (#931).
+    "tclean": {"vis", "imagename", "imsize", "cell", "field", "phasecenter", "spw", "specmode", "gridder", "deconvolver", "weighting", "robust", "niter", "threshold", "mask", "pblimit", "pbcor", "interactive", "write_pb"},
     "split": {"vis", "outputvis", "field", "spw", "width", "datacolumn", "keepflags", "timebin", "intent"},
     "impbcor": {"imagename", "pbimage", "outfile", "mode", "cutoff", "overwrite"},
 }

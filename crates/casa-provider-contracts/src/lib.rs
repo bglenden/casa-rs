@@ -7,12 +7,18 @@
 
 mod application;
 mod builtin;
+mod casa_value;
 mod components;
+mod executable;
 mod parameters;
 mod projection;
 mod provider;
+mod reply;
 mod semantic;
 
+pub use casa_value::{
+    CasaEntry, CasaFloat, CasaKey, CasaValue, ComplexDtype, FloatDtype, IntDtype,
+};
 pub use components::{ProviderComponentSchemas, merged_components};
 pub use parameters::*;
 pub use projection::{
@@ -21,6 +27,10 @@ pub use projection::{
 pub use provider::{
     NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,
     ProviderProtocolDescriptor, TaskProviderContract, TaskProviderSchemas,
+};
+pub use reply::{
+    EXIT_EXECUTION_FAILED, EXIT_INTERRUPTED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED,
+    TaskFailureKind, TaskFrontEndSchemas, TaskReply, TaskRunRequest,
 };
 pub use semantic::{
     ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,
@@ -31,8 +41,8 @@ pub use semantic::{
 #[cfg(test)]
 mod tests;
 pub use application::{
-    ApplicationCatalog, ApplicationDefinition, ApplicationInteraction, ApplicationKind,
-    ApplicationLaunchDescriptor, ApplicationLaunchMode, ApplicationShellKind,
-    builtin_application_catalog,
+    APPLICATION_CATALOG_SCHEMA_VERSION, ApplicationCatalog, ApplicationDefinition,
+    ApplicationLaunchDescriptor, builtin_application_catalog,
 };
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};
+pub use executable::{SUITE_ROOT_ENV, installed_suite_root, resolve_task_executable};

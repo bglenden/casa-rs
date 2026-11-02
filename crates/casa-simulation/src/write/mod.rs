@@ -20,6 +20,7 @@
 
 mod components;
 mod geometry;
+mod grids;
 mod patch;
 mod pipeline;
 mod prediction;
@@ -50,7 +51,7 @@ use geometry::{ArrayGeometry, RowGeometry};
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
 use prediction::PredictionStage;
-use resources::{MainAdmission, MainShape};
+use resources::{MainAdmission, MainShape, NoiseScales};
 
 /// The readme CASA's simulator gives MAIN.
 const MAIN_README: [&str; 2] = [
@@ -184,6 +185,23 @@ fn main_shape<'s>(
             .max()
             .unwrap_or(0),
         generated_bytes: subtables::generated_bytes(planned),
+        noise_scales: NoiseScales::of(
+            session.data_plan(),
+            channels,
+            Some((
+                planned
+                    .iter()
+                    .map(|scan| scan.rows.baseline_count())
+                    .filter(|&rows| rows > 0)
+                    .min()
+                    .unwrap_or(1),
+                planned
+                    .iter()
+                    .map(|scan| scan.rows.antenna_count)
+                    .max()
+                    .unwrap_or(0),
+            )),
+        ),
     }
 }
 
@@ -207,7 +225,11 @@ fn write_main<'s>(
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
     if let Some(stage) = &mut prediction {
-        stage.start(admission.block_rows, admission.cores.streaming_workers);
+        stage.start(
+            admission.block_rows,
+            admission.cores.streaming_workers,
+            admission.grid_bytes,
+        );
     }
     let backend = prediction.as_ref().map_or_else(
         || session.options().resources.resolved_backend(false),
@@ -226,7 +248,12 @@ fn write_main<'s>(
         (session.scans(), planned),
         &geometry,
         &team,
-        (prediction, session.data_plan(), NoiseContext::of(session)),
+        (
+            prediction,
+            session.data_plan(),
+            NoiseContext::of(session),
+            shape.noise_scales,
+        ),
         (
             shape.correlations,
             shape.channels,
@@ -248,6 +275,7 @@ fn write_main<'s>(
     let written = writer.finish(ms, shape.rows, target.generated)?;
     let finish = finishing.elapsed();
     let times = &pipeline.times;
+    let (grid_preparations, grid_prepare) = pipeline.grid_preparations();
     tracing::info!(
         rows = shape.rows,
         batch_rows,
@@ -262,6 +290,9 @@ fn write_main<'s>(
         zero_s = times.zero.as_secs_f64(),
         predict_s = times.predict.as_secs_f64(),
         block_fill_s = pipeline.block_fill_time().as_secs_f64(),
+        grid_bytes = admission.grid_bytes,
+        grid_preparations,
+        grid_prepare_s = grid_prepare.as_secs_f64(),
         cells_s = times.cells.as_secs_f64(),
         send_wait_s = times.send.as_secs_f64(),
         setup_s = setup.as_secs_f64(),
@@ -275,9 +306,9 @@ fn write_main<'s>(
     Ok(())
 }
 
-/// Whether any noise of `plan` has a σ that varies by row (`tsys-manual`),
-/// whose rows then need their antennas' airmasses and exposure. Every
-/// `corrupt` covers scan 0, so its noise is all the plan's.
+/// Whether any noise of `plan` has a σ that varies by row (the Tsys
+/// modes), whose rows then need their antennas' airmasses and exposure.
+/// Every `corrupt` covers scan 0, so its noise is all the plan's.
 fn noise_varies_by_row(plan: &DataPlan) -> bool {
     plan.noise_for_scan(0)
         .iter()

@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-10-21
+Last reality check: 2026-10-28
 Verification: just verify
 
 ## Test categories
@@ -11,6 +11,20 @@ Verification: just verify
 - Interoperability tests: Rust/C++/CASA read/write matrices when on-disk bytes or metadata matter
 - Packaging/runtime tests: editable Python package checks, wheel-install smoke checks, installer validation, demos, and suite layout checks
 - Performance tests: smoke benchmarks and parity timing when performance is part of the requirement
+
+A crate that ports a self-contained CASA C++ library is tested against that
+library compiled locally, not only through CASA. `casa-atmosphere` (ATM)
+commits compact fixtures that `tools/atmosphere/build-atm-oracle.sh` writes by
+building CASA's ATM sources with a harness (`tools/atmosphere/atm_oracle.cc`)
+and with the port's corrections of ATM's data errors
+(`tools/atmosphere/atm-corrections.patch`); CI compares against the committed
+fixtures. Regenerate them only when the harness's inputs, the corrections or
+CASA's ATM change, and record why on the PR.
+`tools/atmosphere/at_tool_check.py` (run under CASA's Python) compares the C++
+built without the corrections with CASA's own `at` tool, which confirms that
+the compiled sources are the ATM that CASA ships, and the port with the C++
+built with them, over the `at` tool's quantities; rerun it when any of them
+changes.
 
 Imaging evidence uses four non-substitutable tiers:
 
@@ -233,15 +247,31 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
-- Release-only install gate: `scripts/test-install-suite.sh`
+- Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
+  builds the release executables and wheel, installs the suite into a
+  temporary root, and checks its commands on `PATH`, a task run from its
+  command and from the suite's Python, and the executable Python chose.
+  `--hide-checkout` moves the checkout aside while the installed suite is
+  checked, so nothing it runs can reach the checkout; CI's `suite_install`
+  job passes it
+- CASA task inventory: `python3 scripts/check-casa-inventory.py`, a step of
+  `just arch-check`, needs no CASA. It checks the CASA 6.7.6.14 fixtures in
+  `resources/casa-compat/casa-6.7.6.14/` and that
+  `docs/reference/casa-compatibility.md` is current; `--write` regenerates
+  the report after a surface changes. CASA compatibility acceptance also
+  needs `scripts/test-casa-inventory.sh`, which compares the fixtures with an
+  installed CASA 6.7.6.14 (`CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`)
+  and fails, rather than skips, without it
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
-- GitHub PR CI: lint/test, editable Python package (including the generated
-  UniFFI binding check), performance-tool tests, and strict docs (rustdoc
+- GitHub PR CI: lint/test, Python package (editable checkout, built wheel and
+  sdist), performance-tool tests, the suite install
+  (`scripts/test-install-suite.sh --hide-checkout`), and strict docs (rustdoc
   built twice, public and with `--document-private-items`, with broken and
   private intra-doc links denied in both, then MkDocs). The required checks
-  are `lint_test`, `python_package` and `docs`
+  are `lint_test`, `python_package` and `docs`; the suite install is
+  informational and does not block merge (ADR-0004, #975)
 - GitHub tag CI: lint/test, editable Python package and performance-tool checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
@@ -265,6 +295,20 @@ the MeasurementSets the session writes, and the digests must equal casa-rs's.
 Its counting law (`--test session_memory`) runs alone in a process of its
 own, as the other counting laws do.
 
+The `simobserve` task runs end to end on a small array in `cargo nextest run
+-p casa-simulation --test simobserve`, which needs no CASA. Its agreement with
+CASA 6.7.6's task is `tools/simulation/simobserve_parity.py`, run under CASA's
+Python with the release `simobserve` binary, a casatestdata clone and
+casa-atmosphere's `at_tool_quantities` example. Its cases are the VLA
+protoplanetary-disk CASA Guide, CASA's ALMA regression on `alma.out20` and
+one case for each mode. For each case it compares:
+- the project's files;
+- the pointing files, byte for byte;
+- the images and the calibrator list;
+- every MeasurementSet, through `compare_sm_ms.py`.
+
+Each case's TAI − UTC shift comes from CASA's measures.
+
 Component lists (`casa-components`) carry the 2x2 matrix for their tables.
 `cargo test -p casa-components` reads the lists CASA 6.7.6's `cl` tool wrote
 (`tests/data/casa-6.7.6`, made by `tools/simulation/componentlist_oracle.py
@@ -277,6 +321,14 @@ because it starts CASA's Python several times: `cargo test -p
 casa-components --test casa_oracle -- --ignored --nocapture` (CASA from
 `CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`) has CASA read the lists
 casa-rs writes, rewrite them in place, and casa-rs read the rewrite back.
+
+Image analysis (`casa-images`: `regrid`, `convolve2d`, robust statistics,
+`impbcor`, `immath` and `feather`) is compared with CASA 6.7.6 in `cargo test
+-p casa-images --test image_analysis_casa`. CASA builds the small images that
+`tests/data/image_analysis_cases.json` describes and records its results in
+`tests/data/image_analysis_casa.json`. Regenerate that file with
+`tools/images/image_analysis_oracle.py`, run with CASA's Python, whenever the
+cases change.
 
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
@@ -320,12 +372,14 @@ volume needs at least 110 GiB free. Image writes must reach at least 60% and
 reads at least 50% of the equivalent raw-file path on the same volume and run.
 
 `just quick` includes `scripts/test-task-cli-hosts.py`, which builds and runs
-every one-shot binary hosted by `casa-task-runtime::TaskCliHost`. The explicit
-inventory proves common protocol/schema discovery, generated help, malformed
-stdin, missing request sources, diagnostics, and exit classification at the
-process boundary. Runtime unit tests inject execution and serialization
-failures, while repository provider-conformance tests mutate protocol versions,
-actions, surface IDs, and schemas through the shared envelope validator.
+every one-shot task binary, each on the shared task front end
+(`casa-task-runtime::TaskFrontEnd`). The explicit inventory proves common
+protocol/schema discovery, generated help, the typed refusals of a malformed
+request, a missing request source and an unknown surface, `--template`,
+`--profile-template` and `--describe`, and exit classification at the process
+boundary. Runtime unit tests drive the front end's replies and exit statuses,
+while repository provider-conformance tests mutate protocol versions, actions,
+surface IDs, and schemas through the shared envelope validator.
 
 ## Evidence source and turnaround
 
@@ -345,12 +399,24 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 
-- Python package and its UniFFI service layer:
-  `scripts/generate-frontend-bindings.sh --check`,
-  `cargo test -p casars-frontend-services`,
-  `scripts/test-frontend-services-python.sh`, and
-  `scripts/test-python-package.sh`. The `casars` task host's end-to-end
-  behaviour is covered by `cargo test -p casars --test casars_cli`.
+- Python package and its PyO3 binding: `cargo test -p casars-python` and
+  `scripts/test-python-package.sh`, which runs the Python tests against an
+  editable checkout and then installs the built wheel and sdist into fresh
+  environments and checks them away from the source tree.
+  `python/tests/test_binding_snapshots.py` pins what the binding returns to
+  Python (the parameter catalog's dictionary shapes, plot data, task
+  completions and errors); regenerate its fixture only for an intended
+  change. `test_task_runner.py` fakes each task executable through its
+  catalog override variable (`CASARS_<APP>_BIN`) and checks what a task call
+  starts, streams, raises and leaves in Last. `test_task_end_to_end.py` runs a
+  real executable that the resolver finds in the development checkout's
+  build: the script builds `flagmanager` first and sets
+  `CASARS_REQUIRE_TASK_BINARIES=1`, so a missing executable fails rather than
+  skips. `cargo test -p casars-python` includes the repository
+  provider-conformance tests (`tests/provider_contract_conformance.rs`).
+  A task's own command line, the Last it records and its agreement with
+  `--json-run` are covered by the front end's tests in `casa-task-runtime`
+  and `cargo test -p casars-imexplore --test imexplore_cli`.
   `scripts/test-python-package.sh` runs the `casars.tools` tests against the
   bundled measures snapshot unless `CASA_RS_MEASURESPATH` names a runtime;
   run directly, those tests skip when no runtime is installed.
@@ -368,7 +434,10 @@ The imaging foundation (#648, plan section 7) tests in four tiers:
 - **T1, end to end** (under ten minutes each; CI):
   `cargo test -p casars-imager --test t1` through the production route, one
   module per capability (standard MFS and masks, cube, mosaic, W and AW
-  projection, MT-MFS, model column, Metal, routes, interrupt).
+  projection, MT-MFS, model column, Metal, routes, interrupt). The store
+  law holds a run's batch geometry in its MeasurementSet equal to its batch
+  geometry in the MSv4 conversion, every sample on every channel, to 1e-12
+  (`casa_imaging_application::store_law`, #932, #942).
 - **T1.5, CASA-paired small fixtures** (local, before an imaging review):
   the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
   references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5

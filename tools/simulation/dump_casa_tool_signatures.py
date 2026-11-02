@@ -13,7 +13,8 @@ compare each casa-rs class with the checked-in output in
 `crates/casars-python/python/tests/data/casa_<tool>_signatures.json`.
 
 For `simutil` only the methods casa-rs declares are recorded (`--methods`):
-the rest of the helper belongs to simulation Phase 5.
+the rest of the helper belongs to simulation Phase 5. Task signatures are in
+the CASA task inventory (`tools/casa-compat/dump_casa_task_inventory.py`).
 
     python3 -I dump_casa_tool_signatures.py --tool measures --out casa_measures_signatures.json
 """
@@ -26,7 +27,18 @@ import json
 
 import casatools
 
-TOOLS = ("simulator", "measures", "quanta", "componentlist", "simutil")
+TOOLS = (
+    "simulator",
+    "measures",
+    "quanta",
+    "componentlist",
+    "simutil",
+    "image",
+    "coordsys",
+    "table",
+    "msmetadata",
+    "ms",
+)
 
 
 def parse_args() -> argparse.Namespace:

@@ -5,8 +5,8 @@ use casa_ms::presentation::UiCommandSchema;
 
 /// Build the launcher-facing UI schema for the standalone imager.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("imager")
-        .expect("built-in imager parameter surface must remain valid");
+    let bundle = casa_provider_contracts::builtin_surface_bundle("tclean")
+        .expect("built-in tclean parameter surface must remain valid");
     let mut schema: UiCommandSchema =
         serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
             .expect("canonical imager UI projection must match UiCommandSchema");
@@ -15,25 +15,16 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
     schema
 }
 
-/// Render `--help`: the parameter surface followed by the shared task-host actions.
-pub(crate) fn render_help(program_name: &str) -> String {
-    format!(
-        "{}\n\n{}",
-        command_schema(program_name).render_help(),
-        casa_task_runtime::task_cli_machine_help("ImagerTaskRequest")
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{command_schema, render_help};
+    use super::command_schema;
     use casa_ms::presentation::{UiArgumentParser, UiValueKind};
 
     #[test]
     fn schema_exposes_workflow_surface_for_casars() {
         let schema = command_schema("casars-imager");
-        assert_eq!(schema.command_id, "imager");
-        assert_eq!(schema.display_name, "Imager");
+        assert_eq!(schema.command_id, "tclean");
+        assert_eq!(schema.display_name, "Tclean");
         assert_eq!(schema.category, "Imaging");
         assert_eq!(
             schema
@@ -140,15 +131,6 @@ mod tests {
     }
 
     #[test]
-    fn help_lists_task_host_actions() {
-        let help = render_help("casars-imager");
-        assert!(help.contains("--imagename"));
-        for action in ["--protocol-info", "--json-schema", "--json-run <SOURCE>"] {
-            assert!(help.contains(action), "help omits {action}");
-        }
-    }
-
-    #[test]
     fn schema_defaults_match_profile_defaults_for_advanced_controls() {
         let schema = command_schema("casars-imager");
         let default_for = |id: &str| {
@@ -165,7 +147,7 @@ mod tests {
 
         assert_eq!(default_for("gain"), "0.1");
         assert_eq!(default_for("pblimit"), "0.2");
-        assert_eq!(default_for("minor_cycle_length"), "1000");
+        assert_eq!(default_for("cycleniter"), "-1");
         assert_eq!(default_for("minpsffraction"), "0.05");
         assert_eq!(default_for("parallel"), "false");
         assert_eq!(default_for("gridprecision"), "auto");

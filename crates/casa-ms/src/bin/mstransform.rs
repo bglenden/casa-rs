@@ -1,232 +1,169 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `mstransform` - tutorial-scoped MeasurementSet transform.
+//! `mstransform` - tutorial-scoped MeasurementSet transform, the `mstransform`
+//! and `split` task provider, on the shared task front end. Its first word
+//! names the surface (`mstransform split ...`); `mstransform` runs otherwise.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 
-use casa_ms::presentation::UiCommandSchema;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformReport, MsTransformRequest, MsTransformTaskRequest, TransformDataColumn,
-    mstransform, mstransform_task_schema_bundle, parse_numeric_id_selector,
+    MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
+    mstransform_task_schema_bundle, parse_numeric_id_selector, parse_spw_selector,
+    task_selection_text,
+};
+use casa_provider_contracts::CasaValue;
+use casa_task_runtime::{
+    CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 
-fn main() {
-    match run() {
-        Ok(()) => {}
-        Err(error) => {
-            eprintln!("Error: {error}");
-            process::exit(1);
+fn main() -> ExitCode {
+    TaskFrontEnd::new(
+        "mstransform",
+        mstransform_task_schema_bundle(),
+        &["mstransform", "split"],
+        run,
+    )
+    .expect("the transform contract carries mstransform and split")
+    .main(
+        std::env::args_os().skip(1),
+        CasaLoggingConfig::from_env(),
+        std::env::set_current_dir,
+        &mut std::io::stdout(),
+        std::io::stderr(),
+    )
+}
+
+/// Both surfaces run the one transform; CASA's tasks return None.
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let request = transform_request(task)?;
+    // The output the transform refuses before it starts is the argument's
+    // fault; anything else failed the transform.
+    let report = mstransform(&request).map_err(|error| match error {
+        MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
+            TaskFailure::validation(error.to_string()).at("outputvis")
         }
-    }
+        other => TaskFailure::execution(other.to_string()),
+    })?;
+    ms_task_success(CasaValue::None, &report)
 }
 
-fn run() -> Result<(), String> {
-    let (logging_guard, args) =
-        casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
-            .map_err(|error| format!("failed to initialize logging: {error}"))?;
-    tracing::info!("mstransform started");
-    let result = run_with_args(args);
-    if result.is_ok() {
-        tracing::info!("mstransform completed");
-    } else if let Err(error) = &result {
-        tracing::error!(casa.priority = "SEVERE", error = %error, "mstransform failed");
-    }
-    logging_guard
-        .flush()
-        .map_err(|error| format!("failed to flush logging: {error}"))?;
-    result
-}
-
-fn run_with_args(args: Vec<OsString>) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!(
-            "{}\n\n{}",
-            command_schema("mstransform").render_help(),
-            casa_task_runtime::task_cli_machine_help("MsTransformTaskRequest")
-        );
-        return Ok(());
-    }
-    let host =
-        casa_task_runtime::TaskCliHost::new(mstransform_task_schema_bundle(), execute_task_request);
-    if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
-        println!("{output}");
-        return Ok(());
-    }
-    let args = os_args_to_strings(args)?;
-    let request = parse_request(&args)?;
-    let report = mstransform(&request).map_err(|error| error.to_string())?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
-fn execute_task_request(request: MsTransformTaskRequest) -> Result<MsTransformReport, String> {
-    let mut selection = MsSelection::default();
-    if !request.field.is_empty() {
-        selection = selection.field(
-            &parse_numeric_id_selector(&request.field, "field")
-                .map_err(|error| error.to_string())?,
-        );
-    }
-    if !request.scan.is_empty() {
-        selection = selection.scan(
-            &parse_numeric_id_selector(&request.scan, "scan").map_err(|error| error.to_string())?,
-        );
-    }
-    if !request.antenna.is_empty() {
-        selection = selection.antenna(
-            &parse_numeric_id_selector(&request.antenna, "antenna")
-                .map_err(|error| error.to_string())?,
-        );
-    }
-    if !request.timerange.is_empty() {
-        let (start, end) = parse_time_range(&request.timerange)?;
-        selection = selection.time_range(start, end);
-    }
-    if !request.msselect.is_empty() {
-        selection = selection.taql(&request.msselect);
-    }
-    if request.width == 0 {
-        return Err("width must be at least 1".to_string());
-    }
-    mstransform(&MsTransformRequest {
-        input_ms: request.vis,
-        output_ms: request.outputvis,
-        spw: request.spw,
-        width: request.width,
-        data_column: parse_data_column(&request.datacolumn)?,
-        selection,
-        keep_flags: request.keepflags,
-    })
-    .map_err(|error| error.to_string())
-}
-
-fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
-    args.into_iter()
-        .map(|arg| {
-            arg.into_string()
-                .map_err(|_| "non-UTF-8 command-line argument".to_string())
-        })
-        .collect()
-}
-
-fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
-    let mut input_ms = None;
-    let mut output_ms = None;
-    let mut spw = String::new();
-    let mut width = 1usize;
-    let mut data_column = TransformDataColumn::default();
-    let mut selection = MsSelection::default();
-    let mut keep_flags = true;
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--ms" | "--vis" => {
-                index += 1;
-                input_ms = Some(PathBuf::from(args.get(index).ok_or_else(usage)?));
-            }
-            "--out" | "--outputvis" => {
-                index += 1;
-                output_ms = Some(PathBuf::from(args.get(index).ok_or_else(usage)?));
-            }
-            "--spw" => {
-                index += 1;
-                spw = args.get(index).ok_or_else(usage)?.clone();
-            }
-            "--width" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(usage)?;
-                width = parse_width(value)?;
-            }
-            "--datacolumn" => {
-                index += 1;
-                data_column = parse_data_column(args.get(index).ok_or_else(usage)?)?;
-            }
-            "--field" => {
-                index += 1;
-                selection = selection.field(
-                    &parse_numeric_id_selector(args.get(index).ok_or_else(usage)?, "field")
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-            "--scan" => {
-                index += 1;
-                selection = selection.scan(
-                    &parse_numeric_id_selector(args.get(index).ok_or_else(usage)?, "scan")
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-            "--antenna" => {
-                index += 1;
-                selection = selection.antenna(
-                    &parse_numeric_id_selector(args.get(index).ok_or_else(usage)?, "antenna")
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-            "--timerange" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(usage)?;
-                let (start, end) = parse_time_range(value)?;
-                selection = selection.time_range(start, end);
-            }
-            "--msselect" => {
-                index += 1;
-                selection = selection.taql(args.get(index).ok_or_else(usage)?);
-            }
-            "--keepflags" => keep_flags = true,
-            "--no-keepflags" => keep_flags = false,
-            "--selectdata" => {}
-            "--no-selectdata" => {}
-            other => return Err(format!("unknown argument {other:?}\n{}", usage())),
-        }
-        index += 1;
+fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, TaskFailure> {
+    let width = channel_width(task)?;
+    // The selector's syntax is checked here, before the transform prepares
+    // its output; the windows it names are checked against the input there.
+    let spw = task_selection_text(task, "spw")?;
+    if !spw.trim().is_empty() {
+        parse_spw_selector(&spw).map_err(|error| {
+            TaskFailure::validation(format!("invalid spw {spw:?}: {error}")).at("spw")
+        })?;
     }
     Ok(MsTransformRequest {
-        input_ms: input_ms.ok_or_else(usage)?,
-        output_ms: output_ms.ok_or_else(usage)?,
+        input_ms: task.path("vis")?,
+        output_ms: task.path("outputvis")?,
         spw,
         width,
-        data_column,
-        selection,
-        keep_flags,
+        data_column: data_column(&task.required_text("datacolumn")?)?,
+        selection: selection(task)?,
+        keep_flags: task.flag("keepflags")?,
     })
 }
 
-fn parse_width(value: &str) -> Result<usize, String> {
-    let first = value
-        .split(',')
-        .next()
-        .unwrap_or(value)
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'');
-    let parsed = first
-        .parse::<usize>()
-        .map_err(|error| format!("invalid --width {value:?}: {error}"))?;
-    if parsed == 0 {
-        return Err("--width must be at least 1".to_string());
-    }
-    Ok(parsed)
+/// The channels averaged into each output channel: split's `width`, or
+/// mstransform's `chanbin` when its `chanaverage` is set and 1 otherwise,
+/// as CASA's tasks take them. CASA's mstransform refuses to average by one
+/// channel; split's `width=1` averages nothing.
+fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
+    let (name, least) = if task.surface() == "split" {
+        ("width", 1)
+    } else if task.flag("chanaverage")? {
+        ("chanbin", 2)
+    } else {
+        return Ok(1);
+    };
+    let width = task.integer(name)?;
+    usize::try_from(width)
+        .ok()
+        .filter(|width| *width >= least)
+        .ok_or_else(|| {
+            let message = if least > 1 {
+                format!("Parameter {name} must be > 1 to do channel averaging, found {width}")
+            } else {
+                format!("{name} must be at least 1, found {width}")
+            };
+            TaskFailure::validation(message).at(name)
+        })
 }
 
-fn parse_data_column(value: &str) -> Result<TransformDataColumn, String> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "DATA" => Ok(TransformDataColumn::Data),
-        "CORRECTED" | "CORRECTED_DATA" => Ok(TransformDataColumn::CorrectedData),
-        other => Err(format!(
-            "unsupported --datacolumn {other:?}; expected DATA or CORRECTED_DATA"
-        )),
+/// The row selection; the TaQL expression is split's `msselect`, a
+/// casa-rs control, and mstransform's `taql`.
+fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
+    let ids = |name: &str| -> Result<Option<Vec<i32>>, TaskFailure> {
+        let text = task_selection_text(task, name)?;
+        if text.is_empty() {
+            return Ok(None);
+        }
+        parse_numeric_id_selector(&text, name)
+            .map(Some)
+            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))
+    };
+    let mut selection = MsSelection::default();
+    if let Some(field) = ids("field")? {
+        selection = selection.field(&field);
+    }
+    if let Some(scan) = ids("scan")? {
+        selection = selection.scan(&scan);
+    }
+    if let Some(antenna) = ids("antenna")? {
+        selection = selection.antenna(&antenna);
+    }
+    let timerange = task_selection_text(task, "timerange")?;
+    if !timerange.is_empty() {
+        let (start, end) = time_range(&timerange)
+            .map_err(|message| TaskFailure::validation(message).at("timerange"))?;
+        selection = selection.time_range(start, end);
+    }
+    let taql_name = if task.surface() == "split" {
+        "msselect"
+    } else {
+        "taql"
+    };
+    let taql = task_selection_text(task, taql_name)?;
+    if !taql.is_empty() {
+        selection = selection.taql(&taql);
+    }
+    Ok(selection)
+}
+
+/// CASA's `datacolumn`, in any case: casa-rs copies `data` and `corrected`
+/// (also spelled `corrected_data`); CASA's other choices are #978.
+fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
+    let text = value.trim().to_ascii_lowercase();
+    match text.as_str() {
+        "data" => Ok(TransformDataColumn::Data),
+        "corrected" | "corrected_data" => Ok(TransformDataColumn::CorrectedData),
+        "model"
+        | "data,model,corrected"
+        | "float_data"
+        | "lag_data"
+        | "float_data,data"
+        | "lag_data,data"
+        | "all" => Err(TaskFailure::validation(format!(
+            "datacolumn={value:?} is not implemented by casa-rs yet (#978)"
+        ))
+        .at("datacolumn")),
+        _ => Err(TaskFailure::validation(format!(
+            "unsupported datacolumn {value:?}; CASA takes 'corrected', 'data', 'model', \
+             'data,model,corrected', 'float_data', 'lag_data', 'float_data,data', \
+             'lag_data,data' or 'all'"
+        ))
+        .at("datacolumn")),
     }
 }
 
-fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
+fn time_range(value: &str) -> Result<(f64, f64), String> {
     let (start, end) = value
         .split_once('~')
-        .ok_or_else(|| format!("--timerange must be start~end MJD seconds, got {value:?}"))?;
+        .ok_or_else(|| format!("timerange must be start~end MJD seconds, got {value:?}"))?;
     let start = start
         .trim()
         .parse::<f64>()
@@ -238,23 +175,59 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
     Ok((start, end))
 }
 
-fn usage() -> String {
-    "usage: mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--field <ids>] [--width <n>] [--datacolumn DATA|CORRECTED_DATA] [--keepflags|--no-keepflags]".to_string()
-}
-
-fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("mstransform")
-        .expect("built-in mstransform parameter surface must remain valid");
-    let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
-            .expect("canonical mstransform UI projection must match UiCommandSchema");
-    schema.invocation_name = program_name.to_string();
-    schema.usage = format!("{program_name} [parameters]");
-    schema
-}
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
     use super::*;
+
+    /// The request a `surface` command line resolves to.
+    fn request_for(surface: &str, args: &[&str]) -> Result<MsTransformRequest, TaskFailure> {
+        let args = ["--vis", "in.ms", "--outputvis", "out.ms"]
+            .iter()
+            .chain(args)
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let bundle = casa_provider_contracts::builtin_surface_bundle(surface).unwrap();
+        let line = TaskCommandLine::parse(&bundle, &args).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .unwrap();
+        transform_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+    }
+
+    #[test]
+    fn each_task_averages_channels_by_its_own_casa_parameters() {
+        let width = |surface, args| request_for(surface, args).unwrap().width;
+        assert_eq!(width("split", &["--width", "8"]), 8);
+        assert_eq!(width("mstransform", &["--chanbin", "4"]), 1);
+        assert_eq!(
+            width("mstransform", &["--chanaverage", "--chanbin", "4"]),
+            4
+        );
+        let error = request_for("mstransform", &["--chanaverage", "--chanbin", "0"]).unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("chanbin"));
+        // CASA's mstransform: "Parameter chanbin must be > 1 to do channel
+        // averaging"; split's width=1 is no averaging (#997 F8).
+        let error = request_for("mstransform", &["--chanaverage"]).unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("chanbin"));
+        assert!(error.message.contains("must be > 1"), "{}", error.message);
+        assert_eq!(width("split", &["--width", "1"]), 1);
+    }
+
+    #[test]
+    fn datacolumn_takes_casas_values_and_default() {
+        for surface in ["split", "mstransform"] {
+            let request = request_for(surface, &[]).unwrap();
+            assert_eq!(request.data_column, TransformDataColumn::CorrectedData);
+            let data = request_for(surface, &["--datacolumn", "data"]).unwrap();
+            assert_eq!(data.data_column, TransformDataColumn::Data);
+            let error = request_for(surface, &["--datacolumn", "model"]).unwrap_err();
+            assert!(error.message.contains("#978"), "{error:?}");
+        }
+    }
 
     #[test]
     fn provider_bundle_embeds_transform_family_parameter_contracts() {

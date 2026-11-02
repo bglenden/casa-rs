@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import functools
+import json
 from pathlib import Path
 from typing import Any
 
 from ..model import Operation, RuntimeResources, SectionManifest, Surface
 from ..resources import binary
 from .base import AdapterPlan, execute_plan
+
+SURFACES = Path(__file__).resolve().parents[3] / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
 
 
 BINARY_BY_TASK = {
@@ -16,7 +20,7 @@ BINARY_BY_TASK = {
     "immoments": "immoments",
     "exportfits": "exportfits",
     "msexplore": "msexplore",
-    "imager": "casars-imager",
+    "tclean": "casars-imager",
     "split": "mstransform",
     "impbcor": "impbcor",
 }
@@ -27,7 +31,7 @@ POSITIONAL: dict[str, tuple[str, ...]] = {
     "immoments": ("imagename",),
     "exportfits": ("imagename", "fitsimage"),
     "msexplore": ("vis",),
-    "imager": (),
+    "tclean": (),
     "split": (),
     "impbcor": (),
 }
@@ -35,6 +39,7 @@ POSITIONAL: dict[str, tuple[str, ...]] = {
 PREFIX: dict[str, tuple[str, ...]] = {
     "imhead": ("imhead",),
     "imstat": ("imstat",),
+    "split": ("split",),
 }
 
 FLAG_NAMES = {
@@ -43,12 +48,7 @@ FLAG_NAMES = {
     "outfile": "outfile",
     "outputvis": "outputvis",
     "vis": "ms",
-    "cell_arcsec": "cell-arcsec",
-    "phasecenter_field": "phasecenter-field",
-    "threshold_jy": "threshold-jy",
-    "mask_box": "mask-box",
     "write_pb": "write-pb",
-    "dirty_only": "dirty-only",
     "keepflags": "keepflags",
     "color_by": "color-by",
     "plot_output": "plot-output",
@@ -56,13 +56,61 @@ FLAG_NAMES = {
 }
 
 TASK_FLAG_NAMES = {
-    "split": {"vis": "ms", "outputvis": "out"},
+    "split": {"vis": "vis", "outputvis": "outputvis"},
 }
 
 OMIT_FOR_CLI = {"json"}
 
 
-def build_operation_argv(operation: Operation, resources: RuntimeResources) -> list[str]:
+def returns_value(operation: Operation) -> bool:
+    """Whether the section compares the task's return value, as JSON: the
+    operation then runs through the binary's `--json-run` (#931)."""
+
+    return operation.parameters.get("json") is True
+
+
+def task_request(operation: Operation) -> dict[str, Any]:
+    """The front end's `--json-run` request for `operation`: its surface and
+    the CASA-named values it sets."""
+
+    values = {key: value for key, value in operation.parameters.items() if key not in OMIT_FOR_CLI}
+    return {"surface": operation.task, "values": values}
+
+
+@functools.cache
+def surface_bindings(task: str) -> dict[str, dict[str, Any]]:
+    """`task`'s surface bindings by name, from the provider-contract
+    catalog; none when the catalog has no surface of that name."""
+
+    for surface in json.loads(SURFACES.read_text(encoding="utf-8"))["surfaces"]:
+        if surface["id"] == task:
+            return {binding["name"]: binding for binding in surface["bindings"]}
+    return {}
+
+
+def boolean_argv(task: str, key: str, flag: str, value: bool) -> list[str]:
+    """`key=value` on the command line, as `task`'s surface spells it: its
+    flag for True, its false flag for False, and nothing for a False the
+    surface defaults to. A False the surface cannot spell is refused rather
+    than dropped, since the run would take the default instead."""
+
+    binding = surface_bindings(task).get(key)
+    if binding is None:
+        return [flag] if value else []
+    cli = binding["projections"].get("cli") or {}
+    if value:
+        return [(cli.get("flags") or [flag])[0]]
+    if cli.get("false_flags"):
+        return [cli["false_flags"][0]]
+    default = binding.get("default", {})
+    if default.get("kind") == "literal" and default["value"] == {"kind": "bool", "value": False}:
+        return []
+    raise ValueError(f"{task}: {key}=False has no command-line spelling")
+
+
+def build_operation_argv(
+    operation: Operation, resources: RuntimeResources, request: Path | None = None
+) -> list[str]:
     task = operation.task
     if task not in BINARY_BY_TASK:
         raise ValueError(f"{task} has no native CLI adapter")
@@ -70,6 +118,10 @@ def build_operation_argv(operation: Operation, resources: RuntimeResources) -> l
         str(binary(resources, BINARY_BY_TASK[task], require_existing=not resources.dry_run)),
         *PREFIX.get(task, ()),
     ]
+    if returns_value(operation):
+        if request is None:
+            raise ValueError(f"{task}: a return value is captured from a one-operation section")
+        return [*argv, "--json-run", str(request)]
     parameters = operation.parameters
     positional = POSITIONAL[task]
     for key in positional:
@@ -84,16 +136,11 @@ def build_operation_argv(operation: Operation, resources: RuntimeResources) -> l
         )
         flag = "--" + flag_name
         if isinstance(value, bool):
-            if value:
-                argv.append(flag)
-            elif key in {"write_pb", "dirty_only", "keepflags", "overwrite", "pbcor"}:
-                argv.append("--no-" + flag[2:])
+            argv.extend(boolean_argv(task, key, flag, value))
             continue
         if isinstance(value, list):
             value = ",".join(str(item) for item in value)
         argv.extend([flag, str(value)])
-    if parameters.get("json") is True:
-        argv.append("--json")
     return argv
 
 
@@ -115,7 +162,15 @@ class CliAdapter:
             worker = resources.repo_root / "scripts" / "tutorial_parity" / "workers" / "command_batch.py"
             argv = [str(runner), str(worker), str(request)]
         else:
-            argv = build_operation_argv(surface.operations[0], resources)
+            operation = surface.operations[0]
+            request = None
+            if returns_value(operation):
+                from ..evidence import write_json_atomic
+
+                request = resources.evidence_root / "requests" / f"{manifest.section_id}.cli-run.json"
+                if not resources.dry_run:
+                    write_json_atomic(request, task_request(operation))
+            argv = build_operation_argv(operation, resources, request)
         return AdapterPlan(
             surface=self.name,
             argv=tuple(argv),
@@ -130,6 +185,10 @@ class CliAdapter:
                     if len(surface.operations) == 1 and surface.operations[0].capture_stdout
                     else None
                 ),
+                # The binary's stdout is then its typed reply; the capture
+                # keeps the task's return value.
+                "capture_reply_value": len(surface.operations) == 1
+                and returns_value(surface.operations[0]),
             },
         )
 

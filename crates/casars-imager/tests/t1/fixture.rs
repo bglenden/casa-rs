@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
+use casa_imaging_application::store_law::compare_stores;
+use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{
     MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
     SyntheticCorruptionConfig, SyntheticField, SyntheticNoiseCorruption, SyntheticNoiseMode,
@@ -45,31 +47,52 @@ pub const PHASE_CENTER_RAD: [f64; 2] = [4.712_391_234_768_306, -0.401_423_788_70
 /// The image geometry a run images and a component's pixel offsets refer to.
 #[derive(Debug, Clone, Copy)]
 pub struct Geometry {
-    /// Image side in pixels.
-    pub image_size: usize,
-    /// Cell in arcseconds.
-    pub cell_arcsec: f64,
+    /// Pixels along x and y.
+    pub image_size: [usize; 2],
+    /// Cell along x and y in arcseconds.
+    pub cell_arcsec: [f64; 2],
 }
 
 impl Geometry {
     /// The default T1 geometry: [`IMAGE_SIZE`] cells of [`CELL_ARCSEC`].
-    pub const DEFAULT: Self = Self {
-        image_size: IMAGE_SIZE,
-        cell_arcsec: CELL_ARCSEC,
-    };
+    pub const DEFAULT: Self = Self::square(IMAGE_SIZE, CELL_ARCSEC);
 
-    /// Cell in radians.
-    pub fn cell_rad(self) -> f64 {
-        self.cell_arcsec.to_radians() / 3_600.0
+    /// `image_size` cells of `cell_arcsec` on both axes.
+    pub const fn square(image_size: usize, cell_arcsec: f64) -> Self {
+        Self {
+            image_size: [image_size; 2],
+            cell_arcsec: [cell_arcsec; 2],
+        }
+    }
+
+    /// Cell along x and y in radians.
+    pub fn cell_rad(self) -> [f64; 2] {
+        self.cell_arcsec.map(|cell| cell.to_radians() / 3_600.0)
+    }
+
+    /// The image reference pixel: half the image on each axis.
+    pub fn centre(self) -> [usize; 2] {
+        self.image_size.map(|side| side / 2)
+    }
+
+    /// The imager's `imsize` and `cell` parameters for this geometry.
+    pub fn parameters(self) -> [(&'static str, Value); 2] {
+        [
+            ("imsize", json!(self.image_size)),
+            (
+                "cell",
+                json!(self.cell_arcsec.map(|cell| format!("{cell}arcsec"))),
+            ),
+        ]
     }
 
     /// Pixel `[x, y]` of a component offset from the image reference pixel.
     pub fn pixel(self, component: Component) -> [usize; 2] {
-        let centre = (self.image_size / 2) as i32;
-        [
-            usize::try_from(centre + component.offset_px[0]).expect("component inside image"),
-            usize::try_from(centre + component.offset_px[1]).expect("component inside image"),
-        ]
+        let centre = self.centre();
+        [0, 1].map(|axis| {
+            usize::try_from(centre[axis] as i32 + component.offset_px[axis])
+                .expect("component inside image")
+        })
     }
 }
 
@@ -143,10 +166,10 @@ impl Component {
     /// Direction cosines `[l, m]` on `geometry`: `l` grows east, opposite
     /// to image `x`.
     pub fn direction_cosines(self, geometry: Geometry) -> [f64; 2] {
-        let cell_rad = geometry.cell_rad();
+        let [cell_x, cell_y] = geometry.cell_rad();
         [
-            -f64::from(self.offset_px[0]) * cell_rad,
-            f64::from(self.offset_px[1]) * cell_rad,
+            -f64::from(self.offset_px[0]) * cell_x,
+            f64::from(self.offset_px[1]) * cell_y,
         ]
     }
 
@@ -172,7 +195,8 @@ impl Component {
                 spectrum,
             },
             Some(fwhm_px) => {
-                let fwhm_rad = fwhm_px * geometry.cell_rad();
+                // A circular component, sized in x cells.
+                let fwhm_rad = fwhm_px * geometry.cell_rad()[0];
                 SyntheticAnalyticComponent::Gaussian {
                     name,
                     l_rad,
@@ -313,7 +337,7 @@ impl Observation {
         f64::from(self.noise_jy) / (self.stokes_i_samples_per_channel() as f64).sqrt()
     }
 
-    /// Run the production route with `controls`, imager parameters by
+    /// Run the production route with `controls`, tclean parameters by
     /// catalog name, merged over the T1 geometry and read back every
     /// product it reports.
     pub fn image(&self, name: &str, controls: Value) -> (ImagerRunReport, Products) {
@@ -327,20 +351,33 @@ impl Observation {
         name: &str,
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_store(&self.measurement_set, name, controls)
+    }
+
+    /// [`Observation::try_image`] of `store`, another store of this
+    /// observation (an MSv4 conversion).
+    pub fn try_image_store(
+        &self,
+        store: &Path,
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
         // would move a law onto the GPU wherever the host has one.
         let mut parameters = json!({
-            "vis": self.measurement_set,
+            "vis": store,
             "imagename": image_name,
-            "imsize": self.geometry.image_size,
-            "cell": format!("{}arcsec", self.geometry.cell_arcsec),
             "backend": "cpu",
         });
         let fields = parameters.as_object_mut().expect("parameters object");
+        for (key, value) in self.geometry.parameters() {
+            fields.insert(key.to_string(), value);
+        }
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
+        imager_defaults(fields);
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
@@ -348,6 +385,45 @@ impl Observation {
         let result = run(parameters, &request)?;
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))
+    }
+
+    /// The store law (#932, #942): under `controls`' geometry the batch
+    /// geometry of every sample equals its batch geometry in `converted`,
+    /// another store of the same observation (an MSv4 conversion), to the
+    /// law's 1e-12.
+    pub fn assert_store_geometry(&self, name: &str, controls: Value, converted: &Path) {
+        let request = self.request(name, controls);
+        let comparison = compare_stores(&request, &run_context(&request), converted)
+            .expect("both stores' geometry");
+        eprintln!("{name}: store geometry law {comparison:?}");
+        assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
+        assert!(
+            comparison.holds(),
+            "{name}: the converted store's geometry departs: {comparison:?}"
+        );
+    }
+
+    /// The request of `controls` merged over the T1 geometry.
+    fn request(&self, name: &str, controls: Value) -> ImagingRequest {
+        let mut parameters = json!({
+            "vis": self.measurement_set,
+            "imagename": self.root.path().join(name),
+            "backend": "cpu",
+        });
+        let fields = parameters.as_object_mut().expect("parameters object");
+        for (key, value) in self.geometry.parameters() {
+            fields.insert(key.to_string(), value);
+        }
+        for (key, value) in controls.as_object().expect("controls object") {
+            fields.insert(key.clone(), value.clone());
+        }
+        imager_defaults(fields);
+        let Value::Object(parameters) = parameters else {
+            unreachable!("parameters are an object");
+        };
+        resolve_request(&ImagingParameters(parameters))
+            .expect("request")
+            .1
     }
 
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
@@ -400,8 +476,8 @@ impl Observation {
             (frequency_hz - band_centre_hz).abs() < 1.0,
             "MFS reference frequency {frequency_hz} Hz, band centre {band_centre_hz} Hz"
         );
-        let side = self.geometry.image_size;
-        assert_eq!(image.pixels.dim(), (side, side));
+        let [nx, ny] = self.geometry.image_size;
+        assert_eq!(image.pixels.dim(), (nx, ny));
     }
 
     /// Direction and Stokes axes: SIN projection at the phase centre with
@@ -423,24 +499,54 @@ impl Observation {
                 reference[axis]
             );
         }
-        let cell_rad = self.geometry.cell_rad();
+        let [cell_x, cell_y] = self.geometry.cell_rad();
         let increment = coordinates.coordinate(0).increment();
         assert!(
-            (increment[0] + cell_rad).abs() < 1.0e-6 * cell_rad,
+            (increment[0] + cell_x).abs() < 1.0e-6 * cell_x,
             "{increment:?}"
         );
         assert!(
-            (increment[1] - cell_rad).abs() < 1.0e-6 * cell_rad,
+            (increment[1] - cell_y).abs() < 1.0e-6 * cell_y,
             "{increment:?}"
         );
         assert_eq!(
             coordinates.coordinate(0).reference_pixel(),
-            vec![(self.geometry.image_size / 2) as f64; 2]
+            self.geometry.centre().map(|pixel| pixel as f64).to_vec()
         );
         let CoordinateModel::Stokes(stokes) = coordinates.coordinate(1) else {
             panic!(".image coordinate 1 is not a Stokes coordinate");
         };
         assert_eq!(stokes.stokes(), [StokesType::I]);
+    }
+}
+
+/// The imager's defaults these laws were written against, where CASA's
+/// tclean defaults differ (#931): 1000-iteration minor cycles, W planes
+/// derived from the data, and the imager's fixed `conjbeams` and
+/// `mosweight`.
+fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
+    fields.entry("cycleniter").or_insert_with(|| json!(1000));
+    match fields.get("gridder").and_then(Value::as_str) {
+        Some("wproject") => {
+            fields.entry("wprojplanes").or_insert_with(|| json!(-1));
+        }
+        Some("awproject") => {
+            fields.entry("conjbeams").or_insert_with(|| json!(true));
+        }
+        Some("mosaic") => {
+            fields.entry("mosweight").or_insert_with(|| json!(false));
+        }
+        _ => {}
+    }
+}
+
+/// A run context for `request` on this host.
+fn run_context(request: &ImagingRequest) -> RunContext {
+    RunContext {
+        host: HostResources::detect().expect("host resources"),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
     }
 }
 
@@ -838,7 +944,7 @@ pub fn box_sum(pixels: &Array2<f32>, centre: [usize; 2], half_width: usize) -> f
 /// quadratic to `ln(psf)` over the connected lobe above `cutoff` of the peak.
 /// Returns FWHM `[major, minor]` in radians on the default geometry.
 pub fn fit_psf_main_lobe(psf: &Array2<f32>, cutoff: f32) -> [f64; 2] {
-    fit_psf_main_lobe_cells(psf, cutoff).map(|fwhm| fwhm * Geometry::DEFAULT.cell_rad())
+    fit_psf_main_lobe_cells(psf, cutoff).map(|fwhm| fwhm * Geometry::DEFAULT.cell_rad()[0])
 }
 
 /// [`fit_psf_main_lobe`] in cells.

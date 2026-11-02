@@ -33,26 +33,36 @@ use casa_imaging_runtime::{
     prepare_bytes, prepare_bytes_for, prepare_minor_cycle, run_bytes, run_bytes_for,
     run_minor_cycle, run_phase,
 };
-use casa_ms::ResolvedSelectedObservationAccess;
 
 use super::charts::{Chart, ChartStitch, charts};
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, domain_operator, native_spacing_hz, selected_correlations,
 };
+use super::observation_source::PlaneBounds;
+use super::observation_source::{BatchRoute, ObservationSource};
 use super::setup::{self, RefreshDemand, SetupDemand, WorkerChoice};
-use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
+use crate::compile::StartModel;
+
+mod seeding;
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
-    pub(crate) access: ResolvedSelectedObservationAccess,
+    /// The observation's batches the passes read.
+    pub(crate) source: &'a BatchRoute,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    /// The main domain's start model, which the initial pass seeds the
+    /// model from.
+    pub(crate) start_model: Option<StartModel>,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
-    pub(crate) visibility_write: Option<VisibilityWriteTarget>,
+    pub(crate) visibility_write: Option<VisibilityWriteTarget<'a>>,
+    /// What the products hold on one lane, and the source's charge, which
+    /// the run releases before them ([`SetupDemand::products`]).
+    pub(crate) products: (u64, u64),
     pub(crate) host: HostResources,
     pub(crate) policy: ResourcePolicy,
     /// Where the run's worker teams go once its setup forms them
@@ -98,7 +108,7 @@ struct Run<'a> {
     charts: Vec<Chart>,
     /// The image domains' images from their charts.
     stitch: ChartStitch,
-    source: MeasurementSetSource<'a>,
+    source: Box<dyn BoundedSource + 'a>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
@@ -110,11 +120,18 @@ struct Run<'a> {
     /// The run's model lifecycle: its generations are paged with the cube
     /// state, or resident.
     lifecycle: ModelLifecycle,
+    /// The start model the initial generation is seeded from; with one,
+    /// the initial pass grids the residual of its prediction.
+    start_model: Option<StartModel>,
+    /// The flat-noise response the start model is made physical with,
+    /// after an initial pass without it has formed the weights
+    /// ([`seeding`]); `None` when it is physical already.
+    reseed: Option<MinorCycleImageResponse>,
     native_spacing_hz: f64,
     backend: BackendChoice,
     /// Whether each Metal backend logs its timing.
     metal_stage_timing: bool,
-    visibility_write: Option<VisibilityWriteTarget>,
+    visibility_write: Option<VisibilityWriteTarget<'a>>,
     /// What the visibility write holds, admitted with the pass that writes;
     /// zero when nothing is written.
     visibility_write_bytes: u64,
@@ -212,12 +229,26 @@ pub(crate) fn run(
     // What a refresh pass holds beside its wave (#763 review): every cycle
     // before it keeps its record, up to the last refresh `nmajor` allows,
     // and the minor cycle's terms, which its solve holds too (#778 review).
-    let refresh = cleaning.then(|| RefreshDemand {
-        masks: 2 * layout.mask_bytes(),
-        cached: layout.refresh_bytes(&setup),
-        results: layout.result_bytes(&setup, iterations),
-        records: layout.record_bytes() * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
-    });
+    let refresh = if cleaning {
+        Some(RefreshDemand {
+            masks: 2 * layout.mask_bytes(),
+            cached: layout.refresh_bytes(&setup),
+            results: layout.result_bytes(&setup, iterations),
+            records: layout.record_bytes()
+                * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
+        })
+    } else {
+        // A run that reseeds refreshes its initial pass with no minor cycle
+        // before it (`seeding`).
+        seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response).map(|_| {
+            RefreshDemand {
+                masks: 0,
+                cached: 0,
+                results: 0,
+                records: 0,
+            }
+        })
+    };
     // Operators, the workers, the source, the imaging weights and the paged
     // cube state. The choice of workers is recorded as it is made, so a
     // setup that then fails still reports it.
@@ -482,12 +513,8 @@ impl<'a> Run<'a> {
         let problem = inputs.problem;
         let backend = inputs.backend;
         let correlations = selected_correlations(problem)?;
-        let selected = inputs
-            .access
-            .into_deferred()
-            .open(problem)
-            .map_err(|error| ImagingError::Observation(Box::new(error)))?;
-        let dish_classes = selected.antenna_response_classes();
+        let route = inputs.source;
+        let dish_classes = route.dish_classes();
         let (host, policy) = (inputs.host, inputs.policy);
         // The passes' workers hold the kernels: at most the policy's.
         let ceiling = policy.cores(&host);
@@ -522,16 +549,17 @@ impl<'a> Run<'a> {
         }
         let cancel = inputs.cancel;
         let channel_local = matches!(domains[0].operator.basis(), Basis::ChannelLocal { .. });
-        let mut source = MeasurementSetSource::new(
+        let planes = domains[0].operator.basis().planes();
+        let pointing_ramp = domains
+            .iter()
+            .any(|domain| domain.operator.cf().pointing_ramp());
+        let mut source: Box<dyn BoundedSource + 'a> = Box::new(ObservationSource::new(
             problem,
-            selected,
-            domains[0].operator.basis().planes(),
+            route,
+            planes,
             plane_bounds(problem),
-            domains
-                .iter()
-                .any(|domain| domain.operator.cf().pointing_ramp()),
-            dish_classes,
-        );
+            pointing_ramp,
+        ));
         let stitch = ChartStitch::new(problem, charts.clone());
         let visibility_write_bytes = inputs
             .visibility_write
@@ -541,6 +569,7 @@ impl<'a> Run<'a> {
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .unwrap_or(0);
         let initial = initial_modes(weight_image);
+        let reseed = seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response);
         let demand = SetupDemand {
             problem,
             domains: &domains,
@@ -556,8 +585,13 @@ impl<'a> Run<'a> {
                 ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
                     .resident_bytes()
             },
+            start_model: inputs.start_model.as_ref().map(|start| {
+                start.seeding_bytes() + reseed.map_or(0, |_| start.conversion_bytes())
+            }),
+            reseeds: reseed.is_some(),
             write: inputs.visibility_write.as_ref().map(|_| {
-                let (modes, with_model) = write_pass(problem, initial);
+                let seeded = (inputs.start_model.is_some(), reseed.is_some());
+                let (modes, with_model) = write_pass(problem, initial, seeded);
                 (modes, with_model, visibility_write_bytes)
             }),
             spill_directory: inputs.spill_directory,
@@ -571,10 +605,22 @@ impl<'a> Run<'a> {
                 free_memory(&host, &policy),
             )
             .map_or(0, |(_, bytes)| bytes),
+            products: inputs.products.0,
+            source: inputs.products.1,
             free: free_memory(&host, &policy),
         };
         let choice = setup::fit_workers(ceiling, demand.free, |cores| demand.bytes(cores))?;
         *chosen = Some(choice.clone());
+        // The products run after the passes: a run whose products do not
+        // fit even on one lane is refused now, not after its passes.
+        drop(admit(
+            &host,
+            &policy,
+            &Demand {
+                phase: "products",
+                memory: demand.products_bytes(choice.cores)?,
+            },
+        )?);
         if let Some(reason) = &choice.reason {
             tracing::warn!(
                 "imaging on {} workers, not the resource policy's {}: {reason}",
@@ -600,7 +646,7 @@ impl<'a> Run<'a> {
         let (weighting, weights) = setup::weighting(
             problem,
             &domains[0],
-            &mut source,
+            source.as_mut(),
             streaming,
             &cancel,
             (&host, &policy),
@@ -643,6 +689,8 @@ impl<'a> Run<'a> {
             policy,
             cube,
             lifecycle,
+            start_model: inputs.start_model,
+            reseed,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             metal_stage_timing: inputs.diagnostics.metal_stage_timing,
@@ -654,43 +702,39 @@ impl<'a> Run<'a> {
             kept_weights: None,
             row_work: None,
         };
-        if run.visibility_write.is_some() {
-            // The pass that writes must hold every plane, and is refused now
-            // rather than after the cycles that precede it.
-            let (modes, with_model) = write_pass(problem, initial);
-            if run
-                .admit_pass(modes, with_model, run.visibility_write_bytes, true)?
-                .value
-                .residency
-                != Residency::All
-            {
-                return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
-            }
-        }
+        run.refuse_a_waved_write()?;
         Ok(run)
     }
 
-    /// The initial major cycle: data and PSF, from an empty model; it writes
-    /// visibilities when it is also final.
-    fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
-        self.measure_row_work()?;
-        // The model is admitted with the pass, before it is allocated.
-        let Admitted {
-            value: plan,
-            reservation: pass,
-        } = self.admit_pass(
+    /// The pass that writes visibilities must hold every plane: a run whose
+    /// write would take waves is refused as it opens, rather than after the
+    /// cycles that precede it.
+    fn refuse_a_waved_write(&self) -> Result<(), ImagingError> {
+        if self.visibility_write.is_none() {
+            return Ok(());
+        }
+        let (modes, with_model) = write_pass(
+            self.problem,
             self.initial_modes(),
-            false,
-            self.lifecycle.resident_bytes() + self.write_bytes(last),
-            self.writes(last),
+            (self.start_model.is_some(), self.reseed.is_some()),
+        );
+        // Without a minor cycle the first major cycle writes, and seeds
+        // beside it.
+        let seeding = if writes_initially(self.problem) {
+            self.seeding_bytes()
+        } else {
+            0
+        };
+        let plan = self.admit_pass(
+            modes,
+            with_model,
+            self.visibility_write_bytes + seeding,
+            true,
         )?;
-        let model = self
-            .lifecycle
-            .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
-        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
-        let major = self.reconcile(cycle, true, last, plan)?;
-        self.retain(&major, pass)?;
-        Ok(major)
+        if plan.value.residency != Residency::All {
+            return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
+        }
+        Ok(())
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -722,7 +766,7 @@ impl<'a> Run<'a> {
             model,
             self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, last, plan)?;
+        let major = self.reconcile(cycle, false, true, last, plan)?;
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
@@ -776,12 +820,14 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Run `cycle`'s pass and finish it. The initial pass grids the data;
+    /// Run `cycle`'s pass and finish it. The initial pass grids the data,
+    /// predicting the cycle's model when `with_model` (a start model's);
     /// every refresh grids the residual of the cycle's model.
     fn reconcile(
         &mut self,
         mut cycle: MajorCycle,
         initial: bool,
+        with_model: bool,
         last: bool,
         plan: PassPlan,
     ) -> Result<Major, ImagingError> {
@@ -796,7 +842,7 @@ impl<'a> Run<'a> {
             .visibility_write
             .as_ref()
             .filter(|_| last)
-            .map(|target| VisibilityWriter::begin(target, transform))
+            .map(|target| target.begin(transform))
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;
         if let Residency::Waves { planes_per_wave } = residency {
@@ -809,7 +855,7 @@ impl<'a> Run<'a> {
         let (model, state) = cycle.parts();
         let summary = self.pass(
             modes,
-            (!initial).then_some(model),
+            with_model.then_some(model),
             plan,
             state,
             initial,
@@ -953,7 +999,7 @@ impl<'a> Run<'a> {
             let work = run_row_work_pass(
                 &domains,
                 &self.weighting,
-                &mut self.source,
+                self.source.as_mut(),
                 team,
                 &self.cancel,
             )?;
@@ -1048,7 +1094,7 @@ impl<'a> Run<'a> {
         });
         Ok(run_major_cycle(
             &pass,
-            &mut self.source,
+            self.source.as_mut(),
             team,
             &self.cancel,
             &mut |chart, images| {
@@ -1086,7 +1132,7 @@ fn kept_weight_bytes(
         .observation()
         .sources()
         .iter()
-        .map(|source| source.selection().rows().selected_row_count())
+        .map(|source| source.selection().samples())
         .sum::<u64>();
     let samples = usize::try_from(rows).ok()?.checked_mul(channels)?;
     let bytes = WeightCache::bytes(samples);
@@ -1165,20 +1211,33 @@ const fn initial_modes(weight_image: bool) -> ModeSet {
 }
 
 /// The modes of the pass that writes visibilities, and whether it has a
-/// model: the initial pass, of modes `initial`, without cleaning, and a
-/// residual refresh otherwise.
-fn write_pass(problem: &CompiledProblem, initial: ModeSet) -> (ModeSet, bool) {
-    if problem.reconstruction().controls().max_minor_iterations() > 0 {
-        (ModeSet::DATA, true)
+/// model: the initial pass, of modes `initial`, without cleaning, with the
+/// model when it was `seeded` from a start model; a residual refresh after
+/// cleaning, or after the initial pass of a run that `reseeds`
+/// ([`seeding`]).
+fn write_pass(
+    problem: &CompiledProblem,
+    initial: ModeSet,
+    (seeded, reseeds): (bool, bool),
+) -> (ModeSet, bool) {
+    if writes_initially(problem) && !reseeds {
+        (initial, seeded)
     } else {
-        (initial, false)
+        (ModeSet::DATA, true)
     }
+}
+
+/// Whether the first major cycle writes visibilities: a run without
+/// cleaning, whose write is beside a start model's seeding
+/// ([`write_pass`]).
+fn writes_initially(problem: &CompiledProblem) -> bool {
+    problem.reconstruction().controls().max_minor_iterations() == 0
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local
 /// basis: from the low edge of its first channel to the high edge of its
 /// last.
-fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
+pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     if !matches!(
         problem.reconstruction().basis(),
         casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
@@ -1232,6 +1291,7 @@ fn minor_cycle_record(
         actual_iterations: summary.components,
         total_actual_iterations,
         total_flux: summary.absolute_flux,
+        model_flux: summary.model_flux,
         initial_peak_flux: summary.start_peak,
         final_peak_flux: summary.peak,
         noise_rms: summary.noise_rms,

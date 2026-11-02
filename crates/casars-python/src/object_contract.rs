@@ -641,7 +641,12 @@ mod tests {
                 "simulator",
                 "measures",
                 "quanta",
-                "componentlist"
+                "componentlist",
+                "image",
+                "coordsys",
+                "table",
+                "msmetadata",
+                "ms"
             ]
         );
         let annotated = bundle.annotations["python"]["objects"]

@@ -178,8 +178,22 @@ impl PlannedContinuumGeneration {
         inputs: &ContinuumProductInputs<'_>,
         controls: &ContinuumProductControls,
     ) -> Result<Self, ProductsError> {
-        controls.validate_for_problem(inputs.problem())?;
-        let list = inputs.problem().product_list();
+        Self::for_problem(inputs.problem(), controls)
+    }
+
+    /// The publication inventory of a run of `problem`, before it runs:
+    /// what [`Self::new`] compiles from the run's completion, which the
+    /// inventory depends on only through its problem.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn for_problem(
+        problem: &CompiledProblem,
+        controls: &ContinuumProductControls,
+    ) -> Result<Self, ProductsError> {
+        controls.validate_for_problem(problem)?;
+        let list = problem.product_list();
         let mut members = Vec::with_capacity(list.publication().members().len());
         for id in list.publication().members() {
             let entry = &list.entries()[id.ordinal()];

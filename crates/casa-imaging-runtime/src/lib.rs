@@ -29,9 +29,7 @@ pub use resources::{
     ReservationWindow, ResourcePolicy, STREAM_PRODUCERS, admit, charge_process_caches, free_memory,
     process_cache_bytes, reserved_memory,
 };
-pub use source_access::{
-    FRAME_MARGIN, SourceAccessError, bootstrap_source_budget, finalize_source_access, row_layout,
-};
+pub use source_access::{BOOTSTRAP_SOURCE_BYTES, FRAME_MARGIN, row_layout};
 pub use summary::{
     Cancelled, Diagnostics, Phase, RunStatus, RunSummary, SCIENCE_TRACE, STAGE_TIMING,
     SummaryTarget, run_phase,

@@ -119,7 +119,7 @@
 //!   accepts, are rejected (from Python's documentation).
 
 pub mod geodesy;
-mod parse;
+pub(crate) mod parse;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

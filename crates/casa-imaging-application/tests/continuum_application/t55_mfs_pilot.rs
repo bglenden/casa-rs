@@ -55,7 +55,7 @@ fn full_field_application() {
             "channel_count": null,
             "weighting": "uniform",
             "niter": iterations,
-            "minor_cycle_length": 1000,
+            "cycleniter": 1000,
             "nmajor": -1,
             "gain": 0.1,
             "threshold": format!("{threshold_jy}Jy"),

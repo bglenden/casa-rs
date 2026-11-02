@@ -53,7 +53,7 @@ fn simulate(
     if let Some(point) = point {
         sm.predict(&PredictSpec {
             images: Vec::new(),
-            component_list: Some(point.to_path_buf()),
+            component_lists: vec![point.to_path_buf()],
             incremental: false,
         })
         .expect("predict");
@@ -271,7 +271,7 @@ fn leakage_holds_through_the_scans() {
         .expect("a second scan");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point),
+        component_lists: vec![point],
         incremental: false,
     })
     .expect("predict");
@@ -384,7 +384,7 @@ fn gains_and_leakage_refuse_what_casa_or_casa_rs_cannot_do() {
 
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.clone()),
+        component_lists: vec![point.clone()],
         incremental: false,
     })
     .expect("predict");
@@ -392,7 +392,7 @@ fn gains_and_leakage_refuse_what_casa_or_casa_rs_cannot_do() {
     sm.corrupt().expect("corrupt");
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point),
+        component_lists: vec![point],
         incremental: true,
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{message}");

@@ -2,10 +2,8 @@
   "limit": 1500,
   "files": [
     "crates/casa-aipsio/src/aipsio.rs",
-    "crates/casa-calibration/src/cli.rs",
     "crates/casa-calibration/src/execute.rs",
     "crates/casa-calibration/src/plan.rs",
-    "crates/casa-calibration/src/solve/kernel.rs",
     "crates/casa-calibration/tests/casa_calibration_parity.rs",
     "crates/casa-calibration/tests/common/mod.rs",
     "crates/casa-images/src/analysis.rs",
@@ -15,7 +13,6 @@
     "crates/casa-images/src/image_expr_compiled.rs",
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/geometry.rs",
-    "crates/casa-imaging-model/src/observation.rs",
     "crates/casa-imaging-model/tests/compiled_problem.rs",
     "crates/casa-imaging-runtime/src/managed_cube_blocks.rs",
     "crates/casa-lattices/src/statistics.rs",
@@ -25,9 +22,7 @@
     "crates/casa-ms/src/listobs.rs",
     "crates/casa-ms/src/ms.rs",
     "crates/casa-ms/src/msexplore.rs",
-    "crates/casa-ms/src/msexplore/cli.rs",
     "crates/casa-ms/src/plot.rs",
-    "crates/casa-ms/src/selected_observation/tests.rs",
     "crates/casa-ms/src/selection.rs",
     "crates/casa-ms/src/simulation.rs",
     "crates/casa-ms/src/simulation_task.rs",
@@ -61,7 +56,6 @@
     "crates/casa-test-support/tests/measures_interop.rs",
     "crates/casa-types/src/measures/direction.rs",
     "crates/casa-vla/src/importer.rs",
-    "crates/casa-vla/src/record.rs",
-    "crates/casars-frontend-services/src/lib.rs"
+    "crates/casa-vla/src/record.rs"
   ]
 }

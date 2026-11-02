@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration tables of simulated antenna-based terms: what CASA's
-//! simulator writes for `sm.setgain(table=...)` and
-//! `sm.setleakage(table=...)` (`SolvableVisCal::setSimulate` and
+//! simulator writes for `sm.setgain(table=...)`, `sm.setleakage(table=...)`
+//! and `sm.settrop(table=...)` (`SolvableVisCal::setSimulate` and
 //! `storeNCT`), written here for `casa-simulation`.
 //!
-//! The layout is CASA 6.7.6's for a simulated `G Jones` or `D Jones` term
-//! (measured): one row per solution and antenna, ANTENNA2 −1, INTERVAL 0,
-//! SCAN_NUMBER −1, OBSERVATION_ID 0, CPARAM, PARAMERR, FLAG and SNR of one
-//! channel per receptor (`[2, 1]`), PARAMERR and SNR zero, FLAG false, and
-//! WEIGHT left undefined; the OBSERVATION, ANTENNA, FIELD and HISTORY
-//! subtables are the MeasurementSet's, and its SPECTRAL_WINDOW with each
-//! window reduced to one channel. As CASA's `NewCalTable::writeToDisk`, a
+//! The layout is CASA 6.7.6's for a simulated `G Jones`, `D Jones` or
+//! `Tf Jones` term (measured): one row per solution and antenna, ANTENNA2
+//! −1, INTERVAL 0, SCAN_NUMBER −1, OBSERVATION_ID 0, CPARAM, PARAMERR, FLAG
+//! and SNR of one channel per receptor (`[2, 1]`) for `G` and `D`, and of
+//! one parameter per channel of the window (`[1, n]`) for `Tf`, PARAMERR and
+//! SNR zero, FLAG false, and WEIGHT left undefined; the OBSERVATION,
+//! ANTENNA, FIELD and HISTORY subtables are the MeasurementSet's, and its
+//! SPECTRAL_WINDOW, with each window reduced to one channel for a term that
+//! does not depend on frequency (`G`, `D`). As CASA's
+//! `NewCalTable::writeToDisk`, a
 //! table already at the output is replaced; the new table is built beside
 //! it and the old one removed only once the new one is in place. An output
 //! that is the MeasurementSet, lies inside it, or contains it is refused
@@ -45,6 +48,8 @@ pub enum SimulatedJones {
     Gain,
     /// `sm.setleakage`: polarization leakage, `D Jones`.
     Leakage,
+    /// `sm.settrop`: tropospheric phase, channel by channel, `Tf Jones`.
+    Troposphere,
 }
 
 impl SimulatedJones {
@@ -54,12 +59,20 @@ impl SimulatedJones {
         match self {
             Self::Gain => "G Jones",
             Self::Leakage => "D Jones",
+            Self::Troposphere => "Tf Jones",
         }
+    }
+
+    /// Whether the term has a value per channel, so the table keeps the
+    /// MeasurementSet's channels (CASA's `freqDepPar`).
+    #[must_use]
+    pub fn depends_on_frequency(self) -> bool {
+        matches!(self, Self::Troposphere)
     }
 }
 
 /// One antenna's solution: a row of the table.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SimulatedSolution {
     /// TIME, seconds (MJD): the solution's time.
     pub time_s: f64,
@@ -69,8 +82,36 @@ pub struct SimulatedSolution {
     pub spectral_window_id: i32,
     /// ANTENNA1.
     pub antenna: i32,
-    /// The receptors' values, CPARAM.
-    pub receptors: [Complex32; 2],
+    /// CPARAM.
+    pub values: SolutionValues,
+}
+
+/// A solution's CPARAM, `[parameter, channel]`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SolutionValues {
+    /// `G` and `D`: the two receptors' values, in one channel (`[2, 1]`).
+    Receptors([Complex32; 2]),
+    /// `Tf`: the one parameter's value in each channel of the window
+    /// (`[1, n]`).
+    Channels(Vec<Complex32>),
+}
+
+impl SolutionValues {
+    /// The values, in CPARAM's Fortran order.
+    fn as_slice(&self) -> &[Complex32] {
+        match self {
+            Self::Receptors(receptors) => receptors,
+            Self::Channels(channels) => channels,
+        }
+    }
+
+    /// CPARAM's shape.
+    fn shape(&self) -> [usize; 2] {
+        match self {
+            Self::Receptors(_) => [2, 1],
+            Self::Channels(channels) => [1, channels.len()],
+        }
+    }
 }
 
 /// Heap a simulated table holds for each row while it is built in memory
@@ -81,11 +122,19 @@ pub struct SimulatedSolution {
 /// for the allocator.
 pub const SIMULATED_TABLE_ROW_BYTES: u64 = 2_560;
 
-/// Heap writing a simulated table of `rows` rows holds beyond its fixed
-/// metadata.
+/// Heap a simulated table holds for each value of a row's CPARAM beyond
+/// [`SIMULATED_TABLE_ROW_BYTES`]: the value in CPARAM, PARAMERR, FLAG and
+/// SNR (17 bytes). Measured at about 16.6 bytes (1.2 million values of a
+/// `Tf Jones` table of 1,024 channels, `casa-simulation`'s
+/// `session_memory/troposphere.rs` law, which 16 fails); a quarter more is
+/// kept for the allocator.
+pub const SIMULATED_TABLE_VALUE_BYTES: u64 = 21;
+
+/// Heap writing a simulated table of `rows` rows, whose CPARAMs hold
+/// `values` values in all, holds beyond its fixed metadata.
 #[must_use]
-pub const fn simulated_table_bytes(rows: u64) -> u64 {
-    rows * SIMULATED_TABLE_ROW_BYTES
+pub const fn simulated_table_bytes(rows: u64, values: u64) -> u64 {
+    rows * SIMULATED_TABLE_ROW_BYTES + values * SIMULATED_TABLE_VALUE_BYTES
 }
 
 /// Refuse `output` as a simulated table of the MeasurementSet at
@@ -186,7 +235,9 @@ pub fn write_simulated_jones_table(
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
     ])?;
-    make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))?;
+    if !kind.depends_on_frequency() {
+        make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))?;
+    }
     writer.save_main()
 }
 
@@ -267,13 +318,15 @@ fn schema() -> TableSchema {
     .expect("valid simulated calibration schema")
 }
 
-/// A `[receptor, channel]` cell of two receptors and one channel.
-fn cell<T>(values: [T; 2]) -> ArrayD<T> {
-    ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), Vec::from(values))
-        .expect("two receptors by one channel")
+/// A `[parameter, channel]` cell of `shape` holding `values`, in Fortran
+/// order.
+fn cell<T>(shape: [usize; 2], values: Vec<T>) -> ArrayD<T> {
+    ArrayD::from_shape_vec(IxDyn(&shape).f(), values).expect("a value per parameter and channel")
 }
 
 fn row(solution: &SimulatedSolution) -> RecordValue {
+    let shape = solution.values.shape();
+    let count = shape[0] * shape[1];
     let int =
         |name: &str, value: i32| RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)));
     let double =
@@ -289,13 +342,22 @@ fn row(solution: &SimulatedSolution) -> RecordValue {
         int(COL_OBSERVATION_ID, 0),
         RecordField::new(
             COL_CPARAM,
-            Value::Array(ArrayValue::Complex32(cell(solution.receptors))),
+            Value::Array(ArrayValue::Complex32(cell(
+                shape,
+                solution.values.as_slice().to_vec(),
+            ))),
         ),
         RecordField::new(
             COL_PARAMERR,
-            Value::Array(ArrayValue::Float32(cell([0.0; 2]))),
+            Value::Array(ArrayValue::Float32(cell(shape, vec![0.0; count]))),
         ),
-        RecordField::new(COL_FLAG, Value::Array(ArrayValue::Bool(cell([false; 2])))),
-        RecordField::new(COL_SNR, Value::Array(ArrayValue::Float32(cell([0.0; 2])))),
+        RecordField::new(
+            COL_FLAG,
+            Value::Array(ArrayValue::Bool(cell(shape, vec![false; count]))),
+        ),
+        RecordField::new(
+            COL_SNR,
+            Value::Array(ArrayValue::Float32(cell(shape, vec![0.0; count]))),
+        ),
     ])
 }

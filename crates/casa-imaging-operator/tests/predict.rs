@@ -8,17 +8,18 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, MeasurementOperator, ModelImages, ModelPlane,
     ModelPrescale, NativeRow, PlaneRange, PredictionScratch, PreparedModelGrids, RowContext,
     SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
+use casa_types::Correlation;
 use common::{IMAGE, operator};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 const UVW_M: [f64; 3] = [37.0, -21.0, 4.0];
 
@@ -628,7 +629,7 @@ fn an_autocorrelation_predicts_the_zero_spacing_only_when_asked() {
 /// are refused.
 #[test]
 fn model_grids_filled_plane_by_plane_equal_the_prepared_model() {
-    let rr_ll = [CorrelationType::CircularRr, CorrelationType::CircularLl];
+    let rr_ll = [Correlation::RR, Correlation::LL];
     let i_v = [
         PolarizationCoordinate::StokesI,
         PolarizationCoordinate::StokesV,

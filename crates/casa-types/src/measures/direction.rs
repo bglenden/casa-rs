@@ -483,6 +483,23 @@ impl MDirection {
         resolve_named_direction(&parse_named_direction(source_name, frame)?, frame)
     }
 
+    /// Whether [`Self::from_source_name`] knows `source_name` and has a
+    /// model of it: `ZENITH`, a solar-system body, a source of `frame`'s
+    /// Measures provider or a built-in calibrator. Unlike resolving it,
+    /// this needs no epoch; a solar-system body still fails to resolve at
+    /// an epoch its ephemeris does not span (1900 to 2100).
+    ///
+    /// # Errors
+    ///
+    /// The error resolving `source_name` would give at every epoch: for a
+    /// name it does not know or cannot parse, or a body it has no model of.
+    pub fn check_source_name(source_name: &str, frame: &MeasFrame) -> Result<(), MeasureError> {
+        match parse_named_direction(source_name, frame)?.kind {
+            NamedDirectionKind::SolarSystem(SolarSystemBody::Pluto) => Err(pluto_unmodelled()),
+            _ => Ok(()),
+        }
+    }
+
     /// Computes the rise and set UTC MJDs for this source.
     ///
     /// The frame must contain:
@@ -704,6 +721,13 @@ fn parse_named_direction(
     })
 }
 
+/// Pluto, which casacore names but no model here resolves.
+fn pluto_unmodelled() -> MeasureError {
+    MeasureError::NotYetImplemented {
+        route: "moving source name PLUTO".to_string(),
+    }
+}
+
 fn parse_solar_system_name(
     original: &str,
     upper: &str,
@@ -839,11 +863,7 @@ fn resolve_solar_system_body(
                 planet[0][2] - earth_helio[0][2],
             ]
         }
-        SolarSystemBody::Pluto => {
-            return Err(MeasureError::NotYetImplemented {
-                route: "moving source name PLUTO".to_string(),
-            });
-        }
+        SolarSystemBody::Pluto => return Err(pluto_unmodelled()),
     };
 
     Ok(MDirection::from_cosines(direction, DirectionRef::ICRS))

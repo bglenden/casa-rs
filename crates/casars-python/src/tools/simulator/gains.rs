@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Antenna gains and polarization leakage: `setgain`, `setleakage` and
-//! `setapply`, converted as casatools' `simulator_cmpt.cc` converts them
-//! and handed to the session (#841 Phase 3).
+//! Antenna gains, polarization leakage and the troposphere: `setgain`,
+//! `setleakage`, `setapply` and `settrop`, converted as casatools'
+//! `simulator_cmpt.cc` converts them and handed to the session (#841
+//! Phases 3 and 4d).
 //!
 //! Before `open` each returns `False` without converting its arguments, as
 //! CASA does. `corrupt` applies the terms when `close` writes the
 //! MeasurementSet.
 
-use casa_simulation::{ApplySpec, GainSpec, LeakageSpec};
+use casa_simulation::{ApplySpec, GainSpec, LeakageSpec, TroposphereSpec};
 use pyo3::prelude::*;
 
 use super::{PySimulator, outcome};
@@ -38,6 +39,15 @@ pub(super) fn setgain(
             amplitude: request.amplitude.clone(),
         };
         outcome(session.simulator.set_gain(&spec), lines)
+    })?;
+    Ok(result.unwrap_or(false))
+}
+
+/// `sm.settrop(...)`: simulate the troposphere's phase over the rows
+/// observed so far (#841 Phase 4d).
+pub(super) fn settrop(tool: &PySimulator, py: Python<'_>, spec: TroposphereSpec) -> PyResult<bool> {
+    let result = tool.on_session(py, |session, lines| {
+        outcome(session.simulator.set_trop(&spec), lines)
     })?;
     Ok(result.unwrap_or(false))
 }

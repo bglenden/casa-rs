@@ -16,14 +16,15 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_model::{
-    CorrelationType, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput,
-    NativeAwTerms, PolarizationCoordinate,
+    EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
+    PolarizationCoordinate,
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
     GridPadding, ImageExtent, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
     PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
 };
+use casa_types::Correlation;
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -181,7 +182,7 @@ fn measure<T>(stage: impl FnOnce() -> T) -> (u64, i64, T) {
 
 fn routing() -> PolarizationRouting {
     PolarizationRouting::compile(
-        &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+        &[Correlation::XX, Correlation::YY],
         &[PolarizationCoordinate::StokesI],
     )
     .expect("routing")
@@ -472,7 +473,7 @@ fn an_aw_catalog_holds_at_most_its_charge() {
 /// resident.
 fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
     let routing = PolarizationRouting::compile(
-        &[CorrelationType::CircularRr, CorrelationType::CircularLl],
+        &[Correlation::RR, Correlation::LL],
         &[PolarizationCoordinate::StokesI],
     )
     .expect("routing");

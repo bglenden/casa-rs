@@ -71,6 +71,13 @@ pub(crate) struct TableDatContents {
     pub big_endian: bool,
     pub table_desc: TableDescContents,
     pub column_set: ColumnSetContents,
+    /// The name a renamed column has in the column set, by the column's
+    /// current name: casacore's `originalName`, under which its storage
+    /// manager knows it, which `Table::renameColumn` leaves as it was. The
+    /// reader gives every `PlainColumnEntry` its column's current name (so
+    /// that a column finds its manager by name) and keeps the name on file
+    /// here for the writer; a column never renamed has no entry.
+    pub names_on_file: std::collections::HashMap<String, String>,
 }
 
 impl TableDatContents {
@@ -196,16 +203,28 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
             let table_desc = read_table_desc(&mut io)?;
             let ncol = table_desc.columns.len();
             let col_is_array: Vec<bool> = table_desc.columns.iter().map(|c| c.is_array).collect();
-            let column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
+            let mut column_set = read_column_set(&mut io, table_version, ncol, &col_is_array)?;
 
             io.getend()?;
             io.close()?;
+
+            // The column set lists its columns in the description's order;
+            // a renamed column is listed under the name it had at creation.
+            let mut names_on_file = std::collections::HashMap::new();
+            for (entry, desc) in column_set.columns.iter_mut().zip(&table_desc.columns) {
+                if entry.original_name != desc.col_name {
+                    let on_file =
+                        std::mem::replace(&mut entry.original_name, desc.col_name.clone());
+                    names_on_file.insert(desc.col_name.clone(), on_file);
+                }
+            }
 
             Ok(TableDatResult::Plain(TableDatContents {
                 nrrow,
                 big_endian,
                 table_desc,
                 column_set,
+                names_on_file,
             }))
         }
         "RefTable" => {
@@ -825,9 +844,8 @@ fn read_array_record_field(io: &mut AipsIo, dt: CasacoreDataType) -> Result<Valu
         CasacoreDataType::TpArrayBool => {
             let count = io.get_u32()? as usize;
             let mut vals = vec![false; count.min(nelem)];
-            for v in vals.iter_mut() {
-                *v = io.get_bool()?;
-            }
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte.
+            io.get_bool_into(&mut vals)?;
             ArrayValue::Bool(
                 ArrayD::from_shape_vec(IxDyn(&shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1248,7 +1266,12 @@ fn write_column_set(io: &mut AipsIo, contents: &TableDatContents) -> Result<(), 
     // PlainColumn entries
     for (i, col) in cs.columns.iter().enumerate() {
         io.put_u32(2)?; // version=2
-        io.put_string(&col.original_name)?;
+        io.put_string(
+            contents
+                .names_on_file
+                .get(&col.original_name)
+                .unwrap_or(&col.original_name),
+        )?;
         // ScaColData or ArrColData derived data
         io.put_u32(1)?; // version=1
         io.put_u32(col.dm_seq_nr)?;
@@ -1352,11 +1375,13 @@ fn write_record_desc(io: &mut AipsIo, record: &RecordValue) -> Result<(), Storag
             // while keeping the wire layout aligned with casacore.
             io.put_string("")?;
         } else if is_array_data_type(dt) {
-            // Array field: write IPosition shape.
-            if let Value::Array(av) = &field.value {
-                let shape: Vec<i32> = av.shape().iter().map(|&d| d as i32).collect();
-                write_iposition(io, &shape)?;
-            }
+            // A keyword array is of variable shape, as `RecordDesc::addField`
+            // without a shape makes it: `IPosition(1, -1)`. The array's own
+            // shape is written with its data (`write_array_record_field`).
+            // Writing the current shape here would fix the field to it, and
+            // `TableRecordRep::defineDataField` then refuses a later update of
+            // another shape (`Record::define - fixed array conformance error`).
+            write_iposition(io, &[-1])?;
         }
 
         io.put_string("")?; // comment
@@ -1423,85 +1448,64 @@ fn write_array_record_field(io: &mut AipsIo, av: &ArrayValue) -> Result<(), Stor
         }
         let nelem = av.len() as u32;
         io.put_u32(nelem)?;
-        match av {
-            ArrayValue::String(a) => {
-                for s in a.as_slice_memory_order().unwrap_or(&[]) {
-                    io.put_string(s)?;
-                }
-            }
-            _ => {
-                write_array_elements(io, av)?;
-            }
-        }
+        write_array_elements(io, av)?;
     }
 
     io.putend()?;
     Ok(())
 }
 
-/// Write array elements in memory (Fortran) order for non-string arrays.
+/// Write an array's elements in casacore's order, the first axis fastest,
+/// whatever the array's memory layout: an array held in C layout, or a
+/// strided view, is written as the logical array it is, and an array in
+/// Fortran layout is read straight from memory, as before. The reader
+/// ([`read_array_record_field`]) rebuilds Fortran-layout arrays.
 fn write_array_elements(io: &mut AipsIo, av: &ArrayValue) -> Result<(), StorageError> {
     match av {
         ArrayValue::Bool(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_bool(v)?;
-            }
+            // casacore's TypeIO stores Booleans bit-packed, eight to a byte;
+            // one byte each is a record casacore refuses ("part of object
+            // not read").
+            let flags: Vec<bool> = casacore_order(a).copied().collect();
+            io.put_bool_slice(&flags, false)?;
+            Ok(())
         }
-        ArrayValue::UInt8(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u8(v)?;
+        ArrayValue::UInt8(a) => put_each(io, a, AipsIo::put_u8),
+        ArrayValue::Int16(a) => put_each(io, a, AipsIo::put_i16),
+        ArrayValue::UInt16(a) => put_each(io, a, AipsIo::put_u16),
+        ArrayValue::Int32(a) => put_each(io, a, AipsIo::put_i32),
+        ArrayValue::UInt32(a) => put_each(io, a, AipsIo::put_u32),
+        ArrayValue::Float32(a) => put_each(io, a, AipsIo::put_f32),
+        ArrayValue::Float64(a) => put_each(io, a, AipsIo::put_f64),
+        ArrayValue::Int64(a) => put_each(io, a, AipsIo::put_i64),
+        ArrayValue::Complex32(a) => put_each(io, a, AipsIo::put_complex32),
+        ArrayValue::Complex64(a) => put_each(io, a, AipsIo::put_complex64),
+        ArrayValue::String(a) => {
+            for s in casacore_order(a) {
+                io.put_string(s)?;
             }
-        }
-        ArrayValue::Int16(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i16(v)?;
-            }
-        }
-        ArrayValue::UInt16(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u16(v)?;
-            }
-        }
-        ArrayValue::Int32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i32(v)?;
-            }
-        }
-        ArrayValue::UInt32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_u32(v)?;
-            }
-        }
-        ArrayValue::Float32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_f32(v)?;
-            }
-        }
-        ArrayValue::Float64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_f64(v)?;
-            }
-        }
-        ArrayValue::Int64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_i64(v)?;
-            }
-        }
-        ArrayValue::Complex32(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_complex32(v)?;
-            }
-        }
-        ArrayValue::Complex64(a) => {
-            for &v in a.as_slice_memory_order().unwrap_or(&[]) {
-                io.put_complex64(v)?;
-            }
-        }
-        ArrayValue::String(_) => {
-            unreachable!("string arrays handled separately")
+            Ok(())
         }
     }
+}
+
+/// `put` each of `array`'s elements in casacore's order.
+fn put_each<T: Copy>(
+    io: &mut AipsIo,
+    array: &ArrayD<T>,
+    put: fn(&mut AipsIo, T) -> casa_aipsio::AipsIoObjectResult<()>,
+) -> Result<(), StorageError> {
+    for &value in casacore_order(array) {
+        put(io, value)?;
+    }
     Ok(())
+}
+
+/// `array`'s elements in casacore's (Fortran) order, the first axis
+/// fastest: its reversed axes in logical order, which is a contiguous walk
+/// of memory for an array in Fortran layout.
+fn casacore_order<T>(array: &ArrayD<T>) -> impl Iterator<Item = &T> {
+    array.t().into_iter()
 }
 
 fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, StorageError> {
@@ -1594,6 +1598,17 @@ impl TableDatContents {
         for column in &column_set.columns {
             bytes = bytes.checked_add(column.original_name.capacity())?;
         }
+        // The names of renamed columns, as they stand and as the file has them.
+        bytes = bytes.checked_add(
+            self.names_on_file
+                .capacity()
+                .checked_mul(size_of::<(String, String)>())?,
+        )?;
+        for (current, on_file) in &self.names_on_file {
+            bytes = bytes
+                .checked_add(current.capacity())?
+                .checked_add(on_file.capacity())?;
+        }
         Some(bytes)
     }
 
@@ -1655,6 +1670,7 @@ impl TableDatContents {
                 }],
                 columns: plain_columns,
             },
+            names_on_file: std::collections::HashMap::new(),
         }
     }
     /// Build `TableDatContents` with both a storage manager DM and virtual engine DMs.
@@ -2102,6 +2118,7 @@ impl TableDatContents {
                 data_managers: dm_entries,
                 columns: plain_columns,
             },
+            names_on_file: std::collections::HashMap::new(),
         }
     }
 }
@@ -2342,6 +2359,79 @@ mod tests {
         std::env::temp_dir().join(format!("table_control_{name}_{nanos}"))
     }
 
+    /// A Boolean array in a keyword record is bit-packed, as casacore's
+    /// `TypeIO` writes it: sixteen flags take the two bytes nine do, and the
+    /// first flag is the lowest bit. One byte per flag made CASA 6.7.6.14
+    /// refuse the table ("AipsIO::getend: part of object not read").
+    #[test]
+    fn a_boolean_array_keyword_is_bit_packed() {
+        fn record_with(flags: &[bool]) -> RecordValue {
+            let mut record = RecordValue::default();
+            let cells = ArrayD::from_shape_vec(IxDyn(&[flags.len()]).f(), flags.to_vec()).unwrap();
+            record.upsert("flags", Value::Array(ArrayValue::Bool(cells)));
+            record
+        }
+        let nine = [true, false, true, true, false, false, true, false, true];
+        let sixteen = [true; 16];
+        let short = serialize_record_to_uchar(&record_with(&nine)).unwrap();
+        let long = serialize_record_to_uchar(&record_with(&sixteen)).unwrap();
+        assert_eq!(short.len(), long.len(), "both pack into two bytes");
+
+        let three = serialize_record_to_uchar(&record_with(&[true, false, true])).unwrap();
+        let element_count_then_bits = [0, 0, 0, 3, 0b101];
+        assert!(
+            three
+                .windows(5)
+                .any(|window| window == element_count_then_bits),
+            "{three:?}"
+        );
+
+        for flags in [&nine[..], &sixteen[..]] {
+            let bytes = serialize_record_to_uchar(&record_with(flags)).unwrap();
+            let read = deserialize_record_from_uchar(&bytes).unwrap();
+            let Some(Value::Array(ArrayValue::Bool(cells))) = read.get("flags") else {
+                panic!("a Boolean array: {read:?}");
+            };
+            assert_eq!(cells.iter().copied().collect::<Vec<_>>(), flags);
+        }
+    }
+
+    /// An array keyword is of variable shape in its `RecordDesc`
+    /// (`IPosition(1, -1)`, as `RecordDesc::addField` without a shape makes
+    /// it), whatever shape its data has: a fixed shape would make casacore
+    /// refuse a later update of another shape
+    /// (`Record::define - fixed array conformance error`, observed with CASA
+    /// 6.7.6.14 on a table whose descriptor had been changed to a fixed one).
+    #[test]
+    fn an_array_keyword_is_of_variable_shape_in_its_record_desc() {
+        let variable_shape = [0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff];
+        let mut record = RecordValue::default();
+        record.upsert(
+            "vector",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.0, 2.0]).unwrap(),
+            )),
+        );
+        record.upsert(
+            "matrix",
+            Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), vec![1, 2, 3, 4, 5, 6]).unwrap(),
+            )),
+        );
+        let bytes = serialize_record_to_uchar(&record).unwrap();
+        let described = bytes
+            .windows(variable_shape.len())
+            .filter(|window| *window == variable_shape)
+            .count();
+        assert_eq!(
+            described, 2,
+            "one variable shape per array field: {bytes:?}"
+        );
+
+        let read = deserialize_record_from_uchar(&bytes).unwrap();
+        assert_eq!(read, record, "the data keeps its own shape");
+    }
+
     #[test]
     fn column_keywords_roundtrip_in_table_dat() {
         // Build a ColumnDescContents with nested record keywords
@@ -2392,6 +2482,7 @@ mod tests {
                     is_array: true,
                 }],
             },
+            names_on_file: std::collections::HashMap::new(),
         };
 
         let dir = test_dir("col_kw_rt");

@@ -18,7 +18,7 @@ fn clark_cube(
         "outframe": "TOPO",
         "restoringbeam": "common",
         "niter": 3,
-        "minor_cycle_length": 1,
+        "cycleniter": 1,
         "nmajor": 3,
         "gain": 0.37,
         "threshold": "1e-12Jy",
@@ -98,7 +98,7 @@ fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
             "specmode": "cube",
             "outframe": "TOPO",
             "niter": 3,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": 3,
             "gain": 0.37,
             "threshold": "1e-12Jy",
@@ -168,7 +168,8 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                         "spw": "0:0~3",
                         "channel_count": 4,
                         "specmode": if cube { "cube" } else { "mfs" },
-                        "outframe": "TOPO",
+                        // An mfs image's frame is casa-rs's LSRK.
+                        "outframe": if cube { "TOPO" } else { "LSRK" },
                         "perchanweightdensity": per_channel,
                     }),
                 );
@@ -386,7 +387,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                         "pblimit": pblimit,
                         "write_pb": true,
                         "pbcor": true,
-                        "mask_box": "3,4,10,12",
+                        "mask": "3,4,10,12",
                     }),
                 );
                 let outcome = casa_imaging_application::execute(

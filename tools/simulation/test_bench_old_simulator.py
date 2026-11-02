@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_old_simulator as bench  # noqa: E402
 
 
-def manifest_entry(predict: bool, usehourangle: bool) -> dict:
+def manifest_entry(predict: bool, usehourangle: bool, tai_minus_utc_s: float | None = None) -> dict:
     calls = [
         {"op": "open", "resolved": {"ms": "x.ms"}, "returned": True},
         {
@@ -45,7 +45,11 @@ def manifest_entry(predict: bool, usehourangle: bool) -> dict:
     ]
     if predict:
         calls.insert(6, {"op": "predict", "resolved": {"imagename": ["/models/alma-cube.image"]}})
-    return {"name": "c", "calls": calls}
+    entry = {"name": "c", "calls": calls}
+    if tai_minus_utc_s is not None:
+        # As the oracle records it from CASA's measures.
+        entry["casa_tai_minus_utc_s"] = tai_minus_utc_s
+    return entry
 
 
 class HarnessTest(unittest.TestCase):
@@ -66,7 +70,6 @@ class HarnessTest(unittest.TestCase):
             variants=["auto"],
             append=False,
             rest_s=0.0,
-            casa_time_shift_s=37.0,
             max_load=100.0,
             busy_deadline_s=1.0,
             only=None,
@@ -81,7 +84,9 @@ class HarnessTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_noise_only_request_without_hour_angle(self):
-        request, info = self.harness.build_request("c", manifest_entry(predict=False, usehourangle=False))
+        request, info = self.harness.build_request(
+            "c", manifest_entry(predict=False, usehourangle=False, tai_minus_utc_s=37.0)
+        )
         body = request["request"]
         self.assertEqual(request["kind"], "run")
         self.assertEqual(body["telescope_name"], "ALMA")
@@ -100,16 +105,18 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(info["expected_corr_type"], [9, 12])
 
     def test_predict_request_adds_the_hour_angle_offset_and_the_fits_model(self):
-        self.harness.casa = lambda *args: {"offset_s": 100.0}
+        # A manifest without CASA's TAI - UTC asks CASA's measures for it.
+        answers = {"hour-angle": {"offset_s": 100.0}, "tai-minus-utc": {"tai_minus_utc_s": 35.0}}
+        self.harness.casa = lambda command, *args: answers[command]
         request, info = self.harness.build_request("c", manifest_entry(predict=True, usehourangle=True))
         body = request["request"]
         self.assertTrue(body["predict_model"])
         self.assertEqual(body["model"], {"kind": "fits_image", "path": os.path.join(self.harness.models, "alma-cube.fits")})
-        self.assertEqual(body["start_time_mjd_seconds"], 61120.0 * 86400.0 + 100.0 - 30.0 + 37.0)
+        self.assertEqual(body["start_time_mjd_seconds"], 61120.0 * 86400.0 + 100.0 - 30.0 + 35.0)
         self.assertEqual(info["expected_time_first"], body["start_time_mjd_seconds"] + 5.0)
 
     def test_several_fields_are_one_span_and_a_complist_is_an_analytic_model(self):
-        entry = manifest_entry(predict=False, usehourangle=False)
+        entry = manifest_entry(predict=False, usehourangle=False, tai_minus_utc_s=37.0)
         centre = [math.radians(195.0), math.radians(34.0)]
         calls = [call for call in entry["calls"] if call["op"] not in ("setfield", "observe")]
         calls[4:4] = [

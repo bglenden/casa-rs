@@ -1,15 +1,16 @@
 # Documentation Index
 
 Truth class: current descriptive
-Last reality check: 2026-10-20
+Last reality check: 2026-10-28
 Verification: just docs-check
 
 This directory holds stable project documentation.
 
 ## User Surfaces
 
-casa-rs is used from the Python package `casars` and the headless `casars`
-task host (`casars run`, `casars params`); see
+casa-rs is used from the Python package `casars` and from the task
+executables of the application catalog (such as `calibrate gaincal ...`),
+which Python also starts for its task calls; see
 [ADR-0017](adr/0017-python-first-surface.md). All computation is in Rust,
 and the Python package is only its interface; see
 [ADR-0018](adr/0018-rust-computes-python-is-the-interface.md).
@@ -23,6 +24,8 @@ and the Python package is only its interface; see
     contract
 - [`reference/task-parameters.md`](reference/task-parameters.md)
   - generated catalog of every task parameter surface
+- [`reference/casa-compatibility.md`](reference/casa-compatibility.md)
+  - generated comparison of each casa-rs task with its CASA 6.7.6.14 task
 - [`provider-contracts.md`](provider-contracts.md)
   - canonical provider schema model for task and object surfaces
 
@@ -52,6 +55,11 @@ still in use. Retired phase plans and finished-wave evidence were removed on
 Canonical active planning and work status live in GitHub issues and pull
 requests. The active simulation programme (#841) follows
 [`simulation/simulation-plan-20261020.md`](simulation/simulation-plan-20261020.md).
+
+The proposed [MeasurementSet architecture and implementation plan](measurement-set/README.md)
+covers shared native observation contracts for MSv2 and XRADIO MSv4, with MSv3
+deferred pending a concrete need. It is a design under review, not a statement
+of implemented format support.
 
 ## Documentation conventions
 

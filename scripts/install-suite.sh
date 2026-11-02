@@ -9,7 +9,10 @@ Usage: scripts/install-suite.sh (--version <version> | --bundle <path-or-url>) [
 
 Installs a published casa-rs suite bundle into a local suite root, creates a
 Python virtual environment from the bundled wheel, and manages stable/rc
-symlinks plus PATH-facing launcher links.
+symlinks plus PATH-facing links to the suite's commands. split, feather,
+immath and impv, CASA names that are system commands or generic words, are
+left off PATH, and a file or foreign link already at a command's name is
+kept.
 
 Options:
   --version <version>       Version to install, for example 0.15.0 or 0.16.0-rc1
@@ -265,8 +268,6 @@ wheel_path="$(select_wheel "$install_dir/wheels" "$python_bin")"
 "$install_dir/python/bin/python" -m pip install "$wheel_path"
 
 ln -sfn "$install_dir" "$install_root/$channel"
-ln -sfn "$install_root/$channel/bin/casars" "$bin_dir/casars-$channel"
-ln -sfn "$install_root/$channel/bin/calibrate" "$bin_dir/calibrate-$channel"
 
 if [[ -z "$activate" ]]; then
   if [[ "$channel" == "stable" ]]; then
@@ -275,23 +276,70 @@ if [[ -z "$activate" ]]; then
     activate="false"
   fi
 fi
-
 if [[ "$activate" == "true" ]]; then
   ln -sfn "$install_dir" "$install_root/current"
-  ln -sfn "$install_root/current/bin/casars" "$bin_dir/casars"
-  ln -sfn "$install_root/current/bin/calibrate" "$bin_dir/calibrate"
 fi
+
+# A link into this suite root whose command a newer suite no longer has, such
+# as the retired casars launcher (#931), is removed.
+for link in "$bin_dir"/*; do
+  if [[ -L "$link" && ! -e "$link" ]]; then
+    case "$(readlink "$link")" in
+      "$install_root"/*) rm -f "$link" ;;
+    esac
+  fi
+done
+
+# Link target to destination, unless destination is something this installer
+# did not make: a file, or a link pointing outside the install root. That is
+# left as it is, with a warning.
+link_command() {
+  local target="$1"
+  local destination="$2"
+  if [[ -e "$destination" || -L "$destination" ]]; then
+    if [[ ! -L "$destination" ]]; then
+      echo "install-suite.sh: leaving $destination, which is not a suite link" >&2
+      return
+    fi
+    case "$(readlink "$destination")" in
+      "$install_root"/*) ;;
+      *)
+        echo "install-suite.sh: leaving $destination, which links outside $install_root" >&2
+        return
+        ;;
+    esac
+  fi
+  ln -sfn "$target" "$destination"
+}
+
+# The suite's commands go on PATH, as <command>-<channel> and, when active,
+# <command>. Python starts tasks from the suite's own bin/, so a command left
+# off PATH still runs there. CASA task names that are also system commands
+# or generic words stay off: split is a coreutil (mstransform hosts it), and
+# feather, immath and impv are ordinary words.
+path_commands=()
+for executable in "$install_dir"/bin/*; do
+  command_name="$(basename "$executable")"
+  case "$command_name" in
+    split|feather|immath|impv) continue ;;
+  esac
+  path_commands+=( "$command_name" )
+  link_command "$install_root/$channel/bin/$command_name" "$bin_dir/$command_name-$channel"
+  if [[ "$activate" == "true" ]]; then
+    link_command "$install_root/current/bin/$command_name" "$bin_dir/$command_name"
+  fi
+done
 
 cat <<EOF
 Installed casa-rs $version for $platform
   suite root: $install_dir
   channel link: $install_root/$channel
-  channel commands: $bin_dir/casars-$channel, $bin_dir/calibrate-$channel
+  channel commands in $bin_dir: ${path_commands[*]/%/-$channel}
 EOF
 
 if [[ "$activate" == "true" ]]; then
   cat <<EOF
-  active commands: $bin_dir/casars, $bin_dir/calibrate
+  active commands in $bin_dir: ${path_commands[*]}
   active suite root: $install_root/current
 EOF
 else

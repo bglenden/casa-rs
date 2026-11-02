@@ -12,14 +12,23 @@ CASA behaviours casa-rs follows for parity:
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
-[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field).
+[a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
+[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
-[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
+[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
+[`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
+[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
+[`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
+[`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
+[`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
+[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
+[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -43,6 +52,11 @@ Simulator behaviours casa-rs does not follow:
 [`tsys-manual`'s stale and borrowed system temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures),
 [`tsys-manual` scaling every noise term](#a-tsys-manual-term-scales-every-noise-term),
 [the noise term a refused `tsys-manual` leaves](#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term),
+[`tsys-atm`'s atmosphere half a band away](#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel),
+[`settrop`'s dispersive delay alone](#settrop-turns-the-phase-by-the-dispersive-wet-delay-alone),
+[`settrop`'s atmosphere half a band away](#settrop-takes-its-atmosphere-half-a-band-below-each-channel),
+[`settrop`'s anisotropic screen](#settrops-screen-has-an-anisotropic-spectrum),
+[`settrop`'s solutions stamped halfway](#settrop-with-simint-stamps-a-solution-halfway-to-its-intervals-start),
 [gain screens read past their transform](#casas-gain-screens-read-past-their-transform),
 [gain screens sharing a seed](#gain-screens-of-neighbouring-antennas-share-a-seed),
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
@@ -68,6 +82,45 @@ Component-list behaviours casa-rs does not follow:
 Component-list behaviours casa-rs follows:
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
+Concatenation behaviours casa-rs does not follow:
+[a merged source record's time](#concat-leaves-a-merged-source-rows-time-unchanged),
+[source equivalence decided by its last column](#concats-source-equivalence-lets-its-last-optional-column-decide),
+[merged sources' numbering](#concat-renumbers-merged-sources-so-that-one-can-split-and-fields-dangle),
+[observation IDs after removing duplicates](#concat-leaves-gaps-in-observation-ids-after-removing-duplicates),
+[an input without states](#concat-drops-every-state-when-one-input-has-none),
+[writing into its inputs](#concat-writes-into-the-measurementsets-it-appends).
+ATM data errors casa-rs corrects (`tools/atmosphere/atm-corrections.patch`):
+[HCN's misplaced line](#atms-hcn-catalogue-misplaces-a-line-at-106-ghz),
+[sea-level air densities](#atms-reference-air-densities-drop-a-digit-at-sea-level),
+[the H2(17)O weight](#atm-weights-h217o-by-the-18o-abundance),
+[the HDO weight](#atms-hdo-weight-divides-by-three).
+ATM behaviours casa-rs follows:
+[HCN above 100 km](#atms-hcn-profile-stops-at-100-km),
+[copied bottom pressures](#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures),
+[unpadded ozone isotopologue layers](#atm-leaves-the-ozone-isotopologue-layers-unpadded),
+[(16)O(17)O](#atm-omits-16o17o).
+ATM behaviours casa-rs does not follow:
+[the averaged non-dispersive wet phase](#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column).
+Calibration behaviours casa-rs follows:
+[a gain table's resolution and total bandwidth](#a-gain-tables-solved-window-records-its-frequency-as-its-resolution-and-total-bandwidth).
+Calibration behaviours casa-rs does not follow:
+[a solve that fits exactly](#viscalsolver2-fails-a-solve-whose-chi-square-is-exactly-zero).
+`simutil` behaviours casa-rs does not follow:
+[the ALMA tiling's default beam](#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff),
+[`noisetemp`'s receiver lookup](#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables),
+[directions without an epoch](#direction_splitter-cannot-split-a-direction-without-an-epoch),
+[`modifymodel`'s axis swaps](#modifymodel-swaps-axes-into-place-and-refuses-a-cyclic-order),
+[`modifymodel`'s Stokes labels](#modifymodel-labels-the-new-images-stokes-planes-by-their-count),
+[`incell` as two cells](#modifymodel-indexes-the-map-it-makes-of-two-cells),
+[the component-only model's unset width](#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment),
+[component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
+Flagging behaviours casa-rs does not follow:
+[a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
+Coordinate behaviours casa-rs does not follow:
+[a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
+[a FITS date's time scale](#importfits-reads-every-fits-date-as-utc),
+[`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -441,6 +494,38 @@ division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
 
+## `tclean` images DATA when CORRECTED_DATA is missing, and says nothing
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour casa-rs follows, with a warning (simulation plan
+  §3, decision 6)
+- Affected code: `synthesis/ImagerObjects/SIMapperCollection.cc` (`grid`),
+  `synthesis/TransformMachines2/FTMachine.cc` (`makeImage`),
+  `synthesis/ImagerObjects/SynthesisImagerVi2.cc` (`selectData`)
+
+`datacolumn='corrected'` sets `FTMachine::CORRECTED` in `selectData`
+without looking at the MeasurementSet. When a VisBuffer has no corrected
+visibilities, `SIMapperCollection::grid` and `FTMachine::makeImage` switch
+to `OBSERVED`, so `tclean` images `DATA` (less the model in a major cycle).
+`SynthesisImager::selectData` once logged "CORRECTED_DATA column does not
+exist. Using DATA column instead"; that block is commented out, and CASA
+6.7.6's `libcasacpp_synthesis` does not contain the message, so CASA logs
+no message for the fallback.
+
+casa-rs's simulator writes `DATA` only, so its imager follows the fallback
+and logs CASA's old message as a warning, since the column imaged is not
+the one asked for.
+
+VisibilityIterator2's `existsColumn` also counts `CORRECTED_DATA` as
+missing in an iteration chunk whose first row's cell is undefined
+(`isDefined(0)` on the chunk's attached table), so CASA can image `DATA`
+chunk by chunk from a partly written column. casa-rs decides by the
+column's presence alone and images an existing `CORRECTED_DATA` as before.
+That is a deliberate scope limit, not full parity: casa-tables'
+metadata-only probe (`array_cell_is_defined_uncached`) answers only for
+lazy, disk-backed `TiledShapeStMan` columns, and one probe would not
+reproduce the per-chunk rule.
+
 ## The Airy beam's blockage term uses the inverse length ratio
 
 - Date noted: 2026-10-21
@@ -474,20 +559,22 @@ CASA's formula rather than the physical one.
 
 `observe` converts the reference epoch to TAI and adds its seconds to the
 start and stop offsets, then writes the result into TIME, whose MEASINFO says
-UTC. The data therefore start 37 s (TAI − UTC since 2017) after the requested
-epoch. The geometry is computed with the stored number read as UT1 (line
-1546), so CASA's data are self-consistent; only the schedule is shifted.
+UTC. The data therefore start TAI − UTC at the reference epoch after the
+requested epoch (37 s since 2017, 35 s in 2014). The geometry is computed with
+the stored number read as UT1 (line 1546), so CASA's data are
+self-consistent; only the schedule is shifted.
 
 casa-rs stores the requested UTC, and also reads the stored TIME as UT1 for
 the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
-requests a start 37 s later on the casa-rs side and compares rows at equal
-TIME (`tools/simulation/compare_sm_ms.py`).
+requests a start later by TAI − UTC at the reference epoch on the casa-rs
+side, taken from the measures data and never written in as a number, and
+compares rows at equal TIME (`tools/simulation/compare_sm_ms.py`).
 
 The same offset separates the calibration tables the two simulators write
 (`setgain` and `setleakage` with `table=`): CASA's TIME is TAI under the UTC
 label. `sm.setapply` of a CASA-simulated table to a casa-rs MeasurementSet,
-or the reverse, therefore takes its solutions 37 s away, several solutions
-of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
+or the reverse, therefore takes its solutions TAI − UTC away (37 s today),
+several solutions of 10 s integrations. The `corrupt-setapply-*` scenarios agree with CASA
 because their runs are shifted as above; tables solved from real data carry
 true UTC and are not affected.
 
@@ -1190,6 +1277,14 @@ The CASA comparison holds CASA's gains to closure only, reports rather than
 checks CASA's unit-gain antennas, and compares the two implementations'
 screens by their autocorrelations, which a screen's scale does not change.
 
+`settrop(mode='individual')`'s water-vapour series come from the same
+`fBM::initialize` and normalise the same way (#841 Phase 4d): in one
+probe, antenna 0's phases were all below 5·10⁻¹⁰ rad. casa-rs transforms
+every slot there too. On fewer than six slots the spectrum's bins
+`i < N/2 − 1` hold only the mean, so whatever varies in CASA's series is
+what it read past the transform; casa-rs refuses `individual` mode on so
+short a track rather than add no turbulence.
+
 ## Gain screens of neighbouring antennas share a seed
 
 - Date noted: 2026-10-24
@@ -1244,7 +1339,9 @@ for the last antenna, which is ANTENNA1 only of its autocorrelation. So
 with autocorrelations written, CASA's default, the last antenna has unit
 gain throughout (`setgain`) and a leakage of 1 on both receptors
 (`setleakage`); measured, antenna 42 of 43 in `corrupt-gain`. casa-rs
-simulates every antenna's term.
+simulates every antenna's term. `settrop`'s `Tf` term takes the same loop
+(its modes are not ones whose autocorrelations CASA simulates), and casa-rs
+simulates every antenna's there too (#841 Phase 4d).
 
 ## `setleakage` simulates only the first two spectral windows
 
@@ -1394,4 +1491,1324 @@ Tsys parameters. A water vapour above 100 mm, or a zenith Tsys that is not
 positive or above 10⁶ K, then makes it return `False`, but the `ANoise` stays:
 the next `corrupt` adds 1 Jy of noise (CASA 6.7.6, `pwv='200mm'`: variance
 0.872 over cross- and autocorrelations, where 1 Jy gives 0.875). casa-rs
-refuses such a `setnoise` without adding a term.
+refuses such a `setnoise` without adding a term. `tsys-atm` takes the same
+path in `setnoise` (the `ANoise` is created before either Tsys mode's
+checks; read from the source, not measured), and casa-rs refuses it the
+same way.
+
+## `tsys-atm` noise takes its atmosphere half a band below each channel
+
+- Date noted: 2026-10-24
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 4c)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::initAtm`, `tsys`, `opac`) and
+  `synthesis/MeasurementComponents/SolvableVisCal.cc` (`setSimulate`)
+
+`setnoise(mode='tsys-atm')` scales a unit `ANoise` by a `Tf` term ("TF
+NOISE") whose Tsys comes from ATM for each channel:
+Tsys(A, c) = (hν/k) e^(τA) (1/(e^(hν/k/T_ebb(A)) − 1) + T_rx/(hν/k)) (1 + g),
+τ the zenith opacity and T_ebb the sky's equivalent blackbody temperature
+at airmass A, with hν/k from the channel's frequency (`casa_simulation`'s
+`corrupt::tsys_atm` has the whole model). Measured on CASA 6.7.6 (ALMA's
+site defaults, 1 mm of water, 64-channel windows of 100 MHz from 180 GHz,
+across the 183 GHz line, and from 321 GHz, 2 s integrations; the probe
+scripts and results are on the NAS under `casa-rs/issue-841-tsys-4c`),
+every channel's noise variance agrees with that formula, through
+`casa-atmosphere`, with no free parameter (ratio 1.0000 and 1.0027, rms
+0.0106 and 0.0100 per channel, against a statistical 1σ of 0.0149) once the
+atmosphere is taken at the frequencies CASA gives ATM, which are not the
+channels':
+
+- **The atmosphere is half a band below the channel.** `initAtm` builds
+  each window's ATM grid from `REF_FREQUENCY`, which the simulator sets to
+  the first channel's frequency, with the reference at the middle channel:
+  ATM's channel i is at `REF + (i − n/2)·Δν` for the first window and
+  `REF + (i − n/2 − 1)·Δν` for the others, and `opac` and `tsys` read
+  channel c of that grid. So channel c's τ and T_ebb are those of a
+  frequency half the band below it (3.2 GHz for the probe's windows), while
+  hν/k is the channel's own. Against the atmosphere at each channel's own
+  frequency, CASA's variance across the 183 GHz line is off by a mean factor
+  of 6.1 and up to 103; at 321 GHz by 0.39 on average and up to 5.5. The
+  shift grows with the window's width and matters wherever the atmosphere
+  changes across it: the 183 GHz line's brightness changes by tens of
+  kelvin over a few GHz at a 5,000 m site (Thompson, Moran & Swenson,
+  *Interferometry and Synthesis in Radio Astronomy*, 3rd ed., p. 746,
+  Fig. 13.21), and an ozone line at 231.7 GHz nearly doubles ALMA's system
+  temperature within a band (B. Svoboda, *Special Topics: Spectral Lines*,
+  NRAO Synthesis Imaging Workshop 2026, slide 18).
+- **A one-channel window after the first gets no Tsys.** For n = 1 the
+  later windows' channel map is read past its end, which is undefined
+  behaviour. In CASA 6.7.6 on macOS the index it read pointed past the grid
+  (the log reads "ch 972849296/20"); the term's `T` came out bad,
+  `setMatByOk` applied it as 1, and the probe's 2 GHz continuum window at
+  230 GHz got unscaled 1 Jy noise (variance 0.996 Jy²). Another build may
+  read something else.
+
+casa-rs evaluates ATM at each channel's CHAN_FREQ, for every window and a
+one-channel window alike, so a channel's σ follows the sky it observes. As
+for `tsys-manual`, each row takes its own integration's airmasses and
+EXPOSURE ([stale and borrowed system
+temperatures](#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures));
+the term is also refused when its zenith Tsys at the first window's centre
+is not a number, which CASA's check (> 10⁶ K or ≤ 0) lets through.
+
+## `settrop` turns the phase by the dispersive wet delay alone
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::cphase`)
+
+`sm.settrop` adds a `Tf Jones` term whose value for antenna a in channel c
+is `exp(i·δ_a·φ(c))`: δ the fractional excess of water vapour over `pwv`
+above the antenna (fractional Brownian motion of rms `deltapwv`) and φ
+ATM's zenith wet phase delay for `pwv` (`casa_simulation`'s
+`corrupt::troposphere` has the whole model). `cphase` takes φ from
+`SkyStatus::getDispersiveH2OPhaseDelay`: the *dispersive* part alone, the
+refraction the water lines add. Measured on CASA 6.7.6 (seven antennas, 1 mm
+of water, 64-channel windows of 100 MHz from 180 GHz, across the 183 GHz
+line, and of 15.625 MHz at 230 GHz; `tools/simulation/sm_trop_scenarios.json`,
+probes on the NAS under `casa-rs/issue-841-trop-4d`), each row of CASA's
+table is one δ times that dispersive delay (on CASA's grid, below) to
+2.2·10⁻⁵ (single precision), where the whole wet delay at the channels'
+frequencies leaves δ spread across a row by 0.17 of itself (median).
+
+The path a column of water vapour adds is mostly its non-dispersive part,
+the refractivity of the water molecule's permanent dipole: `ℒ_V ≃ 6.3w`,
+"an excellent approximation for frequencies below 100 GHz", rising to
+about 8w in the windows above (Thompson, Moran & Swenson, *Interferometry
+and Synthesis in Radio Astronomy*, 3rd ed., eq. 13.19, p. 702). At
+`settrop`'s site ATM gives 7.0 mm of path per mm of water at 100 GHz, and
+the whole wet delay is 940, 119, 36, 23 and 8.5 times the dispersive part
+at 43, 100, 183, 230 and 345 GHz. With `settrop`'s defaults (3 mm of water
+fluctuating by 15 %), CASA's phases have an rms of 3° at 100 GHz and 39° at
+230 GHz where a fluctuation that size in the water column turns the phase
+by about 380° and 910°.
+
+casa-rs takes the whole wet delay, the dispersive and non-dispersive parts
+together, so `deltapwv` means the fluctuation of the water column it
+names. With CASA's defaults the phases are then fully scrambled at
+millimetre wavelengths; a `deltapwv` of 1 % of 3 mm (30 µm of water) turns
+them by about 60° rms at 230 GHz.
+
+## `settrop` takes its atmosphere half a band below each channel
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`AtmosCorruptor::initAtm`, `cphase`)
+
+`settrop`'s delays come from the same ATM grid as `tsys-atm`'s noise, and
+`cphase` reads channel c of it through the same channel map: each
+channel's φ is the atmosphere's half a band below it, and a one-channel
+window after the first reads the map past its end ([`tsys-atm`'s
+atmosphere half a band
+away](#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel)).
+In the Phase 4d probe's CASA table, δ (a row's phase over the dispersive
+delay) is one value across the row to 2.8·10⁻⁶ of itself with the delay on
+that grid, and spreads by 2.5 of itself across the 183 GHz line with the
+delay at the channels' own frequencies. casa-rs evaluates ATM at each
+channel's CHAN_FREQ.
+
+## `settrop`'s screen has an anisotropic spectrum
+
+- Date noted: 2026-10-24
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/CalCorruptor.cc`
+  (`fBM::initialize`, two dimensions)
+
+`settrop(mode='screen')` blows one two-dimensional screen of fractional
+Brownian motion across the array. `fBM::initialize` fills a half spectrum
+`F2(i, j)`, i along the wind (the half axis) and j across it, with
+amplitudes `|(i, j)|^−(β+½)/2` times a normal draw (its comment: "still
+something not quite right with exponent"; an earlier line, left commented
+out, had `−(β+1)/2`):
+
+- **The wavenumbers are indices.** The screen is long along the wind
+  (CASA's probe screen was 1,359 by 271 pixels), so an index along it is a
+  fifth of the wavenumber of an index across it: the spectrum is stretched
+  along the wind, and the screen is not isotropic.
+- **The full axis is not wrapped.** j runs to the screen's width, where
+  the indices past half of it are negative wavenumbers; taking them as
+  large ones gives the negative wavenumbers the smallest amplitudes.
+- **The exponent.** A two-dimensional fractional Brownian motion whose
+  cuts have the spectral exponent β (as `individual` mode's series, and
+  `beta`'s documentation, have it) has amplitudes `|k|^−(β+1)/2`.
+- **Out of bounds.** It sets the imaginary parts of `F2(s0/2, 0)` and
+  `F2(s0/2, s1/2)`, one past the end of the half axis's `s0/2` entries, and
+  a half axis of `s0/2` entries transforms to `s0 − 2` real pixels along
+  the wind, of which it copies `s0`: the last two from past the end of the
+  output, as the one-dimensional series do ([gain screens read past their
+  transform](#casas-gain-screens-read-past-their-transform)). CASA's own
+  `settrop` test is skipped for "intermittent failures".
+
+Isotropic turbulence's phase spectrum depends only on the spatial
+frequency's size, `|q|^−11/3` in two dimensions (Thompson, Moran & Swenson,
+3rd ed., sec. 13.1.7, p. 725). casa-rs draws `|k|^−(β+1)/2` on the
+wavenumbers in cycles per pixel, the full axis wrapped, with the conjugate
+pairs and real bins the real transform needs on the half axis's first and
+Nyquist columns (drawn apart, those modes come out at half the power), and
+transforms every pixel: on a screen five times as long as wide its
+structure function is the same along the wind and across it, where CASA's
+differ by five, and its boundary modes have their interior neighbours'
+power (`corrupt::troposphere`'s unit tests).
+
+## `settrop` with `simint` stamps a solution halfway to its interval's start
+
+- Date noted: 2026-10-24
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 4d)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`
+  (`setSimulate`)
+
+With `simint` longer than an integration, `setSimulate` iterates the
+MeasurementSet in intervals of `simint` and keeps a solution for each
+integration, stamped `(t₀ + t)/2`, t₀ the interval's first integration's
+time and t its own, and takes the screen's slot nearest that stamp. Measured
+on CASA 6.7.6 (`simint=6` on 2 s integrations): the table's times are 0, 1,
+2, 6, 7, 8, … s for integrations at 0, 2, 4, 6, 8, 10 s, and `corrupt`,
+applying the solution nearest each row's time, gives an interval's later
+integrations a slot from earlier in it. casa-rs stamps each solution with
+its integration's time and takes the slot nearest it, as CASA does when
+`simint` is not set (each integration its own interval). The slots are
+`simint` wide either way.
+
+## ATM's HCN catalogue misplaces a line at 106 GHz
+
+- Date noted: 2026-10-24
+- Status: ATM data error; casa-rs corrects it (#841 Phase 4,
+  `casa-atmosphere`; owner decision, 2026-10-24)
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:796`
+  (`mkSpecificRefractivity_hcn`, `fre[18]`)
+
+HCN's rotational lines are spaced by about 88.6 GHz (J=1–0 at 88.631 GHz,
+2–1 at 177.260, 3–2 at 265.886; *Synthesis Imaging in Radio Astronomy II*,
+printed p. 568, PDF p. 592): the table runs 88.63,
+177.26, …, 974.49 GHz, then gives the J=12–11 line as `106.298069519`
+before continuing at 1151.45 GHz. The line belongs at 1062.98 GHz (as the
+JPL catalogue has it, `c027001.cat`); the decimal point moved. ATM
+therefore sums a J=12–11-strength HCN line at 106.3 GHz and none at
+1063 GHz. HCN is a trace gas (a few 1e-4 ppmv), but near 106.3 GHz the
+misplaced line is not negligible: with the default Chajnantor profile, the
+compiled C++ gives a zenith opacity of 0.029368 at 106.298 GHz, of which
+HCN is 4.5·10⁻⁴; with the line moved to 1062.98 GHz it gives 0.028919, HCN
+1.3·10⁻⁷, so the total is 1.5 % high there (measured in the #894 review).
+Away from 106.3 GHz the line's wings fall off (in `at_tool_check.py`'s
+bands the correction moves the dry opacity by at most 3.5·10⁻⁵ and Tebb by
+1.3·10⁻⁵, at 90 GHz), and at 1063 GHz the missing line is lost among
+water's.
+
+casa-rs moves the decimal point back: the line is at 1062.98069519 GHz.
+The correction is one of four in `tools/atmosphere/atm-corrections.patch`,
+which `extract_atm_tables.py` applies before it generates the port's tables
+and `build-atm-oracle.sh` before it compiles the C++ the tests compare
+with. `at_tool_check.py` shows the C++ built without the patch equals
+CASA's `at` tool (to 7.5·10⁻¹⁵) and the port equals the C++ built with it
+(to 8.1·10⁻¹⁵), so the port differs from the `at` tool by the four
+corrections alone.
+
+## ATM's reference air densities drop a digit at sea level
+
+- Date noted: 2026-10-24
+- Status: ATM data error; casa-rs corrects it (#841 Phase 4; owner
+  decision, 2026-10-24)
+- Affected code: `atmosphere/ATM/ATMProfile.cc:1360`, `:1367`, `:1374`,
+  `:1381`, `:1388` (`st76`, `den[6][50]`)
+
+`st76` converts the minor gases' mixing ratios to number densities with a
+tabulated air density. For the mid-latitude, subarctic and US Standard
+atmospheres the sea-level entry has lost its leading digit: `.496E+19`,
+`.711E+19`, `.549E+19`, `.855E+19`, `.548E+19` cm⁻³ where the next entries
+(2.26e19 and so on at 1 km) and the tropical profile's 2.450e19 show about
+2.5e19 was meant. The parabola `st76` fits through 0, 1 and 2 km then
+falls far below the true density near the ground: in the committed
+sea-level mid-latitude summer case, restoring the digit raises the first
+layer's interpolated density 4.075 times (#894 review). So O3, N2O, CO,
+NO2, SO2, HCl and HCN are up to about four times too scarce in layers whose
+middle is below 1 km. Only sea-level-to-1-km sites with those atmospheres
+see it, and those gases' columns lie mostly higher.
+
+casa-rs restores the digit: 2.496e19, 2.711e19, 2.549e19, 2.855e19 and
+2.548e19 cm⁻³. Air density falls with height, by about e⁻¹ in a dry-air
+scale height of 8 km (*Interferometry and Synthesis in Radio Astronomy*,
+3rd ed., printed pp. 661 and 668, PDF pp. 700 and 707), and the restored
+values fall by 0.88 to 0.91 to
+their 1 km entries, as the tropical profile's untouched 2.450e19 does; the
+typo's values rise 3 to 5 times instead. The US Standard Atmosphere's
+sea-level 1013.25 hPa and 288.15 K give 2.547e19 by the ideal gas law. In
+`at_tool_check.py`'s humid sea-level atmosphere (mid-latitude summer) the
+correction raises the O3, CO and N2O line opacities by up to 1.8 %, 7.7 %
+and 8.5 % and the dry opacity by up to 0.22 % (at 690 GHz); Tebb moves by
+at most 1.2·10⁻⁵. Sites at 1 km and above do not change.
+
+## ATM weights H2(17)O by the (18)O abundance
+
+- Date noted: 2026-10-24
+- Status: ATM bug; casa-rs corrects it (#841 Phase 4; owner decision,
+  2026-10-24)
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:449`
+  (`mkEarthSpecificRefractivity`, `ratiohh17o`)
+
+`ratiohh17o = abun_18o/(1+abun_18o+abun_17o+2.0*abun_d)` uses the (18)O/(16)O
+ratio (0.0020439) where the (17)O ratio (0.000375) belongs, so H2(17)O lines
+are 5.45 times too strong. ATM's own (17)O fractions for oxygen and ozone
+use `abun_17o`. casa-rs does too. Over `at_tool_check.py`'s atmospheres and
+bands the correction lowers the wet opacity by up to 0.61 % (at 990 GHz)
+and Tebb by up to 0.087 % (at 460 GHz), and changes the dispersive wet
+phase by up to 4 % where it is small (at 380 GHz); at Chajnantor the zenith
+opacity at 230 GHz moves by 2·10⁻⁴.
+
+## ATM's HDO weight divides by three
+
+- Date noted: 2026-10-24
+- Status: ATM typo; casa-rs corrects it (#841 Phase 4; owner decision,
+  2026-10-24)
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:450`
+  (`mkEarthSpecificRefractivity`, `ratiohdo`)
+
+`ratiohdo = 2.0*abun_d/(1+abun_18o+abun_17o+2-0*abun_d)` reads `2-0*abun_d`
+(that is, 2) where every sibling ratio has `2.0*abun_d`. The denominator is
+3.0024 instead of 1.0030, so HDO lines are about three times too weak.
+casa-rs uses `2.0*abun_d`. Of the four corrections this one matters most:
+at Chajnantor the zenith opacity rises 0.32 % at 230 GHz (near HDO's
+225.9 GHz line) and 0.15 % at 90 GHz (near its 80.6 GHz line), with Tebb
+0.24 % and 0.10 % higher; over `at_tool_check.py`'s atmospheres and bands
+the wet opacity rises by up to 1.8 % and Tebb by up to 0.47 % (both at
+850 GHz).
+
+## ATM's HCN profile stops at 100 km
+
+- Date noted: 2026-10-24
+- Status: ATM data gap; casa-rs follows it (#841 Phase 4): there are no
+  values to restore, and the air above 90 km (below 0.002 hPa) is about
+  2·10⁻⁶ of the column
+- Affected code: `atmosphere/ATM/ATMProfile.cc:1429` (`st76`, `hcn[50]`)
+
+`hcn[50]` is initialised with 45 values, so C++ zero-fills its last five
+levels (100 to 120 km) and the interpolated HCN falls to zero over them. A
+layer whose middle is above 90 km already interpolates toward the zero at
+100 km: the tropical fixture keeps, under a 95 km top, a layer with its
+middle at 90.8 km and its top at 94.1 km (#894 review). So profiles topped
+above about 90 km see the gap; `tools/atmosphere/extract_atm_tables.py`
+reports it whenever it regenerates the tables.
+
+## Copying an AtmProfile copies its top pressures as bottom pressures
+
+- Date noted: 2026-10-24
+- Status: ATM bug; no effect on what casa-rs ports
+- Affected code: `atmosphere/ATM/ATMProfile.cc:567` (copy constructor)
+
+The copy constructor fills `v_layerPressure0_` from `a.v_layerPressure1_`.
+`RefractiveIndexProfile` (and so `SkyStatus`) copies its `AtmProfile` this
+way, so their `getLayerBottomPressure` returns each layer's top pressure and
+`setAltitude` would take a wrong ground pressure. No opacity, path or
+brightness calculation reads bottom pressures. `casa-atmosphere` keeps one
+profile and never copies it through such a path.
+
+## ATM leaves the ozone isotopologue layers unpadded
+
+- Date noted: 2026-10-24
+- Status: latent ATM bug; does not arise with ATM's own profiles
+- Affected code: `atmosphere/ATM/ATMRefractiveIndexProfile.cc:723–725`
+  (`mkRefractiveIndexProfile`)
+
+For a layer without ozone, `mkRefractiveIndexProfile` pushes a zero onto the
+total-ozone vector only. The eight ozone state and isotopologue vectors get
+nothing, so they become shorter than the layer count and later layers' values
+shift down one place. ATM's standard profiles have ozone in every layer, so
+this needs a user profile with zero ozone.
+
+## ATM omits (16)O(17)O
+
+- Date noted: 2026-10-24
+- Status: deliberate in ATM; casa-rs follows it
+- Affected code: `atmosphere/ATM/ATMRefractiveIndex.cc:3252`
+  (`mkSpecificRefractivity_16o17o`)
+
+The (16)O(17)O function returns zero before its line loop. The comment says
+the isotope was removed in 2024 while its catalogue is reviewed, because it
+gave lines that do not exist. The port returns zero too and keeps the
+catalogue in its tables for the record.
+
+## RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column
+
+- Date noted: 2026-10-24
+- Status: ATM bug; casa-rs does not follow it (#841 Phase 4b)
+- Affected code: `atmosphere/ATM/ATMRefractiveIndexProfile.cc:2466`
+  (`getAverageNonDispersiveH2OPhaseDelay(const Length &, unsigned int)`)
+
+The window average calls `getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]
++ i)`. `RefractiveIndexProfile` has no overload taking a channel alone, so
+the index converts to a `Length` in metres, and the call returns channel 0's
+phase for a water column of 0, 1, 2 … metres. The average is then scaled
+again by the requested column. For the simulator's Chajnantor atmosphere and
+1.3 mm of water this gives 306,132° in a 22 GHz window, where the channels'
+mean is a few degrees (`casa-atmosphere`'s `oracle_absorption` test
+reproduces ATM's number exactly). CASA's `at` tool does not reach this
+function: its averages go through `SkyStatus`, whose override is correct.
+`casa-atmosphere` takes the mean of the channels' phases.
+
+## VisCalSolver2 fails a solve whose chi-square is exactly zero
+
+- Date noted: 2026-10-24
+- Status: CASA behaviour casa-rs does not follow (#903, #905)
+- Affected code: `synthesis/MeasurementComponents/VisCalSolver2.cc:180–185`
+  (and `:353–358`, the other `solve` overload), CASA 6.7.5.18
+
+Each Levenberg-Marquardt iteration recomputes chi-square and, if it is
+exactly `0.0`, prints "CHI2 IS SPURIOUSLY ZERO!" and returns `False`, so
+`Calibrater::genericGatherAndSolve` records no solution for the interval
+(and writes no table when no interval solves). Chi-square is exactly zero
+only when the current gains reproduce every unflagged sample to the last
+bit, which in practice means noise-free synthetic data whose first guess is
+already the answer. That is an exact fit, not a failure; CASA's oracle runs
+on the casa-rs gain fixtures had to add noise to get a table at all. casa-rs's `solve_graphs` keeps an exact fit as a solution. A
+chi-square that is small but not zero follows CASA's convergence rule
+unchanged, so noise-free data that converge only linearly can still reach
+CASA's 50-iteration limit and fail as CASA's would.
+
+## `calc_pointings2`'s ALMA tiling reads an undefined `pbcoeff`
+
+- Date noted: 2026-10-26
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:611` (`calc_pointings2`)
+
+For `maptype='ALMA'` (and its aliases `alma`, `ALMA-OT`), when the caller
+gives no primary beam (`beam <= 0`), `calc_pointings2` defaults it to
+`spacing_asec*pbcoeff*pl.sqrt(3)`. `pbcoeff` is a local of
+`task_simobserve.py`, not defined in `simutil.py`, so the call raises
+`NameError` (CASA 6.7.6). `simobserve` reaches it with an ALMA map and no
+antenna list, and any script that calls `calc_pointings2` directly without
+`beam` does too. casa-rs uses `simobserve`'s value, 1.13, as the default
+clearly intends (`casa_simulation::simutil::pointings::PBCOEFF`); the
+pointings are then those of the beam `spacing × 1.13 × √3`.
+
+## `noisetemp` reads the wrong receiver temperature at the edges of its tables
+
+- Date noted: 2026-10-26
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:1124–1134` (`noisetemp`)
+
+`noisetemp` looks the receiver temperature up with
+`while(f0[z]<obsfreq and z<len(t0)): z+=1` and then `t_rx=t0[z-1]`:
+
+- **At the first band edge.** A frequency at or above the table's lower
+  limit but not above its first edge leaves `z = 0`, and `t0[-1]` is
+  Python's last entry. ALMA, ACA and total power at exactly 35 GHz get
+  230 K (band 10's) instead of 28 K, the (E)VLA from 0.8 to 1 GHz 28 K (Q
+  band's) instead of 10 K, and the SMA at 180 GHz 500 K instead of 67 K.
+  casa-rs takes the first temperature there.
+- **Above the last edge of an unknown telescope's table.** For a telescope
+  `noisetemp` does not know, the frequency edges and temperatures are lists
+  of the same length (`[10, 900]`, `[200, 200]`), so above 900 GHz the
+  test reads `f0[2]` before checking `z` and raises `IndexError` (CASA
+  6.7.6, `WSRT` at 950 GHz). casa-rs keeps the last temperature, 200 K.
+  For the telescopes it knows, the edges have one more entry than the
+  temperatures and the test does not overrun.
+
+The efficiencies are unchanged. `tools/simulation/simutil_oracle.py` records
+both cases, and `tests/simutil_casa.rs` checks that casa-rs departs exactly
+there.
+
+## `direction_splitter` cannot split a direction without an epoch
+
+- Date noted: 2026-10-26
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5a)
+- Affected code: `casatasks/src/private/simutil.py:876–894`
+  (`direction_splitter`)
+
+`direction_splitter` keeps the epoch only when a direction has three
+fields, but reads the longitude from field 1 and the latitude from field 2
+whatever the count. A direction without an epoch (`'18h00m00 -23d00m00'`)
+therefore raises `IndexError`, and a latitude its regular expression
+`([+-]?\d+).(\d+).(\d+\.?\d*)` does not match raises `AttributeError`
+(CASA 6.7.6). casa-rs refuses both with "can't interpret ... as a
+direction", the message `isdirection` gives, so a `simobserve` that is given
+such a direction stops with a clear error rather than a traceback. A
+direction with more than three fields is split as CASA splits it (no epoch,
+fields 1 and 2).
+
+## `modifymodel` swaps axes into place and refuses a cyclic order
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2951–2971`
+  (`modifymodel`)
+
+`modifymodel` finds which of the model's axes is each of the four it
+writes (direction, direction, Stokes, spectral) and then moves them with
+`for ax in range(4): if axmap[ax] != ax: arr = arr.swapaxes(ax, axmap[ax])`,
+marking both axes done after each swap. That orders a model whose axes are
+a transposition of the four (the FITS order, spectral before Stokes), but
+not a cyclic one: a model with its spectral axis first (`[spectral, RA,
+Dec, Stokes]`) is left out of order, and the check before it raises
+"internal error: I'm confused about the shape if your model data cube"
+(CASA 6.7.6), with the new image already created and empty. casa-rs
+permutes the axes, so any order of the four is written as
+`[RA, Dec, Stokes, spectral]`; `tests/skymodel_casa.rs` checks the
+cyclic case pixel by pixel.
+
+## `modifymodel` labels the new image's Stokes planes by their count
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2838–2912`
+  (`modifymodel`)
+
+`modifymodel` returns the model's Stokes labels (`model_stokes`), but the
+image it writes takes its Stokes axis from `ia.fromshape`, whose default
+coordinate system labels the planes by their count: I, IQ, IQU or IQUV
+(`CoordinateUtil::addStokesAxis`). So:
+- a model labelled I and V comes out labelled I and Q, the V data then read
+  as Stokes Q;
+- three unlabelled planes come out IQU, though `modifymodel` warns
+  "setting IQV Stokes parameters from the 4th axis of you model" and
+  returns `"IQV"`.
+
+casa-rs keeps the model's labels and labels unlabelled planes as
+`modifymodel` reports them (IQV for three). Models of Stokes I alone, the
+usual case, are unaffected. A model labelled in a circular or linear basis
+(RR and LL, or XX and YY) also keeps its labels, so `flatimage` (which
+wants a Stokes I plane) and adding components (which wants I, Q, U or V)
+refuse it, where CASA relabels it I and Q and goes on; `simobserve`'s sky
+model is a brightness in Stokes parameters.
+
+## `modifymodel` indexes the map it makes of two cells
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/simutil.py:2631–2632`, `2720`
+  (`modifymodel`)
+
+Given `incell` as a list of two cells, `modifymodel` converts them with
+`incell = map(qa.convert, incell, ['arcsec', 'arcsec'])` and later reads
+`incell[0]`. Under Python 3 `map` returns an iterator, and the index raises
+`TypeError: 'map' object is not subscriptable` (CASA 6.7.6). casa-rs takes
+the two cells, converted to arcsec and used as given (signs included), as
+the code did under Python 2. A single cell is unaffected: it becomes
+`[−cell, cell]`.
+
+## An unset `compwidth` gives the component-only model a meaningless spectral increment
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatasks/src/private/task_simobserve.py:506`
+
+With a component list and no sky image, `simobserve` observes a bandwidth
+of `compwidth`, or 2 GHz when `compwidth` is not a quantity, but sets the
+`.compskymodel` image's spectral increment with
+`modelcsys.setincrement(type="spectral", value=compwidth)` whatever it is.
+For `compwidth=""`, `coordsys.setincrement` puts a meaningless value there:
+in CASA 6.7.6 the model's right ascension in radians, read as hertz
+(4.976 Hz for RA 19h). casa-rs uses the 2 GHz `simobserve` observes with.
+The increment is the model's only spectral information beyond its
+reference frequency, since the model has one channel.
+
+## `ia.modify` converts a component spectrum through the image's default measures frame
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour; casa-rs does not follow it (#841 Phase 5b)
+- Affected code: `casatools/src/code/imageanalysis/Images/ComponentListImage.cc`
+  (`_cacheCoordinateInfo`), `components/ComponentModels/SpectralModel.cc:100–116`
+  (`refFreqInFrame`)
+
+When `ia.modify` adds a component list to an image, each spectral model
+converts its reference frequency into the image's spectral frame
+(`refFreqInFrame`) through the measures frame of the image's spectral
+coordinate. An image made from a shape (`ia.fromshape`, as `modifymodel`
+and `simobserve` make theirs) has that frame at its defaults: the
+geocentre, an epoch of 0, and the J2000 pole, the same defaults as
+[the measures tool's](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre).
+So a TOPO spectrum on an LSRK image, or LSRK spectra on a TOPO image, are
+shifted by a velocity no observation has, about 1e-4 of the frequency in
+CASA 6.7.6's oracle, which a spectral index turns into a flux difference of
+about 1e-4.
+
+casa-rs converts as CASA does when the image's conversion layer carries a
+real frame: an epoch and an observatory position (and the direction). The
+oracle's LSRD image, with an LSRK conversion layer at the VLA on
+2025-06-01, agrees with CASA to 1e-6 (a 1 Jy point at the reference
+frequency stays 1 Jy). With no conversion layer, or the placeholder (an
+epoch of 0 at the geocentre), casa-rs takes the frequencies as they are:
+a meaningful conversion would need the observation's epoch and position,
+which such a sky model does not carry.
+
+Components in the image's own frame, the usual case, are unaffected. The
+oracle's matched-frame cases (LSRK spectra on an LSRK cube, TOPO spectra
+on a TOPO cube) agree with CASA to 1e-6, where the same cube with spectra
+in the other frame and only the placeholder differs by 1.1e-4.
+
+## simobserve's calibrator: the last pass, its scans and two component lists
+
+- Date noted: 2026-10-27
+- Status: CASA bugs; casa-rs does not follow them (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6:
+  the observing loop, `sm.setdata(fieldid=range(0,nfld))`, and the
+  `complist+","+cal.cclist` joins); `Simulator::createSkyEquation`
+
+With a phase calibrator (`caldirection` and `calflux`), CASA 6.7.6's
+`simobserve` has three faults. Each was measured by
+`tools/simulation/simobserve_parity.py`'s CASA runs.
+
+**The last pass.** The observing loop calls `observemany` for the map's
+pointings only when a pass over them completes, and observes the
+calibrator after it. Pointings of a pass that `totaltime` ends inside are
+collected but never observed. With `totaltime='300s'` over a 105-pointing
+map at 10 s, CASA's MeasurementSet holds the calibrator's one scan and no
+pointing at all. casa-rs observes the pointings the time allows, as CASA
+does without a calibrator. With `totaltime` a whole number of passes,
+the two schedules are the same.
+
+**The calibrator's scans.** Before predicting, the task selects the map's
+fields, `setdata(fieldid=range(0,nfld))`. The calibrator's field is `nfld`,
+so its scans keep the zeros `observe` wrote; noise is then added to them.
+casa-rs predicts every scan, the calibrator's included.
+
+**Two component lists.** With a `complist` and a calibrator, the task
+predicts from `complist + "," + <stem>.cal.cclist`. `createSkyEquation`
+opens that string as one table, which does not exist ("ComponentList …
+not readable"), so `predict` returns `False`. The task does not check it:
+the MeasurementSet is left unpredicted, every visibility zero, for a model
+image with a list or for a list alone. casa-rs predicts both lists, as one
+list of their components (`PredictSpec::component_lists`).
+
+The parity cases `calibrator` and `calibrator_lists` compare casa-rs with
+CASA's own simulator doing what the task meant: CASA's MeasurementSet
+predicted again over every field, from the model image and the lists
+merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.
+
+## simobserve leaves `<stem>.noisier.T.cal`
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `setnoise(..., table=noisymsroot)` and the clean-up)
+
+`tsys-atm` noise is set with `table=<noisy root>`, so CASA writes the `T`
+term's table beside the noisy MeasurementSet. The task's clean-up deletes
+`<stem>.noisy.T.cal` and `<stem>.noisy.sd.T.cal`, but not
+`<stem>.noisier.T.cal`, the one written when leakage comes first. The table
+is a by-product the task means to remove; casa-rs writes no Tsys table for
+any of the three.
+
+## simobserve's observing loop never ends for pointings of no length
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `while (sttime-scanstart) < totalsec` loop)
+
+The loop advances the time by each pointing's scan length. When the
+lengths of a pass sum to zero, as they do for `integration='0s'` or a
+pointing file of zero times, the time never advances and CASA loops
+forever, collecting pointings. casa-rs refuses such a schedule with a
+message.
+
+## `simutil.ismstp` takes any zero UVW value for total power
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 5c)
+- Affected code: `casatasks/src/private/simutil.py` (`ismstp`)
+
+When `simobserve` corrupts an existing MeasurementSet (`obsmode=''`), it
+asks `ismstp` whether the data are total power. For a MeasurementSet whose
+first antenna's name has no `TP` and which has more than one antenna, the
+test is `uvw.all() == 0.`. That is true when any UVW value is zero, not
+when all are. An interferometer's MeasurementSet with one zero coordinate
+is then corrupted as a single dish's, with the wrong file names and
+sensitivity constant. casa-rs tests whether every value is zero.
+
+## simobserve deletes a sky model that is the model it writes
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs refuses the input (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  the `newmodel` set-up)
+
+The task writes `<project>/<stem>.skymodel`, or `<stem>.newmodel` when
+`skymodel` is the bare name `<stem>.skymodel`. Given the full path
+`<project>/<stem>.skymodel`, as a rerun on an earlier run's model would
+give it, the output is the input: with `overwrite=True`, the default, CASA
+deletes it and then fails to read it. casa-rs refuses it, and the model is
+left in place.
+
+## simobserve nests a project path inside itself
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `fileroot + "/" + project`)
+
+The task makes the directory `project` and names its files
+`fileroot + "/" + project + "." + <configuration>`, so a `project` given
+as a path, `a/b`, names its files `a/b/a/b.<cfg>…`, in a directory that does
+not exist. Only a plain name in the working directory works. casa-rs names
+the files by the directory's last component, `a/b/b.<cfg>…`. For a plain
+name the two are the same.
+
+## simobserve writes through a symbolic link in the project
+
+- Date noted: 2026-10-27
+- Status: CASA limitation; casa-rs departs (#841 Phase 5c, #920 review)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `shutil.copyfile(ptgfile, ...ptg.txt)`, `util.write_pointings` after
+  `os.path.exists`, and the `shutil.rmtree` calls before each product is
+  written)
+
+`overwrite=True` replaces the project's files without asking. CASA writes
+`<stem>.ptg.txt` through a symbolic link there in two ways:
+- a pointing file copied from `ptgfile` replaces the file outside the
+  project that the link points to (`shutil.copyfile` follows it);
+- laid-out pointings over a dangling link create the file the link names
+  outside the project. `os.path.exists` follows the link, finds nothing to
+  remove, and `open(..., 'w')` follows it.
+
+A link to a table that it replaces stops the task instead, since
+`shutil.rmtree` refuses links. Its existence checks follow links, so a
+dangling link does not count as an existing file under `overwrite=False`.
+
+casa-rs replaces a link in the project with the new file or table and
+leaves what the link points to as it was. A link counts as an existing file
+under `overwrite=False`, dangling or not. The project's own files are the
+only ones `overwrite` replaces (the owner's decision of 2026-10-26, recorded
+with the provider contracts' overwrite exception).
+
+## simobserve rounds a `direction` list of one to its mean
+
+- Date noted: 2026-10-27
+- Status: CASA artefact; casa-rs simobserve departs (#841 Phase 5c, after
+  the #913 review)
+- Affected code: `casatasks/src/private/task_simobserve.py` (CASA 6.7.6,
+  `dir = direction` for a list) and `simutil.direction_splitter`
+
+CASA passes a `direction` list to `calc_pointings2` as a list, even a list
+of one. `direction_splitter` centres a list at its mean, written at
+precision 5 and read back. So `['J2000 18h00m00.123456789s …']` lays its
+map out about 1e-5 s of right ascension (0.15 mas) from the same direction
+given as a string.
+
+casa-rs's `simutil` tool follows CASA here, since its lists must match
+CASA's (#913 review). casa-rs's `simobserve` cannot tell the two apart.
+The task contract resolves a string to a list of one, as it does for every
+parameter that takes a string or a list. So `simobserve` lays a map out at
+a single direction exactly as given, whether a string or a list of one. A
+list of several is the pointings themselves, as in CASA. The rounding
+carries no information, so the exact direction is the better answer.
+
+## A gain table's solved window records its frequency as its resolution and total bandwidth
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour casa-rs follows, for CASA's append (#917)
+- Affected code: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
+  `SolvableVisCal::setCTFrequencies`, CASA 6.7.5.18
+
+A G or T table holds one channel per spectral window. For a window a solve
+reaches, `setCTFrequencies` writes that channel's frequency and width from
+`FreqMetaData`. It then takes `const Vector<Double>& chres(chfr); //
+resolution same as freq` and `Double totbw=sum(chfr);`, so `RESOLUTION` and
+`TOTAL_BANDWIDTH` both hold the frequency. On ngc5921 (`gaincal`, `spw='0'`)
+the table's window reads `CHAN_FREQ` 1413421909.706 Hz, `CHAN_WIDTH`
+1538085.9 Hz, and `RESOLUTION` and `TOTAL_BANDWIDTH` 1413421909.706 Hz.
+
+The values are plainly meant to be widths:
+- the same function sets `EFFECTIVE_BW` to the width;
+- the older `setOrVerifyCTFrequencies` sets resolution, effective bandwidth
+  and total bandwidth to the width;
+- `NewCalTable::setSpwFreqs` sets `TOTAL_BANDWIDTH` to the summed width;
+- a window no solve reached keeps its summed resolution and the
+  MeasurementSet's total bandwidth (`createMemCalTable2`).
+
+Nothing in CASA's apply path reads either column, so the error does not
+change calibrated data. But CASA's `gaincal(append=True)` merges the new
+solutions' windows into the table's (`NewCalTable::mergeSpwMetaInfo`). It
+requires `NUM_CHAN`, `CHAN_FREQ`, `CHAN_WIDTH`, `RESOLUTION`,
+`EFFECTIVE_BW`, `REF_FREQUENCY` and `TOTAL_BANDWIDTH` to equal its own
+exactly for any window both hold.
+
+A casa-rs table that wrote the widths there was refused ("Error merging
+spw=0's meta info"). So casa-rs writes the frequency as CASA does: the
+interoperability contract outranks the correction.
+
+The law `casa_appends_to_a_casa_rs_gain_table` (casa-calibration
+`slow-tests`) appends CASA's solutions to a casa-rs table. With
+`gain_table_windows_match_casa_on_ngc5921` and its two-sideband companion,
+it asserts that every column of every window row equals CASA's exactly.
+
+## `imregrid` refuses a one-channel template in another spectral frame
+
+- Date noted: 2026-10-27
+- Status: CASA behaviour casa-rs does not follow (#841 Phase 6a)
+- Affected code: CASA 6.7.6's `imregrid` (casacore `ImageRegrid` through
+  `ImageRegridder`)
+
+casacore does not regrid an axis whose input and template both have one
+pixel. CASA 6.7.6 keeps the input's coordinate for it in the output: a
+template one channel 3 MHz away, or with its one Stokes plane labelled Q,
+gives the input's channel and Stokes I (`tools/images/image_analysis_oracle.py`,
+cases `imregrid_one_channel_moved` and `imregrid_one_stokes_plane_relabelled`).
+The same template with that one channel in another frame (LSRK to TOPO)
+stops instead, with "Failed to set conversion layer state".
+
+casa-rs treats that channel as it treats the others: it is not regridded,
+and the output keeps the input's (`casa_images::regrid`). Converting the
+frame of an axis that is never regridded serves no purpose.
+
+## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs does not follow (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/sdbeamutil.py`
+  (`TheoreticalBeam.get_kernel` and the kernel functions it calls)
+
+`tsdimaging` gives its image the beam `sdbeamutil.TheoreticalBeam`
+computes: the antenna's Gaussian beam convolved with a cut through the
+gridding kernel and with a box as wide as the sampling, then fitted with a
+Gaussian. The kernel it convolves with is not the gridder's (`SDGrid::init`)
+but a model of it, and the models disagree with the gridder:
+- **`GAUSS`.** The gridder takes `gwidth` as a half width at half maximum;
+  `sdbeamutil` passes it to a Gaussian that takes a full width. It also cuts
+  the kernel at 1.5 `gwidth` where the gridder cuts at `truncate`
+  (default 3 `gwidth`).
+- **`GJINC`.** `sdbeamutil` ignores `truncate` ("NOT SUPPORTED YET") and
+  always cuts at the jinc's first null.
+- **`SF`.** The gridder's kernel is `(1 − ν²) grdsf(ν)`; `sdbeamutil` uses
+  SciPy's prolate spheroid `pro_ang1(0, 0, c)` with `c = 5.356π/2`, chosen
+  to resemble it.
+- **`PB`.** The gridder takes the telescope's power pattern (for ALMA, the
+  10.7 m Airy pattern of `VPSkyJones`); `sdbeamutil` takes an Airy disk
+  scaled to the Gaussian beam's width, for the antenna's own diameter.
+- **`BOX`.** `sdbeamutil` makes the box one pixel wide whatever
+  `convsupport` is; the gridder's box reaches `2s + 1` pixels.
+
+The reported beam is then not the image's. Against CASA 6.7.6 on the
+oracle's setups (`tools/singledish/tsdimaging_oracle.py`), the gridder's own
+kernels give beams wider by 0.60% to 3.3% for `GAUSS`, and 0.31% narrower
+for `GJINC` with a `truncate`. They differ by at most 6.0e-4 for `SF`, `PB`
+and `GJINC` at its defaults. The gridder reads its table at the radius
+truncated to a hundredth of a pixel, which widens the kernel slightly. That
+accounts for all of `GJINC`'s difference at its defaults (read at the
+rounded radius, it agrees with CASA to 1e-6) and for about 40% of `SF`'s.
+The rest of `SF`'s is SciPy's spheroid against `grdsf`.
+
+casa-rs cuts through the gridder's own table (`casa_imaging_singledish::
+theoretical_beam_arcsec`), so the beam describes the image the gridder
+makes. `BOX` at its default support, which both describe alike, agrees with
+CASA to 2e-8.
+
+The cost falls downstream. `simanalyze` and `simalma` grid total power with
+`SF` of support 6 and scale its flux by this beam's area. A beam 6e-4 wider
+is an area about 1.2e-3 larger, so their scaled total-power and feathered
+products differ from CASA's by about that factor, at the edge of the 1e-3
+acceptance. Phases 6g and 6h measure it.
+
+## `getPointingSamplingRaster` measures the row spacing in raw longitude
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/Utilities/SingleDishBeamUtil.cc`
+  (`getPointingSamplingRaster`)
+
+CASA estimates a raster's sampling from its pointings. Along the scan it
+scales each longitude step by the cosine of the map's central latitude, so
+the step is an angle on the sky. Across the scan it projects the steps
+between rows' median positions on the perpendicular without that factor. A
+map scanned in latitude, whose rows step in longitude, then has its row
+spacing overestimated by `1/cos δ`, 15% at δ = −30°. The beam `tsdimaging`
+reports widens with it.
+
+casa-rs scales the rows' longitude steps as it scales the along-scan ones
+(`casa_imaging_singledish::raster_sampling`). A map scanned in longitude, as
+`simobserve` scans one, is unaffected: CASA and casa-rs agree on the
+oracle's maps to 1e-15.
+
+## `tsdimaging` writes the weight mask's threshold to six decimal places
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#938 part 1, #841 Phase 6c)
+- Affected code: `casatasks/src/private/task_tsdimaging.py` (CASA 6.7.6,
+  `do_weight_mask`: `ia.calcmask("'%s'>%f" % (weightimage, weight_threshold))`)
+
+`minweight` masks the pixels whose weight is at most `minweight` times the
+median positive weight. The threshold goes into the mask expression through
+`%f`, which keeps six decimal places. A threshold under 5e-7 is written 0,
+so every pixel with a positive weight stays unmasked, and one of 1.4e-6 is
+written 0.000001, masking less than asked. Weights have no fixed scale, so
+a MeasurementSet whose weights are all small loses its `minweight` mask
+entirely. casa-rs compares with
+the threshold itself (`casa_imaging_singledish::weight_mask_threshold`;
+`tools/singledish/tsdimaging_oracle.py`, case `sf_small_weights`).
+
+## `SDGrid` grids nothing with an `SF` kernel of no support
+
+- Date noted: 2026-10-28
+- Status: CASA behaviour casa-rs refuses (#938 part 1, #841 Phase 6c)
+- Affected code: `casatools/src/code/synthesis/TransformMachines2/SDGrid.cc`
+  (`SDGrid::init`)
+
+`SDGrid::init` tabulates the `SF` kernel over `convsupport` pixels, so
+`convsupport=0` gives a kernel of zeros. Every pixel's weight is then zero,
+the image is empty, and `tsdimaging` only warns that no weight is positive.
+casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
+default of 3 (`casa_imaging_singledish::GridFunction::from_casa`).
+
+## `simanalyze` writes the fidelity's floor to six decimal places
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `"max(abs('%s'), %f)" % (difference, maxdiff/pl.sqrt(2.0))`)
+
+The fidelity image divides the convolved model by the difference, floored at
+the difference's median absolute deviation over √2. The floor goes into the
+image expression through `%f`, which keeps six decimal places. A floor of
+5.19e-7 Jy/beam is written 0.000001, nearly twice its value, and one under
+5e-7 is written 0, so a pixel where the difference is zero divides by zero.
+Simulations of faint sources have differences that small
+(`tools/simulation/simanalyze_analysis_oracle.py`, case `faint`). casa-rs
+uses the floor itself (`casa_simulation::simutil::analysis::fidelity`).
+
+## `simanalyze`'s fidelity image is labelled Jy/beam
+
+- Date noted: 2026-10-27
+- Status: CASA artefact; casa-rs departs (#841 Phase 6f)
+- Affected code: `casatasks/src/private/task_simanalyze.py` (CASA 6.7.6,
+  `ia.imagecalc(fidelityim, "abs('%s') / '%s'" % (convolved, absdiff))`)
+
+The fidelity is the ratio of two images in Jy/beam. CASA's image expression
+copies its unit from the first image it names, so the fidelity is labelled
+Jy/beam. casa-rs writes it without a unit.
+
+## `statim` scales a Jy/beam image without a beam by the pixel area
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: `casatasks/src/private/simutil.py` (CASA 6.7.6, `statim`:
+  `toJyarcsec=1.` when `ia.restoringbeam()` is empty, then
+  `toJypix=toJyarcsec*pixarea`)
+
+`statim` multiplies an image's minimum, maximum and corner rms by a
+flux-per-pixel factor. For Jy/pixel, and for Jy/beam with a restoring beam,
+the factor is 1, so the statistics stay in the image's unit. For Jy/beam
+without a beam it treats the image as Jy per square arcsecond, and the factor
+becomes the pixel area in square arcseconds: 0.04 for 0.2″ pixels. It still
+reports the unit as Jy/beam, so the numbers are in no unit at all. Without a
+beam, Jy/beam cannot be converted to anything. casa-rs reports the image's
+own values in its own unit (`casa_simulation::simutil::analysis::statim`;
+`tools/simulation/simanalyze_analysis_oracle.py`, image `beamless.flat`).
+`simanalyze`'s reported statistics of its image do not meet this case: it
+reads the image's beam first, and fails without one.
+
+## Image expressions containing "pa" are labelled as position angles
+
+- Date noted: 2026-10-27
+- Status: CASA bug; casa-rs does not follow it (#841 Phase 6f)
+- Affected code: casatools
+  `imageanalysis/ImageAnalysis/ImageExprCalculator.tcc`
+  (`_expr.contains(casacore::Regex("pa\\(*"))`)
+
+`ImageExprCalculator` looks for the `pa()` function with the regular
+expression `pa\(*`, which matches "pa" followed by any number of
+parentheses, so any "pa" at all. An expression whose image paths contain
+"pa" (a project named `pancake`, or a path through `scratchpad`) has its
+output's unit set to deg and its Stokes axis replaced by `Pangle`.
+`simanalyze`'s difference, absolute difference, fidelity and absolute model
+are all image expressions over `<project>/<project>.<configuration>`, so a
+project whose path contains "pa" gets a fidelity labelled deg, and
+difference and fidelity images whose Stokes plane is a position angle. casa-rs
+computes those images directly and keeps the Stokes axis.
+
+## `concat` leaves a merged SOURCE row's TIME unchanged
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`:
+  `sourceCol.interval().put(j, newTime)` before
+  `sourceCol.interval().put(j, newInterval)`)
+
+When two `SOURCE` rows of one window are equivalent, `updateSource` keeps the
+first and widens its validity to span both: it computes the union's centre
+and length, then writes the centre into `INTERVAL` and overwrites it with the
+length. `TIME` is never written, so the kept row is valid over an interval
+centred on its old time, which misses the end of the other row's validity.
+casa-rs centres the record on the union
+(`casa_observation::merge`, `sources.rs`, `widen`).
+
+## `concat`'s source equivalence lets its last optional column decide
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc`
+  (`sourceRowsEquivalent`)
+
+`sourceRowsEquivalent` compares the required columns with `&&`, then tests
+each optional column present (`POSITION`, `PULSAR_ID`, `REST_FREQUENCY`,
+`SYSVEL`, `TRANSITION`) by assigning its result to `areEquivalent`, so the last
+optional column tested decides: two rows with different rest frequencies but
+equal transitions are equivalent, and their lines are merged into one.
+casa-rs requires every member to be equal (an optional one stated by both or
+by neither).
+
+## `concat` renumbers merged sources so that one can split and fields dangle
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`updateSource`, "renumber
+  consecutively"; `copyField`, `newSourceIndex2_p`)
+
+After removing redundant `SOURCE` rows, `updateSource` renumbers source IDs
+row by row: a row whose ID exceeds the count so far gets the next number. A
+source of several rows (one per window) after a removed ID therefore gets one
+number for its first row and another for the next, splitting it. The IDs it
+changes are applied to the fields `copyField` appends, not to the fields
+already in the output, which can then name a source ID no row has. casa-rs
+numbers merged sources in the order they first appear, every record of a
+source keeping its number, and maps every field
+(`casa_observation::merge`, `sources.rs`, `regroup`).
+
+## `concat` leaves gaps in observation IDs after removing duplicates
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`copyObservation`)
+
+`copyObservation` appends the incoming `OBSERVATION` rows, removes each row
+equivalent to an earlier one, and maps it to the last earlier equivalent. It
+does not shift the IDs of the rows after a removed one, as `copyProcessor`
+does with `removedSoFar`, so an input of several observations can have its
+rows mapped past the end of the table, or onto another observation, once a
+duplicate is removed. casa-rs maps each duplicate to its first equivalent and
+numbers the distinct observations consecutively, for processors and
+observations alike (`casa_observation::merge`, `distinct`).
+
+## `concat` drops every state when one input has none
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casacore `ms/MSOper/MSConcat.cc` (`concatenate`, "merge
+  STATE")
+
+When one of the two MeasurementSets has no `STATE` rows, `concatenate` writes
+no states at all: it deletes the first MeasurementSet's `STATE` rows and sets
+every row's `STATE_ID` to -1, so the intents of the input that had them are
+lost. casa-rs keeps them: the rows of an input without states have
+`STATE_ID` -1, and the others keep their merged states
+(`casa_observation::merge`, `states`).
+
+## `concat` writes into the MeasurementSets it appends
+
+- Date noted: 2026-10-29
+- Status: CASA behaviour; casa-rs does not follow it (#937 PR B, #939)
+- Affected code: casatools `src/tools/ms/ms_cmpt.cc` (`ms::concatenate`,
+  line 6497)
+
+After appending a MeasurementSet, `ms::concatenate` writes a `HISTORY` row
+("… appended to …", with its parameters) into the appended MeasurementSet,
+an input, rather than into the output; the inputs' own `HISTORY` is never
+copied. A task that reads several MeasurementSets to make another should
+leave them as they were. casa-rs never writes an input: the output's
+`HISTORY` holds what the creating task records of itself
+(`CreationOptions::history`), and the inputs' `HISTORY` is a declared loss.
+
+## `tclean` reads a `uvtaper` with no unit as radians
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs refuses the value (#841 Phase 6b)
+- Affected code: casatools `synthesisimager_cmpt.cc` (`setweighting`) and
+  `msvis/MSVis/VisImagingWeight.cc` (`setFilter`)
+
+`tclean`'s documentation gives `uvtaper=['300.0']` as a taper in
+wavelengths ("default units are lambda in aperture plane"). `setFilter` takes
+the uv-plane path only when the unit contains "lambda", and otherwise treats
+the value as an image-plane angle, here 300 radians. The filter is then
+`exp(-π²θ²/(4 ln 2) u²)`, which underflows to zero on every baseline of
+`refim_point.ms`. Every imaging weight is zero there, and the image is empty
+with a beam of 1e-6 arcsec (CASA 6.7.6). A unitless value is always an angle
+in radians to CASA, never the documented wavelengths. Whether it empties the
+image depends on the value and the baselines, and a small enough one does
+not. casa-rs refuses a `uvtaper` entry without a unit and asks for an angle
+or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
+
+## `tclean` seeds a Stokes I image from a Stokes Q start model
+
+- Date noted: 2026-10-28
+- Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
+  review)
+- Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
+  (`setModelImageOne`, `regridToModelImage`) and casacore
+  `images/Images/ImageRegrid.tcc`
+
+`regridToModelImage` regrids a start model on its direction and spectral
+axes only. `ImageRegrid` copies the Stokes axis without comparing its
+coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
+Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
+requires the start model's Stokes to be the image's, plane for plane, a
+single plane included (`casa_imaging_application`'s `StartModel`).
+
+A degenerate spectral axis is replicated the same way: an MFS start model of
+one plane seeds the MFS plane at whatever frequency it is stated. That is
+physically sound for a continuum model, and casa-rs keeps it. A cube's start
+model must have the cube's spectral axis.
+
+## `flagmanager` gives the version a save renames the new comment
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatasks `private/task_flagmanager.py` (mode `save`,
+  lines 51–83)
+
+Saving a version under a name that already exists first renames the old
+version to `<name>.old.<seconds since 1970>`, so both stay restorable. The
+task then rewrites the old entry of `FLAG_VERSION_LIST` as
+`tmpname + ' : ' + comment`, where `comment` is the comment of the new save.
+CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
+1: {'name': 'v1', 'comment': 'second'}}` after saving `v1` with `'first'`
+and then `'second'`; the first comment is lost. casa-rs renames the version
+the same way and keeps its own comment (`flagmanager`'s
+`keep_existing_version`).
+
+## `flagdata`'s summary aborts on a correlation it cannot name
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#931, #997 review)
+- Affected code: casatools `flagging/Flagging/FlagMSHandler.cc` (`open`) and
+  `FlagDataHandler.cc` (`generatePolarizationsMap`)
+
+With a polarization whose `CORR_TYPE` is RX, RY, LX and LY (casacore Stokes
+types 13 to 16), CASA 6.7.6.14's `flagdata(mode='summary')` warns
+"Correlation product unknown found: 13" and "The 0 th correlation is
+unknown: 13", then aborts the Python process with an uncaught
+`std::out_of_range` from `map::at`; there is no summary. casa-rs names
+every correlation by casacore's `Stokes::name`, so the summary keys those
+correlations `RX`, `RY`, `LX` and `LY` (`listobs::stokes_name`).
+
+## A subimage offsets a tabular coordinate's world values instead of moving its table
+
+- Date noted: 2026-10-29
+- Status: CASA bug; casa-rs does not follow it (#1001, PR #1005 review)
+- Affected code: casacore `coordinates/Coordinates/CoordinateSystem.cc`
+  (`subImageInSitu`) and `TabularCoordinate.cc` (`toWorld`,
+  `setReferencePixel`)
+
+A `TabularCoordinate` with a nonlinear table converts a pixel through its
+channel corrector first and its linear part (`crval`, `cdelt`, `crpix`)
+second. `subImageInSitu` moves a tabular coordinate's reference pixel by the
+subimage's start, as for a linear axis, but the corrector stays in the input's
+pixels. A subimage's world values are therefore the input's at the same
+pixel, offset by `cdelt × start`, not the input's at the pixel they were cut
+from. For a table at pixels `[0, 1, 3, 4]` with world values
+`[10, 11, 15, 22]`, `coordsys.subimage(originshft=[0, 1])` gives world values
+`[13, 14, 16]` at pixels 0 to 2, where the input has `[11, 13, 15]` (CASA
+6.7.6). A tabular spectral coordinate is not affected: `subImageInSitu`
+rebuilds its table over the subimage's channels. casa-rs moves the table's
+pixels with the reference pixel (`casa_images` `imsubimage`), so a subimage
+reads the input's world values at the pixels it was cut from. CASA's
+`imsubimage` ignores a box on an image without a direction coordinate, the
+only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
+CASA.
+
+## `tb.getcol` refuses a column of `int64`
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `src/code/stdcasa/StdCasa/CasacSupport.cc`
+  (`fromValueHolder`)
+
+`tb.getcol` of a scalar column of `Int64` raises `RuntimeError: Unknown casa
+DataType!` in CASA 6.7.6.14, while `tb.getcell` of the same column returns the
+value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
+`int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
+the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
+(the converter for records in the same file has both). The recording is
+`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
+`int64` array, as it does for every other integer column.
+
+## `tb.putkeyword` stores an int beyond 32 bits as 0
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion for table keywords
+
+`tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
+gives `0`, both for a new keyword and for an existing 32-bit `Int` one
+(CASA 6.7.6.14; the `casa_bugs` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
+stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
+refuses such a value for an existing 32-bit keyword with
+`RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
+bits`, rather than store a wrong number.
+
+## `tb` slices with a wrong rank or a start outside the array abort the process
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `table::getcellslice`, `getcolslice`, `putcellslice`
+  and `putcolslice`, over casacore's `Slicer`
+
+In CASA 6.7.6.14 a slice whose `blc`, `trc` or `incr` has the wrong number of
+elements for the array, or whose `blc` lies outside the array, throws an
+`ArraySlicerError` that nothing catches, and the Python process ends
+(`libc++abi: terminating due to uncaught exception of type
+casacore::ArraySlicerError`, exit status 134). The default `incr=[1]` is such a
+slice for an array of more than one axis, so `tb.getcellslice('DATA', 0, [0, 0],
+[1, 3])` aborts. casa-rs raises a `RuntimeError` for each of them and takes a
+one-element `incr` as the step of every axis. The recording
+(`crates/casars-python/python/tests/data/casa_table_tool.json`, `slices` and
+`ms_slices`) holds only the cases CASA survives. CASA is also inconsistent
+about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
+than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
+follows both.
+
+## `tb.putcell` and `putcol` wrap an int beyond 32 bits in an int cell
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casatools `ValueHolder` conversion to a column's type
+
+`tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
+`-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
+(CASA 6.7.6.14; the `int_overflow` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
+to the 32-bit column type without a range check, as for `putkeyword` above.
+casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
+leaves the cell, rather than store a wrong number. Astra's review of #1034
+noted the departure.
+
+## `tb.putcell` with several rows writes those before a missing one
+
+- Date noted: 2026-10-30
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::putCell`
+
+`tb.putcell('id', [0, 3], 22)` on a table of three rows writes row 0, then
+fails on row 3 with `no such row`: `TableProxy::putCell` checks and writes one
+row at a time, so a call that raises has still changed the table
+(`rows_vector` scenario). casa-rs checks every row first and raises with the
+table as it was. The recording follows the failed call with a write that puts
+row 0 back, so that its later reads agree.
+
+## `tb.addrows` with a negative count removes rows
+
+- Date noted: 2026-10-31
+- Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
+- Affected code: casacore `TableProxy::addRow` (the count is an `Int` handed
+  to `Table::addRow(rownr_t)`)
+
+`tb.addrows(-1)` on a table of three rows returns `True` and leaves two;
+`addrows(-2)` leaves none, and the table reopens with no rows
+(`addrows_negative` scenario). The count converts to a huge unsigned number
+and the table's row count wraps. casa-rs raises `RuntimeError` ("the number
+of rows must not be negative") and changes nothing.
+
+## `tb.removerows` and `tb.addcols` do part of a call that fails
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1036)
+- Affected code: casacore `BaseTable::removeRow(Vector)` and
+  `TableProxy::addColumns`
+
+`tb.removerows([2, 2])` on a table of three rows removes the first row 2,
+then raises "rownr 2 too high ... (#rows=2)", leaving two rows: the row
+numbers are taken from the highest down and each is checked against the
+table as it then is. (A number beyond the table, even among valid ones, fails
+before any row goes: it is the highest.) `tb.addcols` of `aaa` and `id` on a
+table that has `id` adds `aaa` and then raises "column already exists":
+`addColumns` builds the whole description first (a malformed field fails the
+call with nothing added) and then adds the columns one by one, in the
+record's sorted order (`structure_partial` scenario). casa-rs checks the whole
+call before it changes anything: both raise CASA's message and leave the table
+as it was. The successful calls, repeats included (`removerows([0, 0])`
+removes two rows), are CASA's.
+
+## `importfits` reads every FITS date as UTC
+
+- Date noted: 2026-10-30
+- Status: CASA bug; casa-rs does not follow it (#1017)
+- Affected code: casacore `coordinates/Coordinates/FITSCoordinateUtil.cc`
+  (`getObsInfo`, which reads `TIMESYS` from the header record, and the WCS
+  date wcslib holds)
+
+`exportfits` writes an image's observation date in the epoch's own time
+scale, `DATE-OBS` with `TIMESYS` naming the scale (`ObsInfo::toFITS`).
+`importfits` gives the date back with the same calendar value but labelled
+UTC, whatever `TIMESYS` says. An image observed at 2020-05-31 12:00 TAI
+exported by CASA 6.7.6 with `TIMESYS = 'TAI'` imports at 2020-05-31 12:00
+UTC, 37 seconds later. Where the scale is lost was not pinned down:
+`getObsInfo` reads `TIMESYS` from the header record and the date from
+wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
+when it names none (`casa_coordinates::fits::from_fits_header`), so the
+round trip keeps the date.
+
+## `feather` fails on an image whose direction is not on its first two axes
+
+- Date noted: 2026-10-30
+- Status: CASA limitation; casa-rs does not follow it (#1002, PR #1022
+  review)
+- Affected code: casatools `synthesis/MeasurementEquations/Feather.cc`
+  (its FFT, cursor and weight-image paths)
+
+`feather` finds an image's direction axes for part of its setup, but its
+lattice cursors and FFTs assume the direction plane is the first two axes.
+CASA 6.7.6.14's `feather` of a pair of 16 by 16 pixel images, one Stokes and
+two channels, with 2″ and 6″ beams, succeeds over [RA, Dec, Stokes, Freq].
+The same pair over [Stokes, RA, Dec, Freq] or [Freq, RA, Dec, Stokes], as
+`imtrans` makes it, fails with `LatticeStepper::setCursorShape: cursorShape
+<=0 or > latticeShape`. casa-rs feathers each direction plane wherever its
+axes are. The transposed pair's result is the transpose of the
+direction-first pair's (`casa-images` `casa_axis_maps` test
+`feather_takes_the_direction_wherever_its_axes_are`), and the direction-first
+result is checked against CASA's in `image_analysis_casa`.
+
+## `tb.copyrows` adds the rows before it finds a cell it cannot convert, and wraps integers
+
+- Date noted: 2026-10-31
+- Status: CASA behaviour that casa-rs does not follow (#1025, the `table`
+  tool; Astra's review of #1039)
+- Affected code: casacore `TableCopy::copyRows` and `ROTableRow`/`TableRow::put`
+  (`RecordInterface::as...`)
+
+`copyRows` adds an output row and then puts its cells one by one. When a
+shared column has a type the input's cell cannot be converted to (a `double`
+output column for a `dcomplex` input, `RecordInterface::asDouble - invalid
+data type`; an `int` output column for a `float` array input,
+`TableRecordRep::get_pointer - incorrect data type used for field ...`), the
+call raises with the rows already added and their cells never set: reading
+them gives whatever the heap held (`copyrows_types` scenario of
+`crates/casars-python/python/tests/data/casa_table_tool.json`, which does not
+compare the table after a refusal). casa-rs checks the types before it changes
+anything and raises with the output table as it was.
+
+Which conversions CASA accepts was probed pair by pair and is what casa-rs
+accepts (`tools/table/cell_convert.rs`), with one exception: an integer that
+does not fit the output column's type is wrapped as a C cast does (a `Short`
+-5 becomes the `uChar` 251, a `uInt` 4294967291), the same narrowing as
+`putcell` above. casa-rs raises `RuntimeError: a value is out of range for a
+column of ...`, before the output is touched, rather than store a wrong
+number.
+
+## `MSIter` keeps the previous window's receptor angles for a window without its own `FEED` row
+
+- Date noted: 2026-11-02
+- Status: casacore behaviour that casa-rs does not follow (MSv2 adapter,
+  `Feeds::receptors`)
+- Affected code: casacore `ms/MeasurementSets/MSIter.cc` (`setFeedInfo`,
+  lines 779-814 on `master`)
+
+The MeasurementSet definition makes a `FEED` row with `SPECTRAL_WINDOW_ID`
+-1 valid for every spectral window. `setFeedInfo` instead decides once per
+table: if every row is -1 it uses them for every window, and otherwise
+(`spwDepFeed_p`) it copies into its cache only the rows whose window is the
+iterator's current one. A window with no row of its own for an antenna and
+feed (a -1 row beside rows for other windows, or no row at all, as for
+ALMA's WVR window) leaves that cache entry untouched: `receptorAngles_p`
+is resized to the same shape, which casacore's `Array::resize` does not
+reinitialise, so `receptorAngles()` gives the previous window's angles (or,
+for the first window iterated, zeros: the new array's elements are
+value-initialised). XRADIO 1.3.1's converter makes the
+same per-dataset choice and writes such a dataset with no receptor angles.
+casa-rs reads an antenna and feed's rows in the window, else its rows for
+every window, and states no receptors where it has neither. Where `FEED`'s
+rows are all -1 or all name windows, which is how CASA's simulator, ALMA
+and casa-rs's MSv2 writer write it, the receptors are the same.

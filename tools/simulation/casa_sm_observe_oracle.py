@@ -5,7 +5,8 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3`).
 For each scenario in a scenario file (`sm_observe_scenarios.json` by default,
 `sm_predict_scenarios.json` for prediction and noise, `sm_noise_scenarios.json`
-for `tsys-manual` noise) the script creates an MS
+for `tsys-manual` noise, `sm_atm_scenarios.json` for `tsys-atm` noise) the
+script creates an MS
 with CASA's `sm` tool: `setconfig` (from a CASA `.cfg` through
 `simutil.readantenna`, or local coordinates), then the scenario's calls, then
 `close`. It writes `<out>/<scenario>.ms` and `<out>/manifest.json`.
@@ -28,10 +29,11 @@ CASA predicts from a copy in `<out>/`, and the manifest records the pristine
 image for casa-rs. The copies are made, and every call's arguments resolved,
 before the scenario's clock starts at `open`, so its `seconds` (and each
 call's) time only CASA's `sm` work. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
-(the noise-free scenario a noisy one is compared with) and `noise_variance`
-(the variance its noise should have, Jy²) are copied to the manifest for
-`compare_sm_ms.py`, as are a corrupted scenario's `CORRUPTION_KEYS`
-(`sm_corrupt_scenarios.json`).
+(the noise-free scenario a noisy one is compared with), `noise_variance`
+(the variance its noise should have, Jy²) and `direct_spws` (the windows
+whose `tsys-atm` noise is also compared directly) are copied to the
+manifest for `compare_sm_ms.py`, as are a corrupted scenario's
+`CORRUPTION_KEYS` (`sm_corrupt_scenarios.json`).
 
 A two-stage scenario (`sm_openfromms_scenarios.json`) calls `close` and then
 `openfromms` among its calls: the first stage's MS is copied to
@@ -110,7 +112,14 @@ QUANTITY_UNITS = {
     "elevationlimit": "rad",
     "simplenoise": "Jy",
     "pwv": "mm",
+    "pground": "mbar",
+    "altitude": "m",
+    "waterheight": "m",
 }
+
+# Calls whose arguments are plain numbers, not quantities: `settrop`'s
+# `pwv` is in mm already, where a bare number would resolve to metres.
+PLAIN_NUMBER_OPS = {"settrop"}
 
 
 def resolve_config(config: dict, args: argparse.Namespace, me) -> dict:
@@ -193,7 +202,7 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     kwargs = {key: value for key, value in call.items() if key != "op"}
     resolved = dict(kwargs)
     for key, unit in QUANTITY_UNITS.items():
-        if key in kwargs:
+        if key in kwargs and op not in PLAIN_NUMBER_OPS:
             resolved[key] = qa.convert(qa.quantity(kwargs[key]), unit)["value"]
     if "sourcedirection" in kwargs:
         direction = me.direction(*kwargs["sourcedirection"])
@@ -216,7 +225,13 @@ def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     if "referencetime" in kwargs:
         epoch = me.epoch(*kwargs["referencetime"])
         kwargs["referencetime"] = epoch
-        resolved["referencetime"] = me.measure(epoch, "UTC")["m0"]["value"]
+        utc = me.measure(epoch, "UTC")["m0"]["value"]
+        resolved["referencetime"] = utc
+        # CASA's simulator stores TAI seconds under the UTC label: TAI - UTC
+        # at the reference epoch, from CASA's measures (good to ~1e-6 s, the
+        # MJD difference's rounding).
+        tai = me.measure(epoch, "TAI")["m0"]["value"]
+        resolved["tai_minus_utc_s"] = (tai - utc) * 86400.0
     return op, kwargs, resolved
 
 
@@ -245,7 +260,7 @@ def run_scenario(
                 # the oracle wrote.
                 path = os.path.join(os.path.abspath(args.out), "complists", kwargs["complist"])
                 kwargs["complist"] = resolved["complist"] = path
-        if op in ("setgain", "setleakage") and kwargs.get("table"):
+        if op in ("setgain", "setleakage", "settrop") and kwargs.get("table"):
             # CASA writes the table under the oracle's output; the manifest
             # keeps its name, which the casa-rs driver writes under its own.
             kwargs["table"] = os.path.join(os.path.abspath(args.out), kwargs["table"])
@@ -292,9 +307,20 @@ def run_scenario(
         "data": scenario.get("data", "zero"),
         "twin": scenario.get("twin"),
         "noise_variance": scenario.get("noise_variance"),
+        "direct_spws": scenario.get("direct_spws"),
         "openfromms_ms": scenario.get("openfromms_ms", "casa-rs"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
+        # TAI - UTC at the settimes reference epoch, by CASA's measures, which
+        # observe_scenarios checks its own against.
+        "casa_tai_minus_utc_s": next(
+            (
+                call["resolved"]["tai_minus_utc_s"]
+                for call in calls
+                if call["op"] == "settimes" and "tai_minus_utc_s" in call.get("resolved", {})
+            ),
+            None,
+        ),
         **{key: scenario[key] for key in CORRUPTION_KEYS if key in scenario},
     }
     if record_path is not None:
@@ -402,7 +428,6 @@ def main() -> int:
     manifest = {
         "schema_version": 1,
         "purpose": f"simulation Phase 1 sm oracle (#841): {os.path.basename(args.scenarios)}",
-        "casa_tai_minus_utc_s": 37.0,
         "scenarios": results,
     }
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as handle:

@@ -54,9 +54,15 @@ impl<'a> DirectionColumn<'a> {
     /// This extracts the first column of the polynomial (the direction
     /// at the reference time).
     pub fn get_direction(&self, row: usize) -> MsResult<MDirection> {
-        let arr = get_array(self.table, row, self.column)?;
-        let (lon, lat) = extract_direction_constant(arr, self.column)?;
+        let (lon, lat) = self.get_angles(row)?;
         Ok(MDirection::from_angles(lon, lat, self.refer))
+    }
+
+    /// The constant term's stored longitude and latitude in radians, as
+    /// written: [`Self::get_direction`]'s angles without its round trip
+    /// through direction cosines.
+    pub fn get_angles(&self, row: usize) -> MsResult<(f64, f64)> {
+        extract_direction_constant(get_array(self.table, row, self.column)?, self.column)
     }
 
     /// Evaluate the direction polynomial at time offset `dt` seconds
@@ -78,7 +84,8 @@ fn extract_direction_constant(arr: &ArrayValue, col_name: &str) -> MsResult<(f64
     match arr {
         ArrayValue::Float64(a) => {
             let shape = a.shape();
-            if shape.len() != 2 || shape[0] != 2 {
+            // A polynomial of no terms (N = 0) has no constant term to read.
+            if shape.len() != 2 || shape[0] != 2 || shape[1] == 0 {
                 return Err(MsError::ColumnTypeMismatch {
                     column: col_name.to_string(),
                     table: "FIELD".to_string(),

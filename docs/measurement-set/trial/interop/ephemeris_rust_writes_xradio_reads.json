@@ -1,0 +1,81 @@
+{
+ "checks": 13,
+ "failed": 0,
+ "results": [
+  {
+   "check": "XRADIO schema check of the Rust store",
+   "ok": true
+  },
+  {
+   "check": "dataset type",
+   "ok": true,
+   "detail": "field_and_source_ephemeris"
+  },
+  {
+   "check": "observer is the Earth's centre",
+   "ok": true,
+   "detail": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "check": "FIELD_PHASE_CENTER_DIRECTION equals XRADIO's at every time",
+   "ok": true,
+   "detail": 8.881784197001252e-16
+  },
+  {
+   "check": "FIELD_PHASE_CENTER_DIRECTION frame",
+   "ok": true,
+   "detail": "fk5"
+  },
+  {
+   "check": "FIELD_PHASE_CENTER_DISTANCE equals XRADIO's at every time",
+   "ok": true,
+   "detail": 1.550067021089847e-16
+  },
+  {
+   "check": "FIELD_PHASE_CENTER_DISTANCE frame",
+   "ok": true,
+   "detail": "fk5"
+  },
+  {
+   "check": "every XRADIO sample is one of ours",
+   "ok": true,
+   "detail": {
+    "ours": 6,
+    "theirs": 4,
+    "common": 4
+   }
+  },
+  {
+   "check": "SOURCE_DIRECTION equals XRADIO's at the samples both hold",
+   "ok": true,
+   "detail": 4.440892098500626e-16
+  },
+  {
+   "check": "SOURCE_DISTANCE equals XRADIO's at the samples both hold",
+   "ok": true,
+   "detail": 0.0
+  },
+  {
+   "check": "SOURCE_RADIAL_VELOCITY equals XRADIO's at the samples both hold",
+   "ok": true,
+   "detail": 0.0
+  },
+  {
+   "check": "ours cover the last time's TDB",
+   "ok": true,
+   "detail": 179.2667543888092
+  },
+  {
+   "check": "XRADIO's cover the last time's TDB (finding, not a failure)",
+   "ok": true,
+   "detail": {
+    "covered": false,
+    "reach_s": 59.266753911972046
+   }
+  }
+ ]
+}

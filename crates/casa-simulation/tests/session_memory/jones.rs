@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 
-use casa_simulation::{GainSpec, Simulator};
+use casa_simulation::{GainSpec, Simulator, TroposphereSpec};
 
 use super::{
     ALLOWANCE_BYTES, BUDGET_32, CASES, EXCESS, Ordering, ROWS_ALLOWANCE_BYTES, alone, case_paths,
@@ -31,25 +31,40 @@ static GAINS: AtomicBool = AtomicBool::new(false);
 /// it.
 static TABLES: OnceLock<PathBuf> = OnceLock::new();
 
+/// Whether [`set_gains`] sets an `individual` tropospheric term
+/// (`settrop`): the troposphere laws set it, each alone in its process.
+pub(super) static TROPOSPHERE: AtomicBool = AtomicBool::new(false);
+
 /// An `fbm` and a `random` gain term on `sm`, once a gain law sets
-/// [`GAINS`], each writing its table under [`TABLES`] when that is set.
+/// [`GAINS`], and a tropospheric term once a troposphere law sets
+/// [`TROPOSPHERE`], each writing its table under [`TABLES`] when that is
+/// set.
 pub(super) fn set_gains(sm: &mut Simulator) {
-    if !GAINS.load(Ordering::Relaxed) {
-        return;
-    }
-    for mode in ["fbm", "random"] {
-        let table = TABLES.get().map_or_else(String::new, |directory| {
+    let table = |name: &str| {
+        TABLES.get().map_or_else(String::new, |directory| {
             directory
-                .join(format!("{mode}.cal"))
+                .join(format!("{name}.cal"))
                 .to_string_lossy()
                 .into_owned()
-        });
-        sm.set_gain(&GainSpec {
-            mode: mode.to_string(),
-            table,
-            amplitude: vec![0.05],
         })
-        .expect("setgain");
+    };
+    if GAINS.load(Ordering::Relaxed) {
+        for mode in ["fbm", "random"] {
+            sm.set_gain(&GainSpec {
+                mode: mode.to_string(),
+                table: table(mode),
+                amplitude: vec![0.05],
+            })
+            .expect("setgain");
+        }
+    }
+    if TROPOSPHERE.load(Ordering::Relaxed) {
+        sm.set_trop(&TroposphereSpec {
+            mode: "individual".to_string(),
+            table: table("troposphere"),
+            ..TroposphereSpec::default()
+        })
+        .expect("settrop");
     }
 }
 
@@ -59,7 +74,8 @@ fn a_gain_session_holds_its_admission_and_no_more_for_more_rows() {
         return;
     }
     let root = tempfile::tempdir().expect("temporary directory");
-    gain_session_law(root.path());
+    GAINS.store(true, Ordering::Relaxed);
+    session_law(root.path());
 }
 
 /// The first law with each term writing its calibration table at `close`.
@@ -69,15 +85,21 @@ fn a_gain_session_writing_tables_holds_its_admission_and_no_more_for_more_rows()
     {
         return;
     }
+    GAINS.store(true, Ordering::Relaxed);
+    table_law();
+}
+
+/// The first law with the terms [`set_gains`] sets writing their
+/// calibration tables at `close`.
+pub(super) fn table_law() {
     let root = tempfile::tempdir().expect("temporary directory");
     let tables = root.path().join("tables");
     std::fs::create_dir(&tables).expect("the tables' directory");
     TABLES.set(tables).expect("set once");
-    GAINS.store(true, Ordering::Relaxed);
     // The tables are built after the MAIN writer's admission is released,
     // below the session's peak, so the peaks alone do not hold them: at
-    // every allocation of the ten-times-the-rows session (two tables of
-    // 12,000 rows), the heap stays within what the reservations hold.
+    // every allocation of the ten-times-the-rows session (tables of 12,000
+    // rows), the heap stays within what the reservations hold.
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
@@ -98,12 +120,12 @@ fn a_gain_session_writing_tables_holds_its_admission_and_no_more_for_more_rows()
         case.name
     );
     std::fs::remove_dir_all(&directory).expect("remove the case");
-    gain_session_law(root.path());
+    session_law(root.path());
 }
 
-/// The base and ten-times-the-rows cases with gains, run under `root`.
-fn gain_session_law(root: &Path) {
-    GAINS.store(true, Ordering::Relaxed);
+/// The base and ten-times-the-rows cases with the terms [`set_gains`]
+/// sets, run under `root`.
+pub(super) fn session_law(root: &Path) {
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();

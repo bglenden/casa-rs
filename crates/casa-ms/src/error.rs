@@ -86,6 +86,17 @@ pub enum MsError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// A read that would hold more bytes than its caller's budget allows.
+    #[error("{what} requires {required} bytes but the planner supplied {available} bytes")]
+    OverBudget {
+        /// What the bytes are for.
+        what: &'static str,
+        /// The bytes the read needs.
+        required: usize,
+        /// The bytes the budget allows.
+        available: usize,
+    },
+
     /// Invalid input for native synthetic-observation generation.
     #[error("synthetic observation input: {0}")]
     SyntheticObservation(String),

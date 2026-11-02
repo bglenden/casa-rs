@@ -643,37 +643,28 @@ fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<
 
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
+    let modes = (0..state.row_count())
+        .map(|row| state.string(row, "OBS_MODE"))
+        .collect::<MsResult<Vec<_>>>()?;
     let mut ids = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
-        }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
-            continue;
-        }
-        let mut matched = false;
-        for row in 0..state.row_count() {
-            let obs_mode = state.string(row, "OBS_MODE")?;
-            let is_match = if part.contains('*') {
-                matches_simple_glob(part, &obs_mode)
-            } else {
-                obs_mode == part
-            };
-            if is_match {
-                ids.push(row as i32);
-                matched = true;
+    for selector in super::syntax::parse_intent_selector(value) {
+        match &selector {
+            super::syntax::IntentSelector::State(id) => ids.push(*id),
+            super::syntax::IntentSelector::Mode(pattern) => {
+                let before = ids.len();
+                ids.extend(
+                    modes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, mode)| selector.matches(mode))
+                        .map(|(row, _)| row as i32),
+                );
+                if ids.len() == before {
+                    return Err(MsError::VersionError(format!(
+                        "intent selector {pattern:?} did not match any STATE rows"
+                    )));
+                }
             }
-        }
-        if !matched {
-            return Err(MsError::VersionError(format!(
-                "intent selector {part:?} did not match any STATE rows"
-            )));
         }
     }
     Ok(dedup_i32(ids))
@@ -959,7 +950,7 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
+pub(super) fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
     if !pattern.contains('*') {
         return pattern == candidate;
     }

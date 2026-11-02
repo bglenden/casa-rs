@@ -72,7 +72,7 @@ fn patch(case: PatchCase<'_>, ms: &Path, measures: &Arc<dyn MeasuresProvider>) -
     if let Some(model) = case.model {
         sm.predict(&PredictSpec {
             images: vec![model.to_path_buf()],
-            component_list: None,
+            component_lists: Vec::new(),
             incremental: true,
         })
         .expect("predict");

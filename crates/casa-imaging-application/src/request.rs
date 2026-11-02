@@ -1,24 +1,28 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The imaging request: the provider-contracts catalog's `imager` surface,
+//! The imaging request: the provider-contracts catalog's `tclean` surface,
 //! resolved, as one typed record (plan section 5.8, decision D8).
 //!
-//! Field names and choices are the catalog's, and so are the defaults: a
-//! request is deserialized only from resolved catalog values (every route,
-//! the command line and `--json-run` alike, resolves through the catalog),
-//! so nothing here restates a default and a missing field is an error. The
-//! catalog spells an unset optional value `"none"`. Parameters that are
-//! active only for one gridder live in that gridder's variant.
+//! A request is made only from resolved catalog values (every route, the
+//! command line and `--json-run` alike, resolves through the catalog), by
+//! [`ImagingRequest::from_tclean`], which reads CASA's tclean parameters as
+//! CASA's modes read them (`crate::tclean`); so nothing here restates a
+//! default and a missing field is an error. Most fields are tclean's
+//! parameters by name; the reader fills the few casa-rs holds in its own
+//! form. An unset optional value is spelled `"none"` or left blank.
+//! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
+    UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
 use casa_ms::CubeInterpolation;
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
+use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
@@ -32,14 +36,18 @@ pub struct ImagingRequest {
     /// the working directory, as CASA's is.
     #[serde(deserialize_with = "absolute")]
     pub imagename: PathBuf,
-    /// Image side in pixels; images are square.
-    #[serde(deserialize_with = "square")]
-    pub imsize: usize,
-    /// Cell side in arcseconds.
-    #[serde(deserialize_with = "cell_arcsec")]
-    pub cell: f64,
+    /// Image size in pixels along x and y; one value sizes both, as CASA's
+    /// `imsize` does.
+    #[serde(deserialize_with = "pixel_pair")]
+    pub imsize: [usize; 2],
+    /// Cell along x and y in arcseconds; one value sizes both, as CASA's
+    /// `cell` does.
+    #[serde(deserialize_with = "cell_pair_arcsec")]
+    pub cell: [f64; 2],
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
-    /// exists and `DATA` otherwise.
+    /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
+    /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
+    /// casa-rs also logs a warning.
     #[serde(deserialize_with = "optional")]
     pub datacolumn: Option<DataColumn>,
     /// Whether the final model's prediction is written to `MODEL_DATA`.
@@ -106,9 +114,7 @@ pub struct ImagingRequest {
     pub restoringbeam: RestoringBeamPolicy,
     /// Whether a cube's density weighting is per output channel.
     pub perchanweightdensity: bool,
-    /// Write the dirty products only, with no minor cycle.
-    pub dirty_only: bool,
-    /// Total minor-cycle iterations.
+    /// Total minor-cycle iterations; zero writes the dirty products only.
     pub niter: usize,
     /// Absolute stopping threshold in Jy/beam.
     #[serde(deserialize_with = "threshold_jy")]
@@ -162,10 +168,20 @@ pub struct ImagingRequest {
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
+    /// CASA's `startmodel`: an image in Jy/pixel that the model starts from
+    /// (`SIImageStore::setModelImageOne`).
+    #[serde(deserialize_with = "optional")]
+    pub startmodel: Option<PathBuf>,
     /// Visibility weighting.
     pub weighting: Weighting,
     /// Briggs robustness.
     pub robust: f64,
+    /// CASA's `uvtaper`, a Gaussian taper of the imaging weights, read as
+    /// `VisImagingWeight::setFilter` reads it: an angle is the image-plane
+    /// FWHM and wavelengths are the uv-plane HWHM. `None` when it is empty
+    /// or its first entry is.
+    #[serde(deserialize_with = "uv_taper")]
+    pub uvtaper: Option<UvTaper>,
     /// The convolution-function set, with the parameters only it reads.
     #[serde(flatten)]
     pub gridder: Gridder,
@@ -227,7 +243,7 @@ pub enum BackendRequest {
 pub enum DataColumn {
     /// `DATA`.
     Data,
-    /// `CORRECTED_DATA`.
+    /// `CORRECTED_DATA`, else `DATA` when the MeasurementSet has none.
     Corrected,
 }
 
@@ -413,7 +429,7 @@ impl ImagingRequest {
                 "name one image centre, not two",
             );
         }
-        if self.imsize == 0 || self.cell <= 0.0 {
+        if self.imsize.contains(&0) || self.cell.iter().any(|cell| *cell <= 0.0) {
             return invalid("imsize, cell", "the image must have positive extent");
         }
         if self.psfcutoff <= 0.0 || self.pblimit == 0.0 || self.pblimit.abs() >= 1.0 {
@@ -424,6 +440,19 @@ impl ImagingRequest {
         }
         if self.nsigma < 0.0 || self.scales.iter().any(|scale| *scale < 0.0) {
             return invalid("nsigma, scales", "must not be negative");
+        }
+        if self.startmodel.is_some() && self.deconvolver == Deconvolver::Mtmfs {
+            return invalid(
+                "startmodel, deconvolver",
+                "an mtmfs start model is one image per Taylor term, which is not supported yet",
+            );
+        }
+        if self.startmodel.is_some() && self.outlierfile.is_some() {
+            return invalid(
+                "startmodel, outlierfile",
+                "a start model with outlier fields is not supported yet: an outlier would own the \
+                 main field's overlap with no start model of its own",
+            );
         }
         if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
             return invalid(
@@ -440,8 +469,11 @@ impl ImagingRequest {
                 "a solving run needs minor-cycle iterations and a major cycle",
             );
         }
-        if self.savemodel && !self.solves() {
-            return invalid("savemodel, niter", "MODEL_DATA needs a solved model");
+        if self.savemodel && !self.solves() && self.startmodel.is_none() {
+            return invalid(
+                "savemodel, niter",
+                "MODEL_DATA needs a solved model or a start model",
+            );
         }
         if (self.mask_image.is_some() && !self.mask_box.is_empty())
             || (self.usemask == UseMask::AutoMultithresh
@@ -480,16 +512,16 @@ impl ImagingRequest {
     }
 
     /// Whether the run solves for a model: `mtmfs` always, the other
-    /// solvers unless the run is dirty (`dirty_only` or `niter = 0`).
+    /// solvers unless the run is dirty (`niter = 0`).
     #[must_use]
     pub fn solves(&self) -> bool {
-        self.deconvolver == Deconvolver::Mtmfs || (!self.dirty_only && self.niter > 0)
+        self.deconvolver == Deconvolver::Mtmfs || self.niter > 0
     }
 
-    /// Total minor-cycle iterations: none for `dirty_only`.
+    /// Total minor-cycle iterations.
     #[must_use]
     pub const fn iterations(&self) -> usize {
-        if self.dirty_only { 0 } else { self.niter }
+        self.niter
     }
 
     /// The resource policy `parallel` asks for: the balanced share of the
@@ -636,24 +668,30 @@ fn absolute<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Er
     std::path::absolute(PathBuf::deserialize(deserializer)?).map_err(D::Error::custom)
 }
 
-/// Both axes of a square pair, or one value for both.
-fn square_pair(value: Value) -> Result<Value, String> {
-    match value {
-        Value::Array(items) => match <[Value; 2]>::try_from(items) {
-            Ok([first, second]) if first == second => Ok(first),
-            Ok(_) => Err("the image must be square".to_string()),
-            Err(items) => Err(format!("expected two axes, found {}", items.len())),
-        },
-        value => Ok(value),
+/// The x and y values of a pair, or one value for both, given alone or as a
+/// one-element list (CASA's `SynthesisParamsImage::fromRecord`).
+fn pair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[Value; 2], D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::Array(mut items) if items.len() == 1 => {
+            let value = items.remove(0);
+            Ok([value.clone(), value])
+        }
+        Value::Array(items) => <[Value; 2]>::try_from(items).map_err(|items| {
+            D::Error::custom(format!("expected one or two axes, found {}", items.len()))
+        }),
+        value => Ok([value.clone(), value]),
     }
 }
 
-fn square<'de, D: Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
-    let value = square_pair(Value::deserialize(deserializer)?).map_err(D::Error::custom)?;
-    value
-        .as_u64()
-        .and_then(|side| usize::try_from(side).ok())
-        .ok_or_else(|| unexpected(&value, "a pixel count"))
+fn pixel_pair<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[usize; 2], D::Error> {
+    let side = |value: &Value| {
+        value
+            .as_u64()
+            .and_then(|side| usize::try_from(side).ok())
+            .ok_or_else(|| unexpected(value, "a pixel count"))
+    };
+    let [x, y] = pair(deserializer)?;
+    Ok([side(&x)?, side(&y)?])
 }
 
 /// A quantity `"<number><unit>"` in the catalog's canonical unit, as a number.
@@ -667,9 +705,89 @@ fn quantity(value: &Value, unit: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("expected a quantity in {unit}, found {text:?}"))
 }
 
-fn cell_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-    let value = square_pair(Value::deserialize(deserializer)?).map_err(D::Error::custom)?;
-    quantity(&value, "arcsec").map_err(D::Error::custom)
+fn cell_pair_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f64; 2], D::Error> {
+    let [x, y] = pair(deserializer)?;
+    let arcsec = |value: &Value| quantity(value, "arcsec").map_err(D::Error::custom);
+    Ok([arcsec(&x)?, arcsec(&y)?])
+}
+
+/// CASA's `uvtaper` (`synthesisimager::setweighting`, then
+/// `VisImagingWeight::setFilter`): `[bmaj]`, `[bmaj, bmin]` or
+/// `[bmaj, bmin, bpa]`, with `bmin = bmaj` and `bpa = 0` when not given,
+/// and no taper when the list or its first entry is empty. In wavelengths
+/// (`lambda`, `klambda`, …) the axes are the taper's uv-plane HWHM; as
+/// angles they are its image-plane FWHM θ, whose uv-plane HWHM is
+/// 2 ln 2 / (π θ). CASA reads an axis with no unit as radians and tapers
+/// every weight to zero; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
+fn uv_taper<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UvTaper>, D::Error> {
+    let entries = match Value::deserialize(deserializer)? {
+        Value::Array(items) => items,
+        value => vec![value],
+    };
+    let texts = entries
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::trim)
+                .ok_or_else(|| unexpected(entry, "a quantity"))
+        })
+        .collect::<Result<Vec<_>, D::Error>>()?;
+    let taper = match texts.as_slice() {
+        [] | ["", ..] => return Ok(None),
+        [bmaj] => uv_taper_axes(bmaj, bmaj, None),
+        [bmaj, bmin] => uv_taper_axes(bmaj, bmin, None),
+        [bmaj, bmin, bpa] => uv_taper_axes(bmaj, bmin, Some(bpa)),
+        _ => Err("uvtaper takes at most [bmaj, bmin, bpa]".to_string()),
+    };
+    taper.map(Some).map_err(D::Error::custom)
+}
+
+/// One `uvtaper` axis: its uv-plane HWHM in wavelengths, and whether it was
+/// given as an angle.
+fn uv_taper_axis(text: &str) -> Result<(f64, bool), String> {
+    let refused = || {
+        format!(
+            "uvtaper {text:?}: give an angle (the image-plane FWHM) or wavelengths (the uv-plane \
+             HWHM, lambda or klambda)"
+        )
+    };
+    let quantity: Quantity = text.parse().map_err(|_| refused())?;
+    let unit = |name: &str| Unit::from_str(name).expect("a casacore unit");
+    let hwhm = if let Ok(wavelengths) = quantity.get_value_in(&unit("lambda")) {
+        (wavelengths, false)
+    } else if let Ok(fwhm) = quantity.get_value_in(&unit("rad")) {
+        (
+            2.0 * std::f64::consts::LN_2 / (std::f64::consts::PI * fwhm),
+            true,
+        )
+    } else {
+        return Err(refused());
+    };
+    if quantity.unit().name().is_empty() || !(hwhm.0.is_finite() && hwhm.0 > 0.0) {
+        return Err(refused());
+    }
+    Ok(hwhm)
+}
+
+fn uv_taper_axes(bmaj: &str, bmin: &str, bpa: Option<&str>) -> Result<UvTaper, String> {
+    let (major, major_angle) = uv_taper_axis(bmaj)?;
+    let (minor, minor_angle) = uv_taper_axis(bmin)?;
+    if major_angle != minor_angle {
+        return Err(format!(
+            "uvtaper {bmaj:?}, {bmin:?}: give both axes as angles or both in wavelengths"
+        ));
+    }
+    let position_angle_rad = match bpa {
+        None => 0.0,
+        Some(text) => text
+            .parse::<Quantity>()
+            .ok()
+            .filter(|angle| !angle.unit().name().is_empty())
+            .and_then(|angle| angle.get_value_in(&Unit::from_str("rad").ok()?).ok())
+            .ok_or_else(|| format!("uvtaper position angle {text:?} needs an angle unit"))?,
+    };
+    Ok(UvTaper::new(major, minor, position_angle_rad))
 }
 
 fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -899,26 +1017,30 @@ pub(crate) mod tests {
 
     use super::*;
 
-    /// The active values the catalog resolves from `overrides` over its
-    /// defaults, with a MeasurementSet and image name.
-    fn resolved(
+    /// The values the catalog resolves from `overrides` over its defaults,
+    /// with a MeasurementSet, an image name and a cell.
+    pub(crate) fn resolved(
         overrides: Value,
     ) -> Result<serde_json::Map<String, Value>, casa_task_runtime::ResolveError> {
-        let mut values = json!({ "vis": "unused.ms", "imagename": "unused" });
+        let mut values = json!({ "vis": "unused.ms", "imagename": "unused", "cell": "1arcsec" });
         let fields = values.as_object_mut().expect("object");
         fields.extend(overrides.as_object().expect("overrides object").clone());
         casa_task_runtime::resolve_plain_values(
-            casa_provider_contracts::builtin_surface_bundle("imager").expect("imager surface"),
+            casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
             PathBuf::from("."),
             fields,
         )
     }
 
+    /// The request tclean's `overrides` make, or its refusal.
+    pub(crate) fn read(overrides: Value) -> Result<ImagingRequest, crate::TcleanRefusal> {
+        ImagingRequest::from_tclean(&resolved(overrides).expect("catalog values"))
+    }
+
     /// A request resolved through the catalog from `overrides` over its
-    /// defaults, with a MeasurementSet and image name.
+    /// defaults, with a MeasurementSet, an image name and a cell.
     pub(crate) fn request(overrides: Value) -> ImagingRequest {
-        let resolved = resolved(overrides).expect("catalog values");
-        serde_json::from_value(Value::Object(resolved)).expect("imaging request")
+        read(overrides).expect("imaging request")
     }
 
     fn refusal(overrides: Value) -> &'static str {
@@ -926,22 +1048,6 @@ pub(crate) mod tests {
             .validate()
             .expect_err("an invalid request")
             .parameters
-    }
-
-    /// `facets` is active only with the standard gridder, so naming it with
-    /// another gridder is refused, not ignored.
-    #[test]
-    fn facets_with_another_gridder_are_refused() {
-        for gridder in ["wproject", "mosaic", "awproject"] {
-            let error = resolved(json!({ "gridder": gridder, "facets": 2 }))
-                .expect_err("facets with a non-standard gridder");
-            assert!(
-                error.to_string().contains("\"facets\" is inactive"),
-                "{gridder}: {error}"
-            );
-        }
-        let resolved = resolved(json!({ "gridder": "standard", "facets": 2 })).expect("facets");
-        assert_eq!(resolved["facets"], json!(2));
     }
 
     #[test]
@@ -973,14 +1079,76 @@ pub(crate) mod tests {
         );
     }
 
+    /// CASA's `imsize` and `cell` take one value for both axes or one per
+    /// axis, x first.
+    #[test]
+    fn imsize_and_cell_take_one_value_or_one_per_axis() {
+        let square = request(json!({ "imsize": 64, "cell": "2arcsec" }));
+        assert_eq!((square.imsize, square.cell), ([64, 64], [2.0, 2.0]));
+        // CASA's one-element lists are one value for both axes (#970 review).
+        let listed = request(json!({ "imsize": [120], "cell": ["8arcsec"] }));
+        assert_eq!((listed.imsize, listed.cell), ([120, 120], [8.0, 8.0]));
+        let pairs = request(json!({ "imsize": [120, 80], "cell": ["8arcsec", "6arcsec"] }));
+        assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
+        pairs.validate().expect("a non-square image");
+        assert!(resolved(json!({ "imsize": [64, 32, 16] })).is_err());
+    }
+
+    /// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the
+    /// image-plane FWHM θ, whose uv-plane HWHM is 2 ln 2 / (π θ), and
+    /// wavelengths are the uv-plane HWHM. CASA's
+    /// `π² θ² / (4 ln 2) = ln 2 / HWHM²`.
+    #[test]
+    fn uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
+        use std::f64::consts::{LN_2, PI};
+        let parsed =
+            |value: Value| read(json!({ "uvtaper": value })).map(|request| request.uvtaper);
+        let close = |actual: f64, expected: f64| {
+            assert!(
+                (actual - expected).abs() <= 1.0e-12 * expected,
+                "{actual} against {expected}"
+            );
+        };
+        assert_eq!(request(json!({})).uvtaper, None);
+        assert_eq!(parsed(json!([])).expect("an empty taper"), None);
+        let arcsec = PI / (180.0 * 3600.0);
+        let circular = parsed(json!(["10arcsec"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(circular.major_lambda(), 2.0 * LN_2 / (PI * 10.0 * arcsec));
+        close(circular.minor_lambda(), circular.major_lambda());
+        assert_eq!(circular.position_angle_rad(), 0.0);
+        let rbmaj = PI * PI * (10.0 * arcsec).powi(2) / (4.0 * LN_2);
+        close(LN_2 / circular.major_lambda().powi(2), rbmaj);
+        let uv = parsed(json!(["5klambda", "3klambda", "45deg"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(uv.major_lambda(), 5000.0);
+        close(uv.minor_lambda(), 3000.0);
+        close(uv.position_angle_rad(), PI / 4.0);
+        let two = parsed(json!(["80arcsec", "40arcsec"]))
+            .expect("parsed")
+            .expect("a taper");
+        close(two.minor_lambda(), 2.0 * two.major_lambda());
+        // CASA reads a bare number as radians and tapers every weight to
+        // zero; mixed axes and a unitless angle are refused too.
+        for value in [
+            json!(["500.0"]),
+            json!(["10arcsec", "3klambda"]),
+            json!(["10arcsec", "5arcsec", "30"]),
+            json!(["1Jy"]),
+        ] {
+            assert!(parsed(value.clone()).is_err(), "{value}");
+        }
+    }
+
     #[test]
     fn contradictory_parameters_are_refused_before_any_data_is_read() {
         for (overrides, parameters) in [
             (
-                json!({ "phasecenter": "J2000 0rad 0rad", "phasecenter_field": "0" }),
-                "phasecenter, phasecenter_field",
+                json!({ "deconvolver": "mtmfs", "nterms": 0 }),
+                "nterms, deconvolver",
             ),
-            (json!({ "nterms": 2 }), "nterms, deconvolver"),
             (
                 json!({ "deconvolver": "mtmfs", "nterms": 2, "specmode": "cube" }),
                 "deconvolver, specmode",
@@ -991,11 +1159,11 @@ pub(crate) mod tests {
                 "save_continuum_residual, fitspw",
             ),
             (json!({ "fitspw": "0:0~3" }), "fitspw, specmode"),
-            (
-                json!({ "usemask": "auto-multithresh", "mask_box": "0,0,4,4" }),
-                "usemask, mask_image, mask_box",
-            ),
             (json!({ "pblimit": 1.0 }), "psfcutoff, pblimit"),
+            (
+                json!({ "deconvolver": "mtmfs", "nterms": 2, "startmodel": "deep.model" }),
+                "startmodel, deconvolver",
+            ),
         ] {
             assert_eq!(refusal(overrides), parameters);
         }
@@ -1006,14 +1174,17 @@ pub(crate) mod tests {
         let aw = |planes: Value| {
             json!({
                 "gridder": "awproject",
+                "conjbeams": true,
                 "cfcache": "cf",
                 "wprojplanes": planes,
             })
         };
         assert_eq!(refusal(aw(json!(16))), "wprojplanes");
+        assert_eq!(refusal(aw(json!(-1))), "wprojplanes");
         request(aw(json!(32))).validate().expect("32 planes");
         let native = json!({
             "gridder": "awproject",
+            "conjbeams": true,
             "aw_cf_source": "native-evla",
             "wprojplanes": 32,
             "native_cf_cache": "cache",
@@ -1029,81 +1200,22 @@ pub(crate) mod tests {
         );
     }
 
-    /// Every parameter the catalog resolves is a required field of the
-    /// request, for every gridder and AW source: a binding the request does
-    /// not read would otherwise be dropped silently (the flattened gridder
-    /// rules out `deny_unknown_fields`).
-    #[test]
-    fn every_resolved_parameter_is_a_required_field() {
-        for overrides in [
-            json!({}),
-            json!({ "gridder": "wproject" }),
-            json!({ "gridder": "mosaic" }),
-            json!({ "gridder": "awproject", "cfcache": "cf" }),
-            json!({
-                "gridder": "awproject",
-                "aw_cf_source": "native-evla",
-                "native_cf_cache": "cache",
-                "evla_surface": "surface",
-                "native_cf_working_size": 64,
-                "native_cf_oversampling": 4,
-                "native_cf_cache_bytes": 1_048_576,
-                "native_cf_maximum_cells": 64,
-            }),
-        ] {
-            let values = resolved(overrides.clone()).expect("catalog values");
-            serde_json::from_value::<ImagingRequest>(Value::Object(values.clone()))
-                .unwrap_or_else(|error| panic!("{overrides}: {error}"));
-            for name in values.keys() {
-                let mut without = values.clone();
-                without.remove(name);
-                assert!(
-                    serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
-                    "{overrides}: the request does not read {name}"
-                );
-            }
-        }
-    }
-
-    /// A blank optional parameter is unset, as it always was.
+    /// A blank optional parameter is unset, as CASA's empty text is.
     #[test]
     fn blank_optional_values_are_unset() {
         let blank = request(json!({
-            "datacolumn": "",
             "phasecenter": "",
-            "mask_image": "",
+            "mask": "",
             "outlierfile": "",
             "restfreq": "",
-            "scales": "",
-            "mask_box": "",
+            "scales": [],
             "field": "",
             "spw": "",
             "start": "",
+            "startmodel": "",
         }));
         assert_eq!(blank, request(json!({})));
-    }
-
-    /// A parameter its gridder does not read is refused when set, and
-    /// absent from the request when not.
-    #[test]
-    fn the_catalog_refuses_a_parameter_its_gridder_does_not_read() {
-        let error = resolved(json!({ "gridder": "standard", "wprojplanes": 4 }))
-            .expect_err("W planes without W projection");
-        assert!(
-            matches!(
-                &error,
-                casa_task_runtime::ResolveError::Invalid { parameter: Some(name), .. }
-                    if name == "wprojplanes"
-            ),
-            "{error:?}"
-        );
-        let values = resolved(json!({ "gridder": "wproject", "wprojplanes": 4 })).expect("W");
-        assert_eq!(values["wprojplanes"], json!(4));
-        assert!(
-            !resolved(json!({}))
-                .expect("defaults")
-                .contains_key("wprojplanes")
-        );
+        assert_eq!(blank.datacolumn, None);
     }
 
     #[test]
@@ -1124,9 +1236,8 @@ pub(crate) mod tests {
             );
         }
         for text in ["IXX", "XXRR", "IQZ", "X", ""] {
-            let refused = resolved(json!({ "stokes": text })).map_or(true, |values| {
-                serde_json::from_value::<ImagingRequest>(Value::Object(values)).is_err()
-            });
+            let refused = resolved(json!({ "stokes": text }))
+                .map_or(true, |values| ImagingRequest::from_tclean(&values).is_err());
             assert!(refused, "{text:?}");
         }
     }

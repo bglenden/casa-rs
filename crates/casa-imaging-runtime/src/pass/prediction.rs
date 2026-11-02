@@ -14,7 +14,8 @@
 //! [`BlockPredictor`] is the same path for a caller that is not a major
 //! cycle: the simulator, which predicts the rows it writes.
 
-use std::ops::Range;
+use std::ops::{Deref, Range};
+use std::sync::Arc;
 
 use casa_imaging_metal::{MetalBackend, MetalNoiseRow, MetalNoiseTerm};
 use casa_imaging_operator::{
@@ -34,14 +35,43 @@ use super::{
 ///
 /// A [`BlockPredictor`] predicts `Σ_d A_d·m_d` over its domains, each row
 /// read in the projection of its own domain ([`NativeBlock::row`]).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PredictionDomain<'a> {
     /// The measurement operator.
     pub operator: &'a MeasurementOperator,
     /// Maps native rows to the operator's planes.
     pub resampler: &'a SpectralResampler,
     /// The model grids of every plane the rows reach.
-    pub model: &'a PreparedModelGrids,
+    pub model: DomainModel<'a>,
+}
+
+/// A domain's model grids: borrowed from an owner that outlives the
+/// predictor (a major cycle's grids), or shared with one that may drop
+/// them first (the simulator's per-field grids, which its cache evicts
+/// while the predictor of their field keeps them).
+#[derive(Clone)]
+pub enum DomainModel<'a> {
+    /// Grids the owner keeps while the domain is used.
+    Borrowed(&'a PreparedModelGrids),
+    /// Grids the domain keeps alive itself.
+    Shared(Arc<PreparedModelGrids>),
+}
+
+impl Deref for DomainModel<'_> {
+    type Target = PreparedModelGrids;
+
+    fn deref(&self) -> &PreparedModelGrids {
+        match self {
+            Self::Borrowed(grids) => grids,
+            Self::Shared(grids) => grids,
+        }
+    }
+}
+
+impl<'a> From<&'a PreparedModelGrids> for DomainModel<'a> {
+    fn from(grids: &'a PreparedModelGrids) -> Self {
+        Self::Borrowed(grids)
+    }
 }
 
 /// Noise a [`BlockPredictor`] adds on the device to the rows it predicts
@@ -450,19 +480,14 @@ impl<'w> BlockPredictor<'w> {
     /// `workers` workers predicts in: as many as a major-cycle wave's, each
     /// of the rows whose degridded samples fit [`CHUNK_PLACEMENTS`] and at
     /// most a block's share.
-    fn shape(
-        domains: &[PredictionDomain<'_>],
+    fn shape<'r>(
+        resamplers: impl Iterator<Item = &'r SpectralResampler>,
         block: BlockShape,
         workers: usize,
     ) -> PredictionShape {
         let chunks = super::wave::chunks(workers);
-        let row = domains
-            .iter()
-            .map(|domain| {
-                domain
-                    .resampler
-                    .prediction_samples_per_row(block.channels())
-            })
+        let row = resamplers
+            .map(|resampler| resampler.prediction_samples_per_row(block.channels()))
             .max()
             .unwrap_or(0);
         PredictionShape {
@@ -489,17 +514,39 @@ impl<'w> BlockPredictor<'w> {
         block: BlockShape,
         workers: usize,
     ) -> u64 {
-        let shape = Self::shape(domains, block, workers);
-        let pairs = domains
-            .iter()
-            .map(|domain| (domain.operator, domain.resampler));
+        Self::bytes_for(
+            domains
+                .iter()
+                .map(|domain| (domain.operator, domain.resampler)),
+            backend,
+            block,
+            workers,
+        )
+    }
+
+    /// [`Self::bytes`] for domains of `domains`' operators and resamplers,
+    /// known before their models are prepared: what a predictor holds does
+    /// not depend on its domains' models.
+    #[must_use]
+    pub fn bytes_for<'d>(
+        domains: impl ExactSizeIterator<Item = (&'d MeasurementOperator, &'d SpectralResampler)> + Clone,
+        backend: BackendChoice,
+        block: BlockShape,
+        workers: usize,
+    ) -> u64 {
+        let count = domains.len();
+        let shape = Self::shape(
+            domains.clone().map(|(_, resampler)| resampler),
+            block,
+            workers,
+        );
         let store = match backend {
             BackendChoice::Cpu => 0,
             BackendChoice::Metal => super::wave::prediction_bytes(block),
         };
-        BlockPrediction::bytes(pairs.clone(), backend, true, shape)
-            + BlockPrediction::record_bytes(pairs, backend, shape.chunks)
-            + size_of_val(domains) as u64
+        BlockPrediction::bytes(domains.clone(), backend, true, shape)
+            + BlockPrediction::record_bytes(domains, backend, shape.chunks)
+            + (count * size_of::<PredictionDomain<'_>>()) as u64
             + store
     }
 
@@ -553,7 +600,11 @@ impl<'w> BlockPredictor<'w> {
                 "Metal predicts from f32 grids (D2)"
             );
         }
-        let shape = Self::shape(domains, block, workers);
+        let shape = Self::shape(
+            domains.iter().map(|domain| domain.resampler),
+            block,
+            workers,
+        );
         let cells = match backend {
             BackendChoice::Cpu => 0,
             BackendChoice::Metal => block.rows * block.channels() * block.correlations,
@@ -736,13 +787,14 @@ impl PredictionChunk<'_> {
             scratch,
             predictors,
         } = self;
+        let model: &PreparedModelGrids = &domain.model;
         scratch.begin(npol);
         for position in rows.clone() {
             let row = block.row(index, row_at(block, ordered, position));
             let placed =
                 domain
                     .resampler
-                    .place_prediction(domain.operator, domain.model, &row, scratch)?;
+                    .place_prediction(domain.operator, model, &row, scratch)?;
             domain
                 .resampler
                 .native_terms(&row, npol, placed, scratch, cell_of(position, channels));
@@ -752,12 +804,12 @@ impl PredictionChunk<'_> {
             (Predictor::Cpu(backend), ChunkCells::Host(cells)) => {
                 let first = cell_of(rows.start, channels);
                 let target = NativeTarget::Host { cells, first };
-                scratch.apply_native(backend, cf, domain.model, target, add)?;
+                scratch.apply_native(backend, cf, model, target, add)?;
             }
             (Predictor::Metal(backend), ChunkCells::Device(cells)) => {
                 let backend: &mut MetalBackend<'_> = backend;
                 let target = NativeTarget::Device(cells);
-                scratch.apply_native(backend, cf, domain.model, target, add)?;
+                scratch.apply_native(backend, cf, model, target, add)?;
             }
             _ => unreachable!("a block prediction's predictors and store share its backend"),
         }

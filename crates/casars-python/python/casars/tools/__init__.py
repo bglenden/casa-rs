@@ -16,6 +16,26 @@ the module path.
 
 from __future__ import annotations
 
-from .._core import componentlist, measures, quanta, simulator
+from .._core import (
+    componentlist,
+    coordsys,
+    image,
+    measures,
+    ms,
+    msmetadata,
+    quanta,
+    simulator,
+    table,
+)
 
-__all__ = ["componentlist", "measures", "quanta", "simulator"]
+__all__ = [
+    "componentlist",
+    "coordsys",
+    "image",
+    "measures",
+    "ms",
+    "msmetadata",
+    "quanta",
+    "simulator",
+    "table",
+]

@@ -51,7 +51,8 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 }
 
 /// A dirty cube imaged in waves equals the cube imaged in one resident
-/// pass, both when its waves read restricted channel windows and under
+/// pass, both when its waves read restricted channel windows, of all the
+/// channels or of a selection with a gap (`0:1~10;20~30`), and under
 /// continuum subtraction, whose interior waves reach none of the fit-only
 /// channels (0 and 31) and so read whole rows for the fit. (Residual waves
 /// with a model are pinned by the runtime's pass laws.)
@@ -60,18 +61,17 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    for (label, continuum) in [("windowed", false), ("continuum", true)] {
+    for (label, overrides) in [
+        ("windowed", json!({ "imsize": 128 })),
+        ("gapped", json!({ "imsize": 128, "spw": "0:1~10;20~30" })),
+        (
+            "continuum",
+            json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
+        ),
+    ] {
         let cube = |name: &str, memory: u64| {
             let image_name = root.path().join(format!("{label}-{name}"));
-            let imaging = line_cube(
-                &measurement_set,
-                &image_name,
-                if continuum {
-                    json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 })
-                } else {
-                    json!({ "imsize": 128 })
-                },
-            );
+            let imaging = line_cube(&measurement_set, &image_name, overrides.clone());
             let outcome =
                 casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
                     .unwrap_or_else(|error| panic!("{label} {name}: {error:?}"));
@@ -79,16 +79,22 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
         };
         let (resident, resident_waves) = cube("resident", 4 << 30);
         assert_eq!(resident_waves, None, "{label}: every plane fits 4 GiB");
+        // Each wave binds its channels per partition, from the conversion
+        // factors its times span (#932 step 4).
         let (waved, waves) = cube("waved", WAVED_MEMORY_BYTES);
         assert!(
             waves.is_some_and(|planes| planes < 30),
             "{label}: the capped cube runs in waves: {waves:?}"
         );
         for suffix in DIRTY_PRODUCT_SUFFIXES {
-            assert_eq!(
-                read_product(&waved, suffix),
-                read_product(&resident, suffix),
-                "{label} {suffix}"
+            let nrms = product_law::image_nrms(
+                &PathBuf::from(format!("{}{suffix}", resident.display())),
+                &PathBuf::from(format!("{}{suffix}", waved.display())),
+            )
+            .expect("both cubes");
+            assert!(
+                nrms <= product_law::TOLERANCE,
+                "{label} {suffix}: the waves differ by NRMS {nrms:.3e}"
             );
         }
     }
@@ -170,8 +176,12 @@ fn flag_channels(measurement_set: &Path, channels: &[usize]) {
 const WAVED_MEMORY_BYTES: u64 = 8 << 20;
 
 /// Admission: a memory ceiling that cannot hold the cube is refused, typed,
-/// before anything is written; a ceiling just above one plane of the pass
-/// runs it one plane per wave.
+/// before anything is written; the least ceiling that admits it runs the
+/// cube in waves. When the pass sets that least, a ceiling just above one
+/// plane of it runs one plane per wave; when the products do (#932: their
+/// restoring convolution can hold more than a plane of a cheap pass), the
+/// ceiling just below is refused at the products, before any pass, and the
+/// pass takes as many planes as fit beside them.
 #[test]
 fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -185,40 +195,72 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
         names.sort();
         names
     };
-    let before = entries();
     let imaging = line_cube(
         &measurement_set,
         &root.path().join("admitted"),
         json!({ "imsize": 128 }),
     );
+    // A refused run writes nothing: the directory is as it was before it.
     let run = |memory: u64| {
-        casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+        let before = entries();
+        let result =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)));
+        if result.is_err() {
+            assert_eq!(entries(), before, "a refused run writes nothing");
+        }
+        result
     };
     // Raise the ceiling by what each refusal reports missing until the pass
     // itself is admitted. Each phase admitted before the pass also takes a
     // share of a higher ceiling (the cube cache a quarter of what is free),
     // so each step adds a third more than the gap.
     let mut memory = 64 << 10;
+    let mut refused = memory;
     let mut refusals = 0;
-    let waves = loop {
-        match run(memory) {
-            Ok(outcome) => break outcome.planes_per_wave,
-            Err(ApplicationDispatchError::Admission(Admission {
-                required,
-                available,
-                ..
-            })) => {
-                assert_eq!(entries(), before, "a refused run writes nothing");
-                let gap = required - available;
+    let admitted = |result: Result<_, _>| match result {
+        Ok(outcome) => Ok(outcome),
+        Err(ApplicationDispatchError::Admission(Admission {
+            phase,
+            required,
+            available,
+        })) => Err((phase, required - available)),
+        Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+    };
+    let mut refused_at = "";
+    let mut outcome = loop {
+        match admitted(run(memory)) {
+            Ok(outcome) => break outcome,
+            Err((phase, gap)) => {
+                (refused, refused_at) = (memory, phase);
                 memory += gap + gap.div_ceil(3);
                 refusals += 1;
                 assert!(refusals < 32, "the ceiling converges");
             }
-            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
         }
     };
     assert!(refusals > 0, "64 KiB holds no line cube");
-    assert_eq!(waves, Some(1), "a ceiling just above one plane");
+    // The last step overshoots by a third of its gap: the smallest ceiling
+    // admitted, to a kibibyte.
+    while memory - refused > 1 << 10 {
+        let middle = refused + (memory - refused) / 2;
+        match admitted(run(middle)) {
+            Ok(smaller) => (memory, outcome) = (middle, smaller),
+            Err((phase, _)) => (refused, refused_at) = (middle, phase),
+        }
+    }
+    if refused_at == "products" {
+        assert!(
+            outcome.planes_per_wave.is_some_and(|planes| planes < 30),
+            "the least ceiling ({memory} bytes) runs in waves: {:?}",
+            outcome.planes_per_wave
+        );
+    } else {
+        assert_eq!(
+            outcome.planes_per_wave,
+            Some(1),
+            "a ceiling just above one plane ({memory} bytes; refused below at {refused_at:?})"
+        );
+    }
 }
 
 /// A refused run still leaves its summary when the context names one: the
@@ -322,7 +364,7 @@ fn cleaned_cube(measurement_set: &Path, image_name: &Path) -> ImagingRequest {
             "specmode": "cube",
             "outframe": "TOPO",
             "niter": 3,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": 3,
             "gain": 0.37,
             "threshold": "1e-12Jy",

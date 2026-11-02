@@ -7,6 +7,13 @@ Supersedes: 0005; 0007; the stateful-session provider and session-surface
 parts of 0003 and 0006
 Superseded by:
 
+Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
+PyO3 only (item 4, Enforcement and Drift detection). This was the first stage
+of #931.
+Amended: 2026-10-28, on owner direction (#931 PR 3): the `casars` launcher
+is retired and Python starts each task's executable directly (items 1 and 4,
+Enforcement and Drift detection, in their final wording).
+
 ## Context
 
 From May to October 2026 casa-rs carried several interactive surfaces beside
@@ -32,8 +39,7 @@ The last state of the interactive surfaces is preserved at the tag
 
 ## Decision
 
-1. The product surfaces are the Python package (`casars`), the headless task
-   host `casars` (`casars run` and `casars params`), and the task-provider
+1. The product surfaces are the Python package (`casars`) and the task
    executables listed in the application catalog.
 2. casa-rs has no terminal UI, native GUI, notebook or assistant program,
    interactive browser sessions, or Rust-side plot rasterisation. Every
@@ -42,9 +48,13 @@ The last state of the interactive surfaces is preserved at the tag
 3. Plots are typed data. Rust builds plot documents and text point manifests
    (`msexplore`/`plotms --plot-format txt`); Python renders them with
    Matplotlib (`casars.data.plot_matplotlib`, `casars.imexplore`).
-4. `casars-frontend-services` is the UniFFI service layer of the Python
-   package only. It exports what `casars.parameters`, `casars.tasks` and
-   `casars.data` call, and nothing for other frontends.
+4. The Python package binds in-process Rust functionality through PyO3 in
+   `casars._core`. Task calls start the catalog-selected task-provider
+   executable directly as a child process; a provider may host a task
+   family. Python and the executable use the shared task front end in
+   `casa-task-runtime`. Ordinary Python task calls neither load nor save
+   managed Last state; command-line lifecycle policy is explicit. There is
+   no separate `casars` launcher or UniFFI layer.
 5. New interactive surfaces, if ever wanted again, start from a new ADR
    rather than from the retired code.
 
@@ -80,12 +90,27 @@ Neutral / tradeoffs:
 ## Enforcement
 
 This decision is enforced by:
-- tests: `crates/casars/tests/casars_cli.rs` (no launcher or `open` command;
-  `casars run` executes a provider), the provider-contract and catalog tests
-  (27 task surfaces, no session kinds), the Python package tests;
+- tests:
+  - the Python package tests: `test_task_runner.py` (a task call starts the
+    executable its catalog override names with `--json-run -`, streams its
+    log, and leaves Last untouched on success, failure and interruption) and
+    `test_task_end_to_end.py` (a real executable, found in a development
+    checkout's build);
+  - `scripts/test-task-cli-hosts.py` (every catalog executable is on the
+    shared task front end and answers its machine actions);
+  - the command line's Last lifecycle and its equivalence with `--json-run`:
+    the front end's tests in `casa-task-runtime`,
+    `crates/casars-imexplore/tests/imexplore_cli.rs` and the imager's
+    `t1::routes`;
+  - the provider-contract and catalog tests (26 task surfaces, every
+    application a task, no launcher, no session kinds), and the resolver's
+    tests in `casa-provider-contracts`;
 - lint/import/dependency rules: none beyond the workspace manifests;
-- CI checks: `just quick`, `scripts/generate-frontend-bindings.sh --check` in
-  the `python_package` job, `just docs-check`;
+- CI checks: `just quick`, `scripts/test-python-package.sh` in the
+  `python_package` job (its binding snapshots pin what the binding returns to
+  Python, and it tests the built wheel and sdist), the `suite_install` job
+  (`scripts/test-install-suite.sh --hide-checkout`: the installed suite's
+  commands and Python, with the checkout moved aside), `just docs-check`;
 - review trigger: any pull request that adds a UI, rendering or session
   dependency or crate.
 
@@ -93,7 +118,10 @@ This decision is enforced by:
 
 Suspect drift if:
 - `Cargo.lock` gains `ratatui`, `crossterm`, `plotters`, `image`, `printpdf`
-  or a UniFFI foreign-language generator other than Python;
+  or `uniffi`;
 - a parameter surface or provider declares a non-task kind;
-- `casars-frontend-services` grows exports that the Python package does not
-  call.
+- a second native module appears beside `casars._core`;
+- a crate spawns catalog executables on Python's behalf.
+
+These pair with the direct-launch, no-Last and command-line-equivalence
+tests above.

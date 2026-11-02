@@ -119,6 +119,11 @@ struct SharedTileKey {
     cube_idx: usize,
     target_col_idx: usize,
     tile_index: usize,
+    /// A surviving handle can retain older metadata after a table at the
+    /// same path is rewritten. A cached tile is safe to copy into bools
+    /// only when it was decoded as a multi-pixel bool tile.
+    is_bool: bool,
+    single_pixel: bool,
 }
 
 #[derive(Clone)]
@@ -840,6 +845,26 @@ pub(crate) fn tiled_2d_channel_tile_width(
     Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
 }
 
+/// The tile shape of the tiled manager `dm_seq_nr`: its first hypercube's,
+/// else its default tile shape, in casacore's axis order (the cell's axes,
+/// then rows).
+pub(crate) fn tiled_tile_shape(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<Option<Vec<usize>>, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    if let Some(cube) = header.cubes.iter().find(|cube| !cube.tile_shape.is_empty()) {
+        return Ok(Some(cube.tile_shape.clone()));
+    }
+    let default_tile_shape: Vec<usize> = variant
+        .default_tile_shape()
+        .iter()
+        .map(|&extent| usize::try_from(extent).unwrap_or(0))
+        .collect();
+    Ok((!default_tile_shape.is_empty()).then_some(default_tile_shape))
+}
+
 /// Bytes of the largest bucket (tile) of the tiled manager `dm_seq_nr`,
 /// over its hypercubes and its default tile shape: what reading or writing
 /// one of its cells holds whole.
@@ -867,6 +892,40 @@ pub(crate) fn tiled_bucket_bytes(table_path: &Path, dm_seq_nr: u32) -> Result<us
 /// and 3 (explicit endian, 64-bit).
 fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader, StorageError> {
     Ok(read_tiled_stman_base_versioned(io)?.0)
+}
+
+/// The tiled manager's name (`DataManager::dataManagerName()`, the
+/// hypercolumn name its header holds), read from the head of the header file
+/// without the hypercubes. It is the NAME the manager was bound with, which
+/// need not be the group its columns' descriptions declare. `None` when the
+/// file is missing or does not parse.
+pub(crate) fn name_from_file(path: &Path) -> Option<String> {
+    let mut io = AipsIo::open(path, AipsOpenOption::Old).ok()?;
+    let outer_type = io.get_next_type().ok()?;
+    io.getstart(&outer_type).ok()?;
+    match outer_type.as_str() {
+        // The default tile shape comes before the base class in these.
+        "TiledColumnStMan" | "TiledCellStMan" => {
+            read_iposition(&mut io).ok()?;
+        }
+        "TiledShapeStMan" | "TiledDataStMan" => {}
+        _ => return None,
+    }
+    let version = io.getstart("TiledStMan").ok()?;
+    if version >= 2 {
+        io.get_bool().ok()?;
+    }
+    io.get_u32().ok()?;
+    if version >= 3 {
+        io.get_u64().ok()?;
+    } else {
+        io.get_u32().ok()?;
+    }
+    let ncol = io.get_u32().ok()?;
+    for _ in 0..ncol {
+        io.get_i32().ok()?;
+    }
+    io.get_string().ok()
 }
 
 /// [`read_tiled_stman_base`], also returning the `TiledStMan` object
@@ -3714,24 +3773,36 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
             SelectedArray2DCellsMut::Bool(values) | SelectedArray2DCellsMut::RowChannelBool(values),
         ) => {
             values.resize(sample_count, false);
-            fill_typed_selected_2d_rows(
-                table_path,
-                dm_seq_nr,
-                header,
-                target_col_idx,
-                dt,
-                elem_size,
-                &col_desc.col_name,
-                &patches_by_cube,
-                selected_rows.len(),
-                corr_count,
-                channel_start,
-                channel_count,
-                fill_plan.row_major,
-                &mut session,
-                values,
-                |bytes, _| bytes[0] != 0,
-            )?;
+            let unpacked = patches_by_cube
+                .keys()
+                .all(|&cube| header.cubes[cube].tile_shape.iter().product::<usize>() > 1);
+            if unpacked {
+                // Both tile loaders expand packed booleans into bytes 0 or 1
+                // when a tile has more than one pixel. Those bytes are valid
+                // bool representations, so the typed copy can place them
+                // directly in the destination. A one-pixel tile can instead
+                // contain its packed byte and must be decoded below.
+                fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+            } else {
+                fill_typed_selected_2d_rows(
+                    table_path,
+                    dm_seq_nr,
+                    header,
+                    target_col_idx,
+                    dt,
+                    elem_size,
+                    &col_desc.col_name,
+                    &patches_by_cube,
+                    selected_rows.len(),
+                    corr_count,
+                    channel_start,
+                    channel_count,
+                    fill_plan.row_major,
+                    &mut session,
+                    values,
+                    |bytes, _| bytes[0] != 0,
+                )?;
+            }
         }
         (
             CasacoreDataType::TpFloat,
@@ -4115,6 +4186,30 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                 }
 
                 let copy_started = profile.then(Instant::now);
+                if !plan.row_major {
+                    let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
+                    for channel in overlap_start..overlap_end {
+                        let src_channel = channel - tile_channel_start;
+                        let dst_channel = channel - plan.channel_start;
+                        let source_offset = src_channel
+                            .saturating_mul(shape.tile_corr_count)
+                            .saturating_mul(plan.elem_size);
+                        for selected in &row_patches {
+                            let row_in_tile = selected.pos_in_cube % row_tile_size;
+                            let src_byte =
+                                row_in_tile * row_tile_nelem * plan.elem_size + source_offset;
+                            let dst_byte = (dst_channel * plan.row_count + selected.out_idx)
+                                * plan.corr_count
+                                * plan.elem_size;
+                            values_bytes[dst_byte..dst_byte + copy_bytes]
+                                .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                        }
+                    }
+                    if let Some(started) = copy_started {
+                        profile_copy += started.elapsed();
+                    }
+                    continue;
+                }
                 for selected in &row_patches {
                     let row_in_tile = selected.pos_in_cube % row_tile_size;
                     let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
@@ -6973,27 +7068,8 @@ impl StreamingTiledShapeWriter {
         let mut default_tile_shape = Vec::new();
         let mut working_set = ShapeCubeWorkingSet::default();
 
+        // Each layout's extents are checked as its cube is created.
         for (cube_index, layout) in layouts.into_iter().enumerate() {
-            if layout.row_count == 0 {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape layout {:?} has no rows",
-                    layout.cell_shape
-                )));
-            }
-            if layout.cell_shape.is_empty() || layout.cell_shape.contains(&0) {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape cell dimensions must be positive: {:?}",
-                    layout.cell_shape
-                )));
-            }
-            if layout.tile_shape.len() != layout.cell_shape.len() + 1
-                || layout.tile_shape.contains(&0)
-            {
-                return Err(StorageError::FormatMismatch(format!(
-                    "streamed TiledShape tile rank must be cell rank + row axis; cell={:?} tile={:?}",
-                    layout.cell_shape, layout.tile_shape
-                )));
-            }
             match cell_rank {
                 Some(rank) if rank != layout.cell_shape.len() => {
                     return Err(StorageError::FormatMismatch(
@@ -7049,17 +7125,13 @@ impl StreamingTiledShapeWriter {
             )));
         }
         // Each cube assembles its bands in memory when they fit the budget
-        // beside the working set and the largest row map the rows can need.
+        // beside the working set and the largest row map the rows can need
+        // ([`Self::resident_bytes`]).
         let band_bytes = cubes
             .iter()
             .map(DirectShapeCubeWriter::band_bytes)
             .sum::<usize>();
-        let largest_row_map = row_count.saturating_mul(3 * std::mem::size_of::<u32>());
-        if working_bytes
-            .saturating_add(band_bytes)
-            .saturating_add(largest_row_map)
-            <= memory_budget_bytes
-        {
+        if shape_cube::buffered_bytes(working_bytes, band_bytes, row_count) <= memory_budget_bytes {
             cubes
                 .iter_mut()
                 .for_each(DirectShapeCubeWriter::buffer_bands);
@@ -9593,12 +9665,15 @@ fn load_shared_column_tile(
     session: &mut TileReadSession,
 ) -> Result<Arc<[u8]>, StorageError> {
     let table_id = session.table_id(table_path);
+    let tile_nelem: usize = cube.tile_shape.iter().product();
     let key = SharedTileKey {
         table_id,
         dm_seq_nr,
         cube_idx,
         target_col_idx,
         tile_index,
+        is_bool: dt == CasacoreDataType::TpBool,
+        single_pixel: tile_nelem <= 1,
     };
     if let Some(hit) = session.recent_tile(&key) {
         return Ok(hit);
@@ -9612,7 +9687,6 @@ fn load_shared_column_tile(
         return Ok(hit);
     }
 
-    let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
     let swap_size = match dt {
@@ -13442,6 +13516,87 @@ mod tests {
         reset_table_cache_budget_for_tests();
     }
 
+    /// A table handle can outlive a rewrite at its path. A stale handle's
+    /// cached bytes must not be mistaken for unpacked bools by the new one.
+    #[test]
+    fn selected_bool_reads_do_not_reuse_tiles_from_stale_metadata() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+
+        let write_table = |root: &Path, primitive, rows, tile_rows| {
+            let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                "data",
+                primitive,
+                vec![1, 1],
+            )])
+            .expect("schema");
+            let mut table = Table::with_schema(schema);
+            for _ in 0..rows {
+                let array = match primitive {
+                    PrimitiveType::Bool => {
+                        ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[1, 1]), true))
+                    }
+                    PrimitiveType::Float32 => {
+                        ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[1, 1]), 1.0))
+                    }
+                    _ => unreachable!(),
+                };
+                table
+                    .add_row(RecordValue::new(vec![RecordField::new(
+                        "data",
+                        Value::Array(array),
+                    )]))
+                    .expect("row");
+            }
+            table
+                .save(
+                    TableOptions::new(root)
+                        .with_data_manager(DataManagerKind::TiledShapeStMan)
+                        .with_tile_shape(vec![1, 1, tile_rows]),
+                )
+                .expect("save");
+        };
+
+        let dir = tempdir().expect("tempdir");
+        for (index, old_type, old_tile, new_tile, rows) in [
+            (0, PrimitiveType::Float32, 8, 8, 256),
+            (1, PrimitiveType::Bool, 1, 2, 2),
+        ] {
+            let root = dir.path().join(format!("stale-{index}.table"));
+            std::fs::create_dir_all(&root).expect("table directory");
+            write_table(&root, old_type, rows, old_tile);
+            let old = Table::open(TableOptions::new(&root)).expect("old handle");
+            write_table(&root, PrimitiveType::Bool, rows, new_tile);
+            let current = Table::open(TableOptions::new(&root)).expect("new handle");
+
+            // Read through the old handle after the new open invalidates the
+            // cache, then read the same tile through the new handle.
+            let mut old_floats = Vec::new();
+            let mut old_bools = Vec::new();
+            let destination = match old_type {
+                PrimitiveType::Float32 => SelectedArray2DCellsMut::Float32(&mut old_floats),
+                PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut old_bools),
+                _ => unreachable!(),
+            };
+            old.fill_array_cells_2d_channel_range_typed_uncached("data", &[0], 0, 1, destination)
+                .expect("stale read")
+                .expect("defined stale cell");
+            let mut flags = Vec::new();
+            current
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    "data",
+                    &[0],
+                    0,
+                    1,
+                    SelectedArray2DCellsMut::Bool(&mut flags),
+                )
+                .expect("current read")
+                .expect("defined current cell");
+            assert_eq!(flags, [true], "stale case {index}");
+        }
+        reset_table_cache_budget_for_tests();
+    }
+
     #[test]
     fn tiled_selected_channel_range_reads_only_intersecting_channel_tiles() {
         let _guard = shared_table_cache_test_guard();
@@ -13524,6 +13679,98 @@ mod tests {
             "full 8-channel row should touch all four channel tiles for this shape"
         );
 
+        reset_table_cache_budget_for_tests();
+    }
+
+    /// A tile can pad its correlation axis beyond the cell's correlations.
+    #[test]
+    fn selected_channel_copy_handles_padded_correlation_tiles() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        for primitive in [PrimitiveType::Complex32, PrimitiveType::Bool] {
+            let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                "DATA",
+                primitive,
+                vec![2, 6],
+            )])
+            .expect("schema");
+            let mut table = Table::with_schema(schema);
+            for row in 0..5 {
+                let values = (0..6)
+                    .flat_map(|channel| (0..2).map(move |corr| row * 100 + channel * 10 + corr));
+                let array = match primitive {
+                    PrimitiveType::Complex32 => ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(
+                            IxDyn(&[2, 6]).f(),
+                            values
+                                .map(|value| Complex32::new(value as f32, -(value as f32)))
+                                .collect(),
+                        )
+                        .expect("values"),
+                    ),
+                    PrimitiveType::Bool => ArrayValue::Bool(
+                        ArrayD::from_shape_vec(
+                            IxDyn(&[2, 6]).f(),
+                            values.map(|value| value % 3 == 0).collect(),
+                        )
+                        .expect("flags"),
+                    ),
+                    _ => unreachable!(),
+                };
+                table
+                    .add_row(RecordValue::new(vec![RecordField::new(
+                        "DATA",
+                        Value::Array(array),
+                    )]))
+                    .expect("row");
+            }
+            let dir = tempdir().expect("tempdir");
+            let root = dir.path().join("padded.table");
+            std::fs::create_dir_all(&root).expect("directory");
+            table
+                .save(
+                    TableOptions::new(&root)
+                        .with_data_manager(DataManagerKind::TiledShapeStMan)
+                        .with_tile_shape(vec![4, 2, 2]),
+                )
+                .expect("save");
+            let (_, header) = read_tiled_header(&root.join("table.f0")).expect("header");
+            assert!(
+                header.cubes.iter().any(|cube| {
+                    cube.cube_shape.first() == Some(&2) && cube.tile_shape == [4, 2, 2]
+                }),
+                "the correlation tile is padded"
+            );
+            let reopened = Table::open(TableOptions::new(&root)).expect("open");
+            let rows = [4, 0, 2, 0];
+            let mut data = Vec::new();
+            let mut flags = Vec::new();
+            let destination = match primitive {
+                PrimitiveType::Complex32 => SelectedArray2DCellsMut::Complex32(&mut data),
+                PrimitiveType::Bool => SelectedArray2DCellsMut::Bool(&mut flags),
+                _ => unreachable!(),
+            };
+            reopened
+                .fill_array_cells_2d_channel_range_typed_uncached("DATA", &rows, 1, 4, destination)
+                .expect("read")
+                .expect("defined cells");
+            for channel in 1..5 {
+                for (index, row) in rows.iter().enumerate() {
+                    for corr in 0..2 {
+                        let value = row * 100 + channel * 10 + corr;
+                        let output = ((channel - 1) * rows.len() + index) * 2 + corr;
+                        match primitive {
+                            PrimitiveType::Complex32 => assert_eq!(
+                                data[output],
+                                Complex32::new(value as f32, -(value as f32))
+                            ),
+                            PrimitiveType::Bool => assert_eq!(flags[output], value % 3 == 0),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
         reset_table_cache_budget_for_tests();
     }
 

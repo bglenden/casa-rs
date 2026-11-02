@@ -1012,3 +1012,53 @@ fn execute_apply_respects_per_table_applicability_selection() {
     assert_eq!(row0[[0, 0]], casa_types::Complex32::new(0.5, 0.0));
     assert_eq!(row1[[0, 0]], casa_types::Complex32::new(0.05, 0.0));
 }
+
+/// applycal's new `CORRECTED_DATA` clears CASA's cached sort keywords, as
+/// `VisSetUtil::addScrCols` does (#912), and leaves the virtual model: only
+/// adding `MODEL_DATA` makes that column the model's origin.
+#[test]
+fn execute_apply_creating_corrected_data_clears_casa_s_sort_keywords() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), false);
+    {
+        let text = |value: &str| Value::Scalar(ScalarValue::String(value.to_string()));
+        let mut ms = MeasurementSet::open(&ms_path).expect("open");
+        let keywords = ms.main_table_mut().keywords_mut();
+        keywords.upsert("SORT_COLUMNS", text("TIME"));
+        keywords.upsert("SORTED_TABLE", text("SORTED_TABLE"));
+        keywords.upsert("definedmodel_field_0", text("model_0"));
+        keywords.upsert("model_0", Value::Record(casa_types::RecordValue::default()));
+        ms.save().expect("save");
+    }
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0"],
+        &[common::SyntheticGainSolutionRow {
+            time_seconds: 100.0,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna_id: 0,
+            gains: vec![casa_types::Complex32::new(1.0, 0.0); 2],
+            flags: vec![false, false],
+        }],
+    );
+    let report = execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply calibration");
+    assert!(report.created_corrected_data_column);
+    let ms = MeasurementSet::open(&ms_path).expect("reopen");
+    let keywords = ms.main_table().keywords();
+    for key in ["SORT_COLUMNS", "SORTED_TABLE"] {
+        assert!(keywords.get(key).is_none(), "{key}");
+    }
+    for key in ["definedmodel_field_0", "model_0"] {
+        assert!(keywords.get(key).is_some(), "{key}");
+    }
+}

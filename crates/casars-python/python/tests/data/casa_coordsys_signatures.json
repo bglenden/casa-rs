@@ -1,0 +1,810 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "addcoordinate": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectral"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabular"
+      }
+    ],
+    "axesmap": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "toworld"
+      }
+    ],
+    "axiscoordinatetypes": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "world"
+      }
+    ],
+    "conversiontype": [
+      {
+        "default": "'direction'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "convert": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "coordin"
+      },
+      {
+        "default": "[True]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "absin"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dopplerin"
+      },
+      {
+        "default": "['Native']",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unitsin"
+      },
+      {
+        "default": "[True]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "absout"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dopplerout"
+      },
+      {
+        "default": "['Native']",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unitsout"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      }
+    ],
+    "convertdirection": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frame"
+      }
+    ],
+    "convertmany": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "coordin"
+      },
+      {
+        "default": "[True]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "absin"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dopplerin"
+      },
+      {
+        "default": "['Native']",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unitsin"
+      },
+      {
+        "default": "[True]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "absout"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dopplerout"
+      },
+      {
+        "default": "['Native']",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unitsout"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "shape"
+      }
+    ],
+    "coordinatetype": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "copy": [],
+    "done": [],
+    "epoch": [],
+    "findaxis": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "world"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      }
+    ],
+    "findaxisbyname": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axisname"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "allowfriendlyname"
+      }
+    ],
+    "findcoordinate": [
+      {
+        "default": "'direction'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "frequencytofrequency": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frequnit"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "velocity"
+      }
+    ],
+    "frequencytovelocity": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frequnit"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "'km/s'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "velunit"
+      }
+    ],
+    "fromrecord": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "record"
+      }
+    ],
+    "getconversiontype": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "showconversion"
+      }
+    ],
+    "increment": [
+      {
+        "default": "'n'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "lineartransform": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "names": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "naxes": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "world"
+      }
+    ],
+    "ncoordinates": [],
+    "newcoordsys": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectral"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "linear"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tabular"
+      }
+    ],
+    "observer": [],
+    "parentname": [],
+    "projection": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "referencecode": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      }
+    ],
+    "referencepixel": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "referencevalue": [
+      {
+        "default": "'n'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "reorder": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "order"
+      }
+    ],
+    "replace": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "csys"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichin"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "whichout"
+      }
+    ],
+    "restfrequency": [],
+    "setconversiontype": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "direction"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spectral"
+      }
+    ],
+    "setdirection": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refcode"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "proj"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "projpar"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refpix"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refval"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "incr"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "xform"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "poles"
+      }
+    ],
+    "setepoch": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "setincrement": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "setlineartransform": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "setnames": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "setobserver": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "setparentname": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imagename"
+      }
+    ],
+    "setprojection": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parameters"
+      }
+    ],
+    "setreferencecode": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "'direction'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "adjust"
+      }
+    ],
+    "setreferencelocation": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixel"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "world"
+      },
+      {
+        "default": "[False]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      }
+    ],
+    "setreferencepixel": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "setreferencevalue": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "setrestfrequency": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      }
+    ],
+    "setspectral": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refcode"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frequencies"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "velocities"
+      }
+    ],
+    "setstokes": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      }
+    ],
+    "settabular": [
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pixel"
+      },
+      {
+        "default": "[-1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "world"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "settelescope": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "setunits": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "overwrite"
+      },
+      {
+        "default": "-10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "which"
+      }
+    ],
+    "stokes": [],
+    "subimage": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "originshft"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "newshape"
+      }
+    ],
+    "summary": [
+      {
+        "default": "'RADIO'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "list"
+      }
+    ],
+    "telescope": [],
+    "toabs": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "isworld"
+      }
+    ],
+    "toabsmany": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "isworld"
+      }
+    ],
+    "topixel": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "topixelmany": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "torecord": [],
+    "torel": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "isworld"
+      }
+    ],
+    "torelmany": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "isworld"
+      }
+    ],
+    "toworld": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "'n'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "format"
+      }
+    ],
+    "toworldmany": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "transpose": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "order"
+      }
+    ],
+    "type": [],
+    "units": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "velocitytofrequency": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "frequnit"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "doppler"
+      },
+      {
+        "default": "'km/s'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "velunit"
+      }
+    ]
+  },
+  "tool": "coordsys"
+}

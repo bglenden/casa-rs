@@ -154,7 +154,7 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
                 "spw": "0:0~23",
                 "channel_count": 24,
                 "minpsffraction": 0.05,
-                "mask_box": "192,192,319,319",
+                "mask": "192,192,319,319",
             }),
         )?;
         assert_eq!(result.scientific().normal_state().domain_count(), 2);
@@ -216,7 +216,7 @@ fn run(
         "cell": "8arcsec",
         "datacolumn": "DATA",
         "niter": iterations,
-        "minor_cycle_length": iterations.max(1),
+        "cycleniter": iterations.max(1),
         "hogbom_iteration_mode": "casa-inclusive",
         "minpsffraction": 0.1,
     });

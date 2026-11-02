@@ -471,7 +471,7 @@ fn request(
         "cell": format!("{CELL_ARCSEC}arcsec"),
         "weighting": "natural",
         "niter": 200,
-        "minor_cycle_length": 50,
+        "cycleniter": 50,
         "gain": 0.2,
         "threshold": "1mJy",
     });
@@ -532,7 +532,7 @@ fn continuum_runs_stay_within_their_admission() {
         ("clark", json!({ "deconvolver": "clark" })),
         (
             "multiscale",
-            json!({ "deconvolver": "multiscale", "scales": "0,4,8" }),
+            json!({ "deconvolver": "multiscale", "scales": [0, 4, 8] }),
         ),
         ("mtmfs", json!({ "deconvolver": "mtmfs", "nterms": 2 })),
         (
@@ -610,35 +610,8 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     assert_eq!(resident_waves, None, "every plane fits {AMPLE} bytes");
     // The outcome keeps its state charged until it drops.
     drop(resident);
-    // Raise the ceiling from 1 MiB by what each refusal reports missing,
-    // and a third more, until the cube runs: just above what it needs, so in
-    // waves. A refused attempt keeps the law as a completed one does. Each
-    // solved plane's terms are admitted as it finishes, and such a refusal
-    // misses only the plane's terms, so the ceiling grows by an eighth at
-    // least.
     let waved = cube(&measurement_set, &root.path().join("waved"), json!({}));
-    let mut memory = 1 << 20;
-    let mut refusals = 0;
-    let waves = loop {
-        let label = format!("cube at {memory} bytes");
-        eprintln!("{label}");
-        let measured = measure(&waved, 4, memory);
-        breaches.extend(admission_breach(&label, &measured));
-        match &measured.outcome {
-            Ok(outcome) => break outcome.planes_per_wave,
-            Err(ApplicationDispatchError::Admission(Admission {
-                required,
-                available,
-                ..
-            })) => {
-                let gap = required - available;
-                memory += (gap + gap.div_ceil(3)).max(memory / 8);
-                refusals += 1;
-                assert!(refusals < 48, "the ceiling converges");
-            }
-            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
-        }
-    };
+    let waves = just_above(&mut breaches, "cube", &waved);
     assert!(
         waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
         "the cube runs in waves just above what it needs: {waves:?}"
@@ -653,6 +626,139 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
         ),
         4,
         AMPLE,
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// Run `request` on four workers just above what it needs, recording
+/// breaches under `label`: the ceiling rises from 1 MiB by what each
+/// refusal reports missing, and a third more, until the run completes, so
+/// a cube runs in waves. A refused attempt keeps the law as a completed
+/// one does. Each solved plane's terms are admitted as it finishes, and
+/// such a refusal misses only the plane's terms, so the ceiling grows by
+/// an eighth at least. The completed run's planes per wave.
+fn just_above(breaches: &mut Vec<String>, label: &str, request: &ImagingRequest) -> Option<u32> {
+    let mut memory = 1 << 20;
+    let mut refusals = 0;
+    loop {
+        let label = format!("{label} at {memory} bytes");
+        eprintln!("{label}");
+        let measured = measure(request, 4, memory);
+        breaches.extend(admission_breach(&label, &measured));
+        match &measured.outcome {
+            Ok(outcome) => return outcome.planes_per_wave,
+            Err(ApplicationDispatchError::Admission(Admission {
+                required,
+                available,
+                ..
+            })) => {
+                let gap = required - available;
+                memory += (gap + gap.div_ceil(3)).max(memory / 8);
+                refusals += 1;
+                assert!(refusals < 48, "the ceiling converges");
+            }
+            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+        }
+    }
+}
+
+/// The observation's batches (#932, step 4) hold no more than they are
+/// admitted: the batches, their geometry, the parallactic cache, the
+/// opening and its index, and the channel-window survey of a cube's
+/// restricted waves. Continuum runs under natural and uniform weighting,
+/// at one worker and at four, a cube resident and in waves, and a window
+/// of 101 channels whole and sparsely selected (`0:0~1;100`), whose
+/// batches span every channel between the selected ones.
+#[test]
+fn the_batches_stay_within_their_admission() {
+    if !alone("the_batches_stay_within_their_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (label, controls) in [
+        ("hogbom", json!({ "deconvolver": "hogbom" })),
+        (
+            "clark uniform",
+            json!({ "deconvolver": "clark", "weighting": "uniform" }),
+        ),
+    ] {
+        for (imsize, workers) in [(256, 1), (1024, 4)] {
+            let image = root.path().join(format!(
+                "batches-{}-{imsize}-{workers}",
+                label.replace(' ', "-")
+            ));
+            check(
+                &mut breaches,
+                &format!("batches {label} {imsize} px {workers} workers"),
+                &request(&measurement_set, &image, imsize, controls.clone()),
+                workers,
+                AMPLE,
+            );
+        }
+    }
+    check(
+        &mut breaches,
+        "batches cube resident",
+        &cube(
+            &measurement_set,
+            &root.path().join("batches-resident"),
+            json!({}),
+        ),
+        4,
+        AMPLE,
+    );
+    let waves = just_above(
+        &mut breaches,
+        "batches cube",
+        &cube(
+            &measurement_set,
+            &root.path().join("batches-waved"),
+            json!({}),
+        ),
+    );
+    assert!(
+        waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
+        "the cube runs in waves just above what it needs: {waves:?}"
+    );
+    let wide_root = root.path().join("wide");
+    std::fs::create_dir(&wide_root).expect("the wide window's root");
+    let wide = observation(&wide_root, 101);
+    warm(&wide, &wide_root);
+    check(
+        &mut breaches,
+        "batches continuum of 101 channels",
+        &request(
+            &wide,
+            &wide_root.join("batches-continuum"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        4,
+        AMPLE,
+    );
+    check(
+        &mut breaches,
+        "batches sparse linear cube",
+        &request(
+            &wide,
+            &wide_root.join("batches-sparse"),
+            256,
+            json!({
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0:0~1;100",
+                "channel_count": 10,
+                "start": "44.64GHz",
+                "width": "1.28GHz",
+                "interpolation": "linear",
+                "niter": 0,
+            }),
+        ),
+        2,
+        2 << 30,
     );
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
@@ -764,7 +870,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 }
 
 /// A cleaned run that writes its model to `MODEL_DATA`: its last pass
-/// predicts every selected sample and hands each block to the writer.
+/// predicts every selected sample and hands each block to the update
+/// session's writer. Its first run creates and seeds `MODEL_DATA` (#932,
+/// step 5).
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
     if !alone("a_visibility_write_stays_within_its_admission") {
@@ -775,19 +883,194 @@ fn a_visibility_write_stays_within_its_admission() {
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
     for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let savemodel = request(
+            &measurement_set,
+            &root.path().join(format!("savemodel-{imsize}")),
+            imsize,
+            json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+        );
         check(
             &mut breaches,
             &format!("savemodel {imsize} px {workers} workers"),
+            &savemodel,
+            workers,
+            AMPLE,
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A start model (#841 Phase 6b) is read, zeroed where masked and
+/// regridded under its own admission before the initial pass, which then
+/// grids its residual with the model: on its own grid, regridded from
+/// 256² onto 1024² (where seeding holds about 45 MB, which the law
+/// resolves), and with no minor cycle while `MODEL_DATA` is written.
+#[test]
+fn a_start_model_stays_within_its_admission() {
+    if !alone("a_start_model_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    casa_imaging_application::execute(
+        &request(
+            &measurement_set,
+            &root.path().join("start"),
+            256,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("the run whose model starts the others");
+    let start_model = root.path().join("start.model");
+    let mut breaches = Vec::new();
+    for (label, imsize, workers, controls) in [
+        ("start model", 256, 1, json!({ "deconvolver": "hogbom" })),
+        (
+            "start model regridded",
+            1024,
+            4,
+            json!({ "deconvolver": "hogbom" }),
+        ),
+        (
+            "start model savemodel",
+            256,
+            1,
+            json!({ "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls["startmodel"] = json!(start_model);
+        check(
+            &mut breaches,
+            &format!("{label} {imsize} px {workers} workers"),
             &request(
                 &measurement_set,
-                &root.path().join(format!("savemodel-{imsize}")),
+                &root.path().join(label.replace(' ', "-")),
                 imsize,
-                json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+                controls,
             ),
             workers,
             AMPLE,
         );
     }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// #970 review (Astra, finding 2): a seeded cube's initial pass plans its
+/// waves in what seeding leaves. It took the largest wave that fitted and
+/// only then admitted the seeding beside it, so a cube whose one wave and
+/// seeding fitted was refused until every plane did. Just above what it
+/// needs, a cube seeded from a cleaned cube's model runs in waves and holds
+/// no more than it was admitted.
+#[test]
+fn a_seeded_cube_runs_in_waves_within_its_admission() {
+    if !alone("a_seeded_cube_runs_in_waves_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the cube whose model seeds the next",
+        &cube(&measurement_set, &root.path().join("start"), json!({})),
+        4,
+        AMPLE,
+    ));
+    let seeded = cube(
+        &measurement_set,
+        &root.path().join("seeded"),
+        json!({ "startmodel": root.path().join("start.model") }),
+    );
+    let waves = just_above(&mut breaches, "seeded cube", &seeded);
+    assert!(
+        waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
+        "the seeded cube runs in waves just above what it needs: {waves:?}"
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// #970 review: a mosaic's start model, in flat-noise units, is made
+/// physical with the weights of an initial pass without it and seeds a
+/// refresh of that pass's residual. The two passes, the seeding and its
+/// conversion beside the refresh, stay within their admission: cleaning
+/// on, with no minor cycle while `MODEL_DATA` is written, and as a cube
+/// just above what it needs, in waves.
+#[test]
+fn a_seeded_mosaic_stays_within_its_admission() {
+    if !alone("a_seeded_mosaic_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
+    warm(&alma, root.path());
+    let mosaic = json!({ "gridder": "mosaic", "deconvolver": "hogbom" });
+    let mut breaches = Vec::new();
+    drop(check(
+        &mut breaches,
+        "the mosaic whose model seeds the others",
+        &request(&alma, &root.path().join("start"), 256, mosaic.clone()),
+        2,
+        AMPLE,
+    ));
+    let start_model = root.path().join("start.model");
+    for (label, controls) in [
+        ("seeded mosaic", json!({ "startmodel": start_model })),
+        (
+            "seeded mosaic savemodel",
+            json!({ "startmodel": start_model, "niter": 0, "savemodel": "modelcolumn" }),
+        ),
+    ] {
+        let mut controls = controls;
+        controls
+            .as_object_mut()
+            .expect("controls")
+            .extend(mosaic.as_object().expect("mosaic").clone());
+        drop(check(
+            &mut breaches,
+            label,
+            &request(
+                &alma,
+                &root.path().join(label.replace(' ', "-")),
+                256,
+                controls,
+            ),
+            2,
+            AMPLE,
+        ));
+    }
+    let cube_controls = json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 });
+    drop(check(
+        &mut breaches,
+        "the mosaic cube whose model seeds the next",
+        &cube(
+            &alma,
+            &root.path().join("cube-start"),
+            cube_controls.clone(),
+        ),
+        2,
+        AMPLE,
+    ));
+    let mut seeded = cube_controls;
+    seeded["startmodel"] = json!(root.path().join("cube-start.model"));
+    let waves = just_above(
+        &mut breaches,
+        "seeded mosaic cube",
+        &cube(&alma, &root.path().join("seeded-cube"), seeded),
+    );
+    assert!(
+        waves.is_some_and(|planes| planes < 8),
+        "the seeded mosaic cube runs in waves just above what it needs: {waves:?}"
+    );
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
@@ -827,7 +1110,7 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
         &root.path().join("mosaic-cube"),
         json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 }),
     );
-    mosaic.imsize = 1024;
+    mosaic.imsize = [1024; 2];
     check(&mut breaches, "mosaic cube 8 × 1024²", &mosaic, 2, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
@@ -883,8 +1166,8 @@ fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
 }
 
 /// The fixed charges a run makes whatever its size, which the over-charge
-/// bound allows beside its proportion: the Measures catalogs (16 MiB), the
-/// walks and envelope of the MeasurementSet, a kernel set's index.
+/// bound allows beside its proportion: the Measures catalogs (16 MiB),
+/// compile's survey of the observation, a kernel set's index.
 const FIXED_ALLOWANCE: u64 = 64 << 20;
 /// How far a run's reservations may stand above what it holds, beyond
 /// [`FIXED_ALLOWANCE`] (#738).
@@ -931,7 +1214,7 @@ fn mtmfs_controls() -> Value {
     json!({
         "deconvolver": "mtmfs",
         "nterms": 2,
-        "scales": "0,5,12",
+        "scales": [0, 5, 12],
         "stage_timing": true,
     })
 }
@@ -1080,7 +1363,7 @@ fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
             "cell": "10arcsec",
             "weighting": "natural",
             "niter": 200,
-            "minor_cycle_length": 50,
+            "cycleniter": 50,
             "gain": 0.2,
             "threshold": "1mJy",
             "gridder": "awproject",

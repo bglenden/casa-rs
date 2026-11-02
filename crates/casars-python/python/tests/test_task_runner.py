@@ -1,220 +1,549 @@
+"""The Python runner starts each task's executable directly (#931 PR 3).
+
+Each test fakes the task's executable through its catalog override,
+``CASARS_<APP>_BIN``: a script that records what it was given, writes log
+lines to stderr and replies as the shared task front end does.
+"""
+
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import signal
+import sys
+import time
 
+import numpy
 import pytest
 
-from casars import tasks
+from casars import parameters, tasks
 from casars.parameters import TaskParameters
+from casars.tasks import _runner
 
-
-def _fake_casars(path: Path) -> Path:
-    path.write_text(
-        """#!/usr/bin/env python3
+FAKE_TASK = """#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import signal
 import sys
+import time
 
-arguments = sys.argv[1:]
-profile_path = Path(arguments[arguments.index("--params") + 1])
-Path(os.environ["FAKE_CASARS_LOG"]).write_text(json.dumps({
-    "argv": arguments,
+request = json.load(sys.stdin)
+Path(os.environ["FAKE_TASK_LOG"]).write_text(json.dumps({
+    "argv": sys.argv[1:],
     "cwd": os.getcwd(),
-    "profile": profile_path.read_text(encoding="utf-8"),
+    "session": os.getsid(0),
+    "request": request,
 }), encoding="utf-8")
-print(os.environ.get("FAKE_CASARS_STDOUT", "runner stdout"))
-print("runner stderr", file=sys.stderr)
-raise SystemExit(int(os.environ.get("FAKE_CASARS_EXIT", "0")))
-""",
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
-    return path
+surface = request["surface"]
+reply = os.environ.get("FAKE_TASK_REPLY", "succeeded")
 
 
-def test_run_uses_canonical_profile_and_forwards_runtime_controls(
-    tmp_path: Path,
-) -> None:
-    binary = _fake_casars(tmp_path / "casars")
+def answer(status, exit_code, **fields):
+    print(json.dumps({"status": status, "surface": surface, **fields}))
+    raise SystemExit(exit_code)
+
+
+def interrupted(*_):
+    Path(os.environ["FAKE_TASK_LOG"] + ".interrupted").write_text("", encoding="utf-8")
+    # A task can log much more than a pipe holds while it shuts down.
+    for _ in range(int(os.environ.get("FAKE_TASK_SHUTDOWN_LINES", "0"))):
+        print("x" * 1000, file=sys.stderr)
+    Path(os.environ["FAKE_TASK_LOG"] + ".cleaned").write_text("", encoding="utf-8")
+    answer("failed", 130, kind="interrupted", message="stopped at a major cycle")
+
+
+signal.signal(signal.SIGINT, interrupted)
+print(f"{surface} started", file=sys.stderr, flush=True)
+if "FAKE_TASK_WAIT_FOR" in os.environ:
+    # Reply only once the caller has seen the first log line.
+    go = Path(os.environ["FAKE_TASK_WAIT_FOR"])
+    deadline = time.monotonic() + 20
+    while not go.exists():
+        if time.monotonic() > deadline:
+            answer("failed", 1, kind="execution", message="the log was not streamed")
+        time.sleep(0.01)
+print(f"{surface} completed", file=sys.stderr, flush=True)
+if reply == "succeeded":
+    result = json.loads(os.environ.get("FAKE_TASK_RESULT", "{}"))
+    value = json.loads(os.environ["FAKE_TASK_VALUE"]) if "FAKE_TASK_VALUE" in os.environ else {"kind": "dict", "entries": [
+        {"key": "npts", "value": {"kind": "float_array", "dtype": "float64", "shape": [1], "data": [12.0]}},
+        {"key": "blc", "value": {"kind": "int_array", "dtype": "int64", "shape": [2, 2], "data": [0, 1, 2, 3]}},
+        {"key": "min", "value": {"kind": "float_array", "dtype": "float32", "shape": [1], "data": ["nan"]}},
+        {"key": "axes", "value": {"kind": "str_array", "shape": [2], "data": ["Right Ascension", "Declination"]}},
+        {"key": 3, "value": {"kind": "bool", "value": True}},
+    ]}
+    answer("succeeded", 0, value=value, result=result)
+if reply == "refused":
+    answer("failed", 2, kind="validation", message="no such image", parameter="vis")
+if reply == "failed":
+    answer("failed", 1, kind="execution", message="cannot read the table")
+if reply == "signalled":
+    os.kill(os.getpid(), signal.SIGKILL)
+if reply == "malformed":
+    print("not a reply")
+    raise SystemExit(0)
+"""
+
+
+@pytest.fixture
+def fake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Fake the executables of ``variables`` (catalog override names)."""
+
     log = tmp_path / "invocation.json"
-    parameters = TaskParameters.defaults("flagmanager", workspace=tmp_path)
-    parameters["vis"] = Path("base.ms")
+    monkeypatch.setenv("FAKE_TASK_LOG", str(log))
 
-    completion = tasks.run(
-        "flagmanager",
-        parameters,
-        workspace=tmp_path,
-        binary=binary,
-        save_last=False,
-        confirm_overwrite=True,
-        confirm_mutation=True,
-        env={"FAKE_CASARS_LOG": str(log)},
-        comment="from generic runner",
-    )
+    def install(*variables: str) -> Path:
+        path = tmp_path / "fake-task"
+        path.write_text(FAKE_TASK, encoding="utf-8")
+        path.chmod(0o755)
+        for variable in variables:
+            monkeypatch.setenv(variable, str(path))
+        return log
 
-    recorded = json.loads(log.read_text(encoding="utf-8"))
-    assert recorded["argv"][:3] == ["run", "flagmanager", "--params"]
-    assert recorded["argv"][4:] == [
-        "--workspace",
-        str(tmp_path),
-        "--no-save-last",
-        "--confirm-overwrite",
-        "--confirm-mutation",
-    ]
-    assert recorded["cwd"] == str(tmp_path)
-    assert 'vis = ["base.ms"]' in recorded["profile"]
-    assert 'comment = "from generic runner"' in recorded["profile"]
-    assert "mode =" not in recorded["profile"]
+    return install
 
+
+def recorded(log: Path) -> dict:
+    return json.loads(log.read_text(encoding="utf-8"))
+
+
+def test_a_task_runs_its_executable_with_the_values_set(
+    tmp_path: Path, fake, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = fake("CASARS_FLAGMANAGER_BIN")
+    draft = TaskParameters.defaults("flagmanager", workspace=tmp_path)
+    draft["vis"] = Path("base.ms")
+
+    completion = tasks.run("flagmanager", draft, comment="from generic runner")
+
+    invocation = recorded(log)
+    assert invocation["argv"] == ["--json-run", "-"]
+    assert invocation["cwd"] == str(tmp_path)
+    assert invocation["request"]["surface"] == "flagmanager"
+    values = invocation["request"]["values"]
+    assert values["vis"] == ["base.ms"]
+    assert values["comment"] == "from generic runner"
     assert completion.successful
+    assert completion.status == "succeeded"
+    # The task's return value arrives as CASA's types: NumPy arrays of its
+    # dtypes and shapes (column-major data on the wire), integer keys kept.
+    value = completion.value
+    assert list(value) == ["npts", "blc", "min", "axes", 3]
+    assert value["npts"].dtype == numpy.float64 and value["npts"].tolist() == [12.0]
+    assert value["blc"].dtype == numpy.int64 and value["blc"].tolist() == [[0, 2], [1, 3]]
+    assert value["min"].dtype == numpy.float32 and numpy.isnan(value["min"][0])
+    assert value["axes"].tolist() == ["Right Ascension", "Declination"]
+    assert value[3] is True
     assert completion.returncode == 0
-    assert completion.stdout == "runner stdout\n"
-    assert completion.stderr == "runner stderr\n"
-    assert completion.parameters_toml == recorded["profile"]
     assert completion.workspace == tmp_path
     assert completion.result is not None
     assert completion.result.surface_id == "flagmanager"
     assert completion.products == ()
-    assert not Path(completion.command[4]).exists()
-    assert parameters["comment"] == "none"
+    # The task's log reached stderr, and the completion keeps a copy.
+    assert completion.stderr == "flagmanager started\nflagmanager completed\n"
+    assert capsys.readouterr().err == completion.stderr
+    # The draft is the caller's, unchanged.
+    assert draft["comment"] == ""
 
 
-def test_task_parameters_run_delegates_to_canonical_runner(tmp_path: Path) -> None:
-    binary = _fake_casars(tmp_path / "casars")
-    values = TaskParameters.defaults("flagmanager", workspace=tmp_path)
-    values["vis"] = "delegated.ms"
-    completion = values.run(
-        workspace=tmp_path,
-        binary=binary,
-        env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
-    )
-    assert completion.successful
-    assert 'vis = ["delegated.ms"]' in completion.parameters_toml
+def test_task_parameters_run_delegates_to_the_runner(tmp_path: Path, fake) -> None:
+    log = fake("CASARS_FLAGMANAGER_BIN")
+    draft = TaskParameters.defaults("flagmanager", workspace=tmp_path)
+    draft["vis"] = "delegated.ms"
+    assert draft.run(comment="delegated").successful
+    assert recorded(log)["request"]["values"]["comment"] == "delegated"
 
 
-def test_run_accepts_profile_and_managed_base_sources(tmp_path: Path) -> None:
-    binary = _fake_casars(tmp_path / "casars")
-    log = tmp_path / "invocation.json"
-    environment = {"FAKE_CASARS_LOG": str(log)}
-    parameters = TaskParameters.defaults("flagmanager", workspace=tmp_path)
-    parameters.set_many({"vis": "saved.ms", "comment": "from file"})
-    profile = parameters.save(tmp_path / "flagmanager.toml")
-
-    from_file = tasks.run(
-        "flagmanager",
-        profile=profile,
-        workspace=tmp_path,
-        binary=binary,
-        env=environment,
-        overrides={"comment": "file override"},
-    )
-    assert 'comment = "file override"' in from_file.parameters_toml
-
-    parameters.write_last()
-    from_last = tasks.run(
-        "flagmanager",
-        base_source="last",
-        workspace=tmp_path,
-        binary=binary,
-        env=environment,
-    )
-    assert 'vis = ["saved.ms"]' in from_last.parameters_toml
-    assert 'comment = "from file"' in from_last.parameters_toml
-
-
-def test_run_preserves_failure_output_with_and_without_check(tmp_path: Path) -> None:
-    binary = _fake_casars(tmp_path / "casars")
-    environment = {
-        "FAKE_CASARS_LOG": str(tmp_path / "invocation.json"),
-        "FAKE_CASARS_EXIT": "7",
-    }
-
-    completion = tasks.run(
-        "flagmanager",
-        workspace=tmp_path,
-        binary=binary,
-        env=environment,
-        check=False,
-        vis="failed.ms",
-    )
-    assert not completion.successful
-    assert completion.returncode == 7
-    assert completion.stdout == "runner stdout\n"
-    assert completion.stderr == "runner stderr\n"
-
-    with pytest.raises(tasks.TaskExecutionError) as failure:
-        tasks.run(
-            "flagmanager",
-            workspace=tmp_path,
-            binary=binary,
-            env=environment,
-            vis="failed.ms",
-        )
-    assert failure.value.completion.returncode == 7
-    assert failure.value.completion.stderr == "runner stderr\n"
-
-
-def test_run_rejects_mismatched_parameters_and_ambiguous_sources(tmp_path: Path) -> None:
-    other = TaskParameters.defaults("imstat", workspace=tmp_path)
-    with pytest.raises(ValueError, match="not requested task"):
-        tasks.run("flagmanager", other, workspace=tmp_path)
-
-    profile = TaskParameters.defaults("flagmanager", workspace=tmp_path)
-    profile["vis"] = "input.ms"
-    path = profile.save(tmp_path / "flagmanager.toml")
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        tasks.run(
-            "flagmanager",
-            profile=path,
-            base_source="last",
-            workspace=tmp_path,
-        )
-
-
-def test_generated_surface_returns_rust_typed_products(tmp_path: Path) -> None:
-    binary = _fake_casars(tmp_path / "casars")
+def test_a_wrapper_runs_in_the_current_directory(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = fake("CASARS_MSTRANSFORM_BIN")
     output = tmp_path / "selected.ms"
     output.mkdir()
+    monkeypatch.chdir(tmp_path)
 
-    completion = tasks.split(
-        vis="input.ms",
-        outputvis=output,
-        workspace=tmp_path,
-        binary=binary,
-        env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
-    )
+    tasks.split(vis="input.ms", outputvis="selected.ms")
 
-    assert completion.result is not None
+    invocation = recorded(log)
+    # mstransform hosts split too; the request names the surface to run.
+    assert invocation["argv"] == ["--json-run", "-"]
+    assert invocation["request"]["surface"] == "split"
+    assert invocation["cwd"] == str(tmp_path)
+    # split returns CASA's value; `run`'s completion names the product.
+    completion = tasks.run("split", vis="input.ms", outputvis="selected.ms")
     assert completion.result.surface_id == "split"
     assert len(completion.products) == 1
     assert completion.products[0].path == str(output)
     assert completion.products[0].exists is True
 
 
-def test_successful_process_with_malformed_managed_result_is_rejected(
-    tmp_path: Path,
+def test_a_profile_runs_as_the_wrappers_values(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    binary = _fake_casars(tmp_path / "casars")
+    log = fake("CASARS_CALIBRATE_BIN")
+    monkeypatch.setenv("FAKE_TASK_RESULT", '{"kind": "solve_gain", "report": {}}')
+    monkeypatch.chdir(tmp_path)
+    draft = TaskParameters.defaults("gaincal", workspace=tmp_path)
+    draft.set_many(
+        {"vis": "target.ms", "caltable": "target.gcal", "refant": "ea01", "solint": "60s"}
+    )
+    path = draft.save(tmp_path / "gaincal.toml")
+
+    assert tasks.run("gaincal", **parameters.load(path)).successful
+
+    invocation = recorded(log)
+    # calibrate hosts gaincal among its surfaces and is told which runs.
+    assert invocation["argv"] == ["gaincal", "--json-run", "-"]
+    values = invocation["request"]["values"]
+    assert values["vis"] == ["target.ms"]
+    assert values["caltable"] == "target.gcal"
+    assert values["solint"] == "60s"
+
+
+@pytest.mark.parametrize("surface", ["msexplore", "plotms"])
+def test_a_request_carries_only_the_values_set(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    # Astra's #974 P3: every resolved value went as if set, so msexplore
+    # refused a page_spec beside datacolumn, color_by and the layout
+    # controls the caller never set.
+    log = fake("CASARS_MSEXPLORE_BIN")
+    monkeypatch.chdir(tmp_path)
+    wrapper = getattr(tasks, surface)
+
+    def sent() -> dict:
+        return recorded(log)["request"]["values"]
+
+    wrapper(vis="input.ms", page_spec="page.json")
+    assert sorted(sent()) == ["page_spec", "vis"]
+
+    draft = TaskParameters.defaults(surface, workspace=tmp_path)
+    draft.set_many({"vis": "input.ms", "page_spec": "page.json"})
+    assert sorted(draft) == ["page_spec", "vis"]
+    assert draft["datacolumn"] == "data"
+    path = draft.save(tmp_path / f"{surface}.toml")
+    loaded = parameters.load(path)
+    assert sorted(loaded) == ["page_spec", "vis"]
+
+    wrapper(**loaded)
+    assert sorted(sent()) == ["page_spec", "vis"]
+    tasks.run(surface, loaded)
+    assert sorted(sent()) == ["page_spec", "vis"]
+    # A value the caller sets goes, even when it is the default.
+    wrapper(**loaded, datacolumn="data")
+    assert sorted(sent()) == ["datacolumn", "page_spec", "vis"]
+
+
+def test_a_relative_override_names_a_file_where_the_caller_is(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Astra's #974 P1: the override was started as given, from the task's
+    # own workspace, where `bin/flagmanager` named another file or none.
+    fake()
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "fake-task").rename(tmp_path / "bin" / "flagmanager")
+    workspace = tmp_path / "elsewhere"
+    workspace.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CASARS_FLAGMANAGER_BIN", "bin/flagmanager")
+
+    completion = tasks.run("flagmanager", workspace=workspace, vis="input.ms")
+
+    assert completion.successful, completion.describe()
+    assert completion.command[0] == str(tmp_path / "bin" / "flagmanager")
+
+
+def test_the_log_streams_while_the_task_runs(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake("CASARS_FLAGMANAGER_BIN")
+    go = tmp_path / "go"
+    monkeypatch.setenv("FAKE_TASK_WAIT_FOR", str(go))
+
+    class Terminal:
+        """sys.stderr that lets the task finish once it sees the first line."""
+
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def write(self, text: str) -> int:
+            self.lines.append(text)
+            go.touch()
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    terminal = Terminal()
+    monkeypatch.setattr(sys, "stderr", terminal)
+    completion = tasks.run("flagmanager", workspace=tmp_path, vis="streamed.ms")
+    assert completion.successful, completion.describe()
+    assert terminal.lines == ["flagmanager started\n", "flagmanager completed\n"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "status", "message", "parameter", "error"),
+    [
+        # A refusal is a ValueError, any other failure a RuntimeError (#931).
+        ("refused", "refused", "no such image", "vis", tasks.TaskParameterError),
+        ("failed", "failed", "cannot read the table", None, tasks.TaskExecutionError),
+        ("signalled", "signalled", None, None, tasks.TaskExecutionError),
+        (
+            "malformed",
+            "malformed_reply",
+            "the task's reply is not valid",
+            None,
+            tasks.TaskExecutionError,
+        ),
+    ],
+)
+def test_a_task_that_does_not_succeed_raises_with_its_outcome(
+    tmp_path: Path,
+    fake,
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+    status: str,
+    message: str | None,
+    parameter: str | None,
+    error: type[Exception],
+) -> None:
+    fake("CASARS_FLAGMANAGER_BIN")
+    monkeypatch.setenv("FAKE_TASK_REPLY", reply)
+    with pytest.raises(error) as failure:
+        tasks.run("flagmanager", workspace=tmp_path, vis="failed.ms")
+    assert isinstance(failure.value, ValueError if reply == "refused" else RuntimeError)
+    completion = failure.value.completion
+    assert completion.status == status
+    assert not completion.successful
+    assert completion.parameter == parameter
+    if message is not None:
+        assert completion.message.startswith(message), completion.message
+    assert "flagmanager started" in completion.stderr
+    if reply == "signalled":
+        assert completion.returncode == -signal.SIGKILL
+        assert "ended by signal 9" in str(failure.value)
+
+
+def interrupt_once_started(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-C, Python's own SIGINT, once the task has logged its first line.
+
+    The task then waits for a reply that never comes, so only the interrupt
+    ends it.
+    """
+
+    monkeypatch.setenv("FAKE_TASK_WAIT_FOR", str(tmp_path / "never"))
+
+    class Terminal:
+        sent = False
+
+        def write(self, text: str) -> int:
+            if not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), signal.SIGINT)
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(sys, "stderr", Terminal())
+
+
+def test_an_interrupted_task_finishes_its_shutdown_however_much_it_logs(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Astra's #974 P2: the log stopped draining at the interrupt, so a task
+    # that logged more than a pipe holds while it stopped blocked in the
+    # write and was killed at the end of the grace period.
+    log = fake("CASARS_FLAGMANAGER_BIN")
+    monkeypatch.setenv("FAKE_TASK_SHUTDOWN_LINES", "1500")
+    interrupt_once_started(tmp_path, monkeypatch)
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        tasks.run("flagmanager", workspace=tmp_path, vis="other.ms")
+    assert Path(str(log) + ".cleaned").exists()
+    assert time.monotonic() - started < _runner._INTERRUPT_GRACE_SECONDS
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "interruption"])
+def test_a_python_task_call_leaves_existing_last_files_untouched(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    log = fake("CASARS_FLAGMANAGER_BIN")
+    saved = TaskParameters.defaults("flagmanager", workspace=tmp_path)
+    saved["vis"] = "saved.ms"
+    last = saved.write_last()
+    last_successful = saved.write_last(successful=True)
+    before = (last.read_bytes(), last_successful.read_bytes())
+    if outcome == "failure":
+        monkeypatch.setenv("FAKE_TASK_REPLY", "failed")
+    if outcome == "interruption":
+        interrupt_once_started(tmp_path, monkeypatch)
+
+    def call() -> tasks.TaskCompletion:
+        return tasks.run("flagmanager", workspace=tmp_path, vis="other.ms")
+
+    if outcome == "success":
+        assert call().successful
+    elif outcome == "failure":
+        with pytest.raises(tasks.TaskExecutionError):
+            call()
+    else:
+        with pytest.raises(KeyboardInterrupt):
+            call()
+        # The interrupt reached the task, which stopped. The task has its
+        # own session, so a terminal's Ctrl-C reaches it only through Python.
+        assert Path(str(log) + ".interrupted").exists()
+        assert recorded(log)["session"] != os.getsid(0)
+    assert (last.read_bytes(), last_successful.read_bytes()) == before
+    # Reading Last stays an explicit choice.
+    assert TaskParameters.last("flagmanager", workspace=tmp_path)["vis"] == ["saved.ms"]
+
+
+def test_a_missing_executable_names_its_remedy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CASARS_FLAGMANAGER_BIN", raising=False)
+    monkeypatch.setenv("CASARS_SUITE_ROOT", str(tmp_path))
+    with pytest.raises(tasks.TaskBinaryNotFoundError, match="CASARS_SUITE_ROOT"):
+        tasks.run("flagmanager", workspace=tmp_path, vis="input.ms")
+
+    # Without a suite, a development checkout names the build it lacks; an
+    # install built outside a checkout names the suite and the override.
+    monkeypatch.delenv("CASARS_SUITE_ROOT")
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "empty-target"))
+    with pytest.raises(tasks.TaskBinaryNotFoundError) as missing:
+        tasks.run("flagmanager", workspace=tmp_path, vis="input.ms")
+    message = str(missing.value)
+    assert "CASARS_FLAGMANAGER_BIN" in message
+    assert (
+        "`cargo build -p casa-ms --bin flagmanager`" in message
+        or "CASARS_SUITE_ROOT" in message
+    ), message
+
+    monkeypatch.setenv("CASARS_FLAGMANAGER_BIN", str(tmp_path / "missing"))
+    with pytest.raises(tasks.TaskBinaryNotFoundError, match="not a file"):
+        tasks.run("flagmanager", workspace=tmp_path, vis="input.ms")
+
+
+def test_run_rejects_parameters_for_another_task(tmp_path: Path) -> None:
+    other = TaskParameters.defaults("imstat", workspace=tmp_path)
+    with pytest.raises(ValueError, match="not requested task"):
+        tasks.run("flagmanager", other, workspace=tmp_path)
+
+
+def test_imstat_of_no_pixels_returns_empty_arrays_and_its_result(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reply imexplore gives for a selection with no valid pixel (#931
+    # PR 4b review): each statistic an empty float64 array, as CASA returns
+    # it, and the run's result with the undefined statistics as null.
+    fake("CASARS_IMEXPLORE_BIN")
+    empty = {"kind": "float_array", "dtype": "float64", "shape": [0], "data": []}
+    corner = {"kind": "int_array", "dtype": "int64", "shape": [4], "data": [0, 0, 0, 0]}
+    statistics = ["flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq"]
+    entries = [{"key": "blc", "value": corner}]
+    entries += [{"key": name, "value": empty} for name in statistics]
+    entries.append({"key": "trc", "value": corner})
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps({"kind": "dict", "entries": entries}))
+    result = {"Imstat": {"imagename": "masked.im", "npts": 0.0, "sum": 0.0, "mean": None,
+                         "min": None, "minpos": None, "flux": 0.0}}
+    monkeypatch.setenv("FAKE_TASK_RESULT", json.dumps(result))
+    monkeypatch.chdir(tmp_path)
+
+    record = tasks.imstat("masked.im")
+
+    assert list(record) == ["blc", *statistics, "trc"]
+    for name in statistics:
+        assert record[name].dtype == numpy.float64 and record[name].shape == (0,), name
+    assert "maxpos" not in record and "minpos" not in record
+    # The completion decodes the whole reply, null statistics included.
+    completion = tasks.run("imstat", imagename="masked.im")
+    assert completion.successful, completion.describe()
+    assert completion.result is not None and completion.result.surface_id == "imstat"
+
+
+def test_a_reply_value_decodes_to_casas_numpy_types(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every array the reply carries arrives as CASA's NumPy array (#931 PR
+    # 4b review): its dtype, string width included, its shape, rank zero
+    # and empty ones too, and column-major data in that shape.
+    fake("CASARS_FLAGMANAGER_BIN")
+    floats = {"kind": "float_array", "dtype": "float64", "shape": [3], "data": ["inf", "-inf", "nan"]}
+    entries = {
+        "int32": {"kind": "int_array", "dtype": "int32", "shape": [2],
+                  "data": [2147483647, -2147483648]},
+        "complex64": {"kind": "complex_array", "dtype": "complex64", "shape": [2],
+                      "data": [[1.0, 2.0], [3.0, -4.0]]},
+        "complex128": {"kind": "complex_array", "dtype": "complex128", "shape": [1, 2],
+                       "data": [[1.0, "inf"], [0.0, -1.0]]},
+        "infinities": floats,
+        "scalar": {"kind": "int_array", "dtype": "int64", "shape": [], "data": [7]},
+        "empty": {"kind": "float_array", "dtype": "float32", "shape": [0, 3], "data": []},
+        "names": {"kind": "str_array", "shape": [2], "data": ["Right Ascension", "Dec"]},
+        "masks": {"kind": "str_array", "shape": [0], "data": []},
+        "grid": {"kind": "str_array", "shape": [2, 2], "data": ["a", "b", "cc", "d"]},
+    }
+    value = {"kind": "dict", "entries": [{"key": key, "value": item} for key, item in entries.items()]}
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps(value))
+    record = tasks.run("flagmanager", workspace=tmp_path, vis="a.ms").value
+
+    assert record["int32"].dtype == numpy.int32
+    assert record["int32"].tolist() == [2147483647, -2147483648]
+    assert record["complex64"].dtype == numpy.complex64
+    assert record["complex64"].tolist() == [1 + 2j, 3 - 4j]
+    assert record["complex128"].dtype == numpy.complex128 and record["complex128"].shape == (1, 2)
+    assert record["complex128"][0, 0] == complex(1, numpy.inf)
+    infinities = record["infinities"]
+    assert infinities[0] == numpy.inf and infinities[1] == -numpy.inf and numpy.isnan(infinities[2])
+    assert record["scalar"].shape == () and record["scalar"] == 7
+    assert record["empty"].dtype == numpy.float32 and record["empty"].shape == (0, 3)
+    # casatools' string widths: the longest string's, and <U5 when empty.
+    assert record["names"].dtype == numpy.dtype("<U15")
+    assert record["masks"].dtype == numpy.dtype("<U5") and record["masks"].shape == (0,)
+    assert record["grid"].dtype == numpy.dtype("<U2")
+    assert record["grid"].tolist() == [["a", "cc"], ["b", "d"]]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"kind": "int_array", "dtype": "int32", "shape": [1], "data": [2147483648]},
+        {"kind": "float_array", "dtype": "float64", "shape": [2, 2], "data": [1.0, 2.0, 3.0]},
+        {"kind": "str_array", "shape": [3], "data": ["a"]},
+    ],
+)
+def test_a_reply_value_that_does_not_fit_its_type_is_rejected(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, item: dict
+) -> None:
+    fake("CASARS_FLAGMANAGER_BIN")
+    value = {"kind": "dict", "entries": [{"key": "bad", "value": item}]}
+    monkeypatch.setenv("FAKE_TASK_VALUE", json.dumps(value))
+    with pytest.raises(tasks.TaskResultError):
+        tasks.run("flagmanager", workspace=tmp_path, vis="a.ms")
+
+
+def test_a_successful_process_with_a_malformed_result_is_rejected(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake("CASARS_IMAGER_BIN")
+    monkeypatch.setenv("FAKE_TASK_RESULT", '"runner stdout"')
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(tasks.TaskResultError, match="successful but invalid result"):
-        tasks.imager(
-            vis="input.ms",
-            imagename="dirty",
-            workspace=tmp_path,
-            binary=binary,
-            env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
-        )
+        tasks.tclean(vis="input.ms", imagename="dirty")
 
 
-def test_a_parameter_its_gridder_does_not_read_is_refused_before_process(
-    tmp_path: Path,
+def test_a_control_its_gridder_does_not_read_is_refused_before_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(ValueError, match="wprojplanes"):
-        tasks.imager(
-            vis="input.ms",
-            imagename="products/image",
-            wprojplanes=4,
-            workspace=tmp_path,
-            binary=tmp_path / "missing-casars",
-        )
+    monkeypatch.setenv("CASARS_IMAGER_BIN", str(tmp_path / "missing-imager"))
+    monkeypatch.chdir(tmp_path)
+    # casa-rs's own AW control means nothing to the standard gridder.
+    with pytest.raises(ValueError, match="cf_resident_mb"):
+        tasks.tclean(vis="input.ms", imagename="products/image", cf_resident_mb=256)
+    # A CASA parameter its gridder ignores is ignored, as CASA's tclean
+    # does (#931 PR 4e): the call reaches the (missing) executable.
+    with pytest.raises(tasks.TaskBinaryNotFoundError):
+        tasks.tclean(vis="input.ms", imagename="products/image", wprojplanes=4)

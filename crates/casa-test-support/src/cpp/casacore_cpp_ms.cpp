@@ -133,6 +133,11 @@ std::string array_shape_tag(const casacore::RecordInterface& rec, casacore::uInt
     os << '[';
     auto emit_shape = [&](const auto& arr) {
         const auto& shape = arr.shape();
+        // An empty IPosition is shown as [0], as casa-rs reads it (#923).
+        if (shape.nelements() == 0) {
+            os << 0;
+            return;
+        }
         for (casacore::uInt axis = 0; axis < shape.nelements(); ++axis) {
             if (axis > 0) {
                 os << ',';
@@ -169,6 +174,13 @@ template<typename T, typename Emit>
 void digest_array_value(StableDigest& digest, const casacore::Array<T>& value, Emit emit)
 {
     const auto& shape = value.shape();
+    // An empty IPosition holds no elements; casa-rs, which has no
+    // 0-dimensional empty array, reads and stores it as [0] (#923).
+    if (shape.nelements() == 0) {
+        digest.write_u64(1);
+        digest.write_u64(0);
+        return;
+    }
     digest.write_u64(static_cast<uint64_t>(shape.nelements()));
     for (casacore::uInt axis = 0; axis < shape.nelements(); ++axis) {
         digest.write_u64(static_cast<uint64_t>(shape[axis]));
@@ -1085,6 +1097,34 @@ void add_second_spectral_window(casacore::MeasurementSet& ms)
     ddFlagRow.put(ddrow, false);
 }
 
+// Add the optional subtable `keyword` names to `ms`, laid out from its
+// required description as casacore lays it out.
+template <class Subtable>
+void add_optional_subtable(casacore::MeasurementSet& ms, casacore::MS::PredefinedKeywords keyword)
+{
+    const casacore::String name = casacore::MS::keywordName(keyword);
+    casacore::SetupNewTable setup(
+        ms.tableName() + "/" + name, Subtable::requiredTableDesc(), casacore::Table::New);
+    ms.rwKeywordSet().defineTable(name, casacore::Table(setup));
+}
+
+// An empty MeasurementSet with its default subtables and the five optional
+// ones (DOPPLER, FREQ_OFFSET, SOURCE, SYSCAL, WEATHER), each from casacore's
+// required description.
+void write_optional_subtables_fixture_impl(const std::string& path)
+{
+    casacore::TableDesc td(casacore::MS::requiredTableDesc());
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::MeasurementSet ms(setup, 0);
+    ms.createDefaultSubtables(casacore::Table::New);
+    add_optional_subtable<casacore::MSDoppler>(ms, casacore::MS::DOPPLER);
+    add_optional_subtable<casacore::MSFreqOffset>(ms, casacore::MS::FREQ_OFFSET);
+    add_optional_subtable<casacore::MSSource>(ms, casacore::MS::SOURCE);
+    add_optional_subtable<casacore::MSSysCal>(ms, casacore::MS::SYSCAL);
+    add_optional_subtable<casacore::MSWeather>(ms, casacore::MS::WEATHER);
+    ms.flush(true);
+}
+
 void write_heterogeneous_tiled_shape_fixture_impl(const std::string& path)
 {
     casacore::TableDesc td(casacore::MS::requiredTableDesc());
@@ -1331,6 +1371,20 @@ int32_t cpp_ms_write_basic_fixture(const char* path, char** out_error)
         return -1;
     } catch (...) {
         *out_error = make_error("unknown exception in cpp_ms_write_basic_fixture");
+        return -1;
+    }
+}
+
+int32_t cpp_ms_write_optional_subtables_fixture(const char* path, char** out_error)
+{
+    try {
+        write_optional_subtables_fixture_impl(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception in cpp_ms_write_optional_subtables_fixture");
         return -1;
     }
 }

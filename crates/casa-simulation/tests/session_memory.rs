@@ -66,6 +66,12 @@
 //! cells, one set of grids, and a pointing for each phase centre), however
 //! many pointings it keeps.
 //!
+//! A law in `session_memory/field_grids.rs` predicts a 1700² model under
+//! the beam over two fields, observed twice each (#841): `predict` keeps the
+//! model's planes and no field's grids, and `close` holds its admission
+//! with a budget for every field's grids and with the least budget that
+//! closes, which holds one set and frees it before it prepares the next.
+//!
 //! Two laws, in `session_memory/patch.rs`, patch a MeasurementSet
 //! `openfromms` opened (#841 Phase 2): `close` holds no more than it is
 //! admitted, and nothing beyond that grows with the rows, or with the
@@ -74,16 +80,22 @@
 //! Two more, in `session_memory/tsys.rs` and `session_memory/patch.rs`,
 //! repeat the first law's base and ten-times-the-rows cases, and the
 //! patch's rows law, with `tsys-manual` noise (#841 Phase 3), whose σ takes
-//! each row's airmasses and exposure.
+//! each row's airmasses and exposure; `session_memory/tsys_atm.rs` holds
+//! `tsys-atm`'s (Phase 4c): `setnoise` builds its atmosphere within what it
+//! is admitted, and `close` holds its admission.
 //!
-//! This binary's global allocator counts the live heap; the counters are
-//! the process's, so each law runs alone in a process of its own
-//! ([`alone`]).
+//! This binary's global allocator counts the live heap, and apart from it
+//! the blocks that are not a write batch's ([`heap`]); the counters are the
+//! process's, so each law runs alone in a process of its own ([`alone`]).
 
 #[path = "session_memory/apply.rs"]
 mod apply;
+#[path = "session_memory/field_grids.rs"]
+mod field_grids;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
+#[path = "session_memory/heap.rs"]
+mod heap;
 #[path = "session_memory/jones.rs"]
 mod jones;
 #[path = "session_memory/mosaic.rs"]
@@ -91,13 +103,16 @@ mod mosaic;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/troposphere.rs"]
+mod troposphere;
 #[path = "session_memory/tsys.rs"]
 mod tsys;
+#[path = "session_memory/tsys_atm.rs"]
+mod tsys_atm;
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_components::{
     ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
@@ -113,86 +128,17 @@ use casa_imaging_runtime::{
     reserved_memory,
 };
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
-    PredictionOptions, SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec, TsysParameters, VoltagePatternSpec,
+    ArrayConfig, AtmosphereSpec, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec,
+    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
+use heap::{BATCH_ALLOCATED, EXCESS, LIVE, OWN_LIVE, OWN_PEAK, PEAK, excess_now};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
-
-#[global_allocator]
-static HEAP: CountingHeap = CountingHeap;
-
-/// The system allocator, counting live bytes and their largest value.
-struct CountingHeap;
-
-static LIVE: AtomicU64 = AtomicU64::new(0);
-static PEAK: AtomicU64 = AtomicU64::new(0);
-/// The most the live bytes exceeded what the process's reservations held,
-/// at any allocation: a heap within its admission at every moment, not only
-/// at the two peaks.
-static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
-
-fn grow(bytes: u64) {
-    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK.fetch_max(live, Ordering::Relaxed);
-    EXCESS.fetch_max(live as i64 - reserved_memory() as i64, Ordering::Relaxed);
-}
-
-/// What the live bytes exceed the reservations by now.
-fn excess_now() -> i64 {
-    LIVE.load(Ordering::Relaxed) as i64 - reserved_memory() as i64
-}
-
-// SAFETY: forwards to `System` with the caller's arguments and adds atomic
-// bookkeeping only.
-unsafe impl GlobalAlloc for CountingHeap {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc`.
-        let pointer = unsafe { System.alloc(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc_zeroed`.
-        let pointer = unsafe { System.alloc_zeroed(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: the caller's contract for `dealloc`.
-        unsafe { System.dealloc(pointer, layout) };
-        LIVE.fetch_sub(layout.size() as u64, Ordering::Relaxed);
-    }
-
-    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let (old, new) = (layout.size() as u64, new_size as u64);
-        // SAFETY: the caller's contract for `realloc`.
-        let moved = unsafe { System.realloc(pointer, layout, new_size) };
-        if !moved.is_null() {
-            if moved != pointer {
-                // Old and new were held at once while the block moved.
-                PEAK.fetch_max(LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
-            }
-            if new >= old {
-                grow(new - old);
-            } else {
-                LIVE.fetch_sub(old - new, Ordering::Relaxed);
-            }
-        }
-        moved
-    }
-}
 
 /// The environment variable that names the law a child process of
 /// [`alone`] runs.
@@ -299,13 +245,18 @@ fn resources(budget: u64) -> SessionResources {
 /// A one-plane Stokes I model of a few points around [`CENTRE_RAD`], its
 /// plane spanning `channels` channels from [`FREQUENCY_HZ`].
 fn write_model(path: &Path, channels: usize) {
+    write_model_of(path, channels, PIXELS);
+}
+
+/// [`write_model`] of `pixels` pixels a side.
+fn write_model_of(path: &Path, channels: usize, pixels: usize) {
     let mut coordinates = ImageCoordinates::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         CENTRE_RAD,
         [-CELL_RAD, CELL_RAD],
-        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
+        [(pixels / 2) as f64, (pixels / 2) as f64],
     ));
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
     let centre_hz = FREQUENCY_HZ + (channels as f64 - 1.0) / 2.0 * CHANNEL_HZ;
@@ -316,14 +267,19 @@ fn write_model(path: &Path, channels: usize) {
         0.0,
         centre_hz,
     ));
-    let shape = vec![PIXELS, PIXELS, 1, 1];
+    let shape = vec![pixels, pixels, 1, 1];
     let mut image =
         PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
-    let mut pixels = ArrayD::zeros(IxDyn(&shape));
-    for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
-        pixels[IxDyn(&[x, y, 0, 0])] = flux;
+    let mut values = ArrayD::zeros(IxDyn(&shape));
+    let centre = pixels / 2;
+    for (x, y, flux) in [
+        (centre, centre, 1.0_f32),
+        (centre + 9, centre - 4, 0.5),
+        (centre - 20, centre + 18, 0.25),
+    ] {
+        values[IxDyn(&[x, y, 0, 0])] = flux;
     }
-    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.put_slice(&values, &[0, 0, 0, 0]).expect("pixels");
     image.set_units("Jy/pixel").expect("units");
     image.save().expect("save model");
 }
@@ -429,7 +385,7 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -443,10 +399,15 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
 /// laws set it, each alone in its process ([`alone`]).
 static TSYS_NOISE: AtomicBool = AtomicBool::new(false);
 
-/// 0.1 Jy of simple noise, or `tsys-manual` noise with CASA's defaults once
-/// a Tsys law sets [`TSYS_NOISE`].
+/// Whether [`noise`] is `tsys-atm`, as [`TSYS_NOISE`].
+static ATM_NOISE: AtomicBool = AtomicBool::new(false);
+
+/// 0.1 Jy of simple noise, or Tsys noise with CASA's defaults once a Tsys
+/// law sets [`TSYS_NOISE`] or [`ATM_NOISE`].
 fn noise() -> NoiseSpec {
-    if TSYS_NOISE.load(Ordering::Relaxed) {
+    if ATM_NOISE.load(Ordering::Relaxed) {
+        NoiseSpec::tsys_atm(TsysParameters::default(), 0.0, AtmosphereSpec::default())
+    } else if TSYS_NOISE.load(Ordering::Relaxed) {
         NoiseSpec::tsys_manual(TsysParameters::default())
     } else {
         NoiseSpec::simple(0.1)
@@ -832,7 +793,7 @@ fn close_repeated(
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -949,7 +910,7 @@ fn predict_after(
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");
@@ -1103,7 +1064,7 @@ fn predict_components(
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(list.to_path_buf()),
+        component_lists: vec![list.to_path_buf()],
         incremental: false,
     })
     .expect("predict");
@@ -1327,7 +1288,7 @@ fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Pr
     EXCESS.store(before, Ordering::Relaxed);
     sm.predict(&PredictSpec {
         images: vec![model.to_path_buf()],
-        component_list: None,
+        component_lists: Vec::new(),
         incremental: false,
     })
     .expect("predict");

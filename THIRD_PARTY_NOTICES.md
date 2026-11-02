@@ -27,3 +27,16 @@ Local builds may select a different FFTW installation via `PKG_CONFIG_PATH`.
 Redistributors of those builds must provide the source and build information
 corresponding to that actual dependency, including any distributor patches;
 the official-release archive does not cover a different installation.
+
+## ATM
+
+`crates/casa-atmosphere` is a Rust port of ATM, the atmospheric transmission
+model distributed with CASA (`casatools/src/code/atmosphere/ATM`, ATM 1.0.0),
+Copyright (c) Instituto de Estructura de la Materia (IEM-CSIC), J. R. Pardo
+et al., in the framework of the ALMA collaboration. ATM is available under
+the GNU Lesser General Public License v2.1 or later; the port, including its
+line catalogues and reference atmospheres (generated from the ATM sources by
+`tools/atmosphere/extract_atm_tables.py`), is distributed under that
+license's "or later" option as LGPLv3-or-later, with ATM's copyright notice
+kept in each ported file. The ATM sources are part of CASA, available from
+<https://github.com/casangi/casa6> and <https://casa.nrao.edu>.

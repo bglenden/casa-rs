@@ -19,9 +19,13 @@
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `sm.setnoise(mode='tsys-manual')`: σ per row from a system temperature (CASA's `AtmosCorruptor`) | [`Simulator::set_noise`], [`NoiseSpec::tsys_manual`], [`TsysParameters`] |
+//! | `sm.setnoise(mode='tsys-atm')`: σ per row and channel from a system temperature the ATM atmosphere model gives | [`Simulator::set_noise`], [`NoiseSpec::tsys_atm`], [`AtmosphereSpec`] |
 //! | `sm.setgain(mode='fbm' or 'random')`, `sm.setleakage`, and the calibration tables they write | [`Simulator::set_gain`], [`Simulator::set_leakage`] |
+//! | `sm.settrop(mode='individual' or 'screen')`: tropospheric phase per channel from a water-vapour screen and ATM, and its `Tf Jones` table | [`Simulator::set_trop`], [`TroposphereSpec`] |
 //! | `sm.setapply` of a `G` or `D` table | [`Simulator::set_apply`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
+//! | `simutil`'s directions, pointings (`calc_pointings2`, pointing files), receiver temperatures and baselines | [`simutil`] |
+//! | the `simobserve` task | [`simobserve::simobserve`] |
 //!
 //! CASA's `sm` has no execution controls; a session's memory budget, workers
 //! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
@@ -34,6 +38,8 @@ mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
+pub mod simobserve;
+pub mod simutil;
 mod write;
 
 pub use session::array::{ArrayConfig, CoordinateSystem};
@@ -41,7 +47,7 @@ pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveManySpec, ObserveSpec, Pointing, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
-    ApplySpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec, LeakageSpec, NoiseSpec,
-    PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, TsysParameters,
-    UnknownBackend, VoltagePatternSpec,
+    ApplySpec, AtmosphereSpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec,
+    LeakageSpec, NoiseSpec, PredictSpec, PredictionOptions, SessionResources, Simulator,
+    SimulatorOptions, TroposphereSpec, TsysParameters, UnknownBackend, VoltagePatternSpec,
 };

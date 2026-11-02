@@ -22,8 +22,7 @@ use std::str::FromStr;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::Array2;
-use ndarray::IxDyn;
+use ndarray::{Array2, IxDyn, ShapeBuilder};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -65,6 +64,10 @@ pub struct DirectionCoordinate {
     /// Celestial coordinates of the native pole [alpha_p, delta_p] in radians.
     /// Computed from crval, longpole, latpole, and theta_0.
     native_pole: [f64; 2],
+    /// The angle units the coordinate is stored and presented in, as
+    /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
+    /// it computes in radians whatever they are.
+    world_units: [String; 2],
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
@@ -179,7 +182,37 @@ impl DirectionCoordinate {
             longpole,
             latpole,
             native_pole,
+            world_units: ["rad".into(), "rad".into()],
         }
+    }
+
+    /// The angle units the coordinate is stored and presented in: those of
+    /// the record it was read from, else radians. Its values, `to_world`
+    /// among them, are radians whatever these are.
+    pub fn world_units(&self) -> &[String; 2] {
+        &self.world_units
+    }
+
+    /// Stores and presents the coordinate in the angle units `units`, as
+    /// casacore's `setWorldAxisUnits` does. Returns `self` for chaining.
+    ///
+    /// # Errors
+    ///
+    /// A unit that is not an angle.
+    pub fn with_world_units(mut self, units: [&str; 2]) -> Result<Self, CoordinateError> {
+        for unit in units {
+            convert_value_to_unit(0.0, "rad", unit, "units")?;
+        }
+        self.world_units = units.map(String::from);
+        Ok(self)
+    }
+
+    /// `values` in radians, one per axis, in the world units.
+    pub fn in_world_units(&self, values: [f64; 2]) -> [f64; 2] {
+        [0, 1].map(|axis| {
+            convert_value_to_unit(values[axis], "rad", &self.world_units[axis], "world value")
+                .expect("world units are angles")
+        })
     }
 
     /// Sets the PC rotation/coupling matrix. Returns `self` for chaining.
@@ -190,6 +223,21 @@ impl DirectionCoordinate {
     pub fn with_pc_matrix(mut self, pc: Array2<f64>) -> Self {
         assert_eq!(pc.shape(), [2, 2]);
         self.pc = pc;
+        self
+    }
+
+    /// Sets the reference pixel, as the coordsys tool's
+    /// `setreferencepixel(type='direction')` does, keeping the reference
+    /// value. Returns `self` for chaining.
+    pub fn with_reference_pixel(mut self, crpix: [f64; 2]) -> Self {
+        self.crpix = crpix;
+        self
+    }
+
+    /// Sets the increments, rad per pixel, as the coordsys tool's
+    /// `setincrement(type='direction')` does. Returns `self` for chaining.
+    pub fn with_increment(mut self, cdelt: [f64; 2]) -> Self {
+        self.cdelt = cdelt;
         self
     }
 
@@ -314,6 +362,7 @@ impl DirectionCoordinate {
             cdelt,
             [crpix[0], crpix[1]],
         );
+        coord.world_units = [axis_units[0].clone(), axis_units[1].clone()];
 
         if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
             if pc_flat.len() != 4 {
@@ -322,10 +371,13 @@ impl DirectionCoordinate {
                     pc_flat.len()
                 )));
             }
-            let pc = Array2::from_shape_vec((2, 2), pc_flat).map_err(|err| {
+            // casacore's matrix is the transpose of the FITS PC matrix this
+            // coordinate holds (`LinearXform`: `pc[i*n+j] = pcIn(j,i)`), so
+            // its elements in row order are the PC's in column order.
+            let pc = Array2::from_shape_vec((2, 2).f(), pc_flat).map_err(|err| {
                 CoordinateError::InvalidRecord(format!("invalid direction pc matrix: {err}"))
             })?;
-            coord = coord.with_pc_matrix(pc);
+            coord = coord.with_pc_matrix(pc.as_standard_layout().into_owned());
         }
         if let Some(longpole) = get_optional_f64(rec, "longpole") {
             let longpole = if is_casa_style {
@@ -688,9 +740,13 @@ impl DirectionCoordinate {
                 self.projection.parameters().to_vec(),
             )),
         );
+        // In the world units, as casacore's `DirectionCoordinate::save`
+        // writes them.
         rec.upsert(
             "crval",
-            Value::Array(ArrayValue::from_f64_vec(self.crval.to_vec())),
+            Value::Array(ArrayValue::from_f64_vec(
+                self.in_world_units(self.crval).to_vec(),
+            )),
         );
         rec.upsert(
             "crpix",
@@ -698,12 +754,15 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "cdelt",
-            Value::Array(ArrayValue::from_f64_vec(self.cdelt.to_vec())),
+            Value::Array(ArrayValue::from_f64_vec(
+                self.in_world_units(self.cdelt).to_vec(),
+            )),
         );
+        // casacore's matrix, the PC's transpose (see `from_record`).
         rec.upsert(
             "pc",
             Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(IxDyn(&[2, 2]), self.pc.iter().copied().collect())
+                ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), self.pc.iter().copied().collect())
                     .expect("2x2 direction pc matrix"),
             )),
         );
@@ -713,7 +772,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "units",
-            Value::Array(ArrayValue::from_string_vec(self.axis_units())),
+            Value::Array(ArrayValue::from_string_vec(self.world_units.to_vec())),
         );
         rec.upsert(
             "conversionSystem",
@@ -934,6 +993,38 @@ mod tests {
         assert_eq!(coord.axis_names(), vec!["Longitude", "Latitude"]);
     }
 
+    /// A coordinate stored in arcminutes (CASA's `fromshape` default)
+    /// computes in radians, presents and saves itself in arcminutes, as
+    /// casacore's does.
+    #[test]
+    fn stored_world_units_are_kept() {
+        let arcmin = PI / 180.0 / 60.0;
+        let stored = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-arcmin, arcmin],
+            [2.0, 2.0],
+        )
+        .with_world_units(["'", "'"])
+        .unwrap();
+        let record = stored.to_record();
+        assert_eq!(get_optional_vec_f64(&record, "cdelt").unwrap(), [-1.0, 1.0]);
+        assert_eq!(
+            get_optional_vec_string(&record, "units").unwrap(),
+            ["'", "'"]
+        );
+        let restored = DirectionCoordinate::from_record(&record).unwrap();
+        assert_eq!(restored.world_units(), &["'".to_string(), "'".to_string()]);
+        let increment = restored.increment();
+        assert!((increment[0] + arcmin).abs() < 1e-18 && (increment[1] - arcmin).abs() < 1e-18);
+        assert_eq!(
+            restored.in_world_units([increment[0], increment[1]]),
+            [-1.0, 1.0]
+        );
+        assert!(stored.clone().with_world_units(["Hz", "'"]).is_err());
+    }
+
     #[test]
     fn to_record_has_projection() {
         let coord = make_sin_coord();
@@ -968,6 +1059,62 @@ mod tests {
         assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
         assert!((restored.longpole() - 0.25).abs() < TOL);
         assert!((restored.latpole() - 1.2).abs() < TOL);
+    }
+
+    /// A rotated image CASA 6.7.6 made (`coordsys.setlineartransform` with
+    /// casacore's matrix [[1 - 1.25e-9, 5e-5], [-5e-5, 1 - 1.25e-9]]) reads
+    /// to CASA's own world coordinates (`coordsys.toworld`).
+    #[test]
+    fn a_casacore_record_reads_to_casas_world_coordinates() {
+        let arcsec = PI / 648_000.0;
+        let mut record = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.6, -0.4],
+            [-0.2 * arcsec, 0.2 * arcsec],
+            [16.0, 17.0],
+        )
+        .to_record();
+        let (c, s) = (0.999_999_998_75, 5e-5);
+        // casacore's matrix [[c, s], [-s, c]], column by column.
+        let matrix = ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![c, -s, s, c]).unwrap();
+        record.upsert("pc", Value::Array(ArrayValue::Float64(matrix)));
+        let coord = DirectionCoordinate::from_record(&record).unwrap();
+        assert_eq!(coord.pc_matrix(), &ndarray::array![[c, -s], [s, c]]);
+        for (pixel, casa) in [
+            (
+                [0.0, 0.0],
+                [0.600_016_842_882_085_7, -0.400_016_484_389_964_9],
+            ),
+            (
+                [32.0, 0.0],
+                [0.599_983_155_328_274, -0.400_016_482_838_550_3],
+            ),
+            (
+                [0.0, 34.0],
+                [0.600_016_844_436_951_4, -0.399_983_517_059_678_9],
+            ),
+            (
+                [10.5, 3.25],
+                [0.600_005_789_316_842, -0.400_013_332_636_851_1],
+            ),
+        ] {
+            let world = coord.to_world(&pixel).unwrap();
+            for (ours, casa) in world.iter().zip(casa) {
+                assert!(
+                    (ours - casa).abs() < 1e-13,
+                    "{pixel:?}: {world:?} against CASA's {casa}"
+                );
+            }
+        }
+        let written = coord.to_record();
+        let Some(Value::Array(ArrayValue::Float64(matrix))) = written.get("pc") else {
+            panic!("a pc matrix");
+        };
+        assert_eq!(
+            matrix.iter().copied().collect::<Vec<_>>(),
+            vec![c, s, -s, c]
+        );
     }
 
     #[test]

@@ -6,18 +6,19 @@
 
 mod common;
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, DenseCell, GridAccumulator,
     GridBackend, GridPrecision, ImageCorrection, KernelNormalisation, MeasurementOperator, Mode,
     ModeSet, ModelImages, ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange,
     PolarizationRouting, RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
 };
+use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, geometry, max_abs, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
+const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
     PolarizationCoordinate::LinearXx,

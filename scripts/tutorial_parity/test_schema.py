@@ -48,6 +48,25 @@ class SectionSchemaTests(unittest.TestCase):
             actual,
         )
 
+    def test_no_section_declares_what_it_reads_as_an_output(self) -> None:
+        # A rerun removes a surface's declared outputs before it runs (#931),
+        # so an output must never be a prerequisite or a path the section
+        # reads that an earlier operation of the same surface did not write.
+        for item in manifests():
+            read = {prerequisite["path"] for prerequisite in item.prerequisites}
+            for surface in item.surfaces.values():
+                written: set[str] = set()
+                for operation in surface.operations:
+                    for name in ("vis", "imagename", "caltable", "pbimage", "fitsimage"):
+                        value = operation.parameters.get(name)
+                        if isinstance(value, str) and value not in written | set(operation.outputs):
+                            read.add(value)
+                    written.update(operation.outputs)
+            for surface in item.surfaces.values():
+                for operation in surface.operations:
+                    clash = read.intersection(operation.outputs)
+                    self.assertFalse(clash, f"{item.section_id} {surface.name}: {clash}")
+
     def test_unknown_task_is_rejected(self) -> None:
         value = copy.deepcopy(self.value)
         value["surfaces"]["cli"]["operations"][0]["task"] = "python-code"

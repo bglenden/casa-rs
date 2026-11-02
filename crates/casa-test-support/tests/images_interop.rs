@@ -226,6 +226,62 @@ ia.done()
     }
 }
 
+/// Copies directory `source`, with its subdirectories, to `target`.
+fn copy_dir_all(source: &Path, target: &Path) {
+    std::fs::create_dir_all(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let to = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&entry.path(), &to);
+        } else {
+            std::fs::copy(entry.path(), to).unwrap();
+        }
+    }
+}
+
+/// CASA wrote this image with its coordinates in creation order over
+/// transposed axes; casa-rs rewrites them numbered in the order of their
+/// axes (#1001). CASA reads the rewrite as it read the original:
+/// `tools/images/axis_map_oracle.py readback` checks the shape, axis types,
+/// names and units, and the world coordinates and pixel values it recorded.
+#[test]
+fn rc_casa_reads_a_transposed_casa_image_rust_rewrote() {
+    let Some(casa) = discover_casa_python() else {
+        eprintln!(
+            "skipping rc_casa_reads_a_transposed_casa_image_rust_rewrote: CASA python unavailable"
+        );
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixtures = root.join("crates/casa-images/tests/data/casa-6.7.6/axis_maps");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("transposed.image");
+    copy_dir_all(&fixtures.join("transposed.image"), &path);
+    let mut image = PagedImage::<f32>::open(&path).unwrap();
+    let coordinates = image.coordinates().clone();
+    image.set_coordinates(coordinates).unwrap();
+    image.save().unwrap();
+    drop(image);
+
+    let output = Command::new(&casa.program)
+        .arg("-I")
+        .arg(root.join("tools/images/axis_map_oracle.py"))
+        .arg("readback")
+        .arg(&path)
+        .arg("--reference")
+        .arg(fixtures.join("axis_maps.json"))
+        .args(["--name", "transposed.image"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // CC: C++-write, C++-read (baseline correctness)
 // ---------------------------------------------------------------------------

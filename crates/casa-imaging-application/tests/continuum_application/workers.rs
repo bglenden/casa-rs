@@ -16,13 +16,35 @@ const HOST: HostResources = HostResources {
     metal: false,
 };
 
-/// A cleaned MFS image of the 32-channel fixture at `image_name`.
-fn cleaned_mfs(measurement_set: &Path, image_name: &Path) -> ImagingRequest {
-    request(
-        measurement_set,
-        image_name,
-        json!({ "imsize": 128, "niter": 20, "spw": "0:1~30" }),
-    )
+/// A cleaned 64 × 64 cube of the 32-channel fixture's 30 channels at
+/// `image_name`, for at most `nmajor` major cycles after the first, with
+/// `controls`. Its passes, which grow with the workers, set the least
+/// memory it runs in. A cleaned MFS image of the fixture runs in no less
+/// than its products need, whose restoring-beam convolution holds more
+/// than its passes on four workers, so it runs on four or on none.
+fn cleaned_cube(
+    measurement_set: &Path,
+    image_name: &Path,
+    nmajor: i64,
+    controls: Value,
+) -> ImagingRequest {
+    let mut values = json!({
+        "imsize": 64,
+        "niter": 20,
+        "nmajor": nmajor,
+        "spw": "0:1~30",
+        "channel_start": 1,
+        "channel_count": 30,
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "start": "1",
+        "width": "1",
+    });
+    values
+        .as_object_mut()
+        .expect("cube controls")
+        .extend(controls.as_object().expect("overrides").clone());
+    request(measurement_set, image_name, values)
 }
 
 /// `request` on [`HOST`] with `workers` workers and `memory` bytes beside
@@ -75,7 +97,7 @@ fn cycled_mfs(measurement_set: &Path, image_name: &Path, nmajor: i64) -> Imaging
         json!({
             "imsize": 128,
             "niter": 20,
-            "minor_cycle_length": 1,
+            "cycleniter": 1,
             "nmajor": nmajor,
             "gain": 0.37,
             "spw": "0:1~30",
@@ -142,10 +164,14 @@ fn run_summarised(
 /// #763 review (Astra, finding 2; Fable, findings 1 and 2): a count the
 /// fit takes is never refused at a later phase. The refresh passes are
 /// admitted beside the normal state and model the run keeps, its masks and
-/// the minor cycles' records, which grow with each cycle up to `nmajor`.
+/// the minor cycles' records, which grow with each cycle up to `nmajor`;
+/// the products after them beside what the run keeps to the end (#932).
 /// Over budgets 128 KiB apart, and the two of Astra's reproductions, every
-/// run completes or is refused with the fit's own reason that no fewer
-/// workers fit; the sweep completes on one worker and on more.
+/// run of an MFS image and of a cube completes or is refused with the
+/// fit's own reason that no fewer workers fit; the sweep completes on one
+/// worker and on more. The MFS image runs on four workers or on none, its
+/// products setting its least memory ([`cleaned_cube`]); the cube's passes
+/// set its own.
 #[test]
 fn a_count_the_fit_takes_is_never_refused_later() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -158,6 +184,12 @@ fn a_count_the_fit_takes_is_never_refused_later() {
             .chain([6 << 20, 6_488_064]);
         let outcomes = fit_sweep(root.path(), &format!("cycled-{nmajor}"), budgets, |name| {
             cycled_mfs(&measurement_set, name, nmajor)
+        });
+        completed.extend(outcomes.into_iter().filter_map(|(_, workers)| workers));
+        let budgets = (1_u64 << 20..=8 << 20).step_by(128 << 10);
+        let outcomes = fit_sweep(root.path(), &format!("cube-{nmajor}"), budgets, |name| {
+            let cycled = json!({ "cycleniter": 1, "gain": 0.37 });
+            cleaned_cube(&measurement_set, name, nmajor, cycled)
         });
         completed.extend(outcomes.into_iter().filter_map(|(_, workers)| workers));
     }
@@ -234,7 +266,7 @@ fn synthetic_clean(measurement_set: &Path, image_name: &Path, controls: Value) -
         "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
         "weighting": "natural",
         "niter": 200,
-        "minor_cycle_length": 50,
+        "cycleniter": 50,
         "nmajor": 1,
         "gain": 0.2,
         "threshold": "1mJy",
@@ -256,26 +288,41 @@ fn synthetic_clean(measurement_set: &Path, image_name: &Path, controls: Value) -
 /// one, two and four workers that budget is found to 16 KiB, and over the
 /// 160 KiB above it, 16 KiB apart, and Astra's reproductions (10,199,040
 /// and 10,223,616 bytes for multiscale, 14,909,440 for MT-MFS), every run
-/// completes or is refused with the fit's own reason.
+/// completes or is refused with the fit's own reason. A run with no minor
+/// cycle seeded from a start model writes on its initial pass, which
+/// seeds beside the write (#970 review, finding 2).
 #[test]
 fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = synthetic_observation::observation(root.path(), 4);
+    let (started, _) = fit_run(root.path(), "start", 256 << 20, &|name| {
+        synthetic_clean(&measurement_set, name, json!({ "deconvolver": "hogbom" }))
+    });
+    assert!(started.is_some(), "the run whose model seeds the last case");
     let cases = [
         (
             "multiscale",
-            json!({ "deconvolver": "multiscale", "scales": "5,12" }),
+            json!({ "deconvolver": "multiscale", "scales": [5, 12] }),
             &[10_199_040_u64, 10_223_616][..],
         ),
         (
             "mtmfs",
-            json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": "5,12" }),
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [5, 12] }),
             &[14_909_440],
         ),
         (
             "savemodel",
             json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+            &[],
+        ),
+        (
+            "seeded savemodel",
+            json!({
+                "niter": 0,
+                "savemodel": "modelcolumn",
+                "startmodel": root.path().join("start.model"),
+            }),
             &[],
         ),
     ];
@@ -406,16 +453,20 @@ fn read_values(base: &Path, suffix: &str) -> Vec<f32> {
 /// whose two-worker plan fits, runs on two workers rather than being
 /// refused: the smallest budget on which a policy of four workers runs on
 /// more than one runs on two, records why in its summary, and its products
-/// are a one-worker run's, apart from rounding. (On an MFS plane three
-/// workers stream as many as four, so their plans need the same memory.)
+/// are a one-worker run's, apart from rounding. The request is a cube,
+/// whose passes set its least memory ([`cleaned_cube`]).
 #[test]
 fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let serial_name = root.path().join("serial");
-    let serial = run(&cleaned_mfs(&measurement_set, &serial_name), 1, 4 << 30)
-        .expect("one worker and ample memory");
+    let serial = run(
+        &cleaned_cube(&measurement_set, &serial_name, 1, json!({})),
+        1,
+        4 << 30,
+    )
+    .expect("one worker and ample memory");
     assert_eq!(serial.workers, 1);
     assert_eq!(serial.summary.workers_reason, None);
 
@@ -425,8 +476,12 @@ fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
     let workers = |memory: u64| {
         let name = root.path().join(format!("probe-{memory}"));
         let summary = root.path().join(format!("probe-{memory}.json"));
-        let (outcome, written) =
-            run_summarised(&cleaned_mfs(&measurement_set, &name), 4, memory, &summary);
+        let (outcome, written) = run_summarised(
+            &cleaned_cube(&measurement_set, &name, 1, json!({})),
+            4,
+            memory,
+            &summary,
+        );
         outcome.map_or_else(
             |error| {
                 let reason = written["workers_reason"].as_str().unwrap_or_default();
@@ -452,8 +507,12 @@ fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
         }
     }
     let parallel_name = root.path().join("parallel");
-    let parallel = run(&cleaned_mfs(&measurement_set, &parallel_name), 4, more)
-        .expect("the budget holds two workers");
+    let parallel = run(
+        &cleaned_cube(&measurement_set, &parallel_name, 1, json!({})),
+        4,
+        more,
+    )
+    .expect("the budget holds two workers");
     assert_eq!(parallel.workers, 2, "four workers do not fit, two do");
     assert_eq!(parallel.summary.workers, 2);
     assert_eq!(parallel.summary.workers_policy, 4);
@@ -465,9 +524,7 @@ fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
     assert!(reason.starts_with("4 workers need "), "{reason}");
     assert!(reason.contains(", 2 fit "), "{reason}");
     // Below it at most one worker fits; a refusal there is the fit's own
-    // (`workers` checks). On this 128-pixel field the refresh pass, which
-    // hardly grows with the workers, sets both counts' needs, so the budget
-    // just below may fit none.
+    // (`workers` checks).
     assert!(
         workers(fewer) <= 1,
         "below the budget at most one worker fits"

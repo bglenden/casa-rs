@@ -2,15 +2,21 @@
 #![warn(missing_docs)]
 //! Logical, backend-independent imaging problem compilation.
 
+mod aw_pointing;
+mod batch_geometry;
 mod compiled_problem;
+mod frame_refs;
 mod geometry;
+mod image_size;
 mod measurement_equation;
 mod model_state;
 mod native_aw;
 mod observation;
+mod pointing_law;
 mod product_list;
-mod selected_observation_sample;
+mod sample_antennas;
 mod transaction;
+mod uvw_projection;
 mod visibility_transform;
 
 pub use compiled_problem::{
@@ -39,6 +45,7 @@ pub use geometry::{
     SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes,
     UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
 };
+pub use image_size::optimum_image_size;
 
 pub use measurement_equation::{
     DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,
@@ -53,14 +60,16 @@ pub use model_state::{
     ModelLifecycleRequirements, ModelSample, ModelSourceShape, ModelSupport, ModelValue,
 };
 
+/// The observation boundary's partition identity, which a
+/// [`PartitionSelection`] names.
+pub use casa_observation::PartitionId;
 pub use observation::{
-    CompileObservationError, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, MsColumnKind,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSource,
-    ObservationSourceInput, ObservationSourceProvenance, ResolvedIntent, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRowSequenceError, SelectedRows, SelectedRowsBuilder,
-    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
+    MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
+    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, PartitionSelection,
+    RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 pub use native_aw::{
@@ -68,14 +77,8 @@ pub use native_aw::{
     NativeAwRequestInput, NativeAwTerms,
 };
 
-mod selected_numeric;
-pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights};
-
-pub use selected_observation_sample::{
-    AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedObservationRunChannel, SelectedObservationRunRow,
-    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedSampleCoordinates,
-    SelectedSampleMetadata,
+pub use sample_antennas::{
+    AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
 };
 
 pub use product_list::{
@@ -90,6 +93,14 @@ pub use transaction::{
     ObservationTransactionRequirements, ObservationWriteSet, SelectedVisibilityWriteAccess,
 };
 
+pub use aw_pointing::{
+    AwChartPixels, AwPointingEpochs, AwPointingError, AwPointingGrouping, aw_grouped_pixels,
+};
+pub use batch_geometry::{
+    BatchGeometry, BatchGeometryError, ChartProjection, GeometryPlan, GeometryTraversal,
+};
+pub use pointing_law::{PointingLawError, PointingSample, PointingSamples};
+pub use uvw_projection::GridFtProjection;
 pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
     ContinuumTransformContractError, SequentialContinuumTransform,

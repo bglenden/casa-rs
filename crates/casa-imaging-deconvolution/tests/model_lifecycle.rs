@@ -320,6 +320,45 @@ fn non_power_of_two_delta_bound_uses_the_explicit_canonical_capacity() {
     assert!(samples.iter().all(|sample| sample.value().value() == 1.0));
 }
 
+/// CASA's `startmodel` seeds the main field (#841 Phase 6b): the first
+/// domain takes the start model's samples in canonical order, every later
+/// domain starts at zero, and a start model of the wrong size or with a
+/// non-finite pixel is refused.
+#[test]
+fn a_start_model_seeds_the_main_domain_and_zeroes_the_others() {
+    let compiled = problem_with_geometry(
+        3,
+        overlapping_geometry(3, 3),
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let owner = model_lifecycle(&compiled);
+    let main = [0.5, -1.25, 2.0];
+    let generation = owner
+        .initial_from_start_model(&main)
+        .expect("a seeded generation");
+    let values: Vec<f64> = generation
+        .read_samples(0..generation.sample_count())
+        .expect("read the seeded model")
+        .iter()
+        .map(|sample| sample.value().value())
+        .collect();
+    assert_eq!(values[..3], [0.5, -1.25, 2.0]);
+    assert!(values[3..].iter().all(|value| *value == 0.0), "{values:?}");
+    assert!(matches!(
+        owner.initial_from_start_model(&main[..2]),
+        Err(ModelLifecycleError::SampleCountMismatch {
+            expected: 3,
+            actual: 2
+        })
+    ));
+    assert!(
+        owner
+            .initial_from_start_model(&[f32::NAN, 0.0, 0.0])
+            .is_err()
+    );
+}
+
 #[test]
 fn final_model_restores_highest_ordinal_domain_across_overlaps() {
     let compiled = problem_with_geometry(

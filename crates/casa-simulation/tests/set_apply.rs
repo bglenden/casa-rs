@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use casa_calibration::{
     ApplyInterpolationMode, CalibrationTableLookup, SimulatedJones, SimulatedSolution,
-    write_simulated_jones_table,
+    SolutionValues, write_simulated_jones_table,
 };
 use casa_simulation::{
     ApplySpec, CasaOutcome, GainSpec, LeakageSpec, PredictSpec, Simulator, SimulatorOptions,
@@ -51,7 +51,7 @@ fn observed(path: &Path, stokes: &str, point: &Path, integration_s: f64) -> Simu
         .expect("a second scan");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.to_path_buf()),
+        component_lists: vec![point.to_path_buf()],
         incremental: false,
     })
     .expect("predict");
@@ -202,7 +202,7 @@ fn a_scan_observed_after_setapply_takes_the_tables_gains() {
         .expect("a scan after the setapply");
     sm.predict(&PredictSpec {
         images: Vec::new(),
-        component_list: Some(point.clone()),
+        component_lists: vec![point.clone()],
         incremental: false,
     })
     .expect("predict");
@@ -300,7 +300,7 @@ fn write_gains(ms: &Path, output: &Path, solutions: &[(f64, i32, f32)]) {
             field_id,
             spectral_window_id: 0,
             antenna,
-            receptors: [Complex32::new(gain, 0.0); 2],
+            values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
         })
     });
     write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");

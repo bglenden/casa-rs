@@ -13,6 +13,9 @@ Each subcommand prints one JSON object on standard output:
   seen from ITRF position `(X, Y, Z)` (metres), as seconds at 3600 s per
   hour: the offset the new simulator's `settimes(usehourangle=True)` adds to
   `observe`'s start and stop (`casa-simulation` `observe::hour_angle_offset_s`).
+- `tai-minus-utc --mjd-days T`: TAI - UTC at the UTC epoch `T`, seconds,
+  from CASA's measures data: CASA's simulator stores TAI seconds under the
+  UTC label, so the comparison shifts casa-rs's requested times by it.
 - `inspect --ms M`: rows, columns, the first row's DATA shape and RMS, the
   TIME range, autocorrelation and flagged-row counts, and the subtables'
   telescope, antenna count, correlation types, channels and field direction.
@@ -37,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     hour_angle.add_argument("--dec", type=float, required=True, help="J2000 Dec, radians")
     hour_angle.add_argument("--mjd-days", type=float, required=True, help="UTC reference epoch")
     hour_angle.add_argument("--itrf", type=float, nargs=3, required=True, help="metres")
+    tai = commands.add_parser("tai-minus-utc", help="TAI - UTC at an epoch")
+    tai.add_argument("--mjd-days", type=float, required=True, help="UTC epoch")
     inspect = commands.add_parser("inspect", help="summarize a MeasurementSet")
     inspect.add_argument("--ms", required=True)
     return parser.parse_args()
@@ -84,6 +89,15 @@ def hour_angle(args: argparse.Namespace) -> dict:
         "hour_angle_rad": value,
         "offset_s": -value * (3600.0 * 180.0 / math.pi / 15.0),
     }
+
+
+def tai_minus_utc(args: argparse.Namespace) -> dict:
+    from casatools import measures
+
+    me = measures()
+    utc = me.epoch("UTC", f"{args.mjd_days!r}d")
+    tai = me.measure(utc, "TAI")
+    return {"tai_minus_utc_s": (tai["m0"]["value"] - utc["m0"]["value"]) * 86400.0}
 
 
 def inspect(args: argparse.Namespace) -> dict:
@@ -142,7 +156,12 @@ def inspect(args: argparse.Namespace) -> dict:
 
 def main() -> int:
     args = parse_args()
-    handler = {"tofits": tofits, "hour-angle": hour_angle, "inspect": inspect}[args.command]
+    handler = {
+        "tofits": tofits,
+        "hour-angle": hour_angle,
+        "tai-minus-utc": tai_minus_utc,
+        "inspect": inspect,
+    }[args.command]
     print(json.dumps(handler(args)), flush=True)
     return 0
 

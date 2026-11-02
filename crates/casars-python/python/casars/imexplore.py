@@ -16,7 +16,14 @@ StrPath: TypeAlias = str | PathLike[str]
 
 @dataclass(frozen=True)
 class ImagePlaneData:
-    """One editable image plane with WCS, mask, beam, and overlay metadata."""
+    """One editable image plane with WCS, mask, beam, and overlay metadata.
+
+    `values` and `mask` are indexed by the image's pixel axes `plane_axes`,
+    in their order: `values[x, y]`. `direction_axes` are the image's
+    direction (longitude, latitude) pixel axes, and `wcs_header` the FITS WCS
+    keywords `exportfits` writes for the image; both are None without a
+    direction coordinate.
+    """
 
     values: npt.NDArray[Any]
     mask: npt.NDArray[np.bool_] | None
@@ -28,6 +35,9 @@ class ImagePlaneData:
     axis: int
     index: int
     stretch: str
+    plane_axes: tuple[int, ...] = ()
+    direction_axes: tuple[int, int] | None = None
+    wcs_header: dict[str, Any] | None = None
 
 
 def data(
@@ -51,6 +61,7 @@ def data(
     slice_shape = list(shape)
     slice_shape[axis] = 1
     mask = image.get_mask_slice(start, slice_shape)
+    direction = image._direction_wcs()
     return ImagePlaneData(
         values=np.squeeze(np.asarray(image.get_plane(axis, index))),
         mask=None if mask is None else np.squeeze(np.asarray(mask, dtype=np.bool_)),
@@ -62,6 +73,10 @@ def data(
         axis=axis,
         index=index,
         stretch=stretch,
+        # The axes `np.squeeze` leaves: all but `axis` and those of length 1.
+        plane_axes=tuple(k for k, length in enumerate(shape) if k != axis and length > 1),
+        direction_axes=None if direction is None else (direction[0], direction[1]),
+        wcs_header=None if direction is None else dict(direction[2]),
     )
 
 
@@ -72,7 +87,13 @@ def imshow(
     wcs: Any = None,
     cmap: str = "viridis",
 ) -> tuple[Any, Any]:
-    """Render a plane and return editable Matplotlib figure/axes objects."""
+    """Render a plane and return editable Matplotlib figure/axes objects.
+
+    The plane's first axis runs across and its second up, as in CASA's
+    viewer. A plane of the image's direction axes is drawn on their WCS
+    unless `wcs` gives another; overlay `x` and `y` are pixels on the first
+    and second axes.
+    """
 
     try:
         from matplotlib import pyplot as plt
@@ -80,12 +101,11 @@ def imshow(
         raise ImportError(
             "Image plotting requires `pip install casa-rs-python[plot]`"
         ) from error
-    resolved_wcs = wcs if wcs is not None else _astropy_wcs(plane.coordinate_system)
+    resolved_wcs = wcs if wcs is not None else _astropy_wcs(plane)
     if figure is None:
         figure = plt.figure()
     axes = figure.add_subplot(1, 1, 1, projection=resolved_wcs)
-    values = np.ma.array(plane.values, mask=None if plane.mask is None else ~plane.mask)
-    image = axes.imshow(values, origin="lower", cmap=cmap)
+    image = axes.imshow(_display_values(plane), origin="lower", cmap=cmap)
     figure.colorbar(image, ax=axes, label=plane.units)
     for overlay in plane.overlays:
         if overlay.get("kind") == "point":
@@ -93,18 +113,34 @@ def imshow(
     return figure, axes
 
 
-def _astropy_wcs(coordinate_system: dict[str, Any]) -> Any:
-    direction = next(
-        (
-            value
-            for key, value in coordinate_system.items()
-            if key.startswith("coordinate")
-            and isinstance(value, dict)
-            and value.get("coordinate_type") == "Direction"
-        ),
-        None,
+def _display_values(plane: ImagePlaneData) -> np.ma.MaskedArray:
+    """`plane`'s values with masked pixels hidden, as Matplotlib and astropy
+    draw an array (`data[y, x]`): the plane's first axis across."""
+
+    values = np.ma.array(plane.values, mask=None if plane.mask is None else ~plane.mask)
+    return values.T
+
+
+def _is_direction_plane(plane: ImagePlaneData) -> bool:
+    """`plane`'s two axes are the image's direction axes."""
+
+    return (
+        plane.wcs_header is not None
+        and plane.direction_axes is not None
+        and plane.plane_axes == plane.direction_axes
     )
-    if direction is None:
+
+
+def _astropy_wcs(plane: ImagePlaneData) -> Any:
+    """The WCS of `plane`'s two axes when they are the image's direction
+    axes, else None.
+
+    It is the image's FITS WCS (`exportfits`'s keywords) cut to the plane's
+    axes. A plane holding one direction axis has no celestial WCS of its own,
+    so it gets none.
+    """
+
+    if not _is_direction_plane(plane):
         return None
     try:
         from astropy.wcs import WCS
@@ -112,17 +148,7 @@ def _astropy_wcs(coordinate_system: dict[str, Any]) -> Any:
         raise ImportError(
             "WCSAxes plotting requires `pip install casa-rs-python[plot]`"
         ) from error
-    projection = str(direction.get("projection", "SIN"))
-    reference = str(direction.get("direction_ref", "J2000"))
-    wcs = WCS(naxis=2)
-    wcs.wcs.crpix = np.asarray(direction["crpix"], dtype=float) + 1.0
-    wcs.wcs.cdelt = np.rad2deg(np.asarray(direction["cdelt"], dtype=float))
-    wcs.wcs.crval = np.rad2deg(np.asarray(direction["crval"], dtype=float))
-    if reference in {"GALACTIC", "SUPERGAL"}:
-        wcs.wcs.ctype = [f"GLON-{projection}", f"GLAT-{projection}"]
-    else:
-        wcs.wcs.ctype = [f"RA---{projection}", f"DEC--{projection}"]
-    return wcs
+    return WCS(plane.wcs_header).sub([axis + 1 for axis in plane.plane_axes])
 
 
 __all__ = ["ImagePlaneData", "data", "imshow"]

@@ -121,6 +121,20 @@ impl ParameterSession {
         &self.states
     }
 
+    /// The value `name` was set to as it was given, before normalization:
+    /// by the overrides, the context or the base profile, whichever its
+    /// state comes from; `None` where it holds its default. A task that
+    /// echoes a parameter, as tclean's record echoes `threshold`, reads the
+    /// caller's form here (`0.001` rather than `'0.001Jy'`).
+    pub fn given(&self, name: &str) -> Option<&ParameterValue> {
+        match self.states.get(name)?.origin {
+            ParameterOrigin::Override => self.override_patch.values.get(name),
+            ParameterOrigin::Context => self.context_patch.values.get(name),
+            ParameterOrigin::BaseProfile => self.base_overrides.get(name),
+            ParameterOrigin::Default => None,
+        }
+    }
+
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -134,13 +148,6 @@ impl ParameterSession {
             .iter()
             .filter_map(|(name, state)| state.value.clone().map(|value| (name.clone(), value)))
             .collect()
-    }
-
-    /// Return the active catalog-owned risks for this resolved draft.
-    pub fn required_run_safety(
-        &self,
-    ) -> Result<crate::RunSafetyRequirements, crate::RunSafetyEvaluationError> {
-        crate::required_run_safety(&self.bundle, &self.states)
     }
 
     /// Apply an accepted launch/project-context patch.
@@ -341,8 +348,9 @@ mod tests {
                 category: "Test".into(),
                 summary: "Test".into(),
                 provider_family: "test".into(),
+                casa_task: None,
+                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
-                safety_rules: Vec::new(),
                 bindings: vec![SurfaceParameterBinding {
                     name: "niter".into(),
                     concept: concept.reference(),
@@ -368,6 +376,8 @@ mod tests {
                     },
                     aliases: Vec::new(),
                     reviewed_homonym: None,
+                    unimplemented: None,
+                    unimplemented_forms: None,
                 }],
                 migrations: Vec::new(),
             }),
@@ -507,7 +517,11 @@ mod tests {
             .unwrap();
         assert!(session.states()["summary_paths"].active);
         let profile = session.render_sparse().unwrap();
-        assert!(profile.contains("summary_paths = \"future-stage.cal\""));
+        // A path list, so the one path is kept as a one-element list.
+        assert!(
+            profile.contains("summary_paths = [\"future-stage.cal\"]"),
+            "{profile}"
+        );
     }
 
     #[test]

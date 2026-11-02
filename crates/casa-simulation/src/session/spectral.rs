@@ -77,8 +77,9 @@ impl SpectralWindow {
     /// What the window gives its rows' noise: REF_FREQUENCY, and
     /// |TOTAL_BANDWIDTH| / NUM_CHAN as each channel's bandwidth
     /// (`AtmosCorruptor::simPar`'s `deltaNu`).
-    pub(crate) fn noise(&self) -> WindowNoise {
+    pub(crate) fn noise(&self, spectral_window_id: usize) -> WindowNoise {
         WindowNoise {
+            spectral_window_id,
             reference_frequency_hz: self.reference_frequency_hz,
             channel_bandwidth_hz: self.total_bandwidth_hz.abs() / self.channel_count.max(1) as f64,
         }

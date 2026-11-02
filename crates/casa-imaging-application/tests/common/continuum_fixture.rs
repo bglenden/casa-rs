@@ -734,7 +734,7 @@ pub(super) fn request(
         "channel_count": 1,
         "datacolumn": "DATA",
         "niter": 1,
-        "minor_cycle_length": 1,
+        "cycleniter": 1,
         "nmajor": 1,
         "gain": 1.0,
         "psfcutoff": 0.2,

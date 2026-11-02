@@ -6,7 +6,13 @@
 //! data cube. Each coordinate owns a contiguous range of pixel and world
 //! axes.
 //!
-//! This corresponds to C++ `CoordinateSystem`.
+//! This corresponds to C++ `CoordinateSystem`. casacore instead records
+//! which axes each coordinate owns, so a transposed casacore system keeps
+//! its coordinates in creation order over permuted axes;
+//! [`CoordinateSystem::from_record`] reads it with its coordinates in the
+//! order of their axes.
+
+mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
 
@@ -61,6 +67,29 @@ impl CoordinateSystem {
     /// Panics if `index >= n_coordinates()`.
     pub fn coordinate(&self, index: usize) -> &CoordinateModel {
         &self.coordinates[index]
+    }
+
+    /// Replaces the coordinate at `index` with `coord`, returning the one it
+    /// replaces.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= n_coordinates()`, or if `coord` has a different
+    /// number of pixel or world axes, which would move the axes of the
+    /// coordinates after it.
+    pub fn replace_coordinate(
+        &mut self,
+        index: usize,
+        coord: impl Into<CoordinateModel>,
+    ) -> CoordinateModel {
+        let coord = coord.into();
+        let old = &self.coordinates[index];
+        assert_eq!(
+            (coord.n_pixel_axes(), coord.n_world_axes()),
+            (old.n_pixel_axes(), old.n_world_axes()),
+            "a replacing coordinate has the same axes"
+        );
+        std::mem::replace(&mut self.coordinates[index], coord)
     }
 
     /// Returns the total number of pixel axes across all coordinates.
@@ -209,27 +238,115 @@ impl CoordinateSystem {
     ///
     /// Unknown or malformed coordinate sub-records are rejected; callers never
     /// receive a silently truncated coordinate system.
+    ///
+    /// casacore's `CoordinateSystem::restore` keeps the record's coordinates
+    /// in index order (`direction0`, `stokes1`, ...) and takes the axes each
+    /// owns from `pixelmap<i>` and `worldmap<i>`. A system transposed in
+    /// casacore (`imtrans`, `ia.transpose`, `coordsys.transpose`) keeps its
+    /// coordinates in creation order over permuted axes. This reads the
+    /// coordinates in the order of the axes they own, so that each owns
+    /// consecutive axes as a [`CoordinateSystem`] holds them. The system is
+    /// the same, but its coordinate numbers can differ from casacore's
+    /// (`coordsys.findcoordinate`), and [`to_record`](Self::to_record) numbers
+    /// them in this order. [`record_coordinates`](Self::record_coordinates)
+    /// says where in the record each coordinate came from.
+    ///
+    /// casacore keeps a removed axis in its coordinate, as `-(axis + 1)` in
+    /// the maps with a replacement value. A linear coordinate whose other axes
+    /// do not depend on its removed ones (the offset axis of an `impv`
+    /// position-velocity image) is read over its other axes only, which
+    /// converts as casacore does.
+    ///
+    /// # Errors
+    ///
+    /// [`CoordinateError::UnsupportedAxisLayout`] for a valid casacore record
+    /// that no coordinate order represents: a coordinate whose axes are out
+    /// of its own order (`imtrans order='1023'`) or not adjacent
+    /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
+    /// other removed axis (`imsubimage(dropdeg=True)` of a single-pixel
+    /// direction axis).
+    /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
+    /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let obs_info = match rec.get("obsinfo") {
             Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
             _ => ObsInfo::from_record(rec)?,
         };
-
-        let mut coordinates = Vec::new();
-        for (_, key) in coordinate_record_entries(rec) {
-            let Some(Value::Record(coord_rec)) = rec.get(&key) else {
-                return Err(CoordinateError::InvalidRecord(format!(
-                    "coordinate field '{key}' is not a record"
-                )));
-            };
-            coordinates.push(parse_coordinate_record(&key, coord_rec)?);
-        }
-
+        let coordinates = read_coordinates(rec)?
+            .into_iter()
+            .map(|(_, coordinate)| coordinate)
+            .collect();
         Ok(Self {
             coordinates,
             obs_info,
         })
     }
+
+    /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
+    /// them, in the order of the system's coordinates:
+    /// `record_coordinates(rec)?[i]` is coordinate `i`.
+    ///
+    /// Each names the record field that holds the coordinate and the system
+    /// pixel axis of each of the record coordinate's own axes. These can
+    /// differ from the system's: a transposed casacore system numbers its
+    /// coordinates in creation order, and a linear coordinate's removed axes
+    /// are in the record but not in the system. For a record whose
+    /// coordinates own consecutive axes in index order, as casa-rs writes
+    /// them, the fields come in index order over consecutive axes.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_record`](Self::from_record).
+    pub fn record_coordinates(rec: &RecordValue) -> Result<Vec<RecordCoordinate>, CoordinateError> {
+        Ok(read_coordinates(rec)?
+            .into_iter()
+            .map(|(placed, _)| placed)
+            .collect())
+    }
+}
+
+/// One coordinate of a casacore coordinate-system record, as
+/// [`CoordinateSystem::record_coordinates`] places it in the system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordCoordinate {
+    /// The record field that holds the coordinate (`direction0`,
+    /// `stokes1`, ...).
+    pub field: String,
+    /// For each of the record coordinate's own axes, in its order, the
+    /// system pixel axis it lies on; `None` for an axis the record removed.
+    pub pixel_axes: Vec<Option<usize>>,
+}
+
+/// `rec`'s coordinates with where they come from, in the order of their
+/// axes.
+fn read_coordinates(
+    rec: &RecordValue,
+) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
+    let mut parsed = Vec::new();
+    for (index, key) in coordinate_record_entries(rec) {
+        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field '{key}' is not a record"
+            )));
+        };
+        let coordinate = parse_coordinate_record(&key, coord_rec)?;
+        parsed.push((index, key, coordinate));
+    }
+    let placements = record_axes::coordinate_order(rec, &mut parsed)?;
+    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
+    Ok(placements
+        .into_iter()
+        .map(|placement| {
+            let (_, field, coordinate) = parsed[placement.index]
+                .take()
+                .expect("an order names each coordinate once");
+            let placed = RecordCoordinate {
+                field,
+                pixel_axes: placement.pixel_axes,
+            };
+            (placed, coordinate)
+        })
+        .collect())
 }
 
 impl Default for CoordinateSystem {
@@ -328,6 +445,47 @@ mod tests {
     use casa_types::measures::epoch::MEpoch;
     use casa_types::measures::frequency::{FrequencyRef, MFrequency};
     use casa_types::measures::position::MPosition;
+
+    fn direction() -> DirectionCoordinate {
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [10.0, 20.0],
+        )
+    }
+
+    #[test]
+    fn a_replaced_direction_moves_its_reference_pixel_and_increments() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(direction());
+        cs.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        let before = cs.to_world(&[10.0, 20.0, 0.0]).unwrap();
+        let changed = direction()
+            .with_reference_pixel([30.0, 40.0])
+            .with_increment([-2.5e-6, 2.5e-6]);
+        let old = cs.replace_coordinate(0, changed);
+        assert_eq!(old.reference_pixel(), vec![10.0, 20.0]);
+        // The reference value now sits at the new reference pixel, and a
+        // pixel step is a quarter of what it was.
+        assert_eq!(cs.to_world(&[30.0, 40.0, 0.0]).unwrap(), before);
+        let step = cs.to_world(&[31.0, 40.0, 0.0]).unwrap();
+        let old_step = {
+            let mut old_cs = CoordinateSystem::new();
+            old_cs.add_coordinate(direction());
+            old_cs.to_world(&[10.25, 20.0]).unwrap()
+        };
+        assert!((step[0] - old_step[0]).abs() < 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "the same axes")]
+    fn a_replacing_coordinate_keeps_the_axes() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(direction());
+        cs.replace_coordinate(0, StokesCoordinate::new(vec![StokesType::I]));
+    }
     use casa_types::measures::{EpochRef, MeasFrame, PositionRef};
     use casa_types::{ArrayD, ArrayValue, RecordField, ScalarValue};
     use ndarray::IxDyn;

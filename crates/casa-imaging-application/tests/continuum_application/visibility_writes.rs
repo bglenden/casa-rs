@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! MODEL_DATA and CORRECTED_DATA writes from the final major-cycle pass.
+//! MODEL_DATA and CORRECTED_DATA writes from the final major-cycle pass,
+//! through the observation's update session (#932, step 5).
+
+use casa_imaging_application::ImagingOutcome;
 
 use super::*;
+
+/// Run `imaging`, which writes visibilities back through the batch route's
+/// update session.
+fn execute_writing(imaging: &ImagingRequest) -> ImagingOutcome {
+    execute(imaging).expect("the run")
+}
 
 /// Channel 1 of the line fixture as a one-channel cube, after a
 /// zeroth-order continuum fit to channels 0 and 3, with `overrides`.
@@ -41,7 +50,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         json!({ "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("native save-model application execution");
+    let result = execute_writing(&imaging);
     let visibility = result
         .visibility_products
         .expect("final visibility completion");
@@ -66,7 +75,7 @@ fn application_commits_exact_final_prediction_to_model_data() {
         &root.path().join("savemodel-overwrite"),
         json!({ "savemodel": "modelcolumn" }),
     );
-    let overwrite_result = execute(&overwrite).expect("native in-place MODEL_DATA overwrite");
+    let overwrite_result = execute_writing(&overwrite);
     assert_eq!(
         overwrite_result
             .visibility_products
@@ -88,7 +97,7 @@ fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
         json!({ "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("line-only MODEL_DATA write");
+    let result = execute_writing(&imaging);
     assert_eq!(
         result
             .visibility_products
@@ -152,7 +161,7 @@ fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_p
         json!({ "savemodel": "modelcolumn", "save_continuum_residual": true }),
     );
 
-    let result = execute(&imaging).expect("persist continuum residual");
+    let result = execute_writing(&imaging);
     assert_eq!(result.major_cycle_count, 2);
     assert!(
         result.visibility_products.is_some(),
@@ -237,7 +246,7 @@ fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
     );
     assert!(!imaging.savemodel);
 
-    let result = execute(&imaging).expect("dirty residual-only persistence");
+    let result = execute_writing(&imaging);
     assert_eq!(result.major_cycle_count, 1);
     assert!(
         result.visibility_products.is_some(),
@@ -278,7 +287,7 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
         json!({ "channel_count": 2, "savemodel": "modelcolumn" }),
     );
 
-    let result = execute(&imaging).expect("partially flagged MODEL_DATA write");
+    let result = execute_writing(&imaging);
     let visibility = result
         .visibility_products
         .expect("terminal visibility completion");
@@ -330,4 +339,85 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
             }
         }
     }
+}
+
+/// A model saved over four data descriptions, which a UV range thins and,
+/// for one, empties: the written partitions' blocks are written each to
+/// its own rows, and every row outside the selection keeps its stale
+/// `MODEL_DATA`. Baselines (0,1), (0,2) and (1,2) lie within 100 m and the
+/// rest beyond (see the fixture's UVW); data description 3's rows (the
+/// row number is 3 modulo 4) are moved to 1 km.
+#[test]
+fn a_model_saved_over_partitions_leaves_what_the_uv_range_excludes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&measurement_set).expect("the fixture");
+    for row in (3..ms.row_count()).step_by(4) {
+        ms.main_table_mut()
+            .row_accessor_mut()
+            .set_cell(
+                row,
+                "UVW",
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![1_000.0, 0.0, 0.0]).expect("UVW"),
+                )),
+            )
+            .expect("move a row beyond the UV range");
+    }
+    ms.save().expect("save the fixture");
+    drop(ms);
+    let imaging = request(
+        &measurement_set,
+        &root.path().join("spanning-savemodel"),
+        json!({
+            "ddid": null,
+            "spw": "0~3",
+            "channel_start": null,
+            "channel_count": null,
+            "uvrange": "0~100m",
+            "savemodel": "modelcolumn",
+        }),
+    );
+
+    let result = execute_writing(&imaging);
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen MODEL_DATA");
+    let model_column = reopened
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA column");
+    let uvw = reopened
+        .main_table()
+        .column_accessor("UVW")
+        .expect("UVW column");
+    let mut selected = 0;
+    for row in 0..reopened.row_count() {
+        let Some(Value::Array(ArrayValue::Float64(uvw))) = uvw.get(row).expect("UVW row").cloned()
+        else {
+            panic!("UVW row {row} is a defined vector")
+        };
+        let ArrayValue::Complex32(model) = model_column.get(row).expect("MODEL_DATA row") else {
+            panic!("MODEL_DATA row is complex")
+        };
+        let stale = model
+            .iter()
+            .filter(|value| **value == Complex32::new(9.0, 9.0));
+        if uvw[[0]].hypot(uvw[[1]]) <= 100.0 {
+            selected += 1;
+            assert_eq!(stale.count(), 0, "row {row} is selected and written");
+        } else {
+            assert_eq!(stale.count(), model.len(), "row {row} is excluded and kept");
+        }
+    }
+    assert_eq!(
+        selected, 8,
+        "two rows each of data descriptions 0 and 2, four of 1, none of 3"
+    );
+    assert_eq!(
+        result
+            .visibility_products
+            .expect("terminal visibility completion")
+            .sample_count(),
+        selected * 8 * 4,
+        "every channel and correlation of each selected row is written"
+    );
 }

@@ -2,9 +2,16 @@
 
 //! Immutable observation manifests and exact resolved selection semantics.
 
-use std::{cmp::Ordering, collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, sync::Arc};
 
+use casa_observation::PartitionId;
+use casa_types::Correlation;
 use thiserror::Error;
+
+mod uv;
+
+use uv::canonicalize_uv_selection;
+pub use uv::{SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection};
 
 /// A resolved non-negative MeasurementSet identifier selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +32,18 @@ impl IdSelection {
         }
     }
 
+    /// Whether the selection holds identifier `value`; a negative one is
+    /// never selected by a list. A canonical list is sorted.
+    #[must_use]
+    pub fn holds(&self, value: i64) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(ids) => {
+                u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
+            }
+        }
+    }
+
     fn canonicalize(&mut self, selector: &'static str) -> Result<(), CompileObservationError> {
         if let Self::Only(ids) = self {
             ids.sort_unstable();
@@ -37,146 +56,20 @@ impl IdSelection {
     }
 }
 
-/// One finite scalar selection boundary.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SelectionBound {
-    value: f64,
-    inclusive: bool,
-}
-
-impl SelectionBound {
-    /// Construct an inclusive boundary.
-    #[must_use]
-    pub const fn inclusive(value: f64) -> Self {
-        Self {
-            value,
-            inclusive: true,
-        }
-    }
-
-    /// Construct an exclusive boundary.
-    #[must_use]
-    pub const fn exclusive(value: f64) -> Self {
-        Self {
-            value,
-            inclusive: false,
-        }
-    }
-
-    /// Return the scalar value.
-    #[must_use]
-    pub const fn value(self) -> f64 {
-        self.value
-    }
-
-    /// Return whether the boundary includes its exact value.
-    #[must_use]
-    pub const fn is_inclusive(self) -> bool {
-        self.inclusive
-    }
-
-    fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
-        if !self.value.is_finite() {
-            return Err(CompileObservationError::InvalidScalarRange);
-        }
-        self.value = canonical_zero(self.value);
-        Ok(())
-    }
-}
-
-/// Unit in which a UV-distance predicate is evaluated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum UvDistanceUnit {
-    /// Projected baseline length in metres.
-    Meters,
-    /// Projected baseline length divided by the row's DDID-linked SPW reference wavelength.
-    Wavelengths,
-}
-
-/// One resolved UV-distance interval.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UvDistanceRange {
-    lower: Option<SelectionBound>,
-    upper: Option<SelectionBound>,
-    unit: UvDistanceUnit,
-}
-
-impl UvDistanceRange {
-    /// Construct a possibly one-sided UV-distance interval.
-    #[must_use]
-    pub const fn new(
-        lower: Option<SelectionBound>,
-        upper: Option<SelectionBound>,
-        unit: UvDistanceUnit,
-    ) -> Self {
-        Self { lower, upper, unit }
-    }
-
-    /// Return the lower boundary, if bounded.
-    #[must_use]
-    pub const fn lower(self) -> Option<SelectionBound> {
-        self.lower
-    }
-
-    /// Return the upper boundary, if bounded.
-    #[must_use]
-    pub const fn upper(self) -> Option<SelectionBound> {
-        self.upper
-    }
-
-    /// Return the distance unit.
-    #[must_use]
-    pub const fn unit(self) -> UvDistanceUnit {
-        self.unit
-    }
-}
-
-/// Exact resolved UV-distance selection union.
-#[derive(Debug, Clone, PartialEq)]
-pub enum UvSelection {
-    /// Select every projected baseline length.
-    All,
-    /// Select the union of these intervals.
-    Ranges(Vec<UvDistanceRange>),
-}
-
-/// One intent pattern resolved to an exact `STATE_ID` and `OBS_MODE` value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedIntent {
-    state_id: u32,
-    observation_mode: String,
-}
-
-impl ResolvedIntent {
-    /// Construct one resolved intent.
-    #[must_use]
-    pub const fn new(state_id: u32, observation_mode: String) -> Self {
-        Self {
-            state_id,
-            observation_mode,
-        }
-    }
-
-    /// Return the selected `STATE_ID`.
-    #[must_use]
-    pub const fn state_id(&self) -> u32 {
-        self.state_id
-    }
-
-    /// Return the exact selected `OBS_MODE` metadata value.
-    #[must_use]
-    pub fn observation_mode(&self) -> &str {
-        &self.observation_mode
-    }
-}
-
-/// Exact resolved scan-intent selection.
+/// Exact resolved scan-intent selection: the observing modes of the
+/// selected partitions.
+///
+/// An observing mode is a whole MSv2 `STATE::OBS_MODE`, a comma-separated
+/// list of intents, or an MSv4 partition's intents joined by commas, which
+/// is how XRADIO splits the `OBS_MODE` it converts. A partition's samples
+/// share one mode, so the partitions the selection reads are those of the
+/// selected modes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentSelection {
-    /// Select every state/intent.
+    /// Select every observing mode.
     All,
-    /// Select exactly these resolved state rows.
-    Only(Vec<ResolvedIntent>),
+    /// Select exactly these observing modes, in canonical (sorted) order.
+    Only(Vec<String>),
 }
 
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
@@ -228,255 +121,64 @@ impl RowSelection {
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}
-            IntentSelection::Only(intents) => {
-                for intent in intents.iter() {
-                    if intent.observation_mode.trim().is_empty() {
-                        return Err(CompileObservationError::InvalidIntent);
-                    }
-                }
-                intents.sort_unstable_by_key(|intent| intent.state_id);
-                if intents.is_empty() {
+            IntentSelection::Only(modes) => {
+                if modes.is_empty() || modes.iter().any(|mode| mode.trim().is_empty()) {
                     return Err(CompileObservationError::InvalidIntent);
                 }
-                if intents
-                    .windows(2)
-                    .any(|pair| pair[0].state_id == pair[1].state_id)
-                {
-                    return Err(CompileObservationError::DuplicateIntentState);
-                }
+                modes.sort_unstable();
+                modes.dedup();
             }
         }
         Ok(())
     }
 }
 
-/// One selected physical MAIN row and its resolved `DATA_DESC_ID`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SelectedMainRow {
-    physical_row: u64,
-    data_description_id: u32,
-}
-
-impl SelectedMainRow {
-    /// Construct one resolved MAIN row coordinate.
-    #[must_use]
-    pub const fn new(physical_row: u64, data_description_id: u32) -> Self {
-        Self {
-            physical_row,
-            data_description_id,
-        }
-    }
-
-    /// Return the physical MAIN row index.
-    #[must_use]
-    pub const fn physical_row(self) -> u64 {
-        self.physical_row
-    }
-
-    /// Return the resolved `DATA_DESC_ID` read from the MAIN row.
-    #[must_use]
-    pub const fn data_description_id(self) -> u32 {
-        self.data_description_id
-    }
-}
-
-/// Failure to record a canonical selected-row manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum SelectedRowSequenceError {
-    /// The observed row count cannot be represented canonically.
-    #[error("selected physical MAIN row count exceeds the canonical u64 domain")]
-    RowCountOverflow,
-    /// A physical row lies outside the captured MAIN row population.
-    #[error("physical MAIN row {row} lies outside source row count {source_row_count}")]
-    PhysicalRowOutOfRange {
-        /// Invalid physical row index.
-        row: u64,
-        /// Captured MAIN row population.
-        source_row_count: u64,
-    },
-    /// A physical row appeared more than once.
-    #[error("physical MAIN row {row} appears more than once")]
-    DuplicatePhysicalRow {
-        /// Duplicate physical row index.
-        row: u64,
-    },
-    /// Physical rows were not supplied in ascending MAIN order.
-    #[error("physical MAIN row {row} follows later row {previous_row}")]
-    DescendingPhysicalRow {
-        /// Prior physical row index.
-        previous_row: u64,
-        /// Descending physical row index.
-        row: u64,
-    },
-}
-
-/// Count and DATA_DESCRIPTION identifiers of the selected MAIN rows.
+/// One selected partition of the observation
+/// ([`casa_observation::PartitionId`]): the spectral window its samples are
+/// in and the correlation products it holds, at their stored positions. A
+/// partition's samples share one window, one correlation axis and one
+/// intent; [`RowSelection`] and the read select its fields, times and
+/// samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectedRows {
-    source_row_count: u64,
-    selected_row_count: u64,
-    used_data_description_ids: Arc<[u32]>,
-}
-
-impl SelectedRows {
-    /// Record canonical MAIN row/DDID coordinates without retaining them.
-    ///
-    /// Each row is checked for range, then adjacent duplication, then descending
-    /// order. A non-adjacent repetition necessarily encounters descending order
-    /// first, so validation needs no separate selection-sized duplicate set.
-    pub fn from_ordered_main_rows(
-        source_row_count: u64,
-        rows: impl IntoIterator<Item = SelectedMainRow>,
-    ) -> Result<Self, SelectedRowSequenceError> {
-        let mut builder = SelectedRowsBuilder::new(source_row_count);
-        for row in rows {
-            builder.push(row)?;
-        }
-        Ok(builder.finish())
-    }
-
-    /// Return the source MAIN row count at capture.
-    #[must_use]
-    pub const fn source_row_count(&self) -> u64 {
-        self.source_row_count
-    }
-
-    /// Return the number of selected MAIN rows.
-    #[must_use]
-    pub const fn selected_row_count(&self) -> u64 {
-        self.selected_row_count
-    }
-
-    /// Return heap bytes owned by the shared DATA_DESCRIPTION identifiers.
-    ///
-    /// Cloning [`SelectedRows`] shares this immutable allocation, so a retained
-    /// storage owner charges it once.
-    #[must_use]
-    pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        (2 * size_of::<usize>()).checked_add(
-            self.used_data_description_ids
-                .len()
-                .checked_mul(size_of::<u32>())?,
-        )
-    }
-
-    fn used_data_description_ids(&self) -> &[u32] {
-        &self.used_data_description_ids
-    }
-}
-
-/// Streaming builder for one compact selected-row manifest.
-pub struct SelectedRowsBuilder {
-    source_row_count: u64,
-    selected_row_count: u64,
-    previous_row: Option<u64>,
-    used_data_description_ids: Vec<u32>,
-}
-
-impl SelectedRowsBuilder {
-    /// Begin one physical-order selected-row capture for a fixed MAIN cardinality.
-    #[must_use]
-    pub fn new(source_row_count: u64) -> Self {
-        Self::with_data_description_capacity(source_row_count, 0)
-    }
-
-    /// Begin one capture with bounded storage for the selected DATA_DESCRIPTION identifiers.
-    #[must_use]
-    pub fn with_data_description_capacity(
-        source_row_count: u64,
-        data_description_capacity: usize,
-    ) -> Self {
-        Self {
-            source_row_count,
-            selected_row_count: 0,
-            previous_row: None,
-            used_data_description_ids: Vec::with_capacity(data_description_capacity),
-        }
-    }
-
-    /// Add one selected MAIN row in canonical physical order.
-    pub fn push(&mut self, selected: SelectedMainRow) -> Result<(), SelectedRowSequenceError> {
-        let row = selected.physical_row;
-        self.selected_row_count = self
-            .selected_row_count
-            .checked_add(1)
-            .ok_or(SelectedRowSequenceError::RowCountOverflow)?;
-        if row >= self.source_row_count {
-            return Err(SelectedRowSequenceError::PhysicalRowOutOfRange {
-                row,
-                source_row_count: self.source_row_count,
-            });
-        }
-        if self.previous_row == Some(row) {
-            return Err(SelectedRowSequenceError::DuplicatePhysicalRow { row });
-        }
-        if let Some(previous_row) = self.previous_row
-            && row < previous_row
-        {
-            return Err(SelectedRowSequenceError::DescendingPhysicalRow { previous_row, row });
-        }
-        if !self
-            .used_data_description_ids
-            .contains(&selected.data_description_id)
-        {
-            self.used_data_description_ids
-                .push(selected.data_description_id);
-        }
-        self.previous_row = Some(row);
-        Ok(())
-    }
-
-    /// Finish the compact manifest without retaining the captured row corpus.
-    #[must_use]
-    pub fn finish(mut self) -> SelectedRows {
-        self.used_data_description_ids.sort_unstable();
-        SelectedRows {
-            source_row_count: self.source_row_count,
-            selected_row_count: self.selected_row_count,
-            used_data_description_ids: self.used_data_description_ids.into(),
-        }
-    }
-}
-
-/// One selected `DATA_DESCRIPTION` row and its exact coordinate pairing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DataDescriptionSelection {
-    data_description_id: u32,
+pub struct PartitionSelection {
+    partition: PartitionId,
     spectral_window_id: u32,
-    polarization_id: u32,
+    products: Vec<CorrelationProduct>,
 }
 
-impl DataDescriptionSelection {
-    /// Construct one resolved `DATA_DESCRIPTION` member.
+impl PartitionSelection {
+    /// Select `partition`, whose samples are in spectral window
+    /// `spectral_window_id`, reading `products`.
     #[must_use]
     pub const fn new(
-        data_description_id: u32,
+        partition: PartitionId,
         spectral_window_id: u32,
-        polarization_id: u32,
+        products: Vec<CorrelationProduct>,
     ) -> Self {
         Self {
-            data_description_id,
+            partition,
             spectral_window_id,
-            polarization_id,
+            products,
         }
     }
 
-    /// Return the MAIN `DATA_DESC_ID` and `DATA_DESCRIPTION` row index.
+    /// The partition.
     #[must_use]
-    pub const fn data_description_id(self) -> u32 {
-        self.data_description_id
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
     }
 
-    /// Return the referenced `SPECTRAL_WINDOW_ID`.
+    /// The spectral window number its samples are in, which tasks select
+    /// by and kernel sets and continuum rules are keyed on.
     #[must_use]
-    pub const fn spectral_window_id(self) -> u32 {
+    pub const fn spectral_window_id(&self) -> u32 {
         self.spectral_window_id
     }
 
-    /// Return the referenced `POLARIZATION_ID`.
+    /// The correlation products read, in canonical (stored-position) order.
     #[must_use]
-    pub const fn polarization_id(self) -> u32 {
-        self.polarization_id
+    pub fn products(&self) -> &[CorrelationProduct] {
+        &self.products
     }
 }
 
@@ -540,13 +242,6 @@ impl SpectralWindowCoordinateCatalog {
     pub const fn first_channel_width_hz(&self) -> f64 {
         self.first_channel_width_hz
     }
-
-    fn retained_manifest_bytes(&self) -> Option<usize> {
-        self.channel_frequencies_hz
-            .len()
-            .checked_mul(size_of::<f64>())?
-            .checked_add(2 * size_of::<usize>())
-    }
 }
 
 /// Exact channels selected from one spectral window.
@@ -597,140 +292,17 @@ impl SpectralWindowSelection {
     }
 }
 
-/// Standard MeasurementSet correlation coordinate.
-///
-/// This covers every defined non-`Undefined` casacore `StokesTypes` value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CorrelationType {
-    /// Stokes I.
-    StokesI,
-    /// Stokes Q.
-    StokesQ,
-    /// Stokes U.
-    StokesU,
-    /// Stokes V.
-    StokesV,
-    /// Circular-feed RR.
-    CircularRr,
-    /// Circular-feed RL.
-    CircularRl,
-    /// Circular-feed LR.
-    CircularLr,
-    /// Circular-feed LL.
-    CircularLl,
-    /// Linear-feed XX.
-    LinearXx,
-    /// Linear-feed XY.
-    LinearXy,
-    /// Linear-feed YX.
-    LinearYx,
-    /// Linear-feed YY.
-    LinearYy,
-    /// Mixed-feed RX.
-    MixedRx,
-    /// Mixed-feed RY.
-    MixedRy,
-    /// Mixed-feed LX.
-    MixedLx,
-    /// Mixed-feed LY.
-    MixedLy,
-    /// Mixed-feed XR.
-    MixedXr,
-    /// Mixed-feed XL.
-    MixedXl,
-    /// Mixed-feed YR.
-    MixedYr,
-    /// Mixed-feed YL.
-    MixedYl,
-    /// General quasi-orthogonal PP.
-    QuasiOrthogonalPp,
-    /// General quasi-orthogonal PQ.
-    QuasiOrthogonalPq,
-    /// General quasi-orthogonal QP.
-    QuasiOrthogonalQp,
-    /// General quasi-orthogonal QQ.
-    QuasiOrthogonalQq,
-    /// Single-dish right-circular polarization.
-    RightCircular,
-    /// Single-dish left-circular polarization.
-    LeftCircular,
-    /// Single-dish linear polarization.
-    Linear,
-    /// Total polarized intensity.
-    PolarizedIntensity,
-    /// Linearly polarized intensity.
-    LinearPolarizedIntensity,
-    /// Total polarized fraction.
-    FractionalPolarizedIntensity,
-    /// Linear polarized fraction.
-    FractionalLinearPolarizedIntensity,
-    /// Linear polarization angle in radians.
-    PolarizationAngle,
-}
-
-impl CorrelationType {
-    /// The correlation a MeasurementSet `POLARIZATION.CORR_TYPE` code names
-    /// (casacore `Stokes::StokesTypes`), or `None` for an unknown code.
-    #[must_use]
-    pub const fn from_casa_code(code: i32) -> Option<Self> {
-        Some(match code {
-            1 => Self::StokesI,
-            2 => Self::StokesQ,
-            3 => Self::StokesU,
-            4 => Self::StokesV,
-            5 => Self::CircularRr,
-            6 => Self::CircularRl,
-            7 => Self::CircularLr,
-            8 => Self::CircularLl,
-            9 => Self::LinearXx,
-            10 => Self::LinearXy,
-            11 => Self::LinearYx,
-            12 => Self::LinearYy,
-            13 => Self::MixedRx,
-            14 => Self::MixedRy,
-            15 => Self::MixedLx,
-            16 => Self::MixedLy,
-            17 => Self::MixedXr,
-            18 => Self::MixedXl,
-            19 => Self::MixedYr,
-            20 => Self::MixedYl,
-            21 => Self::QuasiOrthogonalPp,
-            22 => Self::QuasiOrthogonalPq,
-            23 => Self::QuasiOrthogonalQp,
-            24 => Self::QuasiOrthogonalQq,
-            25 => Self::RightCircular,
-            26 => Self::LeftCircular,
-            27 => Self::Linear,
-            28 => Self::PolarizedIntensity,
-            29 => Self::LinearPolarizedIntensity,
-            30 => Self::FractionalPolarizedIntensity,
-            31 => Self::FractionalLinearPolarizedIntensity,
-            32 => Self::PolarizationAngle,
-            _ => return None,
-        })
-    }
-
-    /// Return whether this stored correlation participates directly in a Stokes-I solve.
-    #[must_use]
-    pub const fn contributes_to_stokes_i(self) -> bool {
-        matches!(
-            self,
-            Self::StokesI | Self::CircularRr | Self::CircularLl | Self::LinearXx | Self::LinearYy
-        )
-    }
-}
-
 /// One selected correlation array coordinate and its MeasurementSet meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CorrelationProduct {
     correlation_index: u32,
-    correlation_type: CorrelationType,
+    correlation_type: Correlation,
 }
 
 impl CorrelationProduct {
     /// Construct one selected correlation coordinate.
     #[must_use]
-    pub const fn new(correlation_index: u32, correlation_type: CorrelationType) -> Self {
+    pub const fn new(correlation_index: u32, correlation_type: Correlation) -> Self {
         Self {
             correlation_index,
             correlation_type,
@@ -745,86 +317,58 @@ impl CorrelationProduct {
 
     /// Return the exact MeasurementSet correlation meaning.
     #[must_use]
-    pub const fn correlation_type(self) -> CorrelationType {
+    pub const fn correlation_type(self) -> Correlation {
         self.correlation_type
     }
 }
 
-/// Exact selected products for one `POLARIZATION_ID`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorrelationSelection {
-    polarization_id: u32,
-    products: Vec<CorrelationProduct>,
-}
-
-impl CorrelationSelection {
-    /// Construct one resolved polarization/correlation selection.
-    #[must_use]
-    pub const fn new(polarization_id: u32, products: Vec<CorrelationProduct>) -> Self {
-        Self {
-            polarization_id,
-            products,
-        }
-    }
-
-    /// Return the selected `POLARIZATION_ID`.
-    #[must_use]
-    pub const fn polarization_id(&self) -> u32 {
-        self.polarization_id
-    }
-
-    /// Return exact selected correlation coordinates in canonical array order.
-    #[must_use]
-    pub fn products(&self) -> &[CorrelationProduct] {
-        &self.products
-    }
-}
-
-/// Complete resolved logical selection for one MeasurementSet.
+/// Complete resolved logical selection of one observation: the partitions
+/// read, the channels of their spectral windows, the per-sample predicates,
+/// and how many samples they select.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSelection {
-    rows: SelectedRows,
+    samples: u64,
     rows_filter: RowSelection,
-    data_descriptions: Vec<DataDescriptionSelection>,
+    partitions: Vec<PartitionSelection>,
     spectral_windows: Vec<SpectralWindowSelection>,
-    correlations: Vec<CorrelationSelection>,
 }
 
 impl ObservationSelection {
-    /// Construct exact row, channel, and correlation semantics.
+    /// Select `partitions`, the `spectral_windows`' channels and the samples
+    /// `rows_filter` holds: `samples` of them, each a (time, baseline) of a
+    /// selected partition that the read delivers.
     #[must_use]
     pub const fn new(
-        rows: SelectedRows,
+        samples: u64,
         rows_filter: RowSelection,
-        data_descriptions: Vec<DataDescriptionSelection>,
+        partitions: Vec<PartitionSelection>,
         spectral_windows: Vec<SpectralWindowSelection>,
-        correlations: Vec<CorrelationSelection>,
     ) -> Self {
         Self {
-            rows,
+            samples,
             rows_filter,
-            data_descriptions,
+            partitions,
             spectral_windows,
-            correlations,
         }
     }
 
-    /// Return the compact selected-row manifest.
+    /// The selected samples: the (time, baseline)s of the selected
+    /// partitions that the per-sample predicates hold, padding excluded.
     #[must_use]
-    pub const fn rows(&self) -> &SelectedRows {
-        &self.rows
+    pub const fn samples(&self) -> u64 {
+        self.samples
     }
 
-    /// Return exact row-level selection predicates.
+    /// Return exact per-sample selection predicates.
     #[must_use]
     pub const fn rows_filter(&self) -> &RowSelection {
         &self.rows_filter
     }
 
-    /// Return the exact selected `DATA_DESCRIPTION` coordinate catalog.
+    /// The selected partitions, in canonical (identifier) order.
     #[must_use]
-    pub fn data_descriptions(&self) -> &[DataDescriptionSelection] {
-        &self.data_descriptions
+    pub fn partitions(&self) -> &[PartitionSelection] {
+        &self.partitions
     }
 
     /// Return exact channel selections in canonical spectral-window order.
@@ -833,118 +377,8 @@ impl ObservationSelection {
         &self.spectral_windows
     }
 
-    /// Return exact selected correlation coordinates by polarization setup.
-    #[must_use]
-    pub fn correlations(&self) -> &[CorrelationSelection] {
-        &self.correlations
-    }
-
-    /// Return bytes owned by this shared immutable selection manifest.
-    ///
-    /// The projection includes the Arc allocation, exact row/DDID manifest,
-    /// resolved predicate vectors and strings, and selected coordinate catalogs.
-    #[must_use]
-    pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        let mut bytes = size_of::<Self>().checked_add(2 * size_of::<usize>())?;
-        bytes = bytes.checked_add(self.rows.retained_manifest_bytes()?)?;
-        let id_selection_bytes = |selection: &IdSelection| match selection {
-            IdSelection::All => Some(0),
-            IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
-        };
-        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.fields)?)?;
-        if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
-            bytes = bytes.checked_add(
-                ranges
-                    .capacity()
-                    .checked_mul(size_of::<UvDistanceRange>())?,
-            )?;
-        }
-        if let IntentSelection::Only(intents) = &self.rows_filter.intents {
-            bytes = bytes.checked_add(
-                intents
-                    .capacity()
-                    .checked_mul(size_of::<ResolvedIntent>())?,
-            )?;
-            for intent in intents {
-                bytes = bytes.checked_add(intent.observation_mode.capacity())?;
-            }
-        }
-        bytes = bytes.checked_add(
-            self.data_descriptions
-                .capacity()
-                .checked_mul(size_of::<DataDescriptionSelection>())?,
-        )?;
-        bytes = bytes.checked_add(
-            self.spectral_windows
-                .capacity()
-                .checked_mul(size_of::<SpectralWindowSelection>())?,
-        )?;
-        for selection in &self.spectral_windows {
-            bytes = bytes.checked_add(
-                selection
-                    .channel_indices
-                    .capacity()
-                    .checked_mul(size_of::<u32>())?,
-            )?;
-            if let Some(catalog) = &selection.coordinate_catalog {
-                bytes = bytes.checked_add(catalog.retained_manifest_bytes()?)?;
-            }
-        }
-        bytes = bytes.checked_add(
-            self.correlations
-                .capacity()
-                .checked_mul(size_of::<CorrelationSelection>())?,
-        )?;
-        for selection in &self.correlations {
-            bytes = bytes.checked_add(
-                selection
-                    .products
-                    .capacity()
-                    .checked_mul(size_of::<CorrelationProduct>())?,
-            )?;
-        }
-        Some(bytes)
-    }
-
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.rows_filter.canonicalize()?;
-        self.data_descriptions
-            .sort_unstable_by_key(|selection| selection.data_description_id);
-        if let Some(data_description_id) = self.data_descriptions.windows(2).find_map(|pair| {
-            (pair[0].data_description_id == pair[1].data_description_id)
-                .then_some(pair[0].data_description_id)
-        }) {
-            return Err(CompileObservationError::DuplicateDataDescription {
-                data_description_id,
-            });
-        }
-        if let Some(data_description_id) = self
-            .data_descriptions
-            .iter()
-            .map(|selection| selection.data_description_id)
-            .find(|&data_description_id| i32::try_from(data_description_id).is_err())
-        {
-            return Err(
-                CompileObservationError::DataDescriptionIdOutsideMainDomain {
-                    data_description_id,
-                },
-            );
-        }
-        if self.rows.selected_row_count() > 0 && self.data_descriptions.is_empty() {
-            return Err(CompileObservationError::NoDataDescriptionSelection);
-        }
-        if let Some(&data_description_id) =
-            self.rows.used_data_description_ids().iter().find(|&&used| {
-                !self
-                    .data_descriptions
-                    .iter()
-                    .any(|selection| selection.data_description_id == used)
-            })
-        {
-            return Err(CompileObservationError::SelectedRowDataDescriptionMissing {
-                data_description_id,
-            });
-        }
         for selection in &mut self.spectral_windows {
             selection.channel_indices.sort_unstable();
             selection.channel_indices.dedup();
@@ -969,7 +403,7 @@ impl ObservationSelection {
         }
         self.spectral_windows
             .sort_unstable_by_key(|selection| selection.spectral_window_id);
-        if self.rows.selected_row_count() > 0 && self.spectral_windows.is_empty() {
+        if self.samples > 0 && self.spectral_windows.is_empty() {
             return Err(CompileObservationError::NoSpectralWindowSelection);
         }
         if let Some(spectral_window_id) = self.spectral_windows.windows(2).find_map(|pair| {
@@ -978,22 +412,32 @@ impl ObservationSelection {
         }) {
             return Err(CompileObservationError::DuplicateSpectralWindow { spectral_window_id });
         }
-
-        for selection in &mut self.correlations {
+        self.partitions
+            .sort_unstable_by_key(|selection| selection.partition);
+        if self.samples > 0 && self.partitions.is_empty() {
+            return Err(CompileObservationError::NoPartitionSelection);
+        }
+        if let Some(partition) = self
+            .partitions
+            .windows(2)
+            .find_map(|pair| (pair[0].partition == pair[1].partition).then_some(pair[0].partition))
+        {
+            return Err(CompileObservationError::DuplicatePartition {
+                partition: partition.0,
+            });
+        }
+        for selection in &mut self.partitions {
+            let partition = selection.partition.0;
             selection.products.sort_unstable();
             if selection.products.is_empty() {
-                return Err(CompileObservationError::EmptyCorrelationSelection {
-                    polarization_id: selection.polarization_id,
-                });
+                return Err(CompileObservationError::EmptyCorrelationSelection { partition });
             }
             if selection
                 .products
                 .windows(2)
                 .any(|pair| pair[0].correlation_index == pair[1].correlation_index)
             {
-                return Err(CompileObservationError::DuplicateCorrelationIndex {
-                    polarization_id: selection.polarization_id,
-                });
+                return Err(CompileObservationError::DuplicateCorrelationIndex { partition });
             }
             let types = selection
                 .products
@@ -1001,68 +445,31 @@ impl ObservationSelection {
                 .map(|product| product.correlation_type)
                 .collect::<BTreeSet<_>>();
             if types.len() != selection.products.len() {
-                return Err(CompileObservationError::DuplicateCorrelationType {
-                    polarization_id: selection.polarization_id,
+                return Err(CompileObservationError::DuplicateCorrelationType { partition });
+            }
+            if self
+                .spectral_windows
+                .binary_search_by_key(&selection.spectral_window_id, |window| {
+                    window.spectral_window_id
+                })
+                .is_err()
+            {
+                return Err(CompileObservationError::UnknownPartitionSpectralWindow {
+                    partition,
+                    spectral_window_id: selection.spectral_window_id,
                 });
             }
         }
-        self.correlations
-            .sort_unstable_by_key(|selection| selection.polarization_id);
-        if self.rows.selected_row_count() > 0 && self.correlations.is_empty() {
-            return Err(CompileObservationError::NoCorrelationSelection);
-        }
-        if let Some(polarization_id) = self.correlations.windows(2).find_map(|pair| {
-            (pair[0].polarization_id == pair[1].polarization_id).then_some(pair[0].polarization_id)
-        }) {
-            return Err(CompileObservationError::DuplicatePolarization { polarization_id });
-        }
-        for data_description in &self.data_descriptions {
-            if self
-                .spectral_windows
-                .binary_search_by_key(&data_description.spectral_window_id, |selection| {
-                    selection.spectral_window_id
-                })
-                .is_err()
-            {
-                return Err(
-                    CompileObservationError::UnknownDataDescriptionSpectralWindow {
-                        data_description_id: data_description.data_description_id,
-                        spectral_window_id: data_description.spectral_window_id,
-                    },
-                );
-            }
-            if self
-                .correlations
-                .binary_search_by_key(&data_description.polarization_id, |selection| {
-                    selection.polarization_id
-                })
-                .is_err()
-            {
-                return Err(
-                    CompileObservationError::UnknownDataDescriptionPolarization {
-                        data_description_id: data_description.data_description_id,
-                        polarization_id: data_description.polarization_id,
-                    },
-                );
-            }
-        }
-        if let Some(spectral_window_id) = self.spectral_windows.iter().find_map(|selection| {
-            (!self.data_descriptions.iter().any(|data_description| {
-                data_description.spectral_window_id == selection.spectral_window_id
-            }))
-            .then_some(selection.spectral_window_id)
+        if let Some(spectral_window_id) = self.spectral_windows.iter().find_map(|window| {
+            (!self
+                .partitions
+                .iter()
+                .any(|partition| partition.spectral_window_id == window.spectral_window_id))
+            .then_some(window.spectral_window_id)
         }) {
             return Err(CompileObservationError::OrphanSpectralWindowSelection {
                 spectral_window_id,
             });
-        }
-        if let Some(polarization_id) = self.correlations.iter().find_map(|selection| {
-            (!self.data_descriptions.iter().any(|data_description| {
-                data_description.polarization_id == selection.polarization_id
-            }))
-            .then_some(selection.polarization_id)
-        }) {
-            return Err(CompileObservationError::OrphanCorrelationSelection { polarization_id });
         }
         Ok(())
     }
@@ -1333,8 +740,8 @@ pub enum CompileObservationError {
     /// No MeasurementSet source was supplied.
     #[error("an observation snapshot requires at least one MeasurementSet source")]
     NoSources,
-    /// No source contributed any selected row.
-    #[error("observation selection contains no rows")]
+    /// No source contributed any selected sample.
+    #[error("observation selection contains no samples")]
     EmptySelection,
     /// Source provenance did not name an origin.
     #[error("observation source locator is empty")]
@@ -1351,58 +758,31 @@ pub enum CompileObservationError {
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,
-    /// Resolved intent metadata was empty.
-    #[error("resolved intent must contain a non-empty OBS_MODE value")]
+    /// An intent selection named no observing mode, or an empty one.
+    #[error("an intent selection names a non-empty observing mode, at least one")]
     InvalidIntent,
-    /// More than one intent mapping was supplied for one state.
-    #[error("more than one resolved intent was supplied for one STATE_ID")]
-    DuplicateIntentState,
-    /// One `DATA_DESC_ID` appeared more than once.
-    #[error("duplicate DATA_DESCRIPTION selection for {data_description_id}")]
-    DuplicateDataDescription {
-        /// Duplicate `DATA_DESC_ID`.
-        data_description_id: u32,
+    /// One partition appeared more than once.
+    #[error("duplicate selection of partition {partition}")]
+    DuplicatePartition {
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// A selected `DATA_DESC_ID` cannot be represented by the MeasurementSet MAIN `Int` column.
-    #[error("DATA_DESCRIPTION selection {data_description_id} exceeds the MAIN Int domain")]
-    DataDescriptionIdOutsideMainDomain {
-        /// Unrepresentable `DATA_DESC_ID`.
-        data_description_id: u32,
-    },
-    /// A selected MAIN row named a `DATA_DESC_ID` absent from the compiled catalog.
-    #[error("selected MAIN row references uncatalogued DATA_DESCRIPTION {data_description_id}")]
-    SelectedRowDataDescriptionMissing {
-        /// Uncatalogued `DATA_DESC_ID`.
-        data_description_id: u32,
-    },
-    /// Selected rows had no exact `DATA_DESCRIPTION` coordinate catalog.
-    #[error("selected rows require at least one DATA_DESCRIPTION selection")]
-    NoDataDescriptionSelection,
-    /// A selected `DATA_DESCRIPTION` row referenced an unselected spectral window.
-    #[error(
-        "DATA_DESCRIPTION {data_description_id} references unselected spectral window {spectral_window_id}"
-    )]
-    UnknownDataDescriptionSpectralWindow {
-        /// Selected `DATA_DESC_ID`.
-        data_description_id: u32,
-        /// Unselected `SPECTRAL_WINDOW_ID`.
+    /// Selected samples had no partition to be read from.
+    #[error("selected samples require at least one partition selection")]
+    NoPartitionSelection,
+    /// A selected partition's spectral window was not selected.
+    #[error("partition {partition} is in unselected spectral window {spectral_window_id}")]
+    UnknownPartitionSpectralWindow {
+        /// The partition's identifier.
+        partition: u32,
+        /// Unselected spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// A selected `DATA_DESCRIPTION` row referenced an unselected polarization setup.
-    #[error(
-        "DATA_DESCRIPTION {data_description_id} references unselected polarization {polarization_id}"
-    )]
-    UnknownDataDescriptionPolarization {
-        /// Selected `DATA_DESC_ID`.
-        data_description_id: u32,
-        /// Unselected `POLARIZATION_ID`.
-        polarization_id: u32,
-    },
     /// No spectral-window/channel semantics were supplied.
-    #[error("selected rows require at least one spectral-window/channel selection")]
+    #[error("selected samples require at least one spectral-window/channel selection")]
     NoSpectralWindowSelection,
-    /// One selected spectral window had no DDID or channel coordinate.
-    #[error("spectral window {spectral_window_id} has an empty DDID or channel selection")]
+    /// One selected spectral window had no channel.
+    #[error("spectral window {spectral_window_id} has an empty channel selection")]
     EmptySpectralWindowSelection {
         /// Spectral-window identifier.
         spectral_window_id: u32,
@@ -1421,44 +801,29 @@ pub enum CompileObservationError {
         /// Spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// A selected spectral-window projection had no selected `DATA_DESCRIPTION` member.
-    #[error("spectral window {spectral_window_id} is not referenced by DATA_DESCRIPTION")]
+    /// A selected spectral window held no selected partition.
+    #[error("spectral window {spectral_window_id} holds no selected partition")]
     OrphanSpectralWindowSelection {
-        /// Orphan `SPECTRAL_WINDOW_ID`.
+        /// Orphan spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// No correlation-coordinate semantics were supplied.
-    #[error("selected rows require at least one polarization/correlation selection")]
-    NoCorrelationSelection,
-    /// One polarization setup selected no correlations.
-    #[error("polarization {polarization_id} has an empty correlation selection")]
+    /// One partition selected no correlations.
+    #[error("partition {partition} has an empty correlation selection")]
     EmptyCorrelationSelection {
-        /// Polarization identifier.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// One array coordinate had conflicting correlation meanings.
-    #[error("polarization {polarization_id} repeats a correlation array index")]
+    /// One stored correlation position appeared more than once.
+    #[error("partition {partition} repeats a correlation position")]
     DuplicateCorrelationIndex {
-        /// Polarization identifier.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// One correlation meaning appeared at multiple coordinates.
-    #[error("polarization {polarization_id} repeats a correlation type")]
+    /// One correlation meaning appeared at several positions.
+    #[error("partition {partition} repeats a correlation type")]
     DuplicateCorrelationType {
-        /// Polarization identifier.
-        polarization_id: u32,
-    },
-    /// One polarization setup appeared more than once.
-    #[error("duplicate correlation selection for polarization {polarization_id}")]
-    DuplicatePolarization {
-        /// Polarization identifier.
-        polarization_id: u32,
-    },
-    /// A selected correlation projection had no selected `DATA_DESCRIPTION` member.
-    #[error("polarization {polarization_id} is not referenced by DATA_DESCRIPTION")]
-    OrphanCorrelationSelection {
-        /// Orphan `POLARIZATION_ID`.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
 }
 
@@ -1473,13 +838,13 @@ pub fn compile_observation(
         return Err(CompileObservationError::NoSources);
     }
     let mut sources = Vec::with_capacity(input.sources.len());
-    let mut has_selected_rows = false;
+    let mut has_selected_samples = false;
     for (input_ordinal, source) in input.sources.into_iter().enumerate() {
         let provenance = source.provenance;
         provenance.validate()?;
         let mut selection = source.selection;
         selection.canonicalize()?;
-        has_selected_rows |= selection.rows.selected_row_count() > 0;
+        has_selected_samples |= selection.samples > 0;
         sources.push(ObservationSource {
             provenance,
             input_ordinal,
@@ -1488,111 +853,8 @@ pub fn compile_observation(
             corrected_data_present: source.corrected_data_present,
         });
     }
-    if !has_selected_rows {
+    if !has_selected_samples {
         return Err(CompileObservationError::EmptySelection);
     }
     Ok(ObservationSnapshot { sources })
-}
-
-fn canonicalize_uv_selection(selection: &mut UvSelection) -> Result<(), CompileObservationError> {
-    if let UvSelection::Ranges(ranges) = selection {
-        if ranges.is_empty() {
-            return Err(CompileObservationError::InvalidScalarRange);
-        }
-        for range in ranges.iter_mut() {
-            canonicalize_bounds(&mut range.lower, &mut range.upper, true)?;
-        }
-        ranges.sort_unstable_by(compare_uv_ranges);
-        let mut merged: Vec<UvDistanceRange> = Vec::with_capacity(ranges.len());
-        for range in ranges.drain(..) {
-            if let Some(last) = merged.last_mut()
-                && last.unit == range.unit
-                && ranges_overlap(last.upper, range.lower)
-            {
-                last.upper = union_upper(last.upper, range.upper);
-            } else {
-                merged.push(range);
-            }
-        }
-        *ranges = merged;
-    }
-    Ok(())
-}
-
-fn canonicalize_bounds(
-    lower: &mut Option<SelectionBound>,
-    upper: &mut Option<SelectionBound>,
-    non_negative: bool,
-) -> Result<(), CompileObservationError> {
-    if lower.is_none() && upper.is_none() {
-        return Err(CompileObservationError::InvalidScalarRange);
-    }
-    if let Some(bound) = lower {
-        bound.canonicalize()?;
-        if non_negative && bound.value < 0.0 {
-            return Err(CompileObservationError::NegativeUvDistance);
-        }
-    }
-    if let Some(bound) = upper {
-        bound.canonicalize()?;
-        if non_negative && bound.value < 0.0 {
-            return Err(CompileObservationError::NegativeUvDistance);
-        }
-    }
-    if let (Some(lower), Some(upper)) = (*lower, *upper)
-        && (lower.value > upper.value
-            || (lower.value == upper.value && !(lower.inclusive && upper.inclusive)))
-    {
-        return Err(CompileObservationError::InvalidScalarRange);
-    }
-    Ok(())
-}
-
-fn compare_uv_ranges(left: &UvDistanceRange, right: &UvDistanceRange) -> Ordering {
-    left.unit
-        .cmp(&right.unit)
-        .then_with(|| compare_lower(left.lower, right.lower))
-}
-
-fn compare_lower(left: Option<SelectionBound>, right: Option<SelectionBound>) -> Ordering {
-    match (left, right) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (Some(left), Some(right)) => left
-            .value
-            .total_cmp(&right.value)
-            .then_with(|| right.inclusive.cmp(&left.inclusive)),
-    }
-}
-
-fn ranges_overlap(upper: Option<SelectionBound>, lower: Option<SelectionBound>) -> bool {
-    match (upper, lower) {
-        (None, _) | (_, None) => true,
-        (Some(upper), Some(lower)) => {
-            upper.value > lower.value
-                || (upper.value == lower.value && (upper.inclusive || lower.inclusive))
-        }
-    }
-}
-
-fn union_upper(
-    left: Option<SelectionBound>,
-    right: Option<SelectionBound>,
-) -> Option<SelectionBound> {
-    match (left, right) {
-        (None, _) | (_, None) => None,
-        (Some(left), Some(right)) => match left.value.total_cmp(&right.value) {
-            Ordering::Less => Some(right),
-            Ordering::Greater => Some(left),
-            Ordering::Equal => Some(SelectionBound {
-                value: left.value,
-                inclusive: left.inclusive || right.inclusive,
-            }),
-        },
-    }
-}
-
-const fn canonical_zero(value: f64) -> f64 {
-    if value == 0.0 { 0.0 } else { value }
 }

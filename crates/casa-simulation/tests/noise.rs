@@ -498,13 +498,8 @@ fn setnoise_refuses_as_casa_does_and_names_later_phases() {
             "Caught exception: unsupported mode bogus in setnoise()".to_string()
         )
     );
-    // `tsys-manual` is implemented (`tests/tsys_noise.rs`).
-    let (refused, message) = outcome(session.set_noise(&mode("tsys-atm")));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(
-        message.contains("tsys-atm") && message.contains("Phase 4"),
-        "{message}"
-    );
+    // The Tsys modes are implemented (`tests/tsys_noise.rs`,
+    // `tests/tsys_atm_noise.rs`).
     let table = NoiseSpec {
         on_the_fly: false,
         ..simple_noise(SIGMA_JY)

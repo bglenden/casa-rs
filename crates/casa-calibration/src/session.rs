@@ -15,8 +15,10 @@ use crate::bandpass::{
     BandpassSolveError, BandpassSolveReport, BandpassSolveRequest, solve_bandpass,
 };
 use crate::execute::EvaluatedApplyRow;
+use crate::selected_data::SelectedData;
 use crate::solve::grouping::{
-    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows, resolve_refant,
+    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows,
+    refuse_shared_spectral_windows, resolve_refant,
 };
 use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
 
@@ -128,6 +130,8 @@ pub(crate) struct CalibrationSolveContext {
     pub(crate) refant_id: i32,
     pub(crate) available_antennas: BTreeSet<i32>,
     pub(crate) rows: Vec<SelectedSolveRow>,
+    /// What `rows` select, for the solve's report.
+    pub(crate) selected_data: SelectedData,
     pub(crate) preapplied_rows: Option<HashMap<usize, EvaluatedApplyRow>>,
 }
 
@@ -139,10 +143,15 @@ pub(crate) fn prepare_calibration_solve(
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
+    let refant_id = resolve_refant(measurement_set, refant)?;
+    let available_antennas = all_antenna_ids(measurement_set)?;
+    let rows = collect_selected_rows(measurement_set, selection)?;
+    refuse_shared_spectral_windows(&rows)?;
     Ok(CalibrationSolveContext {
-        refant_id: resolve_refant(measurement_set, refant)?,
-        available_antennas: all_antenna_ids(measurement_set)?,
-        rows: collect_selected_rows(measurement_set, selection)?,
+        refant_id,
+        available_antennas,
+        selected_data: SelectedData::of(measurement_set, &rows)?,
+        rows,
         preapplied_rows: load_preapplied_rows(
             measurement_set,
             selection,

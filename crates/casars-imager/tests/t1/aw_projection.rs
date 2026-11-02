@@ -33,10 +33,7 @@ const FREQUENCY_HZ: f64 = 1.5e9;
 /// a 41″ synthesised beam, so a 10″ cell images six 28′ primary beams in
 /// 1024 cells and the 25 m aperture spans 25 uv cells of the catalog.
 const CONFIGURATION_SHRINK: f64 = 35.0;
-const GEOMETRY: Geometry = Geometry {
-    image_size: 1024,
-    cell_arcsec: 10.0,
-};
+const GEOMETRY: Geometry = Geometry::square(1024, 10.0);
 const CENTRE: Component = Component {
     offset_px: [0, 0],
     flux_jy: 1.0,
@@ -301,10 +298,7 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
 
 /// The two-window track's geometry: the same 10″ cell over three primary
 /// beams, half the side of [`GEOMETRY`].
-const TWO_WINDOW_GEOMETRY: Geometry = Geometry {
-    image_size: 512,
-    cell_arcsec: 10.0,
-};
+const TWO_WINDOW_GEOMETRY: Geometry = Geometry::square(512, 10.0);
 
 /// [`setup`] observing two L-band windows, 1.4 and 1.6 GHz, on the
 /// smaller [`TWO_WINDOW_GEOMETRY`].
@@ -437,4 +431,23 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
         "A images both windows"
     );
     assert_same_products(&reused, &fresh);
+}
+
+/// Under `usepointing` each row's antenna pointing and its AW pointing
+/// pixel come from the POINTING table (one row an integration, as the
+/// simulator writes for a stated field), over two windows whose epochs the
+/// batches visit window by window, and whose two partitions share one
+/// pointing query (#932 step 3b).
+#[test]
+fn aw_projection_images_on_its_pointing_table() {
+    let setup = Setup {
+        fields: vec![Setup::pointing([0.0, 0.0])],
+        ..two_window_setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
+    controls["usepointing"] = json!(true);
+    observation.image("aw-pointing-image", controls);
 }

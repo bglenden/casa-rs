@@ -188,6 +188,12 @@ fn parse_ism_dm_blob(data: &[u8]) -> Result<String, StorageError> {
     Ok(name)
 }
 
+/// The manager's name (`DataManager::dataManagerName()`), from its blob in
+/// `table.dat`; `None` for a blob that does not parse.
+pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
+    parse_ism_dm_blob(data).ok()
+}
+
 // ---------------------------------------------------------------------------
 // Index parsing (at end of file, after all buckets)
 // ---------------------------------------------------------------------------

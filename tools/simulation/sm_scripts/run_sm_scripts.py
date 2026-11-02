@@ -14,14 +14,16 @@ then writes `<out>/casa/manifest.json` and compares every MeasurementSet pair
 with `compare_sm_ms.py` under CASA's Python (`<out>/report.json`).
 
 **TIME.** CASA's simulator stores TAI in a TIME column labelled UTC, so its
-rows lie TAI - UTC (37 s) after the requested times; casa-rs stores the
-requested UTC (plan decision 5). To compare rows at equal stored TIME, the
-casa-rs run requests every scan 37 s later, as
+rows lie TAI - UTC after the requested times; casa-rs stores the requested
+UTC (plan decision 5). To compare rows at equal stored TIME, the casa-rs run
+requests every scan that much later, as
 `crates/casa-simulation/examples/observe_scenarios.rs` does: before running a
 script the runner replaces `casars.tools.simulator` by a delegating wrapper
-(below) whose `observe` adds `--time-shift-s` to `starttime` and `stoptime`.
-The reference time is unchanged, so the hour-angle offset and SOURCE.TIME are
-CASA's. The script text is not touched apart from its imports.
+(below) whose `settimes` takes TAI - UTC at its reference epoch from the
+measures data (`casars.tools.measures`) and whose `observe` adds it to
+`starttime` and `stoptime`. The reference time is unchanged, so the
+hour-angle offset and SOURCE.TIME are CASA's. The script text is not touched
+apart from its imports.
 
     python3 tools/simulation/sm_scripts/run_sm_scripts.py --out /tmp/sm-acceptance \\
         --casars-python <venv>/bin/python
@@ -55,7 +57,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", required=True, help="output directory (replaced)")
     parser.add_argument("--casa-python", default=CASA_PYTHON, help="CASA's Python")
     parser.add_argument("--casars-python", default=sys.executable, help="a Python with casars installed")
-    parser.add_argument("--time-shift-s", type=float, default=37.0, help="TAI - UTC added to casa-rs scans")
     parser.add_argument("--only", nargs="*", help="run only these scripts (file names)")
     parser.add_argument("--engine", choices=("casa", "casars"), help=argparse.SUPPRESS)
     parser.add_argument("--script", help=argparse.SUPPRESS)
@@ -73,39 +74,49 @@ def casars_text(text: str) -> str:
     return text[: start + len(BEGIN)] + "\n" + CASARS_IMPORTS + text[end:]
 
 
-def shift_casars_scans(shift_s: float) -> None:
-    """Make `casars.tools.simulator` request every scan `shift_s` later."""
+def shift_casars_scans() -> None:
+    """Make `casars.tools.simulator` request every scan TAI - UTC later,
+    TAI - UTC at its `settimes` reference epoch by the measures data."""
     import casars.tools
-    from casars.tools import quanta
+    from casars.tools import measures, quanta
 
     real = casars.tools.simulator
-    qa = quanta()
-
-    def later(time: object) -> str:
-        seconds = qa.convert(qa.quantity(time), "s")["value"]
-        return f"{seconds + shift_s!r}s"
+    qa, me = quanta(), measures()
 
     class simulator:  # noqa: N801 - CASA's class name
-        """casars' simulator, with each scan `shift_s` later (TAI labelled UTC)."""
+        """casars' simulator, with each scan TAI - UTC later (TAI labelled UTC)."""
 
         def __init__(self, *args: object, **kwargs: object) -> None:
             self._sm = real(*args, **kwargs)
+            self._shift_s = None
 
         def __getattr__(self, name: str) -> object:
             return getattr(self._sm, name)
 
+        def settimes(self, integrationtime=[], usehourangle=True, referencetime=[], *args, **kwargs):  # noqa: B006 - CASA's defaults
+            utc = me.measure(referencetime, "UTC")["m0"]["value"]
+            tai = me.measure(referencetime, "TAI")["m0"]["value"]
+            self._shift_s = (tai - utc) * 86400.0
+            return self._sm.settimes(integrationtime, usehourangle, referencetime, *args, **kwargs)
+
+        def later(self, time: object) -> str:
+            if self._shift_s is None:
+                raise RuntimeError("the casa-rs run shifts scans by TAI - UTC at settimes' reference epoch")
+            seconds = qa.convert(qa.quantity(time), "s")["value"]
+            return f"{seconds + self._shift_s!r}s"
+
         def observe(self, sourcename="", spwname="", starttime=[], stoptime=[], *args, **kwargs):  # noqa: B006 - CASA's defaults
-            return self._sm.observe(sourcename, spwname, later(starttime), later(stoptime), *args, **kwargs)
+            return self._sm.observe(sourcename, spwname, self.later(starttime), self.later(stoptime), *args, **kwargs)
 
     casars.tools.simulator = simulator
 
 
-def run_one(engine: str, script: str, shift_s: float) -> None:
+def run_one(engine: str, script: str) -> None:
     """Run one script in the current directory (the child process)."""
     with open(script, encoding="utf-8") as handle:
         text = handle.read()
     if engine == "casars":
-        shift_casars_scans(shift_s)
+        shift_casars_scans()
         text = casars_text(text)
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as handle:
         handle.write(text)
@@ -119,7 +130,7 @@ def run_one(engine: str, script: str, shift_s: float) -> None:
 def main() -> int:
     args = parse_args()
     if args.engine:
-        run_one(args.engine, args.script, args.time_shift_s)
+        run_one(args.engine, args.script)
         return 0
     out = os.path.abspath(args.out)
     shutil.rmtree(out, ignore_errors=True)
@@ -129,7 +140,7 @@ def main() -> int:
         os.makedirs(workdir)
         for script in scripts(args.only):
             command = [python, "-I", os.path.abspath(__file__), "--out", out, "--engine", engine,
-                       "--script", script, "--time-shift-s", str(args.time_shift_s)]
+                       "--script", script]
             print(f"== {engine}: {os.path.basename(script)}", flush=True)
             if subprocess.run(command, cwd=workdir, check=False).returncode != 0:
                 print(f"   {engine} run of {os.path.basename(script)} failed")
@@ -142,7 +153,6 @@ def main() -> int:
     manifest = {
         "schema_version": 1,
         "purpose": "simulation Phase 1 acceptance: CASA sm scripts run with only their imports changed (#841)",
-        "casa_tai_minus_utc_s": args.time_shift_s,
         "scenarios": scenarios,
     }
     with open(os.path.join(casa_dir, "manifest.json"), "w", encoding="utf-8") as handle:

@@ -3,7 +3,7 @@
 //! compiled problem: plan section 5.3 projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    AntennaResponseClass, CompiledImageDomain, CompiledProblem, CorrelationType, InstrumentModel,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, InstrumentModel,
     ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
@@ -16,6 +16,7 @@ use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
     Demand, FRAME_MARGIN, HostResources, Reservation, ResourcePolicy, admit, row_layout,
 };
+use casa_types::Correlation;
 
 use super::ImagingError;
 use crate::AwCatalogDeployment;
@@ -104,16 +105,16 @@ impl DomainOperator {
 }
 
 /// Correlation types every block delivers, in block order: the first
-/// source's selection, which every source must share.
+/// source's selection, which every partition of every source must share.
 pub(crate) fn selected_correlations(
     problem: &CompiledProblem,
-) -> Result<Vec<CorrelationType>, ImagingError> {
+) -> Result<Vec<Correlation>, ImagingError> {
     let mut layouts = problem
         .observation_transaction()
         .read_set()
         .sources()
         .iter()
-        .flat_map(|source| source.selection().correlations())
+        .flat_map(|source| source.selection().partitions())
         .map(|selection| {
             selection
                 .products()
@@ -126,7 +127,7 @@ pub(crate) fn selected_correlations(
     })?;
     if layouts.any(|layout| layout != first) {
         return Err(ImagingError::Unsupported {
-            reason: "selected polarization setups differ in their correlations",
+            reason: "selected partitions differ in their correlations",
         });
     }
     Ok(first)
@@ -261,7 +262,7 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     extent: ImageExtent,
-    correlations: &[CorrelationType],
+    correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
     aw_catalog: Option<&AwCatalogDeployment>,
@@ -488,7 +489,8 @@ pub(crate) fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, 
         .any(|pixel| pixel.fract() != 0.0 || *pixel < 0.0)
     {
         return Err(ImagingError::Unsupported {
-            reason: "the image reference pixel must be a whole pixel",
+            reason: "an odd image size is not supported: the reference pixel, half the size, \
+                     must be a whole pixel",
         });
     }
     Ok(ImageExtent {

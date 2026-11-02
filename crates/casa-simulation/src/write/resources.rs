@@ -12,14 +12,18 @@
 //!    a small budget reaches.
 //! 2. **The pipeline.** The batch being filled, the geometry of the
 //!    integrations it spans, each worker's scratch and, when the session
-//!    predicts, the predictor, its block of native rows and (on Metal) the
-//!    device copies of the model grids. A block is the whole batch when
+//!    predicts, the predictor, its block of native rows, the per-field
+//!    model grids of one segment with a set's preparation, and (on Metal)
+//!    the device copies of the model grids. A block is the whole batch when
 //!    that fits with the policy's streaming workers; otherwise blocks are
 //!    small, and as many workers as fit what is then free are admitted
 //!    (#737's rule: workers shrink first). With one worker that does not
 //!    fit, `close` is refused.
+//! 3. **More per-field grids.** As many more as the budget leaves free,
+//!    up to a set for every field, so fewer fields are prepared again
+//!    ([`super::grids`]). They never cost a worker.
 //!
-//! The model grids themselves were admitted by `predict`, and are held.
+//! The model grids `predict` prepared were admitted by it, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
 use casa_imaging_runtime::pass::BackendChoice;
@@ -31,14 +35,20 @@ use casa_types::Complex32;
 use super::geometry::RowGeometry;
 use super::pipeline::Integration;
 use super::prediction::PredictionStage;
+use crate::corrupt::jones::JonesTerm;
+use crate::corrupt::{BatchScales, NoiseScratch, TsysAtm};
 use crate::session::SessionResources;
 use crate::session::error::{SimulatorError, SimulatorResult};
+use crate::session::plan::DataPlan;
 
 /// The writer's phase, as an admission refusal names it.
 pub(super) const WRITER_PHASE: &str = "the simulator's MeasurementSet writer";
 
 /// The pipeline's phase, as an admission refusal names it.
 pub(super) const PIPELINE_PHASE: &str = "the simulator's geometry, prediction and noise";
+
+/// The phase of the per-field grids beyond the pipeline's.
+const FIELD_GRIDS_PHASE: &str = "the simulator's per-field model grids";
 
 /// Batches the writer holds at once: the one it writes and one queued.
 const WRITER_LIVE_BATCHES: usize = 2;
@@ -67,6 +77,76 @@ pub(super) struct MainShape<'a> {
     /// Heap of the subtable columns the save generates (POINTING's), which
     /// grows with the scans.
     pub(super) generated_bytes: u64,
+    /// What a batch's `tsys-atm` noise holds beside the cells.
+    pub(super) noise_scales: NoiseScales,
+}
+
+/// What a batch's `tsys-atm` noise and `settrop` terms hold beside the
+/// cells: their antenna scales and phasors ([`BatchScales`]), and each
+/// worker's σ of a row ([`NoiseScratch`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct NoiseScales {
+    /// The plan's `tsys-atm` terms.
+    terms: usize,
+    /// The plan's `settrop` terms.
+    tropospheric_terms: usize,
+    /// Channels of the cells.
+    channels: usize,
+    /// Rows of the smallest integration, and antennas of the largest, when
+    /// the rows come in whole integrations ([`BatchScales::most_entries`]).
+    integrations: Option<(usize, usize)>,
+}
+
+impl NoiseScales {
+    /// What `plan`'s corruptions hold, for cells of `channels` channels and
+    /// the rows' `integrations`. Every `corrupt` covers scan 0, so its
+    /// corruptions are all the plan's.
+    pub(super) fn of(
+        plan: &DataPlan,
+        channels: usize,
+        integrations: Option<(usize, usize)>,
+    ) -> Self {
+        let mut models: Vec<*const TsysAtm> = plan
+            .noise_for_scan(0)
+            .iter()
+            .filter_map(|application| application.tsys_atm().map(std::ptr::from_ref))
+            .collect();
+        models.sort_unstable();
+        models.dedup();
+        let mut tropospheric: Vec<*const JonesTerm> = plan
+            .corruptions_for_scan(0)
+            .flat_map(|(_, jones)| jones)
+            .filter(|term| term.tropospheric_phase().is_some())
+            .map(|term| std::ptr::from_ref::<JonesTerm>(term))
+            .collect();
+        tropospheric.sort_unstable();
+        tropospheric.dedup();
+        Self {
+            terms: models.len(),
+            tropospheric_terms: tropospheric.len(),
+            channels,
+            integrations,
+        }
+    }
+
+    /// The most antenna-scale and phasor entries a batch of `rows` rows
+    /// needs: the room its table reserves.
+    pub(super) fn entries(&self, rows: usize) -> (usize, usize) {
+        (
+            BatchScales::most_entries(self.terms, rows, self.integrations),
+            BatchScales::most_entries(self.tropospheric_terms, rows, self.integrations),
+        )
+    }
+
+    /// The most a batch of `rows` rows holds with `workers` workers.
+    pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
+        let scratch = if self.terms == 0 {
+            0
+        } else {
+            workers as u64 * NoiseScratch::bytes(self.channels)
+        };
+        BatchScales::bytes(self.entries(rows), self.channels) + scratch
+    }
 }
 
 /// What `close` was admitted: the write plan, the workers that fit, and the
@@ -80,6 +160,8 @@ pub(super) struct MainAdmission {
     /// Rows of a prediction block: the write batch's, or fewer when the
     /// budget is small.
     pub(super) block_rows: usize,
+    /// Bytes the per-field model grids may hold ([`admit_field_grids`]).
+    pub(super) grid_bytes: u64,
     pub(super) reservation: Reservation,
 }
 
@@ -143,13 +225,44 @@ pub(super) fn admit_main_write(
     )
     .map_err(SimulatorError::admission)?;
     reservation.join(pipeline);
+    let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
     Ok(MainAdmission {
         plan,
         cores,
         policy_cores,
         block_rows,
+        grid_bytes,
         reservation,
     })
+}
+
+/// Admit, into `reservation`, as many of `prediction`'s per-field grids
+/// beyond the pipeline's ([`PredictionStage::extra_grid_bytes`]) as the
+/// budget leaves free, once the pipeline's workers are admitted: the bytes
+/// the grids may then hold, the pipeline's set and these.
+pub(super) fn admit_field_grids(
+    resources: &SessionResources,
+    prediction: Option<&PredictionStage<'_>>,
+    reservation: &mut Reservation,
+) -> SimulatorResult<u64> {
+    let Some(stage) = prediction else {
+        return Ok(0);
+    };
+    let (host, policy) = (resources.host(), resources.policy());
+    let extra = stage.extra_grid_bytes().min(free_memory(host, policy));
+    if extra > 0 {
+        let grids = admit(
+            host,
+            policy,
+            &Demand {
+                phase: FIELD_GRIDS_PHASE,
+                memory: extra,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        reservation.join(grids);
+    }
+    Ok(stage.minimum_grid_bytes() + extra)
 }
 
 /// The MAIN write plan with `available_bytes` for the writer.
@@ -208,7 +321,8 @@ fn refusal_or(
 /// Bytes the pipeline holds beside the writer, with `cores`' streaming
 /// workers: the batch being filled, the geometry of the integrations it
 /// spans (with the unwritten rows of the one before), the list of those
-/// integrations, one integration's scalar runs, and each worker's scratch.
+/// integrations, one integration's scalar runs, each worker's scratch, and
+/// the batch's `tsys-atm` antenna scales.
 pub(super) fn pipeline_bytes(
     shape: &MainShape<'_>,
     batch_rows: usize,
@@ -225,7 +339,10 @@ pub(super) fn pipeline_bytes(
     let integrations = (rows + 2) * size(size_of::<Integration>());
     let scalars = largest * (4 + 4 + 1);
     let workers = cores.streaming_workers as u64 * shape.antennas as u64 * ANTENNA_SCRATCH_BYTES;
-    batch + geometry + integrations + scalars + workers
+    let noise = shape
+        .noise_scales
+        .bytes(batch_rows, cores.streaming_workers);
+    batch + geometry + integrations + scalars + workers + noise
 }
 
 fn to_usize(bytes: u64) -> usize {
@@ -248,6 +365,7 @@ mod tests {
             largest_integration: 1_000,
             antennas: 44,
             generated_bytes: 0,
+            noise_scales: NoiseScales::default(),
         }
     }
 

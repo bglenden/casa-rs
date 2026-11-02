@@ -7,14 +7,20 @@
 //! scalars a batch at a time, as a simulator does. While it streams, the
 //! session's heap beyond what was live before it stays within the plan's
 //! writer-owned bytes ([`MeasurementSetWritePlan::maximum_resident_bytes`])
-//! and the producer's own batch. Finalizing the scalar columns and saving
-//! MAIN do not grow with the row count either. A plan of scalar columns
-//! alone, at the smallest budget it admits, holds its plan through the
-//! save that encodes them; a smaller budget is refused.
+//! and the producer's own batch, and so do finalizing the scalar columns
+//! and saving MAIN. For four times the rows the plan is the same, the
+//! session stays within it, and what streaming and finishing allocate apart
+//! from the visibility batches does not grow. The batches are counted
+//! apart because how many are live is a scheduling matter: two or three
+//! while the producer streams, as the writer falls behind it, and one or
+//! two still being written when the producer's last is sent, which the
+//! writer frees while MAIN saves. A plan of scalar columns alone, at the
+//! smallest budget it admits, holds its plan through the save that encodes
+//! them; a smaller budget is refused.
 //!
-//! This binary's global allocator counts the live heap; the counters are
-//! the process's, so each law runs alone in a process of its own
-//! ([`alone`]).
+//! This binary's global allocator counts the live heap, and apart from it
+//! the blocks allocated in a phase; the counters are the process's, so
+//! each law runs alone in a process of its own ([`alone`]).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
@@ -35,60 +41,210 @@ use num_complex::Complex32;
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
 
-/// The system allocator, counting live bytes and their largest value.
+/// The system allocator, counting live bytes and their largest value, and
+/// apart from them the bytes of blocks allocated in an open phase
+/// ([`open_phase`]). Each block is preceded by a header that holds the
+/// phase it was allocated in, so a phase's frees of older blocks are not
+/// netted against what the phase allocates.
 struct CountingHeap;
 
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
 
-fn grow(bytes: u64) {
-    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK.fetch_max(live, Ordering::Relaxed);
+/// The open phase, which new blocks are tagged with; 0 while none is open.
+static PHASE: AtomicU64 = AtomicU64::new(0);
+/// Live bytes of blocks allocated in the open phase, and their largest
+/// value.
+static PHASE_LIVE: AtomicU64 = AtomicU64::new(0);
+static PHASE_PEAK: AtomicU64 = AtomicU64::new(0);
+
+/// Count, until [`close_phase`], the blocks allocated from now on.
+fn open_phase() {
+    static OPENED: AtomicU64 = AtomicU64::new(0);
+    PHASE_LIVE.store(0, Ordering::Relaxed);
+    PHASE_PEAK.store(0, Ordering::Relaxed);
+    // Released after the counts are zeroed, so a block tagged with the new
+    // phase is counted after them.
+    PHASE.store(
+        OPENED.fetch_add(1, Ordering::Relaxed) + 1,
+        Ordering::Release,
+    );
 }
 
-// SAFETY: forwards to `System` with the caller's arguments and adds atomic
-// bookkeeping only.
+/// The most bytes of the blocks allocated since [`open_phase`] that were
+/// live at once.
+fn close_phase() -> u64 {
+    PHASE.store(0, Ordering::Release);
+    PHASE_PEAK.load(Ordering::Relaxed)
+}
+
+std::thread_local! {
+    /// Whether this thread's blocks are left out of the open phase
+    /// ([`uncounted`]).
+    static UNCOUNTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `work` with the blocks this thread allocates in it left out of the
+/// open phase.
+fn uncounted<T>(work: impl FnOnce() -> T) -> T {
+    UNCOUNTED.set(true);
+    let result = work();
+    UNCOUNTED.set(false);
+    result
+}
+
+/// The phase a block allocated now is tagged with: the open one, or 0
+/// while none is or this thread's blocks are [`uncounted`].
+fn counted_phase() -> u64 {
+    if UNCOUNTED.try_with(std::cell::Cell::get).unwrap_or(false) {
+        return 0;
+    }
+    PHASE.load(Ordering::Acquire)
+}
+
+/// Count a new block of `bytes` tagged `phase`.
+fn grow(bytes: u64, phase: u64) {
+    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    PEAK.fetch_max(live, Ordering::Relaxed);
+    if phase != 0 {
+        let live = PHASE_LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        PHASE_PEAK.fetch_max(live, Ordering::Relaxed);
+    }
+}
+
+/// Count the free of a block of `bytes` tagged `phase`.
+fn shrink(bytes: u64, phase: u64) {
+    LIVE.fetch_sub(bytes, Ordering::Relaxed);
+    if phase != 0 && phase == PHASE.load(Ordering::Acquire) {
+        PHASE_LIVE.fetch_sub(bytes, Ordering::Relaxed);
+    }
+}
+
+/// The header's bytes before a block of `layout`: the phase tag, padded to
+/// keep the caller's bytes aligned.
+fn header(layout: Layout) -> usize {
+    layout.align().max(16)
+}
+
+/// What the system allocates for `size` bytes of `layout` behind a header.
+fn widened(layout: Layout, size: usize) -> Option<Layout> {
+    let header = header(layout);
+    Layout::from_size_align(size.checked_add(header)?, header).ok()
+}
+
+/// Write `phase` into the header of the block at `base`, and return the
+/// caller's bytes.
+///
+/// # Safety
+///
+/// `base` starts a block of at least `header` bytes aligned to `header`,
+/// which is at least 16.
+unsafe fn tag(base: *mut u8, header: usize, phase: u64) -> *mut u8 {
+    // SAFETY: the caller's bytes start `header` bytes in, and the tag is
+    // the aligned word before them.
+    unsafe {
+        let pointer = base.add(header);
+        pointer.cast::<u64>().sub(1).write(phase);
+        pointer
+    }
+}
+
+/// The start of the block whose caller's bytes are at `pointer`, and the
+/// phase it was tagged with.
+///
+/// # Safety
+///
+/// `pointer` came from this allocator for `layout`.
+unsafe fn untag(pointer: *mut u8, layout: Layout) -> (*mut u8, u64) {
+    // SAFETY: `tag` wrote the word before the caller's bytes, `header`
+    // bytes into the block.
+    unsafe {
+        (
+            pointer.sub(header(layout)),
+            pointer.cast::<u64>().sub(1).read(),
+        )
+    }
+}
+
+impl CountingHeap {
+    /// Allocate `layout` behind a header through `allocate`, and tag and
+    /// count it.
+    ///
+    /// # Safety
+    ///
+    /// `allocate` returns null or a block of the layout it is given.
+    unsafe fn tagged(layout: Layout, allocate: impl FnOnce(Layout) -> *mut u8) -> *mut u8 {
+        let Some(wide) = widened(layout, layout.size()) else {
+            return std::ptr::null_mut();
+        };
+        let base = allocate(wide);
+        if base.is_null() {
+            return base;
+        }
+        let phase = counted_phase();
+        grow(layout.size() as u64, phase);
+        // SAFETY: `base` is a block of `wide`, which holds the header before
+        // the caller's bytes, at its alignment.
+        unsafe { tag(base, header(layout), phase) }
+    }
+}
+
+// SAFETY: forwards to `System` with the caller's layout widened by a
+// header before the caller's bytes, aligned as the caller asked, and adds
+// atomic bookkeeping only.
 unsafe impl GlobalAlloc for CountingHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc`.
-        let pointer = unsafe { System.alloc(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
+        // SAFETY: the caller's contract for `alloc`, on `wide`, which is
+        // larger; `System` returns null or a block of it.
+        unsafe { Self::tagged(layout, |wide| System.alloc(wide)) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller's contract for `alloc_zeroed`.
-        let pointer = unsafe { System.alloc_zeroed(layout) };
-        if !pointer.is_null() {
-            grow(layout.size() as u64);
-        }
-        pointer
+        // SAFETY: the caller's contract for `alloc_zeroed`, on `wide`, which
+        // is larger; `System` returns null or a block of it.
+        unsafe { Self::tagged(layout, |wide| System.alloc_zeroed(wide)) }
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: the caller's contract for `dealloc`.
-        unsafe { System.dealloc(pointer, layout) };
-        LIVE.fetch_sub(layout.size() as u64, Ordering::Relaxed);
+        // SAFETY: the caller's contract for `dealloc`: `pointer` came from
+        // `alloc` for `layout`, which widened it alike.
+        unsafe {
+            let (base, phase) = untag(pointer, layout);
+            let wide = widened(layout, layout.size()).unwrap_unchecked();
+            System.dealloc(base, wide);
+            shrink(layout.size() as u64, phase);
+        }
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let (old, new) = (layout.size() as u64, new_size as u64);
-        // SAFETY: the caller's contract for `realloc`.
-        let moved = unsafe { System.realloc(pointer, layout, new_size) };
-        if !moved.is_null() {
-            if moved != pointer {
+        if widened(layout, new_size).is_none() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: the caller's contract for `realloc`, on the block behind
+        // `pointer` widened alike; the header moves with the block.
+        unsafe {
+            let (base, old_phase) = untag(pointer, layout);
+            let wide = widened(layout, layout.size()).unwrap_unchecked();
+            let moved = System.realloc(base, wide, new_size + header(layout));
+            if moved.is_null() {
+                return moved;
+            }
+            // A block reallocated in a phase is counted as the phase's,
+            // whole.
+            let phase = counted_phase();
+            if moved != base {
                 // Old and new were held at once while the block moved.
                 PEAK.fetch_max(LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
+                if phase != 0 {
+                    PHASE_PEAK
+                        .fetch_max(PHASE_LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
+                }
             }
-            if new >= old {
-                grow(new - old);
-            } else {
-                LIVE.fetch_sub(old - new, Ordering::Relaxed);
-            }
+            shrink(old, old_phase);
+            grow(new, phase);
+            tag(moved, header(layout), phase)
         }
-        moved
     }
 }
 
@@ -171,8 +327,14 @@ struct Peaks {
     producer_batch: u64,
     /// The peak while the producer streamed every row.
     streaming: u64,
+    /// The most bytes that streaming allocated and held at once, apart from
+    /// the producer's visibility batches.
+    streaming_own: u64,
     /// The peak while the session finalized the scalars and saved MAIN.
     finishing: u64,
+    /// The most bytes that finalizing the scalars and saving MAIN
+    /// allocated and held at once, apart from what streaming left live.
+    finishing_own: u64,
 }
 
 /// Create a MeasurementSet of `rows` rows under `root`, streaming DATA,
@@ -213,11 +375,15 @@ fn create(root: &Path, rows: usize) -> Peaks {
 
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
+    open_phase();
     let mut session = MeasurementSetWriteSession::start(&staging, plan).expect("session");
     let mut first = 0;
     while first < rows {
         let batch_range = first..rows.min(first + batch_rows);
-        let mut batch = session.visibility_columns();
+        // Two or three batches are live at once, as scheduling leaves the
+        // writer behind the producer; the plan bounds them, and the rest of
+        // what streaming holds is counted apart from them.
+        let mut batch = uncounted(|| session.visibility_columns());
         time.clear();
         antenna1.clear();
         antenna2.clear();
@@ -266,9 +432,16 @@ fn create(root: &Path, rows: usize) -> Peaks {
             .expect("send visibility batch");
         first = batch_range.end;
     }
+    let streaming_own = close_phase();
     let streaming = PEAK.load(Ordering::Relaxed) - baseline;
 
+    // The writer still holds the batches it has not written yet, one or
+    // two as scheduling leaves them, and the batch it recycled after the
+    // producer's last; it frees them while MAIN saves, before or after the
+    // save's buffers are allocated. What finishing allocates is also
+    // counted apart from them.
     PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    open_phase();
     let mut overrides = ColumnOverrides::for_row_count(rows);
     for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
         overrides.insert_deferred(column);
@@ -276,6 +449,7 @@ fn create(root: &Path, rows: usize) -> Peaks {
     session
         .save_and_finish(&mut measurement_set, &overrides)
         .expect("finish MeasurementSet");
+    let finishing_own = close_phase();
     let finishing = PEAK.load(Ordering::Relaxed) - baseline;
     drop(measurement_set);
     target.commit().expect("publish MeasurementSet");
@@ -295,7 +469,25 @@ fn create(root: &Path, rows: usize) -> Peaks {
         planned,
         producer_batch,
         streaming,
+        streaming_own,
         finishing,
+        finishing_own,
+    }
+}
+
+/// Assert that a creation of `rows` rows streamed and finished within its
+/// plan and the producer's batch.
+fn assert_within_plan(rows: usize, peaks: &Peaks) {
+    for (phase, peak) in [
+        ("streaming", peaks.streaming),
+        ("finishing", peaks.finishing),
+    ] {
+        assert!(
+            peak <= peaks.planned + peaks.producer_batch + SLACK_BYTES,
+            "{rows} rows: {phase} held {peak} bytes; plan {} and producer batch {}",
+            peaks.planned,
+            peaks.producer_batch
+        );
     }
 }
 
@@ -307,20 +499,16 @@ fn a_creation_session_streams_within_its_plan_and_one_producer_batch() {
     let root = tempfile::tempdir().expect("tempdir");
     let peaks = create(root.path(), 40_000);
     println!(
-        "planned {} producer batch {} streaming peak {} finishing peak {}",
-        peaks.planned, peaks.producer_batch, peaks.streaming, peaks.finishing
+        "planned {} producer batch {} streaming peak {} (its own {}) finishing peak {} (its own \
+         {})",
+        peaks.planned,
+        peaks.producer_batch,
+        peaks.streaming,
+        peaks.streaming_own,
+        peaks.finishing,
+        peaks.finishing_own
     );
-    for (phase, peak) in [
-        ("streaming", peaks.streaming),
-        ("finishing", peaks.finishing),
-    ] {
-        assert!(
-            peak <= peaks.planned + peaks.producer_batch + SLACK_BYTES,
-            "{phase} held {peak} bytes; plan {} and producer batch {}",
-            peaks.planned,
-            peaks.producer_batch
-        );
-    }
+    assert_within_plan(40_000, &peaks);
 }
 
 #[test]
@@ -332,21 +520,39 @@ fn a_creation_session_holds_no_more_for_more_rows() {
     let small = create(root.path(), 40_000);
     let large = create(root.path(), 160_000);
     println!(
-        "40,000 rows: streaming {} finishing {}; 160,000 rows: streaming {} finishing {}",
-        small.streaming, small.finishing, large.streaming, large.finishing
-    );
-    assert!(
-        large.streaming <= small.streaming + SLACK_BYTES,
-        "streaming grew from {} to {} bytes",
+        "40,000 rows: streaming {} (its own {}) finishing {} (its own {}); 160,000 rows: \
+         streaming {} (its own {}) finishing {} (its own {})",
         small.streaming,
-        large.streaming
-    );
-    assert!(
-        large.finishing <= small.finishing + SLACK_BYTES,
-        "finishing grew from {} to {} bytes",
+        small.streaming_own,
         small.finishing,
-        large.finishing
+        small.finishing_own,
+        large.streaming,
+        large.streaming_own,
+        large.finishing,
+        large.finishing_own
     );
+    // The batches the plan admits are the same for more rows, and the
+    // session holds no more than them.
+    assert_eq!(
+        (large.planned, large.producer_batch),
+        (small.planned, small.producer_batch),
+        "the plan and its batch do not grow with the rows"
+    );
+    assert_within_plan(160_000, &large);
+    // Both peaks are a scheduling matter: streaming's holds two batches or
+    // three as the writer falls behind the producer, and finishing's
+    // starts from one batch more or less left from streaming, with the
+    // save's buffers on top or after the writer frees a batch. What each
+    // allocates apart from the batches is not, so that is compared.
+    for (phase, small, large) in [
+        ("streaming", small.streaming_own, large.streaming_own),
+        ("finishing", small.finishing_own, large.finishing_own),
+    ] {
+        assert!(
+            large <= small + SLACK_BYTES,
+            "{phase}'s own allocations grew from {small} to {large} bytes"
+        );
+    }
 }
 
 /// Rows per batch of the scalar-only creation.
@@ -405,6 +611,7 @@ fn create_scalars(root: &Path, rows: usize) -> Peaks {
 
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
+    open_phase();
     let mut session = MeasurementSetWriteSession::start(&staging, plan).expect("session");
     let mut first = 0;
     while first < rows {
@@ -429,18 +636,23 @@ fn create_scalars(root: &Path, rows: usize) -> Peaks {
         }
         first = batch.end;
     }
+    let streaming_own = close_phase();
     let streaming = PEAK.load(Ordering::Relaxed) - baseline;
 
     PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    open_phase();
     session
         .save_and_finish(&mut measurement_set, &overrides)
         .expect("finish MeasurementSet");
+    let finishing_own = close_phase();
     let finishing = PEAK.load(Ordering::Relaxed) - baseline;
     Peaks {
         planned,
         producer_batch: 0,
         streaming,
+        streaming_own,
         finishing,
+        finishing_own,
     }
 }
 
@@ -452,8 +664,8 @@ fn a_scalar_creation_session_saves_within_its_plan() {
     let root = tempfile::tempdir().expect("tempdir");
     let peaks = create_scalars(root.path(), 3 * 4096 + 123);
     println!(
-        "planned {} streaming peak {} finishing peak {}",
-        peaks.planned, peaks.streaming, peaks.finishing
+        "planned {} streaming peak {} (its own {}) finishing peak {} (its own {})",
+        peaks.planned, peaks.streaming, peaks.streaming_own, peaks.finishing, peaks.finishing_own
     );
     for (phase, peak) in [
         ("streaming", peaks.streaming),
