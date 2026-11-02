@@ -49,20 +49,26 @@ pub(super) struct SpecificationInputs {
 pub(super) fn reconstruction_algorithm(request: &ImagingRequest) -> ReconstructionAlgorithm {
     match request.deconvolver {
         Deconvolver::Mtmfs => ReconstructionAlgorithm::Mtmfs {
-            scales_px: if request.scales.is_empty() {
-                vec![0.0]
-            } else {
-                request.scales.clone()
-            },
+            scales_px: scales_px(request),
             small_scale_bias: request.smallscalebias,
         },
         _ if !request.solves() => ReconstructionAlgorithm::Dirty,
         Deconvolver::Hogbom => ReconstructionAlgorithm::Hogbom,
         Deconvolver::Clark => ReconstructionAlgorithm::Clark,
         Deconvolver::Multiscale => ReconstructionAlgorithm::Multiscale {
-            scales_px: request.scales.clone(),
+            scales_px: scales_px(request),
             small_scale_bias: request.smallscalebias,
         },
+    }
+}
+
+/// The request's scales, or CASA's one point scale when it gives none
+/// (`SDAlgorithmMSClean` and `SDAlgorithmMSMFS` constructors).
+fn scales_px(request: &ImagingRequest) -> Vec<f64> {
+    if request.scales.is_empty() {
+        vec![0.0]
+    } else {
+        request.scales.clone()
     }
 }
 
@@ -336,7 +342,13 @@ fn requested_products(
     // writes no `.image`, `.image.pbcor` or spectral index
     // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`).
     let restored = request.restoration;
-    let mut products = vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model];
+    let mut products = vec![ProductKind::Psf, ProductKind::Residual];
+    // CASA makes the model when the minor cycle, the restoration or a
+    // start model needs it: tclean sets up no deconvolver for `niter=0`
+    // with `restoration=False`, and nothing else writes one.
+    if minor_cycle || restored || request.startmodel.is_some() {
+        products.push(ProductKind::Model);
+    }
     if restored {
         products.push(ProductKind::RestoredImage);
     }
@@ -714,6 +726,41 @@ mod tests {
             );
             assert_eq!(restoring_beam(&request), RestoringBeamPolicy::None);
         }
+    }
+
+    /// CASA cleans with one point scale when `scales` is empty, for
+    /// `multiscale` as for `mtmfs`.
+    #[test]
+    fn scale_aware_solvers_without_scales_use_a_point_scale() {
+        for deconvolver in ["multiscale", "mtmfs"] {
+            let request = crate::request::tests::request(serde_json::json!({
+                "deconvolver": deconvolver, "niter": 10, "smallscalebias": 0.6
+            }));
+            let scales = match reconstruction_algorithm(&request) {
+                ReconstructionAlgorithm::Multiscale { scales_px, .. }
+                | ReconstructionAlgorithm::Mtmfs { scales_px, .. } => scales_px,
+                other => panic!("{deconvolver}: {other:?}"),
+            };
+            assert_eq!(scales, vec![0.0], "{deconvolver}");
+        }
+    }
+
+    /// tclean sets up no deconvolver for `niter=0` with `restoration=False`
+    /// (`task_tclean.py`), so CASA writes no `.model` then, unless a start
+    /// model seeds one.
+    #[test]
+    fn a_model_is_written_when_cleaning_restoring_or_starting_from_one() {
+        let has_model = |overrides| products(overrides).contains(&ProductKind::Model);
+        assert!(!has_model(
+            serde_json::json!({ "niter": 0, "restoration": false })
+        ));
+        assert!(has_model(serde_json::json!({ "niter": 0 })));
+        assert!(has_model(
+            serde_json::json!({ "niter": 5, "restoration": false })
+        ));
+        assert!(has_model(serde_json::json!({
+            "niter": 0, "restoration": false, "startmodel": "start.model"
+        })));
     }
 
     /// `mtmfs` restores its one plane with its fitted beam as one common

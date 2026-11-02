@@ -619,6 +619,17 @@ mod tests {
         assert!(cycle.threshold_reached);
     }
 
+    /// CASA raises the fraction to `minpsffraction`, then caps it at
+    /// `maxpsffraction`: when they cross, the maximum wins
+    /// (`test_iterbot_mfs_9`).
+    #[test]
+    fn crossed_psf_fractions_cap_the_cycle_threshold_at_the_maximum() {
+        let controls =
+            ReconstructionControls::new(100, 0.1, 0.01).with_cycle_threshold(1.0, 0.8, 0.5);
+        let controller = Controller::new(&controls);
+        assert!((controller.cycle_controls(&statistics(2.0)).threshold - 1.0).abs() < 1e-15);
+    }
+
     /// The controller after tclean's first check, which follows the initial
     /// major cycle at zero iterations, then one minor and one major cycle.
     fn after_one_cycle(controls: &ReconstructionControls, first: f64) -> Controller {
