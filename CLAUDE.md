@@ -8,4 +8,8 @@
   `mcp__ccd_pr__set_monitor` as soon as you open a PR or mark one ready. It
   wakes the session on CI failures, merge conflicts and review comments; act
   on those events without waiting to be asked. The switch is per session and
-  per PR, so every session that owns a PR turns it on for that PR.
+  per PR, so every session that owns a PR turns it on for that PR. In a cloud
+  session, `subscribe_pr_activity` does the same.
+- The independent review `AGENTS.md` requires is, in Claude Code, a fresh
+  `Agent` (not a fork) with model `fable` and effort `xhigh`. Run it in the
+  background and keep working.

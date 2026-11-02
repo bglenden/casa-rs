@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-10-20
+Last reality check: 2026-11-02
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
@@ -46,8 +46,8 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Rust 1.99 or newer (`rustup update stable`); set `CARGO_INCREMENTAL=0` for
   raw cargo. Install `cargo-nextest` (`brew install cargo-nextest`) so tests run
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
-- `just quick` is the normal gate; `just verify` is for milestones and
-  releases; `just --list` shows everything else.
+- `just quick` is the full local gate (CI runs the same); `just verify` is
+  for milestones and releases; `just --list` shows everything else.
 - Python package tests: `scripts/test-python-package.sh`. Python binds Rust
   through PyO3 only, in `casars._core` (`crates/casars-python/src`).
 - `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
@@ -100,7 +100,7 @@ The internal disk is small. Do not fill it.
 - Issues and pull requests are the work record. PRs say `Work issue: #N` (or
   `Work source: <reason>`); use `Closes #N` only when merge should close it.
 - One PR per outcome, not per edit. Iterate as a draft; mark it ready once
-  (see Merging: ready means merge when green).
+  (ready means merge when green).
 - Do not commit directly to `main`, except docs-only changes that pass
   `just docs-check`.
 - Merge `main` into long-lived branches regularly.
@@ -110,54 +110,94 @@ The internal disk is small. Do not fill it.
 - The repository is public; copying its source to any host is fine. Never copy
   credentials, secrets, or non-public datasets.
 
-## Completion And Owner Input
+## Decide, Record, Continue
 
-- Carry an authorized task through implementation, validation, required
-  reviews, CI, merge and cleanup. Resumed work and existing PRs follow the
-  same rule. Do not stop at a partial result or a proposal for the next step
-  while authorized work can continue.
-- Stop and ask the owner only for a true blocker or an extremely consequential
-  architectural decision. Investigate and resolve routine implementation,
-  integration and environment problems autonomously. Exhaust safe available
-  alternatives before declaring a blocker, and continue unaffected work.
-- Preserve the authorized scope, scientific and interoperability contracts,
-  and required acceptance checks. Do not weaken tests or reduce acceptance
-  criteria to finish. Record decisions and evidence on the issue or PR.
-- Every required review uses a fresh Astra (`gpt-6-astra`) subagent at
-  `xhigh` reasoning effort, without inherited conversation context. Give it
-  a self-contained brief with the exact revision, diff, relevant contracts
-  and validation evidence. Resolve its findings before proceeding; request
-  another review when substantive changes require one.
+Agents do not wait for the owner. The owner steers by reading what was
+decided, afterwards, not by approving it first.
 
-## Merging
+- Carry an authorized task through implementation, checks, review, CI,
+  merge and cleanup, then take the next item of the same issue. Resumed work
+  and PRs taken over follow the same rule.
+- A choice that is not on the stop list below is yours: make it, record it
+  and continue. List each one under `## Decisions` in the PR body (what, why,
+  the alternative not taken) and add the `owner-review` label. Nothing waits
+  for that review; a decision the owner overturns becomes ordinary follow-up
+  work.
+- When one item is blocked (an unreachable host, missing data, a failing
+  oracle), say why on its issue and go on to the next item. A session ends
+  only when no authorized work it can do remains.
+- Keep long work's state in one status comment on its issue, edited in place,
+  not in handoff documents in the tree.
+- Acceptance checks are not weakened to finish. Work that cannot be finished
+  stays open on its issue, stated there; the PR does not claim it. A
+  relaxation `TESTING.md` reserves for the owner (a matrix-row exception, a
+  review-trigger rule) is such open work, not a reason to stop.
 
-- Marking a PR ready for review is the go-ahead to merge: mark it ready, then
-  immediately run `gh pr merge --auto --merge`; GitHub merges it once the
-  required CI checks on `main` pass.
-- Mark a PR ready without asking once its gates are green, its required
-  reviews are complete with every finding resolved, and no true blocker or
-  extremely consequential architectural decision remains; then report that
-  it is merging. This applies to existing PRs taken over as part of an
-  authorized task. Fix failed gates and review findings autonomously.
-- Science, persistence, and interoperability changes need an independent
-  review by the Astra subagent specified above before they are marked ready.
-  Docs, tests, and tooling need only green CI.
-- The agent that opens or takes over a PR owns it until it merges: watch its
-  CI through the host's PR monitor (`CLAUDE.md` names the Claude app's), or
-  bounded CLI checks when that monitor is unavailable. Rerun a job
-  that failed on a known flaky test, fix real failures on the branch without
-  asking, and report outcomes rather than progress. Auto-merge waits while
-  CI is red; convert the PR back to a draft if the fix is not quick.
-- "Merge as-is" from the user waives the review and check gates for that PR:
-  merge with `gh pr merge --admin --merge` and record the waiver on the PR.
+Stop and ask only before:
 
-## Verification And Done
+1. deleting or overwriting anything outside the repository and your own
+   scratch space (NAS or GLENDENNING data, releases, branches you did not
+   create);
+2. a change casacore C++ could not read, or one that stops casa-rs reading
+   data it wrote before;
+3. editing an accepted ADR, or starting a new top-level app or product
+   family;
+4. taking the internal disk below about 40 GB free;
+5. handling credentials, secrets or non-public data.
 
-- Run the gates the change can affect; one green run is enough.
+Everything else is decided and recorded: scope splits, API changes between
+workspace crates, task-provider contract versions, algorithm choices, and
+CASA deviations.
+
+### CASA deviations
+
+Record each one in `docs/CASA (C++) bugs.md` (inputs, CASA's behaviour,
+casa-rs's, and why), decided by its class:
+
+- CASA crashes, aborts, reads out of bounds, loses or corrupts data, or
+  contradicts its own documentation or evident intent: casa-rs corrects it.
+- CASA's behaviour is deliberate, or users' results depend on it: casa-rs
+  follows it.
+- A mode casa-rs does not implement yet: refuse it with an error that names
+  an issue.
+- Anything else: choose, record it under `## Decisions` with `owner-review`,
+  and continue.
+
+## Review
+
+- A PR that changes science results, on-disk bytes, or a contract outside
+  the workspace (a persisted format, a task's parameters or provider
+  contract) gets one independent review before it is marked ready. Docs,
+  tests, tooling, and changes whose results are checked unchanged
+  (refactors, performance work) need only green CI.
+- The reviewer is a fresh agent without this conversation's context: Astra
+  (`gpt-6-astra`) at `xhigh` in Codex; `CLAUDE.md` names Claude Code's.
+  Brief it with the revision, the diff, the contracts it touches and the
+  evidence, and ask it to look for shallow or tautological tests too.
+- One round. Fix blocking and should-fix findings or answer them on the PR;
+  decline optional ones with a reason. A fix needs no second review unless it
+  adds a mechanism the reviewer did not see.
+- Start the review once the diff is stable, and keep working while it runs.
+
+## Checks And Merging
+
+- Before pushing, run what the change can affect: `cargo fmt`, clippy
+  `-D warnings` and the tests of the crates you touched, and `just
+  arch-check`. CI runs the whole workspace; run `just quick` locally only
+  when the change reaches across many crates. One green run is enough.
+- When the checks are green and any required review is resolved, mark the
+  PR ready and run `gh pr merge --auto --merge`; GitHub merges it once the
+  required CI checks pass. Report that it is merging and move on.
+- The agent that opens or takes over a PR watches it to merge: the host's PR
+  monitor (`CLAUDE.md` names the Claude app's), or bounded CLI checks. Rerun
+  a job that failed on a known flaky test, fix real failures on the branch,
+  and convert the PR back to a draft, saying why, if the fix is not quick.
+- "Merge as-is" from the owner waives the review and check gates for that
+  PR: merge with `gh pr merge --admin --merge` and record the waiver on it.
 - Missing test data or disk space is an environment problem, not a code
   regression; say so.
-- Done means the relevant gates are green, the evidence is recorded on the
-  issue or PR, and the docs match reality.
+- Done means CI is green, the PR body says what was run and what it showed,
+  the decisions are listed, and the docs match the code.
 
 ## Imaging
 
@@ -167,8 +207,8 @@ and its dependency checker stay binding. The plan
 design as landed (section 5), the review checklist every imaging change is
 held to (section 10) and the deviations taken (section 12). An imaging
 change runs its T0 and T1 tests, the T1.5 rows its code touches
-(`TESTING.md`), clippy `-D warnings` on touched crates, the dependency
-checker and `just quick`; an owner that changes what it keeps adds a
-counting law. Evidence runs follow `TESTING.md` "Imaging tiers and
+(`TESTING.md`), clippy `-D warnings` and the tests of the crates it
+touches, and the dependency checker; an owner that changes what it keeps
+adds a counting law. Evidence runs follow `TESTING.md` "Imaging tiers and
 evidence". Open imaging work is in #445, #447–#450, #653, #690, #714 and
 #719–#721. Programme #486 and its rules are retired.

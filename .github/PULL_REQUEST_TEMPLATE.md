@@ -1,17 +1,17 @@
-Closes #___
+Work issue: #___
 
-## Acceptance evidence
+## What changed
 
-- `<contract clause>` — `<command or test>` — `<result>`
-- `<contract clause>` — `<command or test>` — `<result>`
+## Evidence
 
-Reviewed SHA: `<sha>`
+- `<command or test>` — `<result>`
 
-## Contract review
+## Review
 
-Reviewer: `<name>`
-Unresolved blockers: `none`
+`not required` (docs, tests, tooling, or results checked unchanged), or the
+reviewer, the revision it reviewed, and how each finding was resolved.
 
-## Stop point
+## Decisions
 
-`none`, or `<required user decision>`
+`none`, or each choice made without the owner: what, why, and the
+alternative not taken. Add the `owner-review` label when there are any.

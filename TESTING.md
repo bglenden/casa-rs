@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-10-28
+Last reality check: 2026-11-02
 Verification: just verify
 
 ## Test categories
@@ -545,13 +545,17 @@ For each piece of work:
 
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
-- medium/high-risk work gets independent architecture and test-quality review
+- changes that `AGENTS.md` ("Review") names get one independent review,
+  which also looks for shallow or tautological tests
 - docs, interfaces, and boundary descriptions are reconciled with implementation
   before review
-- approved outcome, included issues, and acceptance checks are not deferred or
-  descoped without explicit user signoff recorded in the issue or PR
+- acceptance checks are not weakened; work that cannot be finished stays open
+  on its issue, stated there, and the PR does not claim it
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
-- ordinary non-release merges stay on the affected gates (`just quick` or focused checks) plus CI unless the user explicitly asks to exercise release/tag-only heavy gates; `just verify` is for milestones and releases
+- ordinary non-release merges run focused checks on the crates they touch
+  locally and leave the whole workspace to CI, unless the user explicitly
+  asks to exercise release/tag-only heavy gates; `just quick` is for changes
+  that reach across many crates, `just verify` for milestones and releases
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the approved work touches those concerns
 
@@ -559,14 +563,14 @@ For each piece of work:
 
 Work is not complete until:
 
-- the gates the change can affect pass (`just quick` or focused checks, plus CI)
+- the gates the change can affect pass (focused checks locally, plus CI)
 - tests cover the claimed behavior
-- reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
-- any approved-scope deferral records explicit user signoff
-- the PR was marked ready with the user's go-ahead (which enables auto-merge
-  on green CI), and science, persistence, and interoperability changes also
-  have an independent review
+- unfinished acceptance items stay open on the issue, and decisions taken
+  without the owner are listed on the PR (`AGENTS.md`, "Decide, Record,
+  Continue")
+- the PR was marked ready with auto-merge enabled, after the independent
+  review `AGENTS.md` requires for it
 
 A user's "merge as-is" for a pull request waives its review and check gates.
 Record the waiver on the pull request; do not describe waived evidence as
