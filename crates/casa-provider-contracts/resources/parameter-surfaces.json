@@ -8627,7 +8627,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "awproject reads it as CASA does: a native EVLA cache generates its cells without the aperture when False (and then without wideband cells); an imported CASA cache holds the cells its run made. aterm=False with psterm=False is refused, as CASA refuses it. Other gridders ignore it.",
+          "surface_note": "awproject reads it as CASA does: a native EVLA cache generates its cells without the aperture when False (and then without wideband cells, and for a VLA observation too); an imported CASA cache holds the cells its run made. aterm=False with psterm=False is refused, as CASA refuses it. Other gridders ignore it.",
           "projections": {
             "cli": {"flags": ["--aterm"], "false_flags": ["--no-aterm"]},
             "provider": {"field": "aterm"},

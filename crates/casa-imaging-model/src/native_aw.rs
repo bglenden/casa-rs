@@ -152,10 +152,13 @@ impl EvlaAwCellRequest {
     }
 }
 
-/// One selected SPW's explicit native beam-frequency sampling.
+/// One selected SPW's explicit native beam-frequency sampling, or, without
+/// wideband cells, the one group of every selected SPW at the reference
+/// frequency.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeAwFrequencyGroup {
-    /// Selected MeasurementSet spectral-window identifier.
+    /// Selected MeasurementSet spectral-window identifier (the lowest, for
+    /// the one group without wideband cells).
     pub spectral_window: u32,
     /// Selected physical channel frequencies, in native ascending/descending order.
     pub channel_frequencies_hz: Vec<f64>,

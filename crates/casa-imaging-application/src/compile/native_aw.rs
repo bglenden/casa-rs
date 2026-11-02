@@ -34,7 +34,7 @@ pub(super) fn resolve(
     else {
         unreachable!("native AW resolves only a native cache");
     };
-    let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface)?;
+    let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface, aw.aterm)?;
     let reference_frequency_hz = surveyed.spectral.reference_frequency_hz;
     let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
     let feed_angle = receptor_zero_angle(
@@ -90,17 +90,27 @@ pub(super) fn resolve(
 }
 
 /// The EVLA dish surface, after checking that the observation is EVLA with
-/// the homogeneous 25 m dishes the native model describes.
+/// the homogeneous 25 m dishes the native model describes. CASA images a
+/// `VLA` observation through the same `EVLAAperture`
+/// (`AWProjectFT::createTelescopeATerm`) but with the old VLA's feeds,
+/// which the native model lacks; without the aperture (`aterm=False`) the
+/// cells hold no feed, so either name serves.
 fn evla_dish(
     catalogue: &Catalogue,
     first_cross: FirstCrossSample,
     evla_surface: &std::path::Path,
+    aperture: bool,
 ) -> Result<EvlaDishSurface, PrepareError> {
     let telescope = catalogue
         .observations
         .get(usize::try_from(first_cross.observation_id).expect("an observation is a row"))
         .map(|observation| observation.telescope.trim());
-    if telescope != Some("EVLA") {
+    let modelled = match telescope {
+        Some("EVLA") => true,
+        Some("VLA") => !aperture,
+        _ => false,
+    };
+    if !modelled {
         return Err(PrepareError::NativeAwTelescope);
     }
     if super::instrument::dish_diameters(catalogue)
@@ -167,7 +177,7 @@ fn frequency_groups(
 /// The one frequency group of a run without wideband cells:
 /// `AWConvFunc::makeFreqValList` samples the aperture at the image
 /// reference frequency alone, whatever the windows. The group names the
-/// first window and holds every selected channel, which the cache's
+/// lowest window id and holds every selected channel, which the cache's
 /// manifest records.
 fn reference_group(
     groups: Vec<NativeAwFrequencyGroup>,

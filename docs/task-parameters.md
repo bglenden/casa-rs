@@ -101,6 +101,13 @@ Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
 frozen EVLA case, not general telescope support.
 
+The native cells follow tclean's terms as CASA's `AWProjectFT` reads them:
+`aterm`, `psterm`, `wbawp` (cells at each window's frequency, or at the image
+reference frequency alone; without the aperture CASA drops it), `conjbeams`
+(the weight cell's conjugate beam) and `wprojplanes` (one plane is co-planar).
+An imported CASA cache already holds the cells its run made; with it only
+`conjbeams` changes the run, choosing the cell each sample grids with.
+
 ## Sources and precedence
 
 Every task run resolves its parameters from exactly one base source:
