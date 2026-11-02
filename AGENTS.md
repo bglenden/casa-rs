@@ -94,8 +94,9 @@ locations are in `docs/agent-reference.md`.
   working disk holds large datasets and runs, never the only copy of
   anything that matters.
 - Development artifacts (intermediate images, sweep outputs, probe results)
-  are disposable. Delete them once the code has moved past them; keep only
-  what an issue or PR needs as evidence, summarized there.
+  are disposable. Tools and tests write them under `target/`, where
+  housekeeping clears them; keep only what an issue or PR needs as
+  evidence, summarized there.
 - Worktrees share the main `target/` (`CARGO_TARGET_DIR`) or delete their own
   `target/` when done; a separate build tree is tens of GB.
 - Check free space before large runs; the laptop's 40 GB floor is on the
@@ -122,9 +123,13 @@ locations are in `docs/agent-reference.md`.
   squash merge, start new work from `main`.
 - Do not commit directly to `main`, except docs-only changes that pass
   `just docs-check`.
-- Remove your own scratch and remote copies once their work is pushed, and
-  your merged branches and worktrees whenever you next tidy, without
-  asking; `just tidy --apply` finds merged and squash-merged leftovers.
+- Cleanup is mostly automatic. With `core.hooksPath` set to `.githooks`,
+  the post-commit hook runs daily housekeeping (`just housekeeping`): it
+  removes merged and squash-merged worktrees and branches whose HEAD has
+  not moved for a day, sweeps old build output, and clears `target/`
+  scratch untouched for a week. `scripts/mac-run.sh` prunes Mac copies
+  unused for two weeks. Remove anything else of yours (scratch outside
+  `target/`, other remote copies) once its work is pushed, without asking.
 - The repository is public; copying its source to any host is fine. Never
   copy credentials, secrets, or non-public datasets.
 

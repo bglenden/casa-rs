@@ -14,6 +14,8 @@ merge, or whose whole change reached main as one squashed commit. Without
 Never touched: the main worktree, the worktree this runs from, worktrees with
 uncommitted or untracked changes, and branches or worktrees whose tip is on
 main's first-parent line (for example a fresh branch with no commits yet).
+With TIDY_MIN_IDLE_HOURS=N, a worktree whose HEAD moved in the last N hours
+is also kept, since a session may still be in it.
 EOF
 }
 
@@ -24,6 +26,12 @@ case "${1:-}" in
   -h | --help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
+
+min_idle_hours="${TIDY_MIN_IDLE_HOURS:-0}"
+if ! [[ "$min_idle_hours" =~ ^[0-9]+$ ]]; then
+  echo "tidy-git: TIDY_MIN_IDLE_HOURS must be a whole number of hours" >&2
+  exit 2
+fi
 
 start_worktree="$(git rev-parse --show-toplevel)"
 main_worktree="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')"
@@ -58,6 +66,18 @@ merged_into_main() {
   merged_by_merge "$1" || merged_by_squash "$1"
 }
 
+# A worktree counts as in use while its HEAD moved (a commit, checkout or
+# reset, which its reflog records) within the idle window. The index is no
+# guide: `git status`, from tidy or an editor, can rewrite it.
+recently_used() {
+  ((min_idle_hours > 0)) || return 1
+  local log
+  log="$(git -C "$1" rev-parse --path-format=absolute --git-path logs/HEAD 2>/dev/null)" ||
+    return 0
+  [[ -e "$log" ]] || log="$(git -C "$1" rev-parse --path-format=absolute --git-path HEAD)"
+  [[ -z "$(find "$log" -mmin +"$((min_idle_hours * 60))" 2>/dev/null)" ]]
+}
+
 run() {
   if [[ $apply -eq 1 ]]; then
     "$@"
@@ -80,6 +100,9 @@ while IFS= read -r line || [[ -n "$path" ]]; do
         label="$path${branch:+ [$branch]}"
         if [[ "$path" == "$start_worktree" ]]; then
           echo "keep   $label (current worktree)"
+          worktree_branches+="$branch"$'\n'
+        elif recently_used "$path"; then
+          echo "keep   $label (used in the last $min_idle_hours hours)"
           worktree_branches+="$branch"$'\n'
         elif [[ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
           echo "keep   $label (uncommitted or untracked changes)"

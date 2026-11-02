@@ -388,8 +388,10 @@ acceptance.
 Build local Rust API docs with
 `CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps`.
 
-The optional staged-file SPDX hook can be enabled with
-`git config core.hooksPath .githooks`.
+`git config core.hooksPath .githooks` enables the repository's hooks: an
+SPDX check on staged files, and daily housekeeping after commits that removes
+merged worktrees and branches, old build output and stale `target/` scratch
+(`just housekeeping --dry-run` previews it).
 
 Tagged `v*` releases trigger the Python release workflow, which builds wheels,
 a source distribution, suite and standalone-binary bundles, and the installer.

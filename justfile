@@ -140,6 +140,10 @@ docs-check:
 tidy *args:
     bash scripts/tidy-git.sh {{args}}
 
+# Run the daily housekeeping now (merged worktrees and branches, old build output, stale target/ scratch); add --dry-run to preview.
+housekeeping *args:
+    bash scripts/housekeeping-if-due.sh --now {{args}}
+
 install-local *args:
     bash scripts/install-local.sh {{args}}
 
