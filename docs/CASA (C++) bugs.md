@@ -2605,6 +2605,31 @@ and the whole image is cleaned. casa-rs cleans the whole image in both cases:
 without a mask its noise estimate is Chauvenet's over every valid pixel, as
 CASA's would be once the full mask existed.
 
+## A faceted `tclean` image carries no primary-beam mask
+
+- Date noted: 2026-11-02
+- Status: CASA bug; casa-rs masks a faceted residual and restored image
+  where the primary beam is under `pblimit`, as CASA masks every other
+  image (#980)
+- Affected build/code: CASA 6.7.6.14, casatools
+  `synthesis/ImagerObjects/SynthesisNormalizer.cc`
+  (`divideResidualByWeight`) and `SIImageStore.cc`
+  (`divideResidualByWeight`, `copyMask`)
+
+`SIImageStore::divideResidualByWeight` copies the primary beam's `mask0`
+onto the residual whenever the image has a primary beam and `pblimit >= 0`
+("A T/F mask in the residual will confuse users"), and restoration copies
+the residual's mask onto the image. With `facets > 1`,
+`SynthesisNormalizer::divideResidualByWeight` normalizes each facet's
+sub-image store instead, and `copyMask` finds no `mask0` default mask on a
+facet's sub-image of the primary beam, so it copies nothing: the published
+`.residual` and `.image` have no mask, although `.pb` masks the same
+pixels. On `refim_twopoints_twochan.ms` (`imsize=200`, `cell='8.0arcsec'`,
+`facets=2`, `niter=30`, CASA's `test_multifield_facets_mfs`) CASA's `.pb`
+masks 2,471 pixels below `pblimit` 0.2 and its `.image` and `.residual`
+mask none; casa-rs's `.pb`, `.image` and `.residual` mask those 2,471
+pixels, and every pixel value agrees (normalized RMS 8e-7 and 3e-6).
+
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28
