@@ -42,16 +42,20 @@ fn stated(catalogue: &Catalogue) -> Vec<Vec<(Vec<String>, Vec<f64>)>> {
         .collect()
 }
 
-/// What an `antenna_xds` states of its receptors.
+/// What an `antenna_xds` states of its receptors: its receptor variables,
+/// and the coordinates its group names (xarray's way of keeping a
+/// coordinate no variable refers to, as `polarization_type` is without
+/// `ANTENNA_RECEPTOR_ANGLE`).
 #[derive(Debug, PartialEq)]
 struct Stated {
     receptor_label: Option<Vec<String>>,
     polarization_type: Option<Vec<String>>,
     receptor_angle: Option<Vec<f64>>,
+    group_coordinates: Option<String>,
 }
 
-/// The receptor variables of dataset `dataset`'s `antenna_xds` in the
-/// processing set at `store`.
+/// What dataset `dataset`'s `antenna_xds` in the processing set at `store`
+/// states of its receptors.
 fn antenna_xds(store: &Path, dataset: &str) -> Stated {
     let zarr = Arc::new(FilesystemStore::new(store).expect("store"));
     let path = format!("/{dataset}/antenna_xds");
@@ -80,10 +84,17 @@ fn antenna_xds(store: &Path, dataset: &str) -> Stated {
         let subset = ArraySubset::new_with_shape(array.shape().to_vec());
         array.retrieve_array_subset(&subset).expect("read")
     });
+    let group: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(store.join(dataset).join("antenna_xds/zarr.json")).expect("group"),
+    )
+    .expect("json");
     Stated {
         receptor_label: strings("receptor_label"),
         polarization_type: strings("polarization_type"),
         receptor_angle,
+        group_coordinates: group["attributes"]["coordinates"]
+            .as_str()
+            .map(String::from),
     }
 }
 
@@ -105,8 +116,8 @@ fn feed_rows(path: &Path) -> Vec<(i32, i32)> {
 
 /// A window `FEED` has no row for keeps no receptors through MSv2 → MSv4
 /// → MSv2, as XRADIO converts it: its dataset's `antenna_xds` has XRADIO's
-/// `receptor_label` (which XRADIO's schema requires) and no receptor
-/// angles. Its `polarization_type` names the receptors of the window's
+/// `receptor_label` and `polarization_type` coordinates (which XRADIO's
+/// schema requires) and no receptor angles. Its `polarization_type` names the receptors of the window's
 /// products, `R, L` for `RR, LL`, where XRADIO names the first product's
 /// letters, `R, R` (a recorded divergence). The other window's dataset
 /// states `FEED`'s receptors as XRADIO's does.
@@ -136,6 +147,7 @@ fn a_window_without_feed_rows_has_xradios_receptor_labels_and_no_angles() {
             receptor_label: labels.clone(),
             polarization_type: types(["R", "L"]),
             receptor_angle: Some(vec![0.0; 6]),
+            group_coordinates: None,
         }
     );
     let unfed = antenna_xds(&ours, "ms_trial_lines_1");
@@ -145,6 +157,7 @@ fn a_window_without_feed_rows_has_xradios_receptor_labels_and_no_angles() {
             receptor_label: labels.clone(),
             polarization_type: types(["R", "L"]),
             receptor_angle: None,
+            group_coordinates: Some("polarization_type".to_string()),
         }
     );
     assert_eq!(
@@ -153,6 +166,7 @@ fn a_window_without_feed_rows_has_xradios_receptor_labels_and_no_angles() {
             receptor_label: labels,
             polarization_type: types(["R", "R"]),
             receptor_angle: None,
+            group_coordinates: Some("polarization_type".to_string()),
         },
         "XRADIO names the first product's letters"
     );

@@ -888,15 +888,6 @@ fn write_antennas(
         .map(|(id, _)| entry.receptors.get(id).unwrap_or(&none))
         .collect();
     let antennas: Vec<&AntennaEntry> = antennas.iter().map(|(_, antenna)| *antenna).collect();
-    create_group(
-        store,
-        path,
-        json!({
-            "type": "antenna",
-            "overall_telescope_name": telescope,
-            "relocatable_antennas": super::STATION_NAMED.contains(&telescope),
-        }),
-    )?;
     let count = antennas.len() as u64;
     let receptors = own.first().map_or(0, |own| own.types.len());
     if own
@@ -907,6 +898,18 @@ fn write_antennas(
             what: "antennas with different receptor counts",
         });
     }
+    let mut attributes = json!({
+        "type": "antenna",
+        "overall_telescope_name": telescope,
+        "relocatable_antennas": super::STATION_NAMED.contains(&telescope),
+    });
+    if receptors == 0 {
+        // No ANTENNA_RECEPTOR_ANGLE names polarization_type among its
+        // coordinates, so the group does, as xarray (and XRADIO) writes a
+        // coordinate no variable refers to.
+        attributes["coordinates"] = json!("polarization_type");
+    }
+    create_group(store, path, attributes)?;
     if antennas
         .iter()
         .any(|antenna| antenna.position.refer() != PositionRef::ITRF)
