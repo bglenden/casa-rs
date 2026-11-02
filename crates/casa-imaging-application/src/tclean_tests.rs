@@ -352,11 +352,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "nchan",
             "#980",
         ),
-        (
-            json!({ "specmode": "cube", "spw": "0:2~4", "nchan": 3 }),
-            "start",
-            "#980",
-        ),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");

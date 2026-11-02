@@ -331,7 +331,7 @@ fn cube_law(
     frame: &FrameContext<'_>,
 ) -> Result<AxisLaw, PrepareError> {
     let window = one_window(&survey.spectral_windows, "native cube imaging")?;
-    let axis = cube_axis(request)?;
+    let axis = cube_axis(request, survey, window)?;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
     let (setup, support) = cube_setup(survey, window, output_channels, &axis, frame)?;
     let mut selected = support.indices;
@@ -399,7 +399,7 @@ fn source_frame_cube_law(
 ) -> Result<AxisLaw, PrepareError> {
     let window = one_window(&survey.spectral_windows, "source-frame cube imaging")?;
     let source_reference = survey.source_frequency_reference;
-    let mut axis = cube_axis(request)?;
+    let mut axis = cube_axis(request, survey, window)?;
     axis.specmode = CubeSpecMode::Cubedata;
     axis.outframe = source_reference;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
@@ -447,9 +447,14 @@ fn source_frame_cube_law(
     })
 }
 
-/// CASA's cube axis of the request: `start` (else `channel_start`) and
-/// `width` in the request's velocity convention.
-fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
+/// CASA's cube axis of the request over `window` of `survey`: `start`
+/// (else `channel_start`) and `width` in the request's velocity
+/// convention, and the window's channels its `spw` names.
+fn cube_axis(
+    request: &ImagingRequest,
+    survey: &Survey,
+    window: &SourceSpectralWindow,
+) -> Result<CubeAxisConfig, PrepareError> {
     let start = match (&request.start, request.channel_start) {
         (Some(start), _) => Some(CubeAxisValue::parse(start, request.veltype)?),
         (None, Some(channel)) => Some(CubeAxisValue::Channel(
@@ -474,6 +479,7 @@ fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
         rest_frequency_hz: request.restfreq.first().copied(),
         start,
         width,
+        selected_channels: survey.spw_channels.get(&window.spw_id).cloned(),
     })
 }
 

@@ -21,6 +21,7 @@ use crate::derived::engine::MsCalEngine;
 use crate::error::{MsError, MsResult};
 use crate::selection::syntax::ChannelSelection;
 
+mod default_start;
 mod regrid;
 
 /// Spectral interpolation policy for cube imaging.
@@ -184,6 +185,11 @@ pub struct CubeAxisConfig {
     pub start: Option<CubeAxisValue>,
     /// Optional cube-axis width value.
     pub width: Option<CubeAxisValue>,
+    /// The window's channels tclean's `spw` selects, when it names
+    /// channels. With `start` unset, CASA lays the grid over the selected
+    /// band rather than the whole window, so that the cube starts at the
+    /// first selected channel (`buildCoordinateSystemCore`).
+    pub selected_channels: Option<Vec<usize>>,
 }
 
 impl Default for CubeAxisConfig {
@@ -196,6 +202,7 @@ impl Default for CubeAxisConfig {
             rest_frequency_hz: None,
             start: None,
             width: None,
+            selected_channels: None,
         }
     }
 }
@@ -720,6 +727,11 @@ impl CubeSpectralSetup {
     /// difference of the first two (`buildCoordinateSystemCore`). `start`
     /// is not snapped to a data channel; it moves only when that band
     /// centre falls outside the data.
+    ///
+    /// With `start` unset, CASA lays either grid over the band
+    /// `axis_config.selected_channels` selects when that band begins above
+    /// the window's lowest channel, so the cube starts at the first
+    /// selected channel.
     #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_axis(
         source_freq_ref: FrequencyRef,
@@ -743,7 +755,31 @@ impl CubeSpectralSetup {
                     Some(CubeAxisValue::Channel(_)) | None
                 )
             );
+        // For an unset start CASA lays the grid over the selected band.
+        let cut = match (&axis_config.start, &axis_config.selected_channels) {
+            (None, Some(selected)) => default_start::casa_default_start_channels(
+                all_source_frequencies_hz,
+                all_source_channel_widths_hz,
+                selected,
+            ),
+            _ => None,
+        };
         if channel_mode {
+            // Channel mode starts at the cut's first channel.
+            let started;
+            let axis_config = match &cut {
+                Some(cut) => {
+                    let channel = i32::try_from(*cut.start()).map_err(|_| {
+                        MsError::VersionError("spectral window channel exceeds i32".to_string())
+                    })?;
+                    started = CubeAxisConfig {
+                        start: Some(CubeAxisValue::Channel(channel)),
+                        ..axis_config.clone()
+                    };
+                    &started
+                }
+                None => axis_config,
+            };
             return Self::for_casa_cube_channel_axis(
                 source_freq_ref,
                 all_source_frequencies_hz,
@@ -787,12 +823,19 @@ impl CubeSpectralSetup {
         // `calcChanFreqs` regrids the data channels converted to the output
         // frame (`transNewXin`) with widths measured there
         // (`transCHAN_WIDTH`); cubedata and an unchanged frame keep them.
+        let (band_frequencies_hz, band_widths_hz) = match cut {
+            Some(cut) => (
+                &all_source_frequencies_hz[cut.clone()],
+                &all_source_channel_widths_hz[cut],
+            ),
+            None => (all_source_frequencies_hz, all_source_channel_widths_hz),
+        };
         let regridding_widths_hz =
-            casa_regridding_input_widths(all_source_frequencies_hz, all_source_channel_widths_hz)?;
+            casa_regridding_input_widths(band_frequencies_hz, band_widths_hz)?;
         let (source_frequencies_hz, source_widths_hz) = match frame.as_ref() {
-            None => (all_source_frequencies_hz.to_vec(), regridding_widths_hz),
+            None => (band_frequencies_hz.to_vec(), regridding_widths_hz),
             Some(frame) => (
-                all_source_frequencies_hz
+                band_frequencies_hz
                     .iter()
                     .map(|&frequency_hz| {
                         convert_frequency_to_frame_with_frame(
@@ -806,7 +849,7 @@ impl CubeSpectralSetup {
                 convert_channel_widths_to_frame_with_frame(
                     source_freq_ref,
                     output_freq_ref,
-                    all_source_frequencies_hz,
+                    band_frequencies_hz,
                     &regridding_widths_hz,
                     frame,
                 )?,
@@ -2190,6 +2233,7 @@ mod tests {
                 ms: -2.0,
                 frame: Some(FrequencyRef::BARY),
             }),
+            selected_channels: None,
         };
         let native_axis_config = CubeAxisConfig {
             start: None,
@@ -2749,6 +2793,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
+            selected_channels: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -2772,6 +2817,7 @@ mod tests {
                 ms: 11_991_700.0,
                 frame: Some(FrequencyRef::TOPO),
             }),
+            selected_channels: None,
         };
         let error = effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap_err();
         assert!(error.to_string().contains("disagree"));
@@ -2790,6 +2836,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
+            selected_channels: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -3087,6 +3134,68 @@ mod tests {
                 linear_spectral_axis_hz(first_hz, -5.0e7, 10)
             );
         }
+    }
+
+    #[test]
+    fn for_casa_cube_axis_with_unset_start_begins_at_the_selected_band() {
+        // test_cube_23: spw='0:4~13', start=''; CASA's cube starts at 1.2 GHz.
+        let engine = test_engine();
+        let source_hz = (0..20)
+            .map(|channel| 1.0e9 + f64::from(channel) * 5.0e7)
+            .collect::<Vec<_>>();
+        let selected = (4..=13).collect::<Vec<_>>();
+        for width in [None, Some(CubeAxisValue::Channel(1))] {
+            let axis_config = CubeAxisConfig {
+                outframe: FrequencyRef::TOPO,
+                width,
+                selected_channels: Some(selected.clone()),
+                ..CubeAxisConfig::default()
+            };
+            let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+                FrequencyRef::TOPO,
+                &source_hz,
+                &[5.0e7; 20],
+                10,
+                &axis_config,
+                59_000.0 * 86_400.0,
+                0,
+                None,
+                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+                &engine,
+            )
+            .unwrap();
+            assert_eq!(
+                setup.output_channel_frequencies_hz,
+                linear_spectral_axis_hz(1.2e9, 5.0e7, 10)
+            );
+        }
+        // A frequency width with no start starts from the band's lower edge.
+        let axis_config = CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            width: Some(CubeAxisValue::FrequencyHz {
+                hz: 1.0e8,
+                frame: None,
+            }),
+            selected_channels: Some(selected),
+            ..CubeAxisConfig::default()
+        };
+        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            FrequencyRef::TOPO,
+            &source_hz,
+            &[5.0e7; 20],
+            3,
+            &axis_config,
+            59_000.0 * 86_400.0,
+            0,
+            None,
+            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+            &engine,
+        )
+        .unwrap();
+        assert_eq!(
+            setup.output_channel_frequencies_hz,
+            linear_spectral_axis_hz(1.225e9, 1.0e8, 3)
+        );
     }
 
     #[test]
