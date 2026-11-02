@@ -3872,7 +3872,8 @@ fn fill_typed_selected_2d_rows<T: Copy>(
         };
         let (first_channel_tile, last_channel_tile) = plan.channel_tiles(shape.tile_channel_count);
         let rows_by_tile = tiles.rows_by_tile(patches);
-        let channel_tile_count = last_channel_tile - first_channel_tile + 1;
+        // No channel selected leaves the last tile before the first.
+        let channel_tile_count = (last_channel_tile + 1).saturating_sub(first_channel_tile);
         let stream_tiles = rows_by_tile
             .len()
             .saturating_mul(channel_tile_count)
@@ -3972,7 +3973,8 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
         };
         let (first_channel_tile, last_channel_tile) = plan.channel_tiles(shape.tile_channel_count);
         let rows_by_tile = tiles.rows_by_tile(patches);
-        let channel_tile_count = last_channel_tile - first_channel_tile + 1;
+        // No channel selected leaves the last tile before the first.
+        let channel_tile_count = (last_channel_tile + 1).saturating_sub(first_channel_tile);
         let stream_tiles = rows_by_tile
             .len()
             .saturating_mul(channel_tile_count)

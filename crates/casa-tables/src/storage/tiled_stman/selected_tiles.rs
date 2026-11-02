@@ -70,7 +70,8 @@ pub(super) struct SelectedTiles<'a> {
 
 impl<'a> SelectedTiles<'a> {
     /// The tiles of cube `cube_idx` (`cube`) for column `target_col_idx`
-    /// of type `dt`. The caller has checked the cube's rank.
+    /// of type `dt`: a cube of cells and rows, whose tile shape has the
+    /// cube's rank and no empty axis.
     pub(super) fn new(
         table_path: &'a Path,
         dm_seq_nr: u32,
@@ -80,14 +81,17 @@ impl<'a> SelectedTiles<'a> {
         cube_idx: usize,
         cube: &'a TsmCubeInfo,
     ) -> Result<Self, StorageError> {
-        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-        let (axis0_count, tile_axis0_count) = (cube.cube_shape[0], cube.tile_shape[0]);
-        if tile_axis0_count == 0 || cube.tile_shape[cell_ndim] == 0 {
+        if cube.cube_shape.len() < 2
+            || cube.tile_shape.len() != cube.cube_shape.len()
+            || cube.tile_shape.contains(&0)
+        {
             return Err(StorageError::FormatMismatch(format!(
-                "typed selected read found an empty tile shape {:?}",
-                cube.tile_shape
+                "typed selected read found tile shape {:?} for cube shape {:?}",
+                cube.tile_shape, cube.cube_shape
             )));
         }
+        let cell_ndim = cube.cube_shape.len() - 1;
+        let (axis0_count, tile_axis0_count) = (cube.cube_shape[0], cube.tile_shape[0]);
         let tiles_per_dim: Vec<usize> = cube
             .cube_shape
             .iter()
@@ -331,20 +335,34 @@ mod tests {
         }
     }
 
+    /// A tile shape empty along an axis, or not of the cube's rank, is
+    /// refused rather than divided by or indexed past.
     #[test]
-    fn an_empty_tile_shape_is_refused() {
-        let (header, cube) = (header(), cube(vec![4, 10], vec![0, 5]));
-        assert!(
-            SelectedTiles::new(
+    fn a_malformed_tile_shape_is_refused() {
+        let header = header();
+        for (cube_shape, tile_shape) in [
+            (vec![4, 10], vec![0, 5]),
+            (vec![4, 10], vec![4, 0]),
+            (vec![4, 6, 10], vec![4, 0, 5]),
+            (vec![4, 6, 10], vec![4, 5]),
+            (vec![10], vec![5]),
+        ] {
+            let cube = cube(cube_shape, tile_shape);
+            let tiles = SelectedTiles::new(
                 Path::new(""),
                 0,
                 &header,
                 0,
                 CasacoreDataType::TpFloat,
                 0,
-                &cube
-            )
-            .is_err()
-        );
+                &cube,
+            );
+            assert!(
+                tiles.is_err(),
+                "{:?} {:?}",
+                cube.cube_shape,
+                cube.tile_shape
+            );
+        }
     }
 }

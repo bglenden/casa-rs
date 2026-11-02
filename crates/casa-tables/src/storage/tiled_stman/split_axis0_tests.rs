@@ -314,7 +314,8 @@ fn assert_2d_reads(table: &Table, rows: &[usize], start: usize, count: usize, co
 /// (padding), with channel tiles that split the selected ranges, and
 /// one-pixel tiles whose booleans stay packed: every selected channel range
 /// is gathered whole, through the shared cache for a few rows and streamed
-/// for many.
+/// for many. A range of no channels starting past the first channel tile
+/// reads nothing.
 #[test]
 fn two_dimensional_cells_are_gathered_from_their_axis0_tiles() {
     let few = [3, 2, 2];
@@ -331,7 +332,7 @@ fn two_dimensional_cells_are_gathered_from_their_axis0_tiles() {
                 endian,
             );
             for rows in [&few[..], &many[..]] {
-                for (start, count) in [(0, 6), (1, 3), (5, 1), (2, 2)] {
+                for (start, count) in [(0, 6), (1, 3), (5, 1), (2, 2), (2, 0), (4, 0)] {
                     let context = format!("{endian:?} {tile_shape:?} {} rows", rows.len());
                     assert_2d_reads(&table, rows, start, count, &context);
                 }
@@ -342,23 +343,27 @@ fn two_dimensional_cells_are_gathered_from_their_axis0_tiles() {
 
 /// A streamed read takes each row tile's selected channel tiles, every
 /// tile along axis 0 of each, as one run of consecutive buckets: one read
-/// a row tile, of exactly the tiles it needs.
+/// a row tile, from the first selected channel tile's first bucket (wherever
+/// the range starts) to the target column's tile in the last, in buckets
+/// that also hold another column.
 #[test]
 fn a_streamed_read_takes_a_row_tile_split_along_axis0_as_one_run() {
     for primitive in [PrimitiveType::Float32, PrimitiveType::Bool] {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            "DATA",
-            primitive,
-            vec![4, 6],
-        )])
+        let schema = TableSchema::new(vec![
+            ColumnSchema::array_fixed("DATA", primitive, vec![4, 6]),
+            ColumnSchema::array_fixed("PAD", PrimitiveType::Float32, vec![4, 6]),
+        ])
         .expect("schema");
         let mut table = Table::with_schema(schema);
         for row in 0..56 {
             table
-                .add_row(RecordValue::new(vec![RecordField::new(
-                    "DATA",
-                    Value::Array(cell(primitive, &[4, 6], row)),
-                )]))
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("DATA", Value::Array(cell(primitive, &[4, 6], row))),
+                    RecordField::new(
+                        "PAD",
+                        Value::Array(cell(PrimitiveType::Float32, &[4, 6], row + 100)),
+                    ),
+                ]))
                 .expect("row");
         }
         let dir = tempdir().expect("tempdir");
@@ -372,46 +377,65 @@ fn a_streamed_read_takes_a_row_tile_split_along_axis0_as_one_run() {
             )
             .expect("save");
         let table = Table::open(TableOptions::new(&root)).expect("open");
-        // Fourteen row tiles, nonadjacent; channels 1..5 lie in channel
-        // tiles 0 to 2, each four tiles along axis 0.
-        let mut rows: Vec<usize> = (0..56).step_by(4).rev().collect();
-        rows.push(0);
-        let (mut floats, mut flags) = (Vec::new(), Vec::new());
-        let destination = match primitive {
-            PrimitiveType::Float32 => SelectedArray2DCellsMut::Float32(&mut floats),
-            _ => SelectedArray2DCellsMut::Bool(&mut flags),
-        };
-        STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
-        table
-            .fill_array_cells_2d_channel_range_typed_uncached("DATA", &rows, 1, 4, destination)
-            .expect("fill")
-            .expect("defined cells");
-        let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
-        // A tile holds 1 x 2 x 2 pixels: 16 bytes of Float32, one byte of
-        // packed Bool.
+        // A tile holds 1 x 2 x 2 pixels a column: 16 bytes of Float32, one
+        // byte of packed Bool; a bucket holds DATA's tile and PAD's.
         let tile_bytes = if primitive == PrimitiveType::Bool {
             1
         } else {
             16
         };
-        assert_eq!(calls, 14, "{primitive:?}: one read a row tile");
-        assert_eq!(
-            bytes,
-            14 * 3 * 4 * tile_bytes,
-            "{primitive:?}: only the tiles needed"
-        );
-        let mut expected = vec![0; rows.len() * 4 * 4];
-        for (index, &row) in rows.iter().enumerate() {
-            for channel in 1..5 {
-                for axis0 in 0..4 {
-                    expected[((channel - 1) * rows.len() + index) * 4 + axis0] =
-                        code(row, &[axis0, channel]);
-                }
+        let bucket_bytes = tile_bytes + 16;
+        // Fourteen row tiles, nonadjacent.
+        let mut rows: Vec<usize> = (0..56).step_by(4).rev().collect();
+        rows.push(0);
+        // Channels 1..5 lie in channel tiles 0 to 2, channels 3..5 in 1 and
+        // 2; each is four tiles along axis 0.
+        for (start, count, channel_tiles) in [(1, 4, 3), (3, 2, 2)] {
+            let (mut floats, mut flags) = (Vec::new(), Vec::new());
+            let destination = match primitive {
+                PrimitiveType::Float32 => SelectedArray2DCellsMut::Float32(&mut floats),
+                _ => SelectedArray2DCellsMut::Bool(&mut flags),
+            };
+            STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
+            table
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    "DATA",
+                    &rows,
+                    start,
+                    count,
+                    destination,
+                )
+                .expect("fill")
+                .expect("defined cells");
+            let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
+            let run = channel_tiles * 4;
+            let context = format!("{primitive:?} channels {start}+{count}");
+            assert_eq!(calls, 14, "{context}: one read a row tile");
+            assert_eq!(
+                bytes,
+                14 * ((run - 1) * bucket_bytes + tile_bytes),
+                "{context}: only the buckets needed"
+            );
+            let expected = expected_4(&rows, start, count);
+            match primitive {
+                PrimitiveType::Float32 => assert_codes(&floats, &expected, |c| c as f32, &context),
+                _ => assert_codes(&flags, &expected, flag, &context),
             }
         }
-        match primitive {
-            PrimitiveType::Float32 => assert_codes(&floats, &expected, |c| c as f32, "streamed"),
-            _ => assert_codes(&flags, &expected, flag, "streamed"),
+    }
+}
+
+/// The codes a column-major 2-D read of `rows`' channels
+/// `start..start + count` of four-element axis 0 delivers.
+fn expected_4(rows: &[usize], start: usize, count: usize) -> Vec<usize> {
+    let mut expected = vec![0; rows.len() * count * 4];
+    for (index, &row) in rows.iter().enumerate() {
+        for channel in start..start + count {
+            for axis0 in 0..4 {
+                expected[((channel - start) * rows.len() + index) * 4 + axis0] =
+                    code(row, &[axis0, channel]);
+            }
         }
     }
+    expected
 }
