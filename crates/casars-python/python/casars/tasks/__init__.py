@@ -28,6 +28,7 @@ from ._catalog import (
     imregrid,
     feather,
     importfits,
+    msconvert,
 )
 from ._runner import (
     TaskBinaryNotFoundError,
@@ -39,4 +40,4 @@ from ._runner import (
     run,
 )
 
-__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert']

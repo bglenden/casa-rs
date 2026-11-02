@@ -32,9 +32,9 @@ SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "par
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
 
 # The CASA task each casa-rs surface mimics is its contract's `casa_task`, or
-# its own name. calibrate and msexplore are casa-rs tasks with no CASA
-# counterpart.
-CASA_RS_ONLY = frozenset({"calibrate", "msexplore"})
+# its own name. calibrate, msconvert and msexplore are casa-rs tasks with no
+# CASA counterpart.
+CASA_RS_ONLY = frozenset({"calibrate", "msconvert", "msexplore"})
 # plotms waits for its own decision (#931): casaplotms is a GUI program.
 PENDING = {"plotms": "plotms waits for its own decision (#931): CASA's is the casaplotms GUI"}
 
@@ -240,8 +240,8 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
         "casa-rs does not take yet, those it takes but accepts only at CASA's default, the "
         "parameters casa-rs takes that CASA does not (casa-rs names for CASA concepts, or "
         "casa-rs-only controls), whether the shared parameters keep CASA's order, and the "
-        "defaults that differ. `calibrate` and `msexplore` are casa-rs tasks with no CASA "
-        "counterpart.",
+        "defaults that differ. `calibrate`, `msconvert` and `msexplore` are casa-rs tasks with "
+        "no CASA counterpart.",
         "",
         "The CASA parameters casa-rs lacks or accepts only at their defaults are tracked by "
         "family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and "

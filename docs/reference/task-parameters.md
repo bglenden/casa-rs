@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 542
-- Surfaces: 26 (26 task, 0 session)
-- Surface bindings: 780
+- Concepts: 550
+- Surfaces: 27 (27 task, 0 session)
+- Surface bindings: 791
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -42,6 +42,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
+| [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
 
 <a id="surface-msexplore"></a>
 
@@ -136,7 +137,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run |
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
 | <code>summary_paths</code> | <code>parameter.summary_paths@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; required when mode="summary" | Inspect | Calibration-table paths for summary mode |
 | <code>gaintables</code> | <code>parameter.gaintables@r2</code> | <code>optional&lt;array&lt;path (calibration_table)&gt;&gt; (states: none)</code> | <code>"none"</code>; optional | Input | Calibration-table paths to apply in order |
 | <code>table_path</code> | <code>parameter.table_path@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; required when mode="stats" | Inspect | Calibration-table path for stats mode |
@@ -506,7 +507,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
 | <code>createmms</code> | <code>mstransform.createmms@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Write a multi-MS rather than one MeasurementSet. |
 | <code>separationaxis</code> | <code>mstransform.separationaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Axis a multi-MS is partitioned along. |
 | <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
@@ -574,7 +575,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
 | <code>keepmms</code> | <code>parameter.keepmms@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Preserve MMS structure. |
 | <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
 | <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
@@ -1160,5 +1161,29 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>defaultaxes</code> | <code>fits.defaultaxes@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Add CASA's default four axes where the FITS image lacks them. |
 | <code>defaultaxesvalues</code> | <code>fits.defaultaxesvalues@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Output | Values of the degenerate axes defaultaxes adds. |
 | <code>beam</code> | <code>fits.beam@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Output | Restoring beam to set: major axis, minor axis and position angle. |
+
+<a id="surface-msconvert"></a>
+
+## MS Convert (<code>msconvert</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: MeasurementSet
+- Provider family: `msconvert`
+- Summary: Convert between MeasurementSet v2 and MSv4, in either direction.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Output | Output MeasurementSet path.<br><em>Surface:</em> Named as XRADIO names a processing set: an MSv4 output not ending in ps.zarr gains .ps.zarr. When outputvis is empty, msconvert writes beside vis, naming the output after it, its .ms, .zarr or .ps.zarr replaced by .ps.zarr for an MSv4 or .ms for an MSv2. |
+| <code>outformat</code> | <code>msconvert.outformat@r1</code> | <code>choice (3 values)</code> | <code>""</code>; optional | Output | Format of the converted MeasurementSet: msv2 or msv4. |
+| <code>datagroups</code> | <code>msconvert.datagroups@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data | Data groups to convert; empty converts every one. |
+| <code>partitionscheme</code> | <code>msconvert.partitionscheme@r1</code> | <code>array&lt;choice (2 values)&gt;</code> | <code>[]</code>; optional | MSv4 Output | MSv2 into MSv4: further keys the MSv2 is partitioned by, as XRADIO's partition_scheme. |
+| <code>withpointing</code> | <code>msconvert.withpointing@r1</code> | <code>bool</code> | <code>true</code>; optional | MSv4 Output | MSv4 output: convert the pointing, as XRADIO's with_pointing. |
+| <code>padding</code> | <code>msconvert.padding@r1</code> | <code>choice (2 values)</code> | <code>"flagged"</code>; optional | MSv2 Output | MSv2 output: what a grid cell no acquisition filled becomes. |
+| <code>chunks</code> | <code>msconvert.chunks@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | MSv4 Output | MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default. |
+| <code>codec</code> | <code>msconvert.codec@r1</code> | <code>choice (3 values)</code> | <code>"blosc"</code>; optional | MSv4 Output | MSv4 output: compression of the visibilities, flags and weights. |
+| <code>nthreads</code> | <code>workers.msconvert@r1</code> | <code>integer</code> | <code>0</code>; optional | MSv4 Output | MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 _End of generated reference._
