@@ -15,6 +15,7 @@
   Monitor until-loop where `gh` is unavailable). The PR monitor's "do not
   poll CI" forbids repeated foreground checks, not that one background wait.
 - `AGENTS.md`'s local review is, in Claude Code, a fresh `Agent` (not a
-  fork) with model `fable` and effort `xhigh`; run it in the background and
-  keep working. Its external review of Claude-led work is Astra at `xhigh`
-  or a human, which the owner arranges from the brief you post.
+  fork) with model `fable` (the latest Fable) and effort `xhigh`; run it in
+  the background and keep working. Its external review of Claude-led work
+  is the latest Astra at `xhigh` or a human, which the owner arranges from
+  the brief you post.

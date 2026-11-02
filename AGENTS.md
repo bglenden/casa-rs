@@ -214,16 +214,16 @@ By how far a change reaches:
    and runtime, the task front end) or spans areas, as an imaging speedup
    touching FFTs, MS I/O and the imager does. The agent in charge starts a
    fresh-context reviewer on its own host, usually a more able model than
-   itself (Fable `xhigh` in Claude Code, Astra `gpt-6-astra` `xhigh` in
-   Codex), and reads the findings itself; the owner never runs, relays or
-   announces it.
+   itself (the latest Fable at `xhigh` in Claude Code, the latest Astra at
+   `xhigh` in Codex), and reads the findings itself; the owner never runs,
+   relays or announces it.
 3. **Broad new capabilities and ADRs: external review of the design, before
    it is built.** Broad means a new task or tool family, crate family, app
    or storage format, or architecture several areas depend on; ADR changes
    and additions count too. The reviewer is a human or the other vendor's
-   model (Astra `xhigh` for Claude-led work, Fable `xhigh` for Codex-led
-   work). Post the design and a self-contained brief on its issue and ask
-   the owner to arrange the review.
+   model (the latest Astra at `xhigh` for Claude-led work, the latest Fable
+   at `xhigh` for Codex-led work). Post the design and a self-contained
+   brief on its issue and ask the owner to arrange the review.
 
 No loops: at most one review per change, one round. Fix blocking and
 should-fix findings, each with a test, or answer them; decline optional
