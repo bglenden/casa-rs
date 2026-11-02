@@ -14,7 +14,7 @@ mod native_aw;
 mod observation;
 mod pointing_law;
 mod product_list;
-mod selected_observation_sample;
+mod sample_antennas;
 mod transaction;
 mod uvw_projection;
 mod visibility_transform;
@@ -60,14 +60,16 @@ pub use model_state::{
     ModelLifecycleRequirements, ModelSample, ModelSourceShape, ModelSupport, ModelValue,
 };
 
+/// The observation boundary's partition identity, which a
+/// [`PartitionSelection`] names.
+pub use casa_observation::PartitionId;
 pub use observation::{
-    CompileObservationError, CorrelationProduct, CorrelationSelection, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, MsColumnKind, ObservationSelection,
-    ObservationSnapshot, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ResolvedIntent, RowSelection, SelectedColumns, SelectedMainRow,
-    SelectedRowSequenceError, SelectedRows, SelectedRowsBuilder, SelectionBound,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
+    MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
+    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, PartitionSelection,
+    RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 pub use native_aw::{
@@ -75,14 +77,8 @@ pub use native_aw::{
     NativeAwRequestInput, NativeAwTerms,
 };
 
-mod selected_numeric;
-pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, SelectedNumericWeights};
-
-pub use selected_observation_sample::{
-    AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedObservationRunChannel, SelectedObservationRunRow,
-    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedSampleCoordinates,
-    SelectedSampleMetadata,
+pub use sample_antennas::{
+    AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
 };
 
 pub use product_list::{

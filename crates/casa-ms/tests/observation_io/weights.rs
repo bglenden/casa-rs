@@ -405,3 +405,111 @@ fn spectral_columns_without_content_are_read_past() {
         assert_eq!(delivered_weights(&observation, &stored), plain);
     }
 }
+
+/// Each partition reads `WEIGHT_SPECTRUM` by its own first row, as CASA
+/// asks again at each new spectral window, at the first row it meets there
+/// (`VisibilityIteratorImpl2::weightSpectrumExists`): with the column
+/// filled for one of two partitions only (two sessions of one window),
+/// that partition's stored weights are its `WEIGHT_SPECTRUM` cells, and the
+/// other's its `WEIGHT`, whether or not the partition holds MAIN's first
+/// row. CASA iterates the two sessions as one window, and so answers once
+/// for both (contracts, section 4).
+#[test]
+fn each_partition_reads_weight_spectrum_by_its_first_row() {
+    for filled in [0, 1] {
+        let root = tempfile::tempdir().expect("root");
+        let path = fixture(root.path(), "ms_trial.ms");
+        super::convert::split_sessions(&path, false);
+        let plain = {
+            let observation = Msv2Observation::open(&path).expect("v2");
+            [0, 1].map(|partition| {
+                delivered_weights(
+                    &observation,
+                    &AccessRequest {
+                        partitions: vec![PartitionId(partition)],
+                        ..request(0..8, usize::MAX)
+                    },
+                )
+            })
+        };
+        let mut ms = casa_ms::MeasurementSet::open(&path).expect("ms");
+        let definition = build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+            .expect("schema")
+            .column("WEIGHT_SPECTRUM")
+            .expect("definition")
+            .clone();
+        ms.main_table_mut()
+            .add_column(definition, None)
+            .expect("add column");
+        let session = |row: usize| match ms
+            .main_table()
+            .cell_accessor(row, "OBSERVATION_ID")
+            .and_then(|cell| cell.scalar())
+        {
+            Ok(casa_types::ScalarValue::Int32(id)) => *id as u32,
+            other => panic!("OBSERVATION_ID of row {row}: {other:?}"),
+        };
+        let rows: Vec<usize> = (0..ms.main_table().row_count())
+            .filter(|row| session(*row) == filled)
+            .collect();
+        for row in &rows {
+            let cell =
+                ArrayD::from_shape_fn(vec![4, 8], |index| stored_weight(*row, index[0], index[1]));
+            ms.main_table_mut()
+                .cell_accessor_mut(*row, "WEIGHT_SPECTRUM")
+                .and_then(|mut target| target.set(Value::Array(ArrayValue::Float32(cell))))
+                .expect("set cell");
+        }
+        ms.save().expect("save");
+        drop(ms);
+        let observation = Msv2Observation::open(&path).expect("v2");
+        for partition in [0, 1] {
+            let spectral = partition == filled;
+            let entry = &observation.catalogue().partitions[partition as usize];
+            assert_eq!(entry.observation.0, partition, "partition {partition}");
+            let request = AccessRequest {
+                partitions: vec![PartitionId(partition)],
+                ..request(0..8, usize::MAX)
+            };
+            let source = observation.estimate(&request).expect("estimate").partitions[0]
+                .weights
+                .clone()
+                .expect("weights read");
+            let expected = if spectral {
+                "WEIGHT_SPECTRUM"
+            } else {
+                "WEIGHT"
+            };
+            assert_eq!(
+                entry.data_groups[0].weights, expected,
+                "partition {partition}"
+            );
+            assert_eq!(
+                (source.variable.as_str(), source.per_channel),
+                (expected, spectral),
+                "partition {partition}, filled {filled}"
+            );
+            let delivered = delivered_weights(&observation, &request);
+            if spectral {
+                let sorted = |mut weights: Vec<f32>| {
+                    weights.sort_by(f32::total_cmp);
+                    weights
+                };
+                let cells = rows
+                    .iter()
+                    .flat_map(|row| {
+                        (0..8).flat_map(move |channel| {
+                            (0..4).map(move |product| stored_weight(*row, product, channel))
+                        })
+                    })
+                    .collect();
+                assert_eq!(sorted(delivered), sorted(cells), "filled {filled}");
+            } else {
+                assert_eq!(
+                    delivered, plain[partition as usize],
+                    "partition {partition}"
+                );
+            }
+        }
+    }
+}

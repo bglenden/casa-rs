@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Field-name selection reaches both production imaging routes (#54/#980).
+//! Field-name selection reaches production imaging (#54/#980).
 
-use casa_imaging_application::route_law;
+use casa_imaging_application::product_law;
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD, Setup};
@@ -30,7 +30,7 @@ fn field_names_patterns_and_mixed_lists_image_the_same_rows_as_ids() {
         let (_, b) = observation.image(&named, controls(names, false));
         assert_eq!(a.suffixes(), b.suffixes());
         for suffix in a.suffixes() {
-            let nrms = route_law::image_nrms(
+            let nrms = product_law::image_nrms(
                 &observation.scratch(&format!("{reference}{suffix}")),
                 &observation.scratch(&format!("{named}{suffix}")),
             )

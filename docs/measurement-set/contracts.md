@@ -127,9 +127,16 @@ and SOURCE's fixed vectors have their length on one axis.
   then those for every window: CASA's default rest frequency is the first
   record's first line. A record for a window the store lacks is not read,
   and a line array whose length is not `NUM_LINES` is dropped, each with a
-  warning, since the table is readable otherwise. The MSv4 adapter does not
-  yet read `field_and_source`'s `SOURCE_DIRECTION` and line variables
-  (#976): its sources are empty.
+  warning, since the table is readable otherwise. The MSv4 adapter reads a
+  `field_and_source` dataset's sources (#976): one source per
+  `source_name` (XRADIO's `NAME_SOURCEID`), with one record per window the
+  datasets state it for, of its `SOURCE_DIRECTION` and its lines
+  (`line_name`, or the schema's `line_names`, with `LINE_REST_FREQUENCY`
+  and `LINE_SYSTEMIC_VELOCITY`, a line stated when any of them is not
+  XRADIO's padding). Such a record states nothing else (no time, interval
+  or code), and its velocities have no frame: none is invented. A
+  `field_and_source_ephemeris` dataset states lines per time; they are not
+  read, and its fields name no source.
 - **States** (`Catalogue::states`, `StateId`): every MSv2 `STATE` row, with
   `OBS_MODE` whole, `CAL` and `LOAD` (K), `SIG`, `REF`, `SUB_SCAN` and flag.
   A partition lists the states its rows use: several when they share an
@@ -786,11 +793,19 @@ scratch for it, and binding fails when one time does not fit.
 **Weights from sigmas.** The weight role reads the stored weights
 (`WeightRequest::Stored`) or the weights CASA's solvers use, 1/σ² of the
 stored sigmas (`WeightRequest::InverseSigmaSquared`), 0 where σ is not
-positive or is NaN (`VisBufferImpl2::resetWeightsUsingSigma`). An MSv2 reads
-`SIGMA_SPECTRUM` when MAIN's `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` both hold
-content, else `SIGMA` broadcast over channels, as `VisBufferImpl2` does by
-casacore's `hasContent` (the first cell defined, no axis empty: a column added
-and never filled holds none, and the stored weights are then `WEIGHT`); the
+positive or is NaN (`VisBufferImpl2::resetWeightsUsingSigma`). An MSv2's
+stored weights are a partition's `WEIGHT_SPECTRUM` when the first of its rows
+in time order holds content by casacore's `hasContent` (the cell defined, no
+axis empty: a column added and never filled holds none), else `WEIGHT`
+broadcast over channels: CASA's iterator asks again at each new spectral
+window, on the first row it meets there
+(`VisibilityIteratorImpl2::weightSpectrumExists`). The two agree wherever a
+window's rows agree. Where they do not, CASA's one answer for the window
+depends on the order it iterates in, and reading a cell without content
+fails; the adapter answers per partition instead. It reads `SIGMA_SPECTRUM`
+when the partition's weights are `WEIGHT_SPECTRUM` and MAIN's first row
+holds `SIGMA_SPECTRUM` content, which CASA asks once per MeasurementSet
+(`sigmaSpectrumExists`), else `SIGMA` broadcast over channels; the
 value is made a weight
 before padding is spread, so padding stays NaN. An MSv4 holds no sigmas, so
 the request names its fallback: refuse a traversal that reads weights

@@ -57,7 +57,7 @@ impl PartitionSelection {
 
     /// Whether the scan at one batch time is selected. A requested role must
     /// be present; catalogue IDs are validated when the batch is built.
-    pub(super) fn scan_holds(
+    pub(crate) fn scan_holds(
         &self,
         batch: &VisibilityBatch<'_>,
         time: usize,

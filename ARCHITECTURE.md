@@ -243,67 +243,46 @@ centres and N+1 boundaries, or a linear WCS law that derives both exactly;
 spectral transforms remain unevaluated. `compile_observation` builds the
 Observation Snapshot, which is its sources in request order. Each source holds
 its position (`input_ordinal`), a provenance that is only the MeasurementSet
-locator, the canonical field, UV-distance and intent predicate, the DDID,
-SPW/channel and correlation selection, the selected data, flag and weight
-columns, and whether MAIN has `CORRECTED_DATA`. Selected MAIN rows are kept as
-the MAIN row count, the selected row count and the used-DDID set, not as a
-row list. Neither the snapshot nor its sources carry an identity. Each pass
-re-evaluates the row predicate in physical MAIN order and keeps only the
-current bounded block, so a sparse selection reads but never materializes the
-intervening rows.
+locator, the canonical field, UV-distance and intent predicate, the selected
+partitions of the observation boundary (`PartitionSelection`: each one's
+spectral window and correlation products), the windows' selected channels,
+the selected data, flag and weight columns, whether the store holds the
+corrected data, and how many samples the selection holds. Neither the
+snapshot nor its sources carry an identity, and no sample list is kept: each
+pass binds the selected partitions' fields and channels on the boundary,
+which delivers whole times of them, and tests the UV distance per sample.
 
-`casa-ms` owns the bounded Selected Observation read path. A run opens one
-`BoundSelectedObservation`, which holds a casacore read lock on each source's
-tables. Each pass turns it into one block stream (`into_block_stream`):
-`SelectedObservationBlockSource::fill_next` walks MAIN in physical order,
-applies the row predicate, and fills one reusable block with consecutive
-selected rows of one DDID: it keeps the row metadata the walk read, reads
-their visibility, flag and weight columns over the selected channel span and
-evaluates each row's geometry. `complete` refuses a stream that is
-not exhausted and returns the access for the next pass. For a channel-local
-cube with a linear spectral WCS and no continuum transform, a wave that covers
-only part of the cube and need not read whole rows streams through
-`into_windowed_block_stream` instead: it reads only the channels whose
-output-frame frequencies reach the wave, keeping the straddling channel at
-each edge, and skips a block that reaches none.
+The run reads its observation through the observation boundary
+(`casa-observation`, `docs/measurement-set/contracts.md`), from either store:
+an MSv4 processing set (XRADIO's schema on local Zarr v3) images as a
+MeasurementSet does (imaging port step 6c, owner decision 5). Compile opens
+the store once, a MeasurementSet as an `Msv2Observation`, whose opening grids
+MAIN's key columns into partitions in bounded row chunks, or a processing set
+as an `Msv4Observation`; reads the request's windows, fields, sources,
+observations, intents and antennas from its catalogue and its frames from
+`MsCalEngine::from_catalogue`; and surveys the partitions the
+request selects with one traversal that reads no visibilities (UVW only when
+a UV-distance interval or a W-projecting gridder needs it): their selected
+samples, fields, times, observations, W range and the epochs at which each
+window's frequencies are converted. The run's `ObservationSource` binds one
+`AccessRequest` per partition and wave, admitted from the observation's
+estimate, and packs each `VisibilityBatch` into the runtime's native rows.
 
-Each source's content plan prices the retained table
-metadata, geometry engine, selection, predicate and coordinate catalogs, the
-Measures provider and ephemeris (charged once, to the first source), the
-POINTING catalog or AW pointing-epoch plan when the geometry needs one, one
-block over the selected channel span, and `CONSTRUCTION_SLACK_BYTES` for
-construction scratch. The block's row count is the largest whose envelope fits
-the source budget.
+The application opens one Measures provider (`open_measures_runtime`) for
+compile and the run; the batch geometry receives it, and neither the
+boundary's adapters nor the geometry discover runtime data (the dependency
+policy's `observation-geometry-provider-injection`).
 
-The application passes a Measures provider in the
-`SelectedObservationResolutionRequest`; it supplies EOP values, TAI-UTC, IGRF
-coefficients, observatory positions, named-source directions and rest-line
-frequencies. Resolution wraps it in a `SelectedObservationMeasures`, whose
-constructor calls the provider's `prepare_bounded_state` (for
-`MeasuresRuntime`, eager materialization of all six catalogs) and refuses a
-provider that cannot report its retained bytes. The bound sources' geometry
-engines receive that provider and never discover runtime data inside the
-selected-observation path.
-
-`casa-imaging-model` owns the backend-free values a block lends to its
-consumers: per-row metadata, sample coordinates, per-domain UVW and
-phase-shift projections, pointing directions and antenna response classes
-(`SelectedObservationRunRow`, `SelectedObservationRunChannel`), and the
-borrowed visibility, flag and weight columns of a row (`SelectedNumericRow`).
-`casa-ms` fills them from MAIN and the compiled geometry; the application's
-`MeasurementSetSource` converts each block into the runtime's native rows.
-
-`casa-imaging-model` also owns the same geometry over the observation
-boundary's batches (imaging port step 3b, #932): `GeometryPlan` compiles once
+`casa-imaging-model` owns the geometry over the observation boundary's
+batches (imaging port step 3b, #932): `GeometryPlan` compiles once
 from a problem and a `casa_observation::Catalogue` and evaluates each
 `VisibilityBatch` into a `BatchGeometry` (per row sample and chart the
 reprojected UVW and phase shift, pointing, parallactic angles, AW pointing
-pixels and aperture classes; per time the output-frame frequencies). Both
-routes share the arithmetic: casacore's `UVWMachine`, the prepared frequency
-conversion and the position angle in `casa-types`; CASA's `FTMachine`
-reprojections (`GridFtProjection`), the pointing law and the AW pointing
-groups in `casa-imaging-model`. Production still reads the selected
-observation; the port's later steps move it onto the batches.
+pixels and aperture classes; per time the output-frame frequencies). Its
+arithmetic is casacore's `UVWMachine`, the prepared frequency conversion and
+the position angle in `casa-types`, and CASA's `FTMachine` reprojections
+(`GridFtProjection`), the pointing law and the AW pointing groups in
+`casa-imaging-model`.
 
 `casa-imaging-model` carries the model-state schemas and the
 compiler-owned lifecycle commitment: the target shape, the bounds and the
@@ -321,8 +300,8 @@ The Compiled Problem also derives one Observation Transaction: the canonical
 read set of every consumed per-MS selection and selected columns, and the
 exact selected-cell scope of an optional `MODEL_DATA` or `CORRECTED_DATA`
 write. No
-runtime plan binds it: the application resolves the selected observation once, every pass reads it
-through the bounded source, and the final major-cycle pass writes the
+runtime plan binds it: the application opens the observation once, every pass reads it
+through the batch source, and the final major-cycle pass writes the
 visibilities (see Imaging execution). Conventional image members and
 `MODEL_DATA` are separate side effects: failure of one never rolls back or
 hides a result already completed by the other. Every product member is
@@ -332,13 +311,17 @@ removes the staging and publishes nothing, and a failure while moving leaves an
 incomplete set that must be regenerated, without rollback or a resumable
 per-member recovery ledger.
 `MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
-pass writes selected cells in place through casa-ms's selected-visibility
-writer under casacore's table lock, creating `MODEL_DATA` when MAIN lacks it,
-as CASA does. The writer saves in bounded batches by patching the written
-rows' tiles, so it accepts only destinations in `TiledShapeStMan` or
-`TiledColumnStMan`, the managers CASA and casa-rs store visibilities in. It
-refuses any other manager, whose save would rewrite every row of MAIN, when
-the writing pass is admitted, before anything changes. Interruption may leave
+pass writes selected cells in place through the observation boundary's
+update session (`casa_ms::observation_io`) under casacore's table lock,
+creating `MODEL_DATA` when MAIN lacks it, as CASA does. An MSv4's session
+replaces whole chunks of its `model` and `corrected` groups and cannot add a
+group, so a run that saves the model into an MSv4 without one is refused
+before it images. Each batch is a
+bounded mutation of its rows that patches their tiles, so the session
+accepts only destinations in `TiledShapeStMan` or `TiledColumnStMan`, the
+managers CASA and casa-rs store visibilities in. It refuses any other
+manager, whose save would rewrite every row of MAIN, when the writing pass
+binds, before anything changes. Interruption may leave
 partial derived values, as in CASA; the next run recomputes them. No
 backup column, full-column staging copy, content digest, rollback, snapshot, or
 copy-on-write generation is part of this path. Users may retain or delete

@@ -232,26 +232,6 @@ pub struct ImagingRequest {
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
     pub diagnostics: Diagnostics,
-    /// How the passes read the MeasurementSet: a run option of the imaging
-    /// port (#932), not an imager parameter, so no request names it.
-    #[serde(skip)]
-    pub source_route: SourceRoute,
-}
-
-/// The route the passes read the selected visibilities by, while the
-/// imaging port (#932) holds both: the selected-observation route, which
-/// reads MAIN rows, or the observation's batches through the shared
-/// `casa-observation` boundary. Both image the same samples; the cutover
-/// removes the first.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SourceRoute {
-    /// MAIN rows, through `casa-ms`'s selected-observation layer.
-    #[default]
-    SelectedRows,
-    /// The observation's batches, with geometry over batches; a model or
-    /// corrected column is written back through the observation's update
-    /// sessions (#932, step 5).
-    ObservationBatches,
 }
 
 /// The device a request asks to grid on (`backend`).

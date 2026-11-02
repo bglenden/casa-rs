@@ -29,9 +29,10 @@ _Avoid_: Gridder configuration, sample coordinate cache
 **Observation Snapshot**:
 The immutable logical description of selected MS data. It is a manifest, not
 a materialized copy of bulk samples. Its compiler canonicalizes exact per-MS
-row, SPW/channel, and correlation semantics plus the selected data, flag, and
-weight columns and whether MAIN has `CORRECTED_DATA`. Selected rows are
-retained only as counts and the DATA_DESCRIPTION identifiers they use.
+sample predicates, partitions, SPW/channel, and correlation semantics plus
+the selected data, flag, and weight columns and whether MAIN has
+`CORRECTED_DATA`. Selected samples are retained only as their count and the
+observation partitions that hold them.
 Sources keep request order and their locations. Nothing of it is stored in
 the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
@@ -50,9 +51,10 @@ products are not part of it: each is staged and replaced on its own.
 _Avoid_: Incremental output write, best-effort model save
 
 **Selected Observation**:
-The bounded stream evaluating an Observation Snapshot and compiled transform
-specifications into visibility samples, flags, weights, and per-row
-coordinates. Chunking has no scientific identity.
+The bounded stream of an Observation Snapshot's selected partitions, read as
+the observation boundary's batches and evaluated with the compiled transform
+specifications into visibility samples, flags, weights, and per-sample
+coordinates. Batching has no scientific identity.
 _Avoid_: Observation snapshot, input rows
 
 **Spectral Coordinate Law**:

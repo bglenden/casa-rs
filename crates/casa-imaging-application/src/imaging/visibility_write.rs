@@ -1,52 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Visibilities written back in the final pass: the final model into
 //! `MODEL_DATA` and the continuum-subtracted data into `CORRECTED_DATA`,
-//! on either route ([`crate::SourceRoute`]).
+//! through the batch route's update session.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use casa_imaging_model::{ContinuumFitRule, SequentialContinuumTransform};
+use casa_imaging_runtime::pass::SourceError;
 
-use casa_imaging_model::{
-    ContinuumFitRule, MsColumnKind, ObservationSelection, SequentialContinuumTransform,
-};
-use casa_imaging_runtime::pass::{NativeBlock, SourceError};
-use casa_ms::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
-use num_complex::Complex32;
+use super::observation_source::BatchRoute;
+pub(crate) use super::observation_source::BatchWriter as VisibilityWriter;
 
-use super::observation_source::{BatchRoute, BatchWriter};
+/// Where the visibilities go: the update session of the batch route the
+/// run reads.
+#[derive(Clone, Copy)]
+pub(crate) struct VisibilityWriteTarget<'a>(pub(crate) &'a BatchRoute);
 
-/// Where the visibilities go.
-pub(crate) enum VisibilityWriteTarget<'a> {
-    /// The selected MAIN rows of today's route.
-    SelectedRows(RowWriteTarget),
-    /// The batch route's update session.
-    Batches(&'a BatchRoute),
-}
-
-impl VisibilityWriteTarget<'_> {
+impl<'a> VisibilityWriteTarget<'a> {
     /// Heap bytes the write holds at most, admitted with the pass that
-    /// writes: [`SelectedVisibilityWrite::retained_bytes`] on today's
-    /// route, [`BatchRoute::write_bytes`] on the batch route.
+    /// writes ([`BatchRoute::write_bytes`]).
     pub(crate) fn retained_bytes(&self) -> Result<u64, SourceError> {
-        match self {
-            Self::SelectedRows(target) => Ok(SelectedVisibilityWrite::retained_bytes(
-                &target.path,
-                SelectedVisibilityWriteTargets::new(target.model_data, target.corrected_data),
-            )?),
-            Self::Batches(route) => route.write_bytes(),
-        }
+        self.0.write_bytes()
     }
-}
 
-/// Where today's route writes: the selected MeasurementSet, the selection
-/// whose cells are written, and the columns.
-#[derive(Clone)]
-pub(crate) struct RowWriteTarget {
-    pub(crate) path: PathBuf,
-    pub(crate) selection: Arc<ObservationSelection>,
-    pub(crate) model_data: bool,
-    pub(crate) corrected_data: bool,
+    /// Begin the write; `transform` is the continuum transform whose output
+    /// `CORRECTED_DATA` holds.
+    pub(crate) fn begin(
+        &self,
+        transform: Option<&'a SequentialContinuumTransform>,
+    ) -> Result<VisibilityWriter<'a>, SourceError> {
+        VisibilityWriter::begin(
+            self.0
+                .write_back()
+                .ok_or("the batch route was opened to read only")?,
+            transform,
+        )
+    }
 }
 
 /// Whether a channel of a row under the continuum `rule` reaches the line
@@ -57,189 +44,4 @@ pub(super) fn writes_channel(rule: Option<&ContinuumFitRule>, channel: u32) -> b
         rule.channel_use(channel)
             .is_some_and(|role| role.contributes_to_output())
     })
-}
-
-/// An open in-place write of every selected sample, on the route the run
-/// reads.
-pub(crate) enum VisibilityWriter<'a> {
-    SelectedRows(Box<RowWriter<'a>>),
-    Batches(BatchWriter<'a>),
-}
-
-impl<'a> VisibilityWriter<'a> {
-    /// Begin the write to `target`; `transform` is the continuum transform
-    /// whose output `CORRECTED_DATA` holds.
-    pub(crate) fn begin(
-        target: &VisibilityWriteTarget<'a>,
-        transform: Option<&'a SequentialContinuumTransform>,
-    ) -> Result<Self, SourceError> {
-        Ok(match target {
-            VisibilityWriteTarget::SelectedRows(target) => {
-                Self::SelectedRows(Box::new(RowWriter::begin(target, transform)?))
-            }
-            VisibilityWriteTarget::Batches(route) => Self::Batches(BatchWriter::begin(
-                route
-                    .write_back()
-                    .ok_or("the batch route was opened to read only")?,
-                transform,
-            )?),
-        })
-    }
-
-    /// Whether the write needs model predictions.
-    pub(crate) const fn needs_predictions(&self) -> bool {
-        match self {
-            Self::SelectedRows(writer) => writer.needs_predictions(),
-            Self::Batches(writer) => writer.needs_predictions(),
-        }
-    }
-
-    /// Write one block: its predictions, `[row][channel][correlation]`, to
-    /// `MODEL_DATA`, and its values to `CORRECTED_DATA`, on the channels
-    /// that reach the line output.
-    pub(crate) fn write(
-        &mut self,
-        block: &NativeBlock,
-        predictions: &[Complex32],
-    ) -> Result<(), SourceError> {
-        match self {
-            Self::SelectedRows(writer) => writer.write(block, predictions),
-            Self::Batches(writer) => writer.write(block, predictions),
-        }
-    }
-
-    /// Finish the write; returns the number of cells written.
-    pub(crate) fn complete(self) -> Result<u64, SourceError> {
-        match self {
-            Self::SelectedRows(writer) => writer.complete(),
-            Self::Batches(writer) => writer.complete(),
-        }
-    }
-}
-
-/// Today's route's write: each selected sample's cell, by its MAIN row.
-///
-/// Under a continuum transform only the channels that reach the line output
-/// are written, to either column; fit-only channels keep their contents.
-pub(crate) struct RowWriter<'a> {
-    writer: SelectedVisibilityWrite,
-    model_data: bool,
-    corrected_data: bool,
-    transform: Option<&'a SequentialContinuumTransform>,
-    windows: BTreeMap<u32, u32>,
-    samples: u64,
-}
-
-impl<'a> RowWriter<'a> {
-    /// Take the MeasurementSet's write lock; `MODEL_DATA` is created when
-    /// absent, as CASA does. `CORRECTED_DATA` holds the output of
-    /// `transform`, so it needs one.
-    fn begin(
-        target: &RowWriteTarget,
-        transform: Option<&'a SequentialContinuumTransform>,
-    ) -> Result<Self, SourceError> {
-        if target.corrected_data && transform.is_none() {
-            return Err("CORRECTED_DATA is written only by a continuum transform".into());
-        }
-        Ok(Self {
-            writer: SelectedVisibilityWrite::begin(
-                &target.path,
-                SelectedVisibilityWriteTargets::new(target.model_data, target.corrected_data),
-            )?,
-            model_data: target.model_data,
-            corrected_data: target.corrected_data,
-            transform,
-            windows: target
-                .selection
-                .data_descriptions()
-                .iter()
-                .map(|selection| {
-                    (
-                        selection.data_description_id(),
-                        selection.spectral_window_id(),
-                    )
-                })
-                .collect(),
-            samples: 0,
-        })
-    }
-
-    /// Whether the write needs model predictions.
-    const fn needs_predictions(&self) -> bool {
-        self.model_data
-    }
-
-    /// Write one block on the channels that reach the line output: its
-    /// predictions, `[row][channel][correlation]`, to `MODEL_DATA`, and its
-    /// transformed values to `CORRECTED_DATA`.
-    fn write(&mut self, block: &NativeBlock, predictions: &[Complex32]) -> Result<(), SourceError> {
-        let cells = block.channels() * block.correlations();
-        for row in 0..block.len() {
-            let header = block.header(row);
-            let physical_row = header.address.physical_row;
-            let rule = match self.transform {
-                Some(transform) => {
-                    let window = u32::try_from(header.address.data_description)
-                        .ok()
-                        .and_then(|description| self.windows.get(&description))
-                        .ok_or("a written row's data description is not selected")?;
-                    transform.rule(header.context.field as i32, *window)
-                }
-                None => None,
-            };
-            let output = |channel: u32| writes_channel(rule, channel);
-            if self.model_data {
-                let predicted = &predictions[row * cells..(row + 1) * cells];
-                self.write_row(
-                    MsColumnKind::ModelData,
-                    block,
-                    physical_row,
-                    predicted,
-                    output,
-                )?;
-            }
-            if self.corrected_data {
-                let values = block.row(0, row).values;
-                self.write_row(
-                    MsColumnKind::CorrectedData,
-                    block,
-                    physical_row,
-                    values,
-                    output,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn write_row(
-        &mut self,
-        column: MsColumnKind,
-        block: &NativeBlock,
-        physical_row: u64,
-        values: &[Complex32],
-        mut written: impl FnMut(u32) -> bool,
-    ) -> Result<(), SourceError> {
-        let mut values = values.iter();
-        for channel in block.channel_indices() {
-            let output = written(*channel);
-            for correlation in block.correlation_indices() {
-                let value = *values
-                    .next()
-                    .ok_or("a block holds fewer values than samples")?;
-                if output {
-                    self.writer
-                        .write(column, physical_row, *channel, *correlation, value)?;
-                    self.samples += 1;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Flush and release the lock; returns the number of cells written.
-    fn complete(self) -> Result<u64, SourceError> {
-        self.writer.complete()?;
-        Ok(self.samples)
-    }
 }

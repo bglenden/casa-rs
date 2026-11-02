@@ -8,7 +8,6 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
-use casa_imaging_model::{AntennaResponseClass, GridFtProjection};
 use casa_observation::FieldEphemeris;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
@@ -22,11 +21,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::SelectedObservationEphemeris;
+use crate::PhaseCentreEphemeris;
 use crate::ephemeris::FieldMotion;
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
+
+mod catalogue;
 
 /// Engine for computing derived quantities from MS metadata.
 ///
@@ -51,10 +52,6 @@ pub struct MsCalEngine {
     antenna_positions: Box<[MPosition]>,
     /// Whether each antenna uses an alt-az mount.
     antenna_mount_alt_az: Box<[bool]>,
-    /// CASA aperture response class derived from ANTENNA and OBSERVATION metadata.
-    antenna_response_classes: Box<[Option<AntennaResponseClass>]>,
-    /// Largest aperture response represented by the complete antenna family.
-    antenna_response_family_envelope: Option<AntennaResponseClass>,
     /// Field phase directions (constant term, J2000).
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
@@ -62,16 +59,17 @@ pub struct MsCalEngine {
     /// What each field follows, once attached
     /// ([`Self::with_field_ephemerides`]); empty until then.
     field_motions: Box<[FieldMotion]>,
+    /// The epoch each field's `PHASE_DIR` is stated at (MSv2 `FIELD.TIME`),
+    /// when the store states one.
+    field_reference_epochs: Box<[Option<MEpoch>]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
     measures: Option<Arc<dyn MeasuresProvider>>,
-    selected_observation_ephemeris: Option<Arc<SelectedObservationEphemeris>>,
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
-    mosaic_uvw_cache: RwLock<HashMap<MosaicUvwCacheKey, GridFtProjection>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,21 +77,6 @@ struct GeometryCacheKey {
     time_bits: u64,
     field_id: usize,
     antenna_id: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct MosaicUvwCacheKey {
-    source_field_id: usize,
-    target_cosine_bits: [u64; 3],
-}
-
-impl MosaicUvwCacheKey {
-    fn new(source_field_id: usize, target_direction: &MDirection) -> Self {
-        Self {
-            source_field_id,
-            target_cosine_bits: target_direction.cosines().map(f64::to_bits),
-        }
-    }
 }
 
 impl GeometryCacheKey {
@@ -129,32 +112,6 @@ fn store_geometry_value<T: Copy>(
 }
 
 impl MsCalEngine {
-    /// Model the fixed-slice heap payload retained by the selected-observation engine.
-    pub(crate) fn selected_observation_retained_heap_bytes(ms: &MeasurementSet) -> MsResult<usize> {
-        let antenna_count = ms.antenna()?.row_count();
-        let field_count = ms.field()?.row_count();
-        // The fields' ephemerides ([`Self::with_field_ephemerides`]).
-        let ephemerides = crate::ephemeris::field_motions_bytes(ms)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        antenna_count
-            .checked_mul(
-                size_of::<MPosition>()
-                    + size_of::<bool>()
-                    + size_of::<Option<AntennaResponseClass>>(),
-            )
-            .and_then(|bytes| {
-                field_count
-                    .checked_mul(size_of::<MDirection>() + size_of::<[f64; 2]>())
-                    .and_then(|fields| bytes.checked_add(fields))
-            })
-            .and_then(|bytes| bytes.checked_add(ephemerides))
-            .ok_or_else(|| {
-                MsError::InvalidInput(
-                    "selected-observation geometry metadata byte count overflow".to_string(),
-                )
-            })
-    }
-
     /// Create a new engine by extracting metadata from the MS subtables.
     ///
     /// Reads ANTENNA positions, FIELD phase directions, and resolves the
@@ -191,13 +148,11 @@ impl MsCalEngine {
 
         let observatory_position =
             resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
-        let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
-        let antenna_response_family_envelope =
-            AntennaResponseClass::family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
         let mut field_phase_offsets = Vec::with_capacity(n_field);
+        let mut field_reference_epochs = Vec::with_capacity(n_field);
         for row in 0..n_field {
             let (longitude, latitude) = phase_dir_constant(field.phase_dir(row)?)?;
             field_phase_offsets.push([longitude, latitude]);
@@ -207,118 +162,24 @@ impl MsCalEngine {
                 &observatory_position,
                 Arc::clone(&measures),
             )?);
+            field_reference_epochs.push(field_reference_epoch(ms, row).ok());
         }
         let time_reference = detect_time_reference(ms);
 
         Ok(Self {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
-            antenna_response_classes,
-            antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: Box::new([]),
+            field_reference_epochs: field_reference_epochs.into_boxed_slice(),
             observatory_position,
             time_reference,
             measures: Some(measures),
-            selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
-            mosaic_uvw_cache: RwLock::new(HashMap::new()),
         })
-    }
-
-    /// Create the retained selected-observation engine without populating
-    /// table-wide scalar or array caches in the locked MeasurementSet.
-    pub(crate) fn new_selected_observation(
-        ms: &MeasurementSet,
-        measures: Arc<dyn MeasuresProvider>,
-        ephemeris: Option<Arc<SelectedObservationEphemeris>>,
-    ) -> MsResult<Self> {
-        let antenna = ms.antenna()?;
-        let mut antenna_positions = Vec::with_capacity(antenna.row_count());
-        let mut antenna_mount_alt_az = Vec::with_capacity(antenna.row_count());
-        for row in 0..antenna.row_count() {
-            let position = selected_array_value(antenna.table(), row, "POSITION")?;
-            let ArrayValue::Float64(position) = position else {
-                return Err(MsError::ColumnTypeMismatch {
-                    column: "POSITION".to_string(),
-                    table: "ANTENNA".to_string(),
-                    expected: "Float64 array shaped [3]".to_string(),
-                    found: format!("{:?}", position.primitive_type()),
-                });
-            };
-            if position.shape() != [3] {
-                return Err(MsError::ColumnTypeMismatch {
-                    column: "POSITION".to_string(),
-                    table: "ANTENNA".to_string(),
-                    expected: "Float64 array shaped [3]".to_string(),
-                    found: format!("Float64 array shaped {:?}", position.shape()),
-                });
-            }
-            antenna_positions.push(MPosition::new_itrf(position[0], position[1], position[2]));
-            drop(position);
-            let mount = selected_string_value(antenna.table(), row, "MOUNT")?;
-            antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
-        }
-
-        let observatory_position =
-            resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
-        let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
-        let antenna_response_family_envelope =
-            AntennaResponseClass::family_envelope(&antenna_response_classes);
-        let field = ms.field()?;
-        let mut field_directions = Vec::with_capacity(field.row_count());
-        let mut field_phase_offsets = Vec::with_capacity(field.row_count());
-        for row in 0..field.row_count() {
-            let raw = selected_array_value(field.table(), row, "PHASE_DIR")?;
-            let (longitude, latitude) = phase_dir_constant(&raw)?;
-            field_phase_offsets.push([longitude, latitude]);
-            field_directions.push(resolve_field_phase_direction_selected(
-                ms,
-                row,
-                &observatory_position,
-                Arc::clone(&measures),
-            )?);
-        }
-
-        Ok(Self {
-            antenna_positions: antenna_positions.into_boxed_slice(),
-            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
-            antenna_response_classes,
-            antenna_response_family_envelope,
-            field_directions: field_directions.into_boxed_slice(),
-            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
-            field_motions: Box::new([]),
-            observatory_position,
-            time_reference: detect_time_reference(ms),
-            measures: Some(measures),
-            selected_observation_ephemeris: ephemeris,
-            azel_cache: RwLock::new(HashMap::new()),
-            hadec_cache: RwLock::new(HashMap::new()),
-            parallactic_angle_cache: RwLock::new(HashMap::new()),
-            mosaic_uvw_cache: RwLock::new(HashMap::new()),
-        })
-    }
-
-    /// The source-derived CASA aperture class of every ANTENNA row; `None`
-    /// for a dish outside the ALMA and ACA classes.
-    pub(crate) fn antenna_response_classes(&self) -> &[Option<AntennaResponseClass>] {
-        &self.antenna_response_classes
-    }
-
-    /// Return the source-derived CASA aperture class for one antenna row.
-    pub(crate) fn antenna_response_class(&self, antenna_id: usize) -> Option<AntennaResponseClass> {
-        self.antenna_response_classes
-            .get(antenna_id)
-            .copied()
-            .flatten()
-    }
-
-    /// Return the family-wide aperture envelope used by CASA for shared crops.
-    pub(crate) const fn antenna_response_family_envelope(&self) -> Option<AntennaResponseClass> {
-        self.antenna_response_family_envelope
     }
 
     /// This engine with the ephemeris each field of `ms` follows
@@ -357,7 +218,6 @@ impl MsCalEngine {
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         let antenna_mount_alt_az = vec![true; antenna_positions.len()].into_boxed_slice();
-        let antenna_response_classes = vec![None; antenna_positions.len()].into_boxed_slice();
         let field_phase_offsets = field_directions
             .iter()
             .map(|direction| {
@@ -369,19 +229,16 @@ impl MsCalEngine {
         Self {
             antenna_mount_alt_az,
             antenna_positions: antenna_positions.into_boxed_slice(),
-            antenna_response_classes,
-            antenna_response_family_envelope: None,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
             field_motions: Box::new([]),
+            field_reference_epochs: Box::new([]),
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
-            selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
-            mosaic_uvw_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -455,22 +312,6 @@ impl MsCalEngine {
         Ok(frame.with_direction(direction))
     }
 
-    pub(crate) fn direction_angles_j2000(
-        &self,
-        time_mjd_sec: f64,
-        angles_rad: [f64; 2],
-        source_ref: DirectionRef,
-    ) -> MsResult<[f64; 2]> {
-        if source_ref == DirectionRef::J2000 {
-            return Ok(angles_rad);
-        }
-        let raw = MDirection::from_angles(angles_rad[0], angles_rad[1], source_ref);
-        let frame = self.spectral_frame_observatory_direction(time_mjd_sec, raw.clone())?;
-        let converted = raw.convert_to(DirectionRef::J2000, &frame)?;
-        let (longitude_rad, latitude_rad) = converted.as_angles();
-        Ok([longitude_rad, latitude_rad])
-    }
-
     /// Evaluate one named moving-source direction at an observation timestamp.
     ///
     /// The direction is resolved from the immutable Measures provider bound to
@@ -490,60 +331,13 @@ impl MsCalEngine {
             .map_err(Into::into)
     }
 
-    pub(crate) fn moving_direction_j2000(
-        &self,
-        time_mjd_sec: f64,
-        field_id: usize,
-        source_name: &str,
-    ) -> MsResult<MDirection> {
-        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
-            return self.named_direction_j2000(time_mjd_sec, source_name);
-        };
-        if let Some(target) = ephemeris.named_target() {
-            if !target.eq_ignore_ascii_case(source_name) {
-                return Err(MsError::InvalidInput(format!(
-                    "compiled moving target {source_name:?} does not match bound target {target:?}"
-                )));
-            }
-            return self.named_direction_j2000(time_mjd_sec, target);
-        }
-        let ephemeris_mjd_tdb = self.ephemeris_mjd_tdb(time_mjd_sec)?;
-        let sample = ephemeris
-            .sample(field_id, ephemeris_mjd_tdb)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
-    }
-
-    pub(crate) fn moving_radial_velocity(
-        &self,
-        time_mjd_sec: f64,
-        field_id: usize,
-    ) -> MsResult<Option<casa_types::measures::radial_velocity::MRadialVelocity>> {
-        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
-            return Ok(None);
-        };
-        if ephemeris.named_target().is_some() {
-            return Ok(None);
-        }
-        let ephemeris_mjd_utc = self.ephemeris_mjd_utc(time_mjd_sec)?;
-        ephemeris
-            .sample(field_id, ephemeris_mjd_utc)
-            .map(|sample| {
-                Some(casa_types::measures::radial_velocity::MRadialVelocity::new(
-                    sample.radial_velocity_m_per_s,
-                    sample.velocity_reference,
-                ))
-            })
-            .map_err(|error| MsError::InvalidInput(error.to_string()))
-    }
-
     /// Evaluate one immutable named, external, or FIELD-attached moving source.
     pub fn ephemeris_direction_j2000(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
         source_name: &str,
-        ephemeris: &SelectedObservationEphemeris,
+        ephemeris: &PhaseCentreEphemeris,
     ) -> MsResult<MDirection> {
         if let Some(target) = ephemeris.named_target() {
             if !target.eq_ignore_ascii_case(source_name) {
@@ -566,7 +360,7 @@ impl MsCalEngine {
         &self,
         time_mjd_sec: f64,
         field_id: usize,
-        ephemeris: &SelectedObservationEphemeris,
+        ephemeris: &PhaseCentreEphemeris,
     ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {
         let sample = ephemeris
             .sample(field_id, self.ephemeris_mjd_utc(time_mjd_sec)?)
@@ -643,11 +437,14 @@ impl MsCalEngine {
     }
 
     /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,
-    /// for a field of `ms` that follows an attached ephemeris
+    /// for a field that follows an attached ephemeris
     /// ([`Self::with_field_ephemerides`]): the body's geocentric direction at
-    /// the field row's `TIME` in UTC, shifted by `PHASE_DIR`'s true angle in
-    /// the ephemeris's frame. `None` for a fixed field, whose direction is
-    /// its `PHASE_DIR`.
+    /// the field's reference epoch (MSv2 `FIELD.TIME`) in UTC, shifted by
+    /// `PHASE_DIR`'s true angle in the ephemeris's frame. `None` for a fixed
+    /// field, whose direction is its `PHASE_DIR`. A store that states no
+    /// reference epoch (MSv4) is taken at `first_time_mjd_sec`, in the
+    /// engine's time scale: the field's first time, which is the `TIME` the
+    /// MSv4 → MSv2 conversion writes for it.
     ///
     /// CASA's `tclean` centres an image there when its phase centre is left
     /// empty (#987). Geocentric and at no row's time, it is not the direction
@@ -655,12 +452,12 @@ impl MsCalEngine {
     ///
     /// # Errors
     ///
-    /// An unknown field, an unreadable FIELD `TIME`, an ephemeris that
-    /// cannot be read or does not cover that time, or a failed conversion.
+    /// An unknown field, an ephemeris that cannot be read or does not cover
+    /// that time, or a failed conversion.
     pub fn moving_field_reference_direction(
         &self,
-        ms: &MeasurementSet,
         field_id: usize,
+        first_time_mjd_sec: f64,
     ) -> MsResult<Option<MDirection>> {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(None);
@@ -670,7 +467,12 @@ impl MsCalEngine {
             Some(measures) => frame.with_measures(Arc::clone(measures)),
             None => frame,
         };
-        let origin = field_reference_epoch(ms, field_id)?;
+        let origin = self
+            .field_reference_epochs
+            .get(field_id)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| MEpoch::from_mjd_seconds(first_time_mjd_sec, self.time_reference));
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
         crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset).map(Some)
     }
@@ -760,11 +562,6 @@ impl MsCalEngine {
             .parallactic_angle(&frame)?;
         store_geometry_value(&self.parallactic_angle_cache, key, value);
         Ok(value)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn parallactic_angle_cache_entries(&self) -> usize {
-        self.parallactic_angle_cache.read().unwrap().len()
     }
 
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
@@ -967,9 +764,8 @@ impl MsCalEngine {
     /// phase-center change between fixed J2000 field directions and returns
     /// the corresponding geometric phase shift in meters.
     ///
-    /// Important: CASA's `GridFT` imaging path first applies `negateUV` and is
-    /// represented separately by
-    /// `Self::reproject_raw_uvw_for_gridft_between_j2000_directions`. This method preserves
+    /// Important: CASA's `GridFT` imaging path first applies `negateUV`, which
+    /// imaging's `GridFtProjection` (casa-imaging-model) represents. This method preserves
     /// the direct `fixvis` convention only.
     pub fn reproject_raw_uvw_between_fields(
         &self,
@@ -992,28 +788,6 @@ impl MsCalEngine {
         let phrot = uvw_phase_rotation_vector(target_dir, source_dir);
         let phase_shift_m = dot3(phrot, imaging_uvw_m);
         Ok((imaging_uvw_m, phase_shift_m))
-    }
-
-    /// Reproject raw MS UVW coordinates for CASA mosaic gridding.
-    ///
-    /// CASA's `MosaicFT` uses `FTMachine::girarUVW()`, which starts from
-    /// `negateUV(vb)` and then applies the image-center phase shifter with
-    /// only the image-plane terms contributing to the new u/v coordinates.
-    /// That differs subtly from the direct `fixvis` path
-    /// matched by [`Self::reproject_raw_uvw_between_fields`].
-    pub fn reproject_raw_uvw_for_mosaic_between_fields(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_field_id: usize,
-        target_field_id: usize,
-    ) -> MsResult<([f64; 3], f64)> {
-        // Between the fields' constant phase directions.
-        let transform = GridFtProjection::mosaic_between_directions(
-            self.field_dir(source_field_id)?,
-            self.field_dir(target_field_id)?,
-        );
-        let (uvw_m, phase_shift_m) = transform.apply(raw_uvw_m);
-        Ok((uvw_m, -phase_shift_m))
     }
 
     /// Reproject raw MS UVW coordinates from one field phase center to an
@@ -1044,122 +818,6 @@ impl MsCalEngine {
         Ok((imaging_uvw_m, phase_shift_m))
     }
 
-    /// Reproject raw MS UVW coordinates for CASA `GridFT` at a fixed J2000 centre.
-    ///
-    /// `GridFT` enters `FTMachine::rotateUVW()` through `negateUV`: native MS
-    /// `(u, v)` are negated before `UVWMachine(output=target, input=source)` and
-    /// restored afterwards for casa-rs' operator convention. Keep this paired
-    /// UVW/phase result distinct from the direct `fixvis` transform exposed by
-    /// [`Self::reproject_raw_uvw_to_direction`]. CASA's gridding phasor is
-    /// `exp(-i dphase)` while the reconstruction adjoint consumes
-    /// `exp(+i phase_shift)`, so the stored path length is `-dphase`.
-    #[cfg(test)]
-    pub(crate) fn reproject_raw_uvw_for_gridft_to_j2000(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_field_id: usize,
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<([f64; 3], f64)> {
-        let source = self.field_dir(source_field_id)?;
-        let target = MDirection::from_angles(
-            target_direction_rad[0],
-            target_direction_rad[1],
-            DirectionRef::J2000,
-        );
-        Ok(GridFtProjection::between_directions(source, &target).apply(raw_uvw_m))
-    }
-
-    pub(crate) fn reproject_raw_uvw_for_gridft_between_j2000_directions(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_direction_rad: [f64; 2],
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<([f64; 3], f64)> {
-        let [source, target] = [source_direction_rad, target_direction_rad]
-            .map(|[ra, dec]| MDirection::from_angles(ra, dec, DirectionRef::J2000));
-        Ok(GridFtProjection::between_directions(&source, &target).apply(raw_uvw_m))
-    }
-
-    /// Reproject raw MS UVW coordinates for one CASA faceted `GridFT` chart.
-    ///
-    /// CASA constructs every faceted transform with an explicit common
-    /// tangent plane. That selects casacore `UVWMachine(project=true)`: phase
-    /// rotation is evaluated on the ordinary output-centre UVW, then the UV
-    /// plane is reprojected onto the input observation plane. The latter is
-    /// scientifically observable in the facet PSF and must not be collapsed
-    /// into the ordinary non-faceted GridFT projection above.
-    #[cfg(test)]
-    pub(crate) fn reproject_raw_uvw_for_faceted_gridft_to_j2000(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_field_id: usize,
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<([f64; 3], f64)> {
-        let source = self.field_dir(source_field_id)?;
-        let target = MDirection::from_angles(
-            target_direction_rad[0],
-            target_direction_rad[1],
-            DirectionRef::J2000,
-        );
-        Ok(GridFtProjection::faceted_between_directions(source, &target).apply(raw_uvw_m))
-    }
-
-    pub(crate) fn reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_direction_rad: [f64; 2],
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<([f64; 3], f64)> {
-        let [source, target] = [source_direction_rad, target_direction_rad]
-            .map(|[ra, dec]| MDirection::from_angles(ra, dec, DirectionRef::J2000));
-        Ok(GridFtProjection::faceted_between_directions(&source, &target).apply(raw_uvw_m))
-    }
-
-    /// Reproject raw MS UVW coordinates of a row of `source_field_id` at
-    /// `time_mjd_sec` to an explicit J2000 direction using the CASA mosaic
-    /// `girarUVW()` convention. A field that follows an attached ephemeris
-    /// is reprojected from its direction at the time, uncached.
-    pub fn reproject_raw_uvw_for_mosaic_to_direction(
-        &self,
-        raw_uvw_m: [f64; 3],
-        (time_mjd_sec, source_field_id): (f64, usize),
-        target_direction: &MDirection,
-    ) -> MsResult<([f64; 3], f64)> {
-        if target_direction.refer() != DirectionRef::J2000 {
-            return Err(MsError::ColumnTypeMismatch {
-                column: "PHASE_DIR".to_string(),
-                table: "FIELD".to_string(),
-                expected: "explicit target direction in J2000".to_string(),
-                found: target_direction.refer().as_str().to_string(),
-            });
-        }
-        let key = MosaicUvwCacheKey::new(source_field_id, target_direction);
-        let transform = if self.field_moves(source_field_id) {
-            let source_direction = self.direction_at(time_mjd_sec, source_field_id)?;
-            GridFtProjection::mosaic_between_directions(&source_direction, target_direction)
-        } else if let Some(transform) = self
-            .mosaic_uvw_cache
-            .read()
-            .expect("MS mosaic UVW cache poisoned")
-            .get(&key)
-            .copied()
-        {
-            transform
-        } else {
-            let source_direction = self.field_dir(source_field_id)?;
-            let transform =
-                GridFtProjection::mosaic_between_directions(source_direction, target_direction);
-            self.mosaic_uvw_cache
-                .write()
-                .expect("MS mosaic UVW cache poisoned")
-                .insert(key, transform);
-            transform
-        };
-        // The projection gives the gridder's `−dphase`; this returns CASA's.
-        let (uvw_m, phase_shift_m) = transform.apply(raw_uvw_m);
-        Ok((uvw_m, -phase_shift_m))
-    }
-
     /// The observatory position used by this engine.
     pub fn observatory_position(&self) -> &MPosition {
         &self.observatory_position
@@ -1180,29 +838,6 @@ impl MsCalEngine {
                 context: "antenna_id".to_string(),
             })
     }
-}
-
-fn casa_alma_aca_response_classes(
-    ms: &MeasurementSet,
-) -> MsResult<Box<[Option<AntennaResponseClass>]>> {
-    let antenna = ms.antenna()?;
-    let supported_observation = ms.observation().is_ok_and(|observation| {
-        observation.row_count() > 0
-            && (0..observation.row_count()).all(|row| {
-                selected_string_value(observation.table(), row, "TELESCOPE_NAME")
-                    .is_ok_and(|name| AntennaResponseClass::casa_alma_aca_telescope(&name))
-            })
-    });
-    if !supported_observation {
-        return Ok(vec![None; antenna.row_count()].into_boxed_slice());
-    }
-    (0..antenna.row_count())
-        .map(|row| {
-            selected_f64_value(antenna.table(), row, "DISH_DIAMETER")
-                .map(AntennaResponseClass::casa_alma_aca)
-        })
-        .collect::<MsResult<Vec<_>>>()
-        .map(Vec::into_boxed_slice)
 }
 
 fn uvw_rotation_matrix(
@@ -1476,19 +1111,6 @@ fn phase_dir_constant(dir: &ArrayValue) -> MsResult<(f64, f64)> {
     }
 }
 
-fn selected_array_value(table: &Table, row: usize, column: &str) -> MsResult<ArrayValue> {
-    table
-        .column_accessor(column)?
-        .array_cells_owned_uncached(&[row])?
-        .pop()
-        .flatten()
-        .ok_or_else(|| {
-            MsError::InvalidInput(format!(
-                "required selected metadata {column} row {row} is undefined"
-            ))
-        })
-}
-
 fn selected_scalar_value(table: &Table, row: usize, column: &str) -> MsResult<ScalarValue> {
     table
         .column_accessor(column)?
@@ -1524,41 +1146,6 @@ fn selected_f64_value(table: &Table, row: usize, column: &str) -> MsResult<f64> 
             found: format!("{:?}", other.primitive_type()),
         }),
     }
-}
-
-fn resolve_observatory_position_selected(
-    ms: &MeasurementSet,
-    antenna_positions: &[MPosition],
-    measures: &dyn MeasuresProvider,
-) -> MPosition {
-    let telescope = ms.observation().ok().and_then(|observation| {
-        (0..observation.row_count())
-            .find_map(|row| selected_string_value(observation.table(), row, "TELESCOPE_NAME").ok())
-    });
-    MPosition::casa_array_reference(telescope.as_deref(), antenna_positions.first(), measures)
-}
-
-fn resolve_field_phase_direction_selected(
-    ms: &MeasurementSet,
-    field_id: usize,
-    observatory_position: &MPosition,
-    measures: Arc<dyn MeasuresProvider>,
-) -> MsResult<MDirection> {
-    let field = ms.field()?;
-    let raw = selected_array_value(field.table(), field_id, "PHASE_DIR")?;
-    let (longitude_rad, latitude_rad) = phase_dir_constant(&raw)?;
-    drop(raw);
-    let source_ref =
-        resolve_direction_reference_selected(field.table(), "FIELD", "PHASE_DIR", field_id)?;
-    let direction = MDirection::from_angles(longitude_rad, latitude_rad, source_ref);
-    if source_ref == DirectionRef::J2000 {
-        return Ok(direction);
-    }
-    let frame = MeasFrame::new()
-        .with_epoch(field_reference_epoch(ms, field_id)?)
-        .with_position(observatory_position.clone())
-        .with_measures(measures);
-    Ok(direction.convert_to(DirectionRef::J2000, &frame)?)
 }
 
 pub(crate) fn resolve_direction_reference_selected(
@@ -2097,223 +1684,6 @@ mod tests {
             (phase_shift_m - -0.090_130_307_463_740_37).abs() < 1.0e-12,
             "phase_shift_m={phase_shift_m}"
         );
-    }
-
-    #[test]
-    fn reproject_raw_uvw_for_gridft_uses_negated_uv_boundary_and_adjoint_phase_sign() {
-        let target = MDirection::from_angles(
-            -1.058_214_942_099_811_3,
-            0.702_211_407_924_268_5,
-            DirectionRef::J2000,
-        );
-        let target_angles = target.as_angles();
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![
-                target,
-                MDirection::from_angles(
-                    -1.053_851_618_969_825_7,
-                    0.706_574_731_054_254_4,
-                    DirectionRef::J2000,
-                ),
-            ],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
-        let (uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_for_gridft_to_j2000(
-                [
-                    27.073_056_790_908_41,
-                    -29.672_968_936_171_65,
-                    15.993_460_382_965_498,
-                ],
-                1,
-                [target_angles.0, target_angles.1],
-            )
-            .unwrap();
-        // Fixed evaluation of GridFT's negateUV -> UVWMachine -> restore-UV
-        // equations. The phase value is the casa-rs adjoint sign, opposite
-        // CASA's `locuvw` dphase because CASA forms `exp(-i dphase)`.
-        assert!((uvw_m[0] - 27.209_934_044_771_824).abs() < 1.0e-12);
-        assert!((uvw_m[1] - -29.526_408_975_072_36).abs() < 1.0e-12);
-        assert!((uvw_m[2] - 16.032_371_216_641_046).abs() < 1.0e-12);
-        assert!((phase_shift_m - -0.038_910_833_675_543_17).abs() < 1.0e-12);
-    }
-
-    #[test]
-    fn faceted_gridft_reprojects_uv_plane_like_casacore_project_true() {
-        let target = MDirection::from_angles(
-            -1.058_214_942_099_811_3,
-            0.702_211_407_924_268_5,
-            DirectionRef::J2000,
-        );
-        let target_angles = target.as_angles();
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![
-                target,
-                MDirection::from_angles(
-                    -1.053_851_618_969_825_7,
-                    0.706_574_731_054_254_4,
-                    DirectionRef::J2000,
-                ),
-            ],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
-        let (uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_for_faceted_gridft_to_j2000(
-                [
-                    27.073_056_790_908_41,
-                    -29.672_968_936_171_65,
-                    15.993_460_382_965_498,
-                ],
-                1,
-                [target_angles.0, target_angles.1],
-            )
-            .expect("project facet UVW");
-        // Captured from casacore UVWMachine(out, in, EW=false, project=true)
-        // after CASA GridFT's negate-UV boundary and casa-rs' adjoint sign.
-        assert!((uvw_m[0] - 27.126_332_109_240_163).abs() < 1.0e-12);
-        assert!((uvw_m[1] - -29.603_258_931_514_546).abs() < 1.0e-12);
-        assert!((uvw_m[2] - 16.032_371_216_641_046).abs() < 1.0e-12);
-        assert!((phase_shift_m - -0.038_910_833_675_545_334).abs() < 1.0e-12);
-    }
-
-    #[test]
-    fn reproject_raw_uvw_for_mosaic_matches_casa_giraruvw_reference_values() {
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![
-                MDirection::from_angles(
-                    3.149_807_242_890_337,
-                    -0.329_299_608_769_085_2,
-                    DirectionRef::J2000,
-                ),
-                MDirection::from_angles(
-                    3.149_884_015_678_791,
-                    -0.329_299_608_408_283,
-                    DirectionRef::J2000,
-                ),
-            ],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
-        let (uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_for_mosaic_between_fields(
-                [
-                    4.324_749_385_347_82,
-                    -121.757_651_483_641_07,
-                    -15.081_385_958_149_532,
-                ],
-                1,
-                0,
-            )
-            .unwrap();
-        assert!(
-            (uvw_m[0] - 4.321_726_518_390_6).abs() < 1.0e-12,
-            "u={}",
-            uvw_m[0]
-        );
-        assert!(
-            (uvw_m[1] - -121.757_758_815_853_26).abs() < 1.0e-12,
-            "v={}",
-            uvw_m[1]
-        );
-        assert!(
-            (uvw_m[2] - -15.081_699_947_780_477).abs() < 1.0e-12,
-            "w={}",
-            uvw_m[2]
-        );
-        assert!(
-            (phase_shift_m - -0.000_314_029_427_521_723_44).abs() < 1.0e-12,
-            "phase_shift_m={phase_shift_m}"
-        );
-    }
-
-    #[test]
-    fn awproject_offset_field_uses_girar_uvw_and_phase() {
-        let source = MDirection::from_angles(3.54, 0.29, DirectionRef::J2000);
-        let target_angles = [3.55, 0.293];
-        let target =
-            MDirection::from_angles(target_angles[0], target_angles[1], DirectionRef::J2000);
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![source],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
-        // Synthetic widefield geometry; expected values captured with
-        // casacore UVWMachine and CASA FTMachine::girarUVW's row expressions,
-        // compiled with floating-point contraction disabled.
-        let raw_uvw = [-1_200.0, -2_000.0, 1_900.0];
-        let (uvw, casa_phase) = engine
-            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw, (0.0, 0), &target)
-            .expect("AWProject girarUVW projection");
-        let expected = [
-            -1_205.658_949_685_163_6,
-            -1_996.516_890_818_620_8,
-            1_882.388_540_906_844_6,
-        ];
-        for (actual, expected) in uvw.into_iter().zip(expected) {
-            assert!(
-                (actual - expected).abs() < 1.0e-10,
-                "{actual} != {expected}"
-            );
-        }
-        assert!((casa_phase - -17.514_874_069_400_992).abs() < 1.0e-10);
-
-        let (gridft_uvw, gridft_phase) = engine
-            .reproject_raw_uvw_for_gridft_to_j2000(raw_uvw, 0, target_angles)
-            .expect("GridFT comparison projection");
-        assert!((gridft_uvw[0] - -1_223.865_279_877_529_5).abs() < 1.0e-10);
-        assert!((gridft_phase - 17.611_459_093_155_094).abs() < 1.0e-10);
-        assert!((uvw[0] - gridft_uvw[0]).abs() > 18.0);
-        assert!((-casa_phase - gridft_phase).abs() > 0.09);
-    }
-
-    #[test]
-    fn mosaic_explicit_same_field_machine_matches_vlass_native_bits() {
-        let source_direction = MDirection::from_angles(
-            -2.737_583_127_275_378,
-            0.293_215_314_333_100_33,
-            DirectionRef::J2000,
-        );
-        // This is the exact reference direction returned by CASA's
-        // DirectionCoordinate after its radians -> WCS degrees -> radians
-        // boundary for the frozen VLASS field.
-        let image_direction = MDirection::from_angles(
-            3.545_602_179_904_207_7,
-            0.293_215_314_333_100_33,
-            DirectionRef::J2000,
-        );
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![source_direction],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
-        let (uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_for_mosaic_to_direction(
-                [
-                    -1_236.664_060_532_996_5,
-                    -2_033.447_768_019_716_7,
-                    1_892.803_548_834_091,
-                ],
-                (0.0, 0),
-                &image_direction,
-            )
-            .unwrap();
-
-        assert_eq!(
-            uvw_m.map(f64::to_bits),
-            [
-                13_876_525_758_357_962_531,
-                13_880_030_050_162_779_011,
-                4_656_039_453_490_506_920,
-            ]
-        );
-        assert_eq!(phase_shift_m.to_bits(), 4_425_269_780_393_832_168);
     }
 
     #[test]

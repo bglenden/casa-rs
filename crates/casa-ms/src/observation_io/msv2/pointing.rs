@@ -4,7 +4,6 @@
 //! either side), read once as the production selected-observation source
 //! reads them (`selected_pointing.rs`), as the boundary's series.
 
-use casa_imaging_model::PointingTimeSampling;
 use casa_observation::{ObservationError, PointingDirection, PointingRequest, PointingSeries};
 use casa_types::measures::direction::DirectionRef;
 
@@ -29,29 +28,21 @@ pub(crate) fn scan_rows(budget: usize) -> usize {
 
 impl Msv2Observation {
     /// The most bytes a pointing query of this observation holds while it
-    /// is read and once it is answered, whatever its antennas and times:
-    /// every `POINTING` row taken as a candidate at four polynomial terms
-    /// (the production source's bound), with one scan block of at most
-    /// every row, and the series it gives. A [`PointingRequest`] with this
-    /// budget is never refused for its size, and reads `POINTING` in blocks
-    /// as large as a query may scan. Zero without a `POINTING` table.
-    ///
-    /// # Errors
-    ///
-    /// When `POINTING` cannot be read.
-    pub fn pointing_bytes(&self) -> Result<usize, ObservationError> {
-        Ok(self.pointing_bound()?.0)
-    }
-
-    /// [`Self::pointing_bytes`], and the rows of the scan block it holds:
-    /// `POINTING`'s, up to [`SCAN_ROWS`].
-    fn pointing_bound(&self) -> Result<(usize, usize), ObservationError> {
+    /// is read and once it is answered, whatever its antennas and times
+    /// ([`casa_observation::Observation::pointing_bytes`]): every `POINTING`
+    /// row taken as a candidate at four polynomial terms (the production
+    /// source's bound), with one scan block of at most every row, and the
+    /// series it gives. A [`PointingRequest`] with this budget is never
+    /// refused for its size, and reads `POINTING` in blocks as large as a
+    /// query may scan. Zero without a `POINTING` table. Also the rows of the
+    /// scan block it holds: `POINTING`'s, up to [`SCAN_ROWS`].
+    pub(super) fn pointing_bound(&self) -> Result<(usize, usize), ObservationError> {
         let mut domain = SelectedPointingQueryDomain::builder();
         for antenna in 0..self.catalogue.antennas.len() {
             let id = i32::try_from(antenna).map_err(|_| ObservationError::InvalidStore {
                 reason: format!("antenna {antenna} beyond the MSv2 identifier range"),
             })?;
-            domain.observe_row(id, id, 0.0, 0.0).map_err(storage)?;
+            domain.observe_row(id, id, 0.0).map_err(storage)?;
         }
         let Some(domain) = domain.finish().map_err(storage)? else {
             return Ok((0, 1));
@@ -94,7 +85,7 @@ impl Msv2Observation {
                     reason: format!("no antenna {antenna:?}"),
                 })?;
             for time in [start, end] {
-                domain.observe_row(id, id, time, time).map_err(storage)?;
+                domain.observe_row(id, id, time).map_err(storage)?;
             }
         }
         let store_has_pointing = self
@@ -122,12 +113,7 @@ impl Msv2Observation {
         let plan = PointingReadPlan::new(scan, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
             .map_err(storage)?;
         self.ms
-            .prepare_selected_pointing_catalog(
-                column,
-                &domain,
-                PointingTimeSampling::VisibilityTime,
-                plan,
-            )
+            .prepare_selected_pointing_catalog(column, &domain, plan)
             .map_err(|error| match error {
                 MsError::OverBudget {
                     required,
@@ -152,27 +138,15 @@ impl Msv2Observation {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use casa_imaging_model::PointingTimeSampling;
     use casa_observation::{AntennaId, PartitionId, PointingDirection, PointingRequest};
     use casa_types::ArrayValue;
-    use casa_types::measures::MeasuresProvider;
 
-    use crate::derived::engine::MsCalEngine;
+    use crate::MeasurementSet;
     use crate::observation_io::{OpenOptions, open};
-    use crate::selected_pointing::{PointingDirectionQuery, SelectedPointingQueryDomain};
     use crate::simulation::{
         SyntheticAntenna, SyntheticField, SyntheticObservationRequest,
         generate_synthetic_observation_ms,
     };
-    use crate::{MeasurementSet, PointingDirectionColumn, PointingReadPlan};
-
-    /// No measures: J2000 directions need none.
-    #[derive(Debug)]
-    struct NoMeasures;
-
-    impl MeasuresProvider for NoMeasures {}
 
     /// A simulated MSv2 whose `POINTING` rows differ by antenna: antenna 0's
     /// have a rate term, antenna 1's no interval, antenna 2's intervals
@@ -223,15 +197,83 @@ mod tests {
         request.output_ms
     }
 
-    /// The boundary's MSv2 pointing brackets each (antenna, time) as today's
-    /// imaging reads it (`PreparedSelectedPointingCatalog`): the same
-    /// covering, preceding and following rows, evaluated at the time to the
-    /// same directions, bit for bit. Rows here are in time order for each
-    /// antenna; where they are not, of two rows equally near a time the
-    /// boundary covers with the earlier and today's reading with the lower
-    /// row.
+    /// One `POINTING` row as the table states it.
+    struct Row {
+        antenna: i32,
+        time_s: f64,
+        interval_s: f64,
+        origin_s: f64,
+        /// `DIRECTION`'s terms, `[2, NUM_POLY + 1]`.
+        terms: ndarray::Array2<f64>,
+    }
+
+    /// Every `POINTING` row of `path`, in table order.
+    fn table_rows(path: &std::path::Path) -> Vec<Row> {
+        let ms = MeasurementSet::open(path).expect("ms");
+        let pointing = ms.pointing().expect("POINTING");
+        (0..pointing.row_count())
+            .map(|row| {
+                let ArrayValue::Float64(terms) =
+                    pointing.array(row, "DIRECTION").expect("DIRECTION").clone()
+                else {
+                    panic!("DIRECTION is Float64");
+                };
+                Row {
+                    antenna: pointing.i32(row, "ANTENNA_ID").expect("ANTENNA_ID"),
+                    time_s: pointing.f64(row, "TIME").expect("TIME"),
+                    interval_s: pointing.f64(row, "INTERVAL").expect("INTERVAL"),
+                    origin_s: pointing.f64(row, "TIME_ORIGIN").expect("TIME_ORIGIN"),
+                    terms: terms.into_dimensionality().expect("[2, terms]"),
+                }
+            })
+            .collect()
+    }
+
+    /// `row`'s direction at `time_s`: its polynomial about `TIME_ORIGIN`.
+    fn direction_at(row: &Row, time_s: f64) -> [f64; 2] {
+        let dt = time_s - row.origin_s;
+        [0, 1].map(|axis| {
+            row.terms
+                .row(axis)
+                .iter()
+                .rev()
+                .fold(0.0, |sum, term| sum * dt + term)
+        })
+    }
+
+    /// `antenna`'s bracket at `time_s` read from `rows` one by one, as the
+    /// boundary defines it ([`casa_observation::PointingBracket`]): the row
+    /// whose interval holds the time, nearest it and then first in time
+    /// order; the first row of the latest time at or before it; and the
+    /// first row at or after it. Each is its time and its direction there.
+    fn table_bracket(rows: &[Row], antenna: i32, time_s: f64) -> [Option<(f64, [f64; 2])>; 3] {
+        let mut own: Vec<&Row> = rows.iter().filter(|row| row.antenna == antenna).collect();
+        own.sort_by(|left, right| left.time_s.total_cmp(&right.time_s));
+        let covering = own
+            .iter()
+            .filter(|row| {
+                row.interval_s > 0.0 && (row.time_s - time_s).abs() <= 0.5 * row.interval_s
+            })
+            .min_by(|left, right| {
+                (left.time_s - time_s)
+                    .abs()
+                    .total_cmp(&(right.time_s - time_s).abs())
+            });
+        let latest = own
+            .iter()
+            .rfind(|row| row.time_s <= time_s)
+            .map(|row| row.time_s);
+        let before = latest.and_then(|latest| own.iter().find(|row| row.time_s == latest));
+        let after = own.iter().find(|row| row.time_s >= time_s);
+        [covering, before, after].map(|row| row.map(|row| (row.time_s, direction_at(row, time_s))))
+    }
+
+    /// The boundary's MSv2 pointing brackets each (antenna, time) as the
+    /// table states it, read row by row: the same covering, preceding and
+    /// following rows, evaluated at the time to the same directions. The
+    /// rows here are in time order for each antenna.
     #[test]
-    fn brackets_are_the_selected_observation_reading() {
+    fn brackets_are_the_tables_rows() {
         let root = tempfile::tempdir().expect("root");
         let path = fixture(root.path());
         let observation = open(&path, &OpenOptions::default()).expect("open");
@@ -257,41 +299,30 @@ mod tests {
             })
             .expect("pointing");
         assert_eq!(series.terms, 2);
-
-        let ms = MeasurementSet::open(&path).expect("ms");
-        let mut domain = SelectedPointingQueryDomain::builder();
-        for antenna in 0..3 {
-            for time in &queries {
-                domain
-                    .observe_row(antenna, antenna, *time, *time)
-                    .expect("domain");
-            }
-        }
-        let catalog = ms
-            .prepare_selected_pointing_catalog(
-                PointingDirectionColumn::Direction,
-                &domain.finish().expect("domain").expect("rows"),
-                PointingTimeSampling::VisibilityTime,
-                PointingReadPlan::new(1024, 4, 1 << 20).expect("plan"),
-            )
-            .expect("catalog");
-        let engine =
-            MsCalEngine::new_selected_observation(&ms, Arc::new(NoMeasures), None).expect("engine");
+        let rows = table_rows(&path);
         let mut covered = [0; 3];
         for antenna in antennas {
             for time in &queries {
-                let query = PointingDirectionQuery::new(antenna.0 as i32, *time).expect("query");
-                let today = catalog
-                    .direction_brackets(&engine, &[query])
-                    .expect("today")[0];
                 let boundary = series.bracket(antenna, *time).expect("boundary");
-                let today = [today.covering(), today.before(), today.after()].map(|candidate| {
-                    candidate.map(|c| (c.row_time_mjd_seconds(), c.direction_j2000_rad()))
-                });
                 let boundary = [boundary.covering, boundary.before, boundary.after]
                     .map(|candidate| candidate.map(|c| (c.time_s, c.direction_rad)));
-                assert_eq!(boundary, today, "{antenna:?} at {time}");
-                covered[antenna.0 as usize] += usize::from(today[0].is_some());
+                let table = table_bracket(&rows, antenna.0 as i32, *time);
+                for (got, want) in boundary.iter().zip(&table) {
+                    match (got, want) {
+                        (Some((got_time, got)), Some((want_time, want))) => {
+                            assert_eq!(got_time, want_time, "{antenna:?} at {time}");
+                            for (got, want) in got.iter().zip(want) {
+                                assert!(
+                                    (got - want).abs() <= 1e-15,
+                                    "{antenna:?} at {time}: {got} against {want}"
+                                );
+                            }
+                        }
+                        (None, None) => {}
+                        _ => panic!("{antenna:?} at {time}: {boundary:?} against {table:?}"),
+                    }
+                }
+                covered[antenna.0 as usize] += usize::from(table[0].is_some());
             }
         }
         assert!(

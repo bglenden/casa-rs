@@ -55,7 +55,6 @@ mod metadata;
 pub mod ms;
 pub mod msexplore;
 pub mod observation_io;
-mod observation_owner;
 pub mod plot;
 mod plot_data;
 pub mod plot_document;
@@ -64,8 +63,6 @@ pub mod presentation;
 mod probes;
 pub mod schema;
 pub mod scratch_columns;
-mod selected_observation;
-mod selected_observation_buffer;
 mod selected_pointing;
 pub mod selection;
 pub mod shadowing;
@@ -89,7 +86,7 @@ pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use casa_return::{
     FLAGDATA_SUMMARY_NAME, flagdata_empty_record, flagdata_summary_record, flagmanager_list_record,
 };
-pub use ephemeris::{SelectedObservationEphemeris, SelectedObservationEphemerisError};
+pub use ephemeris::{EphemerisBudget, PhaseCentreEphemeris, PhaseCentreEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::{
     FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
@@ -105,7 +102,6 @@ pub use listobs::{
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
-pub(crate) use ms::{MainRowSelectionCursor, MainRowWalk};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
@@ -124,12 +120,6 @@ pub use msexplore::{
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request,
 };
-pub use observation_owner::{
-    ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
-    SelectedObservationResolutionRequest, resolve_selected_observation,
-};
-#[cfg(unix)]
-pub use observation_owner::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 pub use plot::{
     ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
     ListObsPlotSpec as MeasurementSetPlotSpec,
@@ -152,37 +142,18 @@ pub use probes::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn, initial_model_visibility};
-pub use selected_observation::{
-    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    DeferredSelectedObservationAccess, FilledObservationBlock, ObservationSourceBinding,
-    ProjectedObservationBlock, SPECTRAL_ENVELOPE_KEY_BYTES, SelectedObservationBlock,
-    SelectedObservationBlockSource, SelectedObservationContentBudget,
-    SelectedObservationContentPlan, SelectedObservationContentPlanError,
-    SelectedObservationContentRequirements, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationNumericGeometry,
-    SelectedObservationReferenceDataBudget, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
-};
-pub use selected_observation_buffer::{
-    SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
-};
-pub(crate) use selected_observation_buffer::{
-    SelectedObservationBuffer, SelectedObservationBufferCapacity, SelectedObservationBufferRequest,
-    SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn,
-};
 pub(crate) use selected_pointing::{
-    PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
-    PreparedSelectedPointingCatalog, SelectedPointingCatalogMeasurements,
-    SelectedPointingQueryDomain,
+    PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
-    ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
-    parse_spw_selector,
+    ChannelSelection, ChannelSelectionSegment, IntentSelector, SpwSelector, parse_intent_selector,
+    parse_numeric_id_selector, parse_numeric_row_id_ranges, parse_spw_selector,
 };
 pub use selection::{
-    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
-    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, validate_ms_selector_edit,
+    FieldSelectorRow, MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget,
+    MsSelectionRowBlock, MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow,
+    UvDistanceInterval, UvDistanceLimit, parse_uv_distance_intervals, resolve_field_selector_rows,
+    validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,

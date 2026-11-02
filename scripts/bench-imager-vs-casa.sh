@@ -543,7 +543,16 @@ echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder 
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
-  cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  if [[ "${IMAGER_BENCH_PREBUILT:-0}" == "1" ]]; then
+    # An alternating comparison builds both roles before its timed blocks.
+    # Rechecking Cargo here perturbs the next process's cache state (#932).
+    if [[ ! -x target/release/casars-imager ]]; then
+      echo "error: IMAGER_BENCH_PREBUILT=1 requires target/release/casars-imager" >&2
+      exit 1
+    fi
+  else
+    cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"

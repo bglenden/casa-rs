@@ -14,11 +14,11 @@
 //! field and time, a pointing direction per antenna and time, a frequency
 //! conversion per time.
 //!
-//! The arithmetic is the selected-observation route's, statement for
-//! statement, through the same shared pieces ([`GridFtProjection`],
+//! The arithmetic goes through the shared pieces ([`GridFtProjection`],
 //! [`ObservationPointingLaw::resolve`](crate::ObservationPointingLaw::resolve),
-//! [`AwPointingEpochs`], `casa-types` Measures), so the two routes agree
-//! to rounding on an MSv2.
+//! [`AwPointingEpochs`], `casa-types` Measures). It agreed to rounding with
+//! the row route it replaced on every T1 run (#932, step 3b), and with
+//! itself across stores (`casa-imaging-application`'s store law).
 //!
 //! AW pointing groups carry state from epoch to epoch (a time of one
 //! partition), in the order the batches arrive: partition by partition,
@@ -67,7 +67,7 @@ use crate::geometry::{
     DirectionFrame, PhaseCentreLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
 };
 use crate::pointing_law::PointingLawError;
-use crate::selected_observation_sample::{
+use crate::sample_antennas::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
 };
 use crate::uvw_projection::GridFtProjection;
@@ -511,8 +511,7 @@ impl GeometryPlan {
 
     /// CASA's aperture classes of the observation's antennas, sorted and
     /// without repeats: the dishes a heterogeneous mosaic's kernel set
-    /// keys on (`HetArrayConvFunc::findAntennaSizes`), as the
-    /// selected-observation route lists them.
+    /// keys on (`HetArrayConvFunc::findAntennaSizes`).
     #[must_use]
     pub fn aperture_classes(&self) -> Vec<AntennaResponseClass> {
         let mut classes = self

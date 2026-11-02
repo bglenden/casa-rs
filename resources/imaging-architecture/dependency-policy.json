@@ -304,10 +304,11 @@
    "grandfathered": []
   },
   {
-   "id": "selected-observation-provider-injection",
-   "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime",
+   "id": "observation-geometry-provider-injection",
+   "message": "the observation boundary's adapters and the batch geometry receive an injected Measures provider and cannot discover MeasuresRuntime",
    "roots": [
-    "crates/casa-ms/src/selected_observation"
+    "crates/casa-ms/src/observation_io",
+    "crates/casa-imaging-model/src/batch_geometry"
    ],
    "extensions": [
     ".rs"

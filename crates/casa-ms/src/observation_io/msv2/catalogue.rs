@@ -466,6 +466,16 @@ pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError>
 }
 
 impl Feeds {
+    /// The retained feed lookup and all rows of receptor values it owns.
+    pub(super) fn held_bytes(&self) -> usize {
+        casa_types::memory::btree_node_bytes::<(i32, i32, i32), Vec<Receptors>>(self.rows.len())
+            + self
+                .rows
+                .values()
+                .map(|rows| heap::entries(rows, heap::receptors_bytes))
+                .sum::<usize>()
+    }
+
     /// Antenna `antenna`'s receptors through feed `feed` in spectral window
     /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
     /// select them: the window's own rows when any row names a window, else

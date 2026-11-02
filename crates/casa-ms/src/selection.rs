@@ -36,6 +36,7 @@ pub(crate) mod parser;
 pub mod syntax;
 
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
+pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
 
 /// Builder for MS row selection criteria.
 ///
@@ -145,6 +146,55 @@ pub(crate) struct UvSelectionRange {
     pub(crate) lower: Option<UvBound>,
     pub(crate) upper: Option<UvBound>,
     pub(crate) unit: UvUnit,
+}
+
+/// One bound of a [`UvDistanceInterval`]: its value, scaled to metres or
+/// wavelengths, and whether the interval holds it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvDistanceLimit {
+    /// The bound's value.
+    pub value: f64,
+    /// Whether a distance equal to the bound is selected.
+    pub inclusive: bool,
+}
+
+/// One interval of a CASA `uvrange` selector, as its syntax states it:
+/// each bound, if stated, in metres or (when `wavelengths`) in wavelengths.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvDistanceInterval {
+    /// The lower bound.
+    pub lower: Option<UvDistanceLimit>,
+    /// The upper bound.
+    pub upper: Option<UvDistanceLimit>,
+    /// Whether the bounds are in wavelengths, not metres.
+    pub wavelengths: bool,
+}
+
+/// The intervals of the CASA `uvrange` selector `text`, unit prefixes
+/// applied (`klambda`, `km`, …).
+///
+/// # Errors
+///
+/// [`MsError::InvalidInput`] for text that is not `uvrange` syntax.
+pub fn parse_uv_distance_intervals(text: &str) -> MsResult<Vec<UvDistanceInterval>> {
+    Ok(parser::parse_uvrange_selector(text)?
+        .into_iter()
+        .map(|range| {
+            let (scale, wavelengths) = match range.unit {
+                UvUnit::Meters(scale) => (scale, false),
+                UvUnit::Lambda(scale) => (scale, true),
+            };
+            let limit = |bound: UvBound| UvDistanceLimit {
+                value: bound.value * scale,
+                inclusive: matches!(bound.op, UvBoundOp::GreaterEqual | UvBoundOp::LessEqual),
+            };
+            UvDistanceInterval {
+                lower: range.lower.map(limit),
+                upper: range.upper.map(limit),
+                wavelengths,
+            }
+        })
+        .collect())
 }
 
 /// Explicit resource inputs for deterministic selected-row block planning.

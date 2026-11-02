@@ -2,7 +2,7 @@
 //! Unactivated scan/observation preview: only catalog refusal is bypassed.
 use std::path::Path;
 
-use casa_imaging_application::{ImagingRequest, route_law};
+use casa_imaging_application::{ImagingRequest, product_law};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_types::{ScalarValue, Value};
 use casars_imager::{ImagerRunTaskResult, ImagingParameters, resolve_request, run};
@@ -91,13 +91,14 @@ fn compare_products(result: &ImagerRunTaskResult, prefix: &Path, reference: &Pat
     for artifact in result.artifacts.iter().filter(|artifact| artifact.exists) {
         let suffix = artifact.path.strip_prefix(prefix.as_ref()).unwrap();
         let expected = format!("{}{suffix}", reference.display());
-        let nrms = route_law::image_nrms(Path::new(&expected), Path::new(&artifact.path)).unwrap();
-        assert!(nrms <= route_law::TOLERANCE, "{suffix}: {nrms:e}");
+        let nrms =
+            product_law::image_nrms(Path::new(&expected), Path::new(&artifact.path)).unwrap();
+        assert!(nrms <= product_law::TOLERANCE, "{suffix}: {nrms:e}");
     }
 }
 
 #[test]
-fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
+fn preview_scan_observation_reaches_survey_and_imaging() {
     let observation = numeric_fixture();
     for (index, scan, obs, fields) in [
         (0, "2", "", "1,3"),
@@ -114,10 +115,10 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
         for selectdata in [false, true] {
             let name = format!("numeric-preview-{index}-{selectdata}");
             let (parameters, request) = preview(&observation, &name, scan, obs, selectdata);
-            let legacy = run(parameters.clone(), &request).unwrap();
-            assert_eq!(legacy.run.gridded_samples, reference.gridded_samples);
+            let result = run(parameters, &request).unwrap();
+            assert_eq!(result.run.gridded_samples, reference.gridded_samples);
             assert_eq!(
-                legacy
+                result
                     .artifacts
                     .iter()
                     .filter(|artifact| artifact.exists)
@@ -125,19 +126,10 @@ fn preview_scan_observation_reaches_survey_and_both_imaging_routes() {
                 products.suffixes().len()
             );
             compare_products(
-                &legacy,
+                &result,
                 &request.imagename,
                 &observation.scratch(&reference_name),
             );
-            let batches = route_law::on_batches(&request);
-            let mut batch_parameters = parameters;
-            batch_parameters
-                .0
-                .insert("imagename".to_string(), json!(batches.imagename));
-            let result = run(batch_parameters, &batches).unwrap();
-            assert_eq!(result.run.gridded_samples, reference.gridded_samples);
-            assert_eq!(result.artifacts.len(), legacy.artifacts.len());
-            compare_products(&result, &batches.imagename, &request.imagename);
         }
     }
     for (index, scan, obs) in [

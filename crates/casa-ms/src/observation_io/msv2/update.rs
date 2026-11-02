@@ -31,7 +31,7 @@ use casa_observation::{
 };
 use casa_types::ArrayValue;
 use casa_types::measures::MjdHighPrec;
-use ndarray::{ArrayD, ArrayView3, Axis, IxDyn};
+use ndarray::{ArrayD, ArrayView3, Axis, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 
 use super::index::NO_ROW;
@@ -486,8 +486,7 @@ fn seeds_model(main: &casa_tables::Table, targets: &[ResolvedTarget]) -> bool {
 }
 
 /// Refuse a target whose column cannot be written in place in bounded
-/// memory, as today's route refuses it
-/// ([`crate::scratch_columns::unbounded_destination`]): the column must be
+/// memory ([`crate::scratch_columns::unbounded_destination`]): the column must be
 /// in a tiled manager, and a column the session creates clones `DATA`'s,
 /// which must be one and hold `DATA` alone. A column in any other manager
 /// is saved by rewriting every row of its storage group, once a batch.
@@ -1024,11 +1023,26 @@ fn column_cells(
             .transpose()?;
         let cell = match value {
             PatchValues::Visibilities { values, written } => {
-                let mut cell = match stored {
-                    Some(stored) => complex(stored)?,
-                    None => ArrayD::from_elem(IxDyn(&shape), Complex32::default()),
+                let sample_values = values.index_axis(Axis(0), sample);
+                let contiguous = sample_values.as_slice();
+                let cell = if stored.is_none()
+                    && written.is_none()
+                    && window.whole
+                    && window.products.iter().copied().eq(0..window.correlations)
+                    && let Some(values) = contiguous
+                {
+                    // A delivered [channel, correlation] sample is already
+                    // in the MSv2 cell's Fortran [correlation, channel] order.
+                    ArrayD::from_shape_vec(IxDyn(&shape).f(), values.to_vec())
+                        .expect("the checked patch has the cell's shape")
+                } else {
+                    let mut cell = match stored {
+                        Some(stored) => complex(stored)?,
+                        None => ArrayD::from_elem(IxDyn(&shape), Complex32::default()),
+                    };
+                    overlay(&mut cell, values, written.as_ref(), sample, window);
+                    cell
                 };
-                overlay(&mut cell, values, written.as_ref(), sample, window);
                 ArrayValue::Complex32(cell)
             }
             PatchValues::Flags { set, clear } => {

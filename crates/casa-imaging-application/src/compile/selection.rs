@@ -1,26 +1,28 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The selection a request names, resolved against its MeasurementSet: the
-//! data descriptions, spectral windows and channels, and one pass over the
-//! selected MAIN rows for the facts the later stages need.
+//! The selection a request names, resolved against its observation's
+//! catalogue: the spectral windows (or an MSv2 data description) and
+//! channels, the per-sample predicates, the visibility column, and the
+//! observation selection the survey's partitions make of them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, ObservationSelection, SelectedMainRow, SelectedRows,
-    SelectedRowsBuilder, SpectralWindowSelection, VisibilityColumn as OwnerVisibilityColumn,
+    IdSelection, IntentSelection, ObservationSelection, RowSelection, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
-    MeasurementSet, SelectedObservationContentBudget, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
-    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+    UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
+    parse_uv_distance_intervals, resolve_channel_selector_selection,
 };
-use casa_types::Correlation;
+use casa_observation::{Catalogue, StateId};
 use casa_types::measures::frequency::FrequencyRef;
 
-use super::PrepareError;
-use crate::{DataColumn, ImagingRequest, SpecMode};
+use super::opening::OpenedStore;
+use super::survey::Survey;
+use super::{PrepareError, intents};
+use crate::{DataColumn, ImagingRequest};
 
 /// One selected spectral window's frequency axis.
 pub(super) struct SourceSpectralWindow {
@@ -30,337 +32,157 @@ pub(super) struct SourceSpectralWindow {
     pub(super) channel_widths_hz: Vec<f64>,
 }
 
-/// The `|w|` envelope of the selected rows, in metres.
-#[derive(Clone, Copy)]
-pub(super) struct WRange {
-    pub(super) maximum_abs_m: f64,
-    pub(super) minimum_abs_m: f64,
-    pub(super) sum_squares_m2: f64,
-    pub(super) rows: u64,
-}
-
 /// Selected source channels per spectral window id.
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
-/// What one pass over the selected rows establishes.
-pub(super) struct Survey {
-    /// The request's row predicate over the data descriptions of the
-    /// selected rows.
-    pub(super) row_selection: SelectedObservationRowSelection,
-    pub(super) rows: SelectedRows,
-    /// The selected spectral windows, in one source frame.
-    pub(super) spectral_windows: Vec<SourceSpectralWindow>,
-    pub(super) source_frequency_reference: FrequencyRef,
-    pub(super) fields: BTreeSet<i32>,
-    /// Field of CASA's first visibility buffer, sorted by ARRAY_ID, DDID, FIELD_ID.
-    pub(super) first_visibility_field_id: usize,
-    pub(super) observation_ids: BTreeSet<i32>,
-    pub(super) first_time_mjd_seconds: f64,
-    pub(super) time_bounds_mjd_seconds: [f64; 2],
-    /// The first unflagged cross-correlation row (native AW reads its
-    /// parallactic angle).
-    pub(super) first_cross_row: Option<SelectedObservationRow>,
-    pub(super) w: WRange,
-    pub(super) weight_spectrum_complete: bool,
-    /// A continuum run's selected channels per window and their envelope.
-    pub(super) continuum: Option<(WindowChannels, SelectedObservationSpectralEnvelope)>,
-}
-
-/// Per-row facts gathered by the pass.
-struct RowFacts {
-    rows: SelectedRowsBuilder,
-    rows_error: Option<casa_imaging_model::SelectedRowSequenceError>,
-    ddids: BTreeSet<i32>,
-    fields: BTreeSet<i32>,
-    observation_ids: BTreeSet<i32>,
-    first_visibility_key: Option<(i32, i32, i32)>,
-    first_time_mjd_seconds: Option<f64>,
-    time_bounds_mjd_seconds: [f64; 2],
-    first_cross_row: Option<SelectedObservationRow>,
-    w: WRange,
-}
-
-impl RowFacts {
-    /// Nothing observed yet, over `row_count` MAIN rows and `ddids`
-    /// candidate data descriptions.
-    fn new(row_count: usize, ddids: usize) -> Self {
-        Self {
-            rows: SelectedRowsBuilder::with_data_description_capacity(
-                u64::try_from(row_count).expect("a MAIN row count fits u64"),
-                ddids,
-            ),
-            rows_error: None,
-            ddids: BTreeSet::new(),
-            fields: BTreeSet::new(),
-            observation_ids: BTreeSet::new(),
-            first_visibility_key: None,
-            first_time_mjd_seconds: None,
-            time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
-            first_cross_row: None,
-            w: WRange {
-                maximum_abs_m: 0.0,
-                minimum_abs_m: f64::INFINITY,
-                sum_squares_m2: 0.0,
-                rows: 0,
-            },
-        }
-    }
-
-    fn observe_visibility_key(&mut self, array: i32, description: i32, field: i32) {
-        let key = (array, description, field);
-        self.first_visibility_key = Some(
-            self.first_visibility_key
-                .map_or(key, |prior| prior.min(key)),
-        );
-    }
-
-    fn observe(&mut self, row: SelectedObservationRow) {
-        self.observe_visibility_key(row.array_id(), row.data_description_id(), row.field_id());
-        self.ddids.insert(row.data_description_id());
-        self.fields.insert(row.field_id());
-        self.observation_ids.insert(row.observation_id());
-        self.first_time_mjd_seconds
-            .get_or_insert(row.time_mjd_seconds());
-        if !row.flag_row() && row.antenna1() != row.antenna2() {
-            self.first_cross_row.get_or_insert(row);
-        }
-        self.time_bounds_mjd_seconds[0] =
-            self.time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
-        self.time_bounds_mjd_seconds[1] =
-            self.time_bounds_mjd_seconds[1].max(row.time_mjd_seconds());
-        let [_, _, w_m] = row.uvw_m();
-        self.w.maximum_abs_m = self.w.maximum_abs_m.max(w_m.abs());
-        self.w.minimum_abs_m = self.w.minimum_abs_m.min(w_m.abs());
-        self.w.sum_squares_m2 += w_m * w_m;
-        self.w.rows += 1;
-        if self.rows_error.is_none() {
-            self.rows_error = self
-                .rows
-                .push(SelectedMainRow::new(
-                    u64::try_from(row.physical_row()).expect("row bounded by MS row count"),
-                    u32::try_from(row.data_description_id()).expect("validated nonnegative DDID"),
-                ))
-                .err();
-        }
-    }
-}
-
-/// Bytes an MFS run's spectral envelope reducer may hold beside the survey
-/// walk, admitted on its own: one key per MAIN row at most (each key stands
-/// for a row), and at most a sixty-fourth of the run's `memory` (16 MiB at
-/// least), with its fixed part. Its keys are the selection's distinct
-/// `TIME·(DATA_DESC_ID+1)` products, about an integration per data
-/// description, so this binds only beyond about a million integrations per
-/// gibibyte of memory.
-pub(super) fn envelope_bytes(ms: &MeasurementSet, memory: u64) -> Result<usize, PrepareError> {
-    let fields = ms.field()?.row_count();
-    let fixed = fields.saturating_mul(512).saturating_add(1 << 20);
-    let keys = ms
-        .row_count()
-        .saturating_mul(casa_ms::SPECTRAL_ENVELOPE_KEY_BYTES);
-    let share = usize::try_from(memory / 64)
-        .unwrap_or(usize::MAX)
-        .max(16 << 20);
-    Ok(fixed.saturating_add(keys.min(share)))
-}
-
-/// Resolve the request's selection and survey its rows in one pass; an MFS
-/// run's spectral envelope holds at most `envelope_bytes`, admitted beside
-/// the walk's `budget`.
-pub(super) fn survey(
+/// The request's per-sample predicates: its fields, UV-distance intervals,
+/// scan numbers, observation identifiers and the observing modes its
+/// `intent` selector names ([`intents::resolve`]), with the states a state
+/// number named.
+///
+/// The field selector resolves against the catalogue's fields
+/// ([`resolve_fields`]); scan and observation text against CASA's strict
+/// numeric grammar, kept as inclusive intervals so a wide range holds no
+/// more than its terms.
+pub(super) fn row_selection(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
-    budget: SelectedObservationContentBudget,
-    envelope_bytes: usize,
-    frame_engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<Survey, PrepareError> {
-    let data_description = ms.data_description()?;
-    let ddids = selected_data_descriptions(request, &data_description)?;
-    let field_ids = request
-        .field
-        .as_deref()
-        .map(|selector| ms.resolve_field_selector(selector))
-        .transpose()?;
-    let row_selection = ms
-        .selected_observation_row_selection(
-            &ddids,
-            field_ids.as_deref(),
-            request.uvrange.as_deref(),
-            request.intent.as_deref(),
-        )?
-        .with_numeric_row_selectors(request.scan.as_deref(), request.observation.as_deref())?;
-    let mut spectral_windows = candidate_windows(ms, &data_description, &ddids)?;
-    let mut continuum = continuum_envelope(
-        request,
-        ms,
-        &row_selection,
-        &spectral_windows,
-        frame_engine,
-        envelope_bytes,
-    )?;
-    let io = budget.row_io_budget();
-    let mut facts = RowFacts::new(ms.row_count(), ddids.len());
-    let main_table = ms.main_table();
-    let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
-    let mut row_error = None;
-    ms.visit_selected_observation_rows(&row_selection, io, |row| {
-        if row_error.is_none()
-            && let Some((_, reducer)) = continuum.as_mut()
-        {
-            row_error = reducer.observe(row).err();
+    catalogue: &Catalogue,
+) -> Result<(RowSelection, BTreeSet<StateId>), PrepareError> {
+    let fields = match request.field.as_deref() {
+        Some(selector) => resolve_fields(selector, catalogue)?,
+        None => IdSelection::All,
+    };
+    let scans = numeric_row_ids(request.scan.as_deref(), "scan")?;
+    let observations = numeric_row_ids(request.observation.as_deref(), "observation")?;
+    let uv_distances = match request.uvrange.as_deref() {
+        Some(text) => UvSelection::Ranges(
+            parse_uv_distance_intervals(text)?
+                .into_iter()
+                .map(uv_range)
+                .collect(),
+        ),
+        None => UvSelection::All,
+    };
+    let (intents, states) = match request.intent.as_deref() {
+        Some(text) => {
+            let resolved = intents::resolve(text, catalogue)?;
+            (resolved.selection, resolved.states)
         }
-        if weight_spectrum_complete {
-            match main_table
-                .column_accessor("WEIGHT_SPECTRUM")
-                .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
-            {
-                Ok(defined) => weight_spectrum_complete = defined,
-                Err(error) => row_error = Some(error.into()),
-            }
-        }
-        facts.observe(row);
-    })?;
-    if let Some(error) = facts.rows_error {
-        return Err(error.into());
-    }
-    if let Some(error) = row_error {
-        return Err(error.into());
-    }
-    let rows = facts.rows.finish();
-    if rows.selected_row_count() == 0 {
-        return Err(PrepareError::NoSelectedRows);
-    }
-    let continuum = continuum
-        .map(|(selected, reducer)| reducer.finish().map(|envelope| (selected, envelope)))
-        .transpose()?;
-    // A candidate data description no selected row has goes, with its
-    // spectral window: the predicate admits a row only through its data
-    // description, so over the observed ones it selects the same rows.
-    let row_selection = ms
-        .selected_observation_row_selection(
-            &facts.ddids.iter().copied().collect::<Vec<_>>(),
-            field_ids.as_deref(),
-            request.uvrange.as_deref(),
-            request.intent.as_deref(),
-        )?
-        .with_numeric_row_selectors(request.scan.as_deref(), request.observation.as_deref())?;
-    let spw_ids = row_selection
-        .data_descriptions()
-        .iter()
-        .map(|description| description.spectral_window_id() as usize)
-        .collect::<BTreeSet<_>>();
-    spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
-    let source_frequency_reference = one_source_frame(&spectral_windows)?;
-    let continuum = continuum.map(|(mut selected, envelope)| {
-        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
-        (selected, envelope)
-    });
-    Ok(Survey {
-        row_selection,
-        rows,
-        spectral_windows,
-        source_frequency_reference,
-        fields: facts.fields,
-        first_visibility_field_id: usize::try_from(
-            facts
-                .first_visibility_key
-                .expect("nonempty selected row traversal")
-                .2,
-        )
-        .expect("selected FIELD_IDs are nonnegative"),
-        observation_ids: facts.observation_ids,
-        first_time_mjd_seconds: facts
-            .first_time_mjd_seconds
-            .expect("nonempty selected row traversal"),
-        time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
-        first_cross_row: facts.first_cross_row,
-        w: facts.w,
-        weight_spectrum_complete,
-        continuum,
-    })
+        None => (IntentSelection::All, BTreeSet::new()),
+    };
+    Ok((
+        RowSelection::new(fields, uv_distances, intents).with_scan_observation(scans, observations),
+        states,
+    ))
 }
 
-/// A continuum run's selected channels per candidate window, with the
-/// reducer of their LSRK envelope that the row pass feeds, holding at most
-/// `envelope_bytes`; `None` for a cube.
-fn continuum_envelope<'a>(
-    request: &ImagingRequest,
-    ms: &'a MeasurementSet,
-    row_selection: &'a SelectedObservationRowSelection,
-    spectral_windows: &[SourceSpectralWindow],
-    frame_engine: &'a casa_ms::derived::engine::MsCalEngine,
-    envelope_bytes: usize,
-) -> Result<
-    Option<(
-        WindowChannels,
-        SelectedObservationSpectralEnvelopeReducer<'a>,
-    )>,
-    PrepareError,
-> {
-    if request.specmode != SpecMode::Mfs {
-        return Ok(None);
-    }
-    let selected = spectral_windows
+/// The fields `selector` names among `catalogue`'s, through the shared
+/// FIELD selector ([`casa_ms::resolve_field_selector_rows`]): IDs and
+/// ranges bounded by the fields that exist, exact names and simple `*`
+/// patterns over unflagged fields. A catalogue's field `i` is `FIELD_ID`
+/// `i`. Empty text selects every field; a nonempty selector that matches
+/// none is refused, as imaging never reads an empty selection.
+fn resolve_fields(selector: &str, catalogue: &Catalogue) -> Result<IdSelection, PrepareError> {
+    let rows = catalogue
+        .fields
         .iter()
-        .map(|window| {
-            Ok((
-                window.spw_id,
-                selected_channels(request, window.spw_id, &window.frequencies_hz)?,
-            ))
+        .map(|field| casa_ms::FieldSelectorRow {
+            name: &field.name,
+            flagged: field.flagged.unwrap_or(false),
         })
-        .collect::<Result<BTreeMap<_, _>, PrepareError>>()?;
-    let reducer = ms.selected_observation_spectral_envelope_reducer(
-        row_selection,
-        spectral_windows.iter().map(|window| {
-            SelectedObservationSpectralWindow::borrow_selected(
-                u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
-                window.frequency_reference,
-                &window.frequencies_hz,
-                &window.channel_widths_hz,
-                selected
-                    .get(&window.spw_id)
-                    .expect("selected every candidate spectral window"),
-            )
-        }),
-        FrequencyRef::LSRK,
-        frame_engine,
-        envelope_bytes,
-    )?;
-    Ok(Some((selected, reducer)))
+        .collect::<Vec<_>>();
+    let ids = casa_ms::resolve_field_selector_rows(&rows, selector)?;
+    if ids.is_empty() {
+        return Ok(IdSelection::All);
+    }
+    Ok(IdSelection::Only(
+        ids.into_iter()
+            .map(|id| u32::try_from(id).expect("a resolved FIELD_ID is nonnegative"))
+            .collect(),
+    ))
 }
 
-/// The spectral windows of the candidate data descriptions.
-fn candidate_windows(
-    ms: &MeasurementSet,
-    data_description: &casa_ms::MsDataDescription<'_>,
-    ddids: &[i32],
-) -> Result<Vec<SourceSpectralWindow>, PrepareError> {
-    let spectral_window = ms.spectral_window()?;
-    let spw_ids = ddids
-        .iter()
-        .map(|ddid| data_description_binding(data_description, *ddid).map(|(spw_id, _)| spw_id))
-        .collect::<Result<BTreeSet<_>, _>>()?;
+/// The scan numbers or observation identifiers `text` names, as inclusive
+/// intervals ([`casa_ms::parse_numeric_row_id_ranges`]); absent or empty
+/// text selects every one.
+fn numeric_row_ids(text: Option<&str>, label: &str) -> Result<IdSelection, PrepareError> {
+    let Some(text) = text.filter(|text| !text.is_empty()) else {
+        return Ok(IdSelection::All);
+    };
+    let ranges = casa_ms::parse_numeric_row_id_ranges(text, label)?;
+    if ranges.is_empty() {
+        return Err(casa_ms::MsError::InvalidInput(format!(
+            "{label} selector must contain nonnegative IDs"
+        ))
+        .into());
+    }
+    Ok(IdSelection::Ranges(
+        ranges
+            .into_iter()
+            .map(|(start, end)| {
+                (
+                    u32::try_from(start).expect("a parsed row ID is nonnegative"),
+                    u32::try_from(end).expect("a parsed row ID is nonnegative"),
+                )
+            })
+            .collect(),
+    ))
+}
+
+/// One `uvrange` interval as the model states it.
+fn uv_range(interval: UvDistanceInterval) -> UvDistanceRange {
+    let bound = |limit: UvDistanceLimit| {
+        if limit.inclusive {
+            SelectionBound::inclusive(limit.value)
+        } else {
+            SelectionBound::exclusive(limit.value)
+        }
+    };
+    UvDistanceRange::new(
+        interval.lower.map(bound),
+        interval.upper.map(bound),
+        if interval.wavelengths {
+            UvDistanceUnit::Wavelengths
+        } else {
+            UvDistanceUnit::Meters
+        },
+    )
+}
+
+/// The frequency axes of the catalogue's windows `spw_ids`, each as the
+/// first of its partitions states it.
+pub(super) fn spectral_windows(
+    catalogue: &Catalogue,
+    spw_ids: impl IntoIterator<Item = usize>,
+) -> Vec<SourceSpectralWindow> {
     spw_ids
         .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .map(|spw_id| {
-            let code = spectral_window.meas_freq_ref(spw_id)?;
-            Ok(SourceSpectralWindow {
+            let entry = catalogue
+                .partitions
+                .iter()
+                .find(|entry| entry.window.0 as usize == spw_id)
+                .expect("a candidate's window is a partition's");
+            SourceSpectralWindow {
                 spw_id,
-                frequency_reference: FrequencyRef::from_casacore_code(code)
-                    .ok_or(PrepareError::UnknownSourceFrame { spw_id, code })?,
-                frequencies_hz: spectral_window.chan_freq(spw_id)?,
-                channel_widths_hz: spectral_window.chan_width(spw_id)?,
-            })
+                frequency_reference: entry.frequency_frame,
+                frequencies_hz: entry.frequencies_hz.clone(),
+                channel_widths_hz: entry.channel_widths_hz.clone(),
+            }
         })
         .collect()
 }
 
 /// The one source frame every selected window shares.
-fn one_source_frame(windows: &[SourceSpectralWindow]) -> Result<FrequencyRef, PrepareError> {
+pub(super) fn one_source_frame(
+    windows: &[SourceSpectralWindow],
+) -> Result<FrequencyRef, PrepareError> {
     let mut frames = windows.iter().map(|window| window.frequency_reference);
     let first = frames
         .next()
-        .expect("the selected rows' data descriptions bind a candidate spectral window");
+        .expect("a selected sample is in a selected window");
     if frames.any(|frame| frame != first) {
         return Err(PrepareError::MixedSourceFrames);
     }
@@ -382,50 +204,77 @@ pub(super) fn one_window<'a>(
     }
 }
 
-fn selected_data_descriptions(
-    request: &ImagingRequest,
-    table: &casa_ms::MsDataDescription<'_>,
-) -> Result<Vec<i32>, PrepareError> {
-    if let Some(ddid) = request.ddid {
-        return Ok(vec![ddid]);
-    }
-    let selected_spws = request
-        .spw
-        .as_deref()
-        .map(parse_spw_selector)
-        .transpose()?
-        .unwrap_or_default()
-        .into_iter()
-        .map(|selector| selector.spw_id)
-        .collect::<BTreeSet<_>>();
-    let mut ddids = Vec::new();
-    for row in 0..table.row_count() {
-        let spw = table.spectral_window_id(row)?;
-        let polarization = table.polarization_id(row)?;
-        if spw >= 0
-            && polarization >= 0
-            && (selected_spws.is_empty() || selected_spws.contains(&spw))
-        {
-            ddids.push(i32::try_from(row).expect("DATA_DESCRIPTION rows are addressed by i32 ids"));
-        }
-    }
-    if ddids.is_empty() {
-        return Err(PrepareError::NoSelectedDataDescriptions);
-    }
-    Ok(ddids)
+/// The spectral windows a request selects: the catalogue's windows its
+/// `spw` selector numbers (a MeasurementSet's `SPECTRAL_WINDOW` rows; an
+/// MSv4's windows in the order its datasets name them), or every window, or
+/// the one MSv2 data description its `ddid` names.
+pub(super) enum WindowChoice {
+    /// Every window.
+    All,
+    /// These windows.
+    Windows(BTreeSet<u32>),
+    /// The partitions of one MSv2 `DATA_DESCRIPTION` row.
+    DataDescription(u32),
 }
 
-fn data_description_binding(
-    table: &casa_ms::MsDataDescription<'_>,
-    ddid: i32,
-) -> Result<(usize, usize), PrepareError> {
-    let row = usize::try_from(ddid).map_err(|_| PrepareError::InvalidDataDescription { ddid })?;
-    let spw = table.spectral_window_id(row)?;
-    let polarization = table.polarization_id(row)?;
-    match (usize::try_from(spw), usize::try_from(polarization)) {
-        (Ok(spw), Ok(polarization)) => Ok((spw, polarization)),
-        _ => Err(PrepareError::InvalidDataDescription { ddid }),
+impl WindowChoice {
+    /// Whether partition `id` of `store` is in a selected window.
+    pub(super) fn holds(&self, store: &OpenedStore, id: casa_observation::PartitionId) -> bool {
+        match self {
+            Self::All => true,
+            Self::Windows(windows) => windows.contains(&store.catalogue().partition(id).window.0),
+            Self::DataDescription(ddid) => store
+                .msv2()
+                .is_some_and(|observation| observation.data_description_id(id) == *ddid),
+        }
     }
+}
+
+/// The windows `request` selects in `store` ([`WindowChoice`]).
+///
+/// # Errors
+///
+/// A `ddid` of an MSv4, which has no data descriptions, or one that is not
+/// a `DATA_DESCRIPTION` row binding a window and a polarization; an `spw`
+/// selector that does not parse.
+pub(super) fn window_choice(
+    request: &ImagingRequest,
+    store: &OpenedStore,
+) -> Result<WindowChoice, PrepareError> {
+    if let Some(ddid) = request.ddid {
+        let observation = store
+            .msv2()
+            .ok_or(PrepareError::NoDataDescriptions { ddid })?;
+        let table = observation.measurement_set().data_description()?;
+        let binds = usize::try_from(ddid)
+            .ok()
+            .filter(|row| *row < table.row_count())
+            .map(|row| {
+                Ok::<_, PrepareError>(
+                    table.spectral_window_id(row)? >= 0 && table.polarization_id(row)? >= 0,
+                )
+            })
+            .transpose()?
+            .unwrap_or(false);
+        if !binds {
+            return Err(PrepareError::InvalidDataDescription { ddid });
+        }
+        return Ok(WindowChoice::DataDescription(
+            u32::try_from(ddid).expect("a bound DATA_DESC_ID is nonnegative"),
+        ));
+    }
+    let Some(text) = request.spw.as_deref() else {
+        return Ok(WindowChoice::All);
+    };
+    let windows = parse_spw_selector(text)?
+        .into_iter()
+        .filter_map(|selector| u32::try_from(selector.spw_id).ok())
+        .collect::<BTreeSet<_>>();
+    Ok(if windows.is_empty() {
+        WindowChoice::All
+    } else {
+        WindowChoice::Windows(windows)
+    })
 }
 
 /// The channels of `spw_id` the request selects: those its `spw`
@@ -475,59 +324,49 @@ pub(super) fn explicit_spw_channels(
     ))
 }
 
-/// The observation selection: the surveyed rows, `channels` per window and
-/// every correlation of the selected polarization setups.
+/// The observation selection: the surveyed partitions and samples, and
+/// `channels` per window with the window's whole frequency axis (CASA's
+/// mosaic kernels select by the complete `CHAN_FREQ` and
+/// `|CHAN_WIDTH[0]|`).
 pub(super) fn observation_selection(
-    ms: &MeasurementSet,
     survey: Survey,
     channels: &WindowChannels,
 ) -> Result<ObservationSelection, PrepareError> {
-    let polarization = ms.polarization()?;
     let spectral_windows = channels
         .iter()
         .map(|(spw_id, channels)| {
-            SpectralWindowSelection::new(
+            let window = survey
+                .spectral_windows
+                .iter()
+                .find(|window| window.spw_id == *spw_id)
+                .expect("the channels read are of selected windows");
+            let catalog = window
+                .channel_widths_hz
+                .first()
+                .and_then(|width| {
+                    SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
+                })
+                .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
+            Ok(SpectralWindowSelection::new(
                 u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
                     .iter()
                     .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
                     .collect(),
             )
-        })
-        .collect::<Vec<_>>();
-    let correlations = survey
-        .row_selection
-        .data_descriptions()
-        .iter()
-        .map(|description| description.polarization_id())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|polarization_id| {
-            let correlations = polarization
-                .corr_type(polarization_id as usize)?
-                .iter()
-                .enumerate()
-                .map(|(index, code)| {
-                    Ok(CorrelationProduct::new(
-                        u32::try_from(index).expect("a CORR_TYPE index fits u32"),
-                        correlation_type(*code)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, PrepareError>>()?;
-            Ok(CorrelationSelection::new(polarization_id, correlations))
+            .with_coordinate_catalog(catalog))
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(
-        survey.rows,
-        survey.row_selection.rows().clone(),
-        survey.row_selection.data_descriptions().to_vec(),
+        survey.samples,
+        survey.row_selection,
+        survey.partitions,
         spectral_windows,
-        correlations,
     ))
 }
 
 /// The visibility column imaged: `DATA` when asked for, else
-/// `CORRECTED_DATA` when present, else `DATA`.
+/// `CORRECTED_DATA` when the observation `holds` it, else `DATA`.
 ///
 /// `datacolumn='corrected'` on a MeasurementSet without `CORRECTED_DATA`
 /// therefore images `DATA`, as CASA's `tclean` does (simulation plan §3,
@@ -548,14 +387,13 @@ pub(super) fn observation_selection(
 /// `TiledShapeStMan` columns, and one probe would not reproduce CASA's
 /// per-chunk rule.
 pub(super) fn visibility_column(
-    ms: &MeasurementSet,
+    holds: impl Fn(OwnerVisibilityColumn) -> bool,
     requested: Option<DataColumn>,
 ) -> Result<OwnerVisibilityColumn, PrepareError> {
-    let present = |column| ms.data_column(column).is_ok();
     Ok(match requested {
         Some(DataColumn::Data) => OwnerVisibilityColumn::Data,
-        _ if present(VisibilityDataColumn::CorrectedData) => OwnerVisibilityColumn::CorrectedData,
-        _ if !present(VisibilityDataColumn::Data) => return Err(PrepareError::NoVisibilityColumn),
+        _ if holds(OwnerVisibilityColumn::CorrectedData) => OwnerVisibilityColumn::CorrectedData,
+        _ if !holds(OwnerVisibilityColumn::Data) => return Err(PrepareError::NoVisibilityColumn),
         Some(DataColumn::Corrected) => {
             tracing::warn!("CORRECTED_DATA column does not exist. Using DATA column instead");
             OwnerVisibilityColumn::Data
@@ -564,21 +402,135 @@ pub(super) fn visibility_column(
     })
 }
 
-fn correlation_type(code: i32) -> Result<Correlation, PrepareError> {
-    Correlation::from_casacore_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
+/// The data group holding `visibility` in both stores: `base` for the data
+/// (MSv2 `DATA`, MSv4 `VISIBILITY`), `corrected` for the corrected data.
+pub(super) fn data_group(visibility: OwnerVisibilityColumn) -> &'static str {
+    match visibility {
+        OwnerVisibilityColumn::Data => "base",
+        OwnerVisibilityColumn::CorrectedData => "corrected",
+        OwnerVisibilityColumn::FloatData => "float",
+    }
+}
+
+/// Whether `store` holds `visibility` for the `selected` partitions: a
+/// MeasurementSet when MAIN has its column (its adapter states the `base`
+/// group whether or not MAIN has `DATA`), as CASA asks; an MSv4, whose
+/// partitions each state their own data groups, when every selected
+/// partition has the column's data group.
+pub(super) fn holds(
+    store: &OpenedStore,
+    selected: &[casa_observation::PartitionId],
+    visibility: OwnerVisibilityColumn,
+) -> bool {
+    match store.msv2() {
+        Some(observation) => {
+            let column = match visibility {
+                OwnerVisibilityColumn::Data => VisibilityDataColumn::Data,
+                OwnerVisibilityColumn::CorrectedData => VisibilityDataColumn::CorrectedData,
+                OwnerVisibilityColumn::FloatData => return false,
+            };
+            observation.measurement_set().data_column(column).is_ok()
+        }
+        None => held_by_every(store.catalogue(), selected, data_group(visibility)),
+    }
+}
+
+/// Whether every `selected` partition of `catalogue` has data group `group`.
+fn held_by_every(
+    catalogue: &casa_observation::Catalogue,
+    selected: &[casa_observation::PartitionId],
+    group: &str,
+) -> bool {
+    selected
+        .iter()
+        .all(|id| catalogue.partition(*id).data_group(group).is_some())
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use casa_ms::{MeasurementSetBuilder, OptionalMainColumn};
     use serde_json::json;
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt};
 
     use super::*;
     use crate::request::tests::request;
+
+    /// A partition whose data groups are `groups`.
+    fn partition(groups: &[&str]) -> casa_observation::PartitionEntry {
+        use casa_observation::{
+            DataGroupEntry, ObservationId, PartitionEntry, UvwFrame, VisibilityUnits, WindowId,
+        };
+        use casa_types::measures::direction::DirectionRef;
+        use casa_types::measures::frequency::FrequencyRef;
+        use casa_types::measures::{EpochRef, MjdHighPrec};
+        PartitionEntry {
+            spectral_window: "spw".to_string(),
+            frequencies_hz: vec![1.0e9],
+            frequency_frame: FrequencyRef::LSRK,
+            channel_widths_hz: vec![1.0e6],
+            correlations: vec![casa_types::Correlation::XX],
+            intents: Vec::new(),
+            observation: ObservationId(0),
+            feeds: None,
+            fields: Vec::new(),
+            scans: Vec::new(),
+            baselines: Vec::new(),
+            time_scale: EpochRef::UTC,
+            time_origin: MjdHighPrec::new(0.0, 0.0),
+            data_groups: groups
+                .iter()
+                .map(|name| DataGroupEntry {
+                    name: (*name).to_string(),
+                    visibilities: String::new(),
+                    flags: String::new(),
+                    weights: String::new(),
+                    uvw: String::new(),
+                    units: VisibilityUnits::default(),
+                    uvw_frame: UvwFrame {
+                        effective: DirectionRef::J2000,
+                        stored_label: None,
+                    },
+                })
+                .collect(),
+            receptors: std::collections::BTreeMap::new(),
+            window: WindowId(0),
+            states: Vec::new(),
+            processor: None,
+        }
+    }
+
+    /// An MSv4's partitions each state their own data groups: `corrected` is
+    /// held, and so the default, only when every selected partition has it,
+    /// whatever an unselected one holds (Astra's review of #1013).
+    #[test]
+    fn an_msv4_holds_a_group_when_every_selected_partition_does() {
+        use casa_observation::{Catalogue, PartitionId};
+        let catalogue = Catalogue {
+            partitions: vec![
+                partition(&["base", "corrected"]),
+                partition(&["base"]),
+                partition(&["base", "corrected"]),
+            ],
+            ..Catalogue::default()
+        };
+        let corrected = |selected: &[u32]| {
+            let selected: Vec<PartitionId> = selected.iter().map(|id| PartitionId(*id)).collect();
+            let holds = |column| held_by_every(&catalogue, &selected, data_group(column));
+            visibility_column(holds, None).expect("a column")
+                == OwnerVisibilityColumn::CorrectedData
+        };
+        assert!(
+            !corrected(&[1]),
+            "an unselected partition's group is not the default"
+        );
+        assert!(
+            !corrected(&[0, 1]),
+            "a selected partition without the group"
+        );
+        assert!(corrected(&[0, 2]));
+    }
 
     #[test]
     fn channels_past_the_window_are_refused() {
@@ -592,23 +544,6 @@ mod tests {
                 channels: 2,
             })
         ));
-    }
-
-    #[test]
-    fn first_visibility_field_follows_array_description_field_sort_order() {
-        let keys = [(2, 0, 0), (1, 4, 1), (1, 2, 9), (1, 2, 7), (1, 3, 0)];
-        for reversed in [false, true] {
-            let mut facts = RowFacts::new(keys.len(), 5);
-            for index in 0..keys.len() {
-                let (array, description, field) = keys[if reversed {
-                    keys.len() - 1 - index
-                } else {
-                    index
-                }];
-                facts.observe_visibility_key(array, description, field);
-            }
-            assert_eq!(facts.first_visibility_key, Some((1, 2, 7)));
-        }
     }
 
     /// The messages of the warnings an event logs.
@@ -631,28 +566,22 @@ mod tests {
         }
     }
 
-    /// The column `requested` images in a MeasurementSet with `columns`, and
-    /// the warnings choosing it logs.
+    /// The column `requested` images in an observation holding `columns`,
+    /// and the warnings choosing it logs.
     fn chosen(
-        columns: &[OptionalMainColumn],
+        columns: &[OwnerVisibilityColumn],
         requested: Option<DataColumn>,
     ) -> (Result<OwnerVisibilityColumn, PrepareError>, Vec<String>) {
-        let builder = columns
-            .iter()
-            .fold(MeasurementSetBuilder::new(), |builder, column| {
-                builder.with_main_column(*column)
-            });
-        let ms = MeasurementSet::create_memory(builder).expect("an in-memory MeasurementSet");
         let warnings = Warnings::default();
         let chosen = tracing::subscriber::with_default(
             tracing_subscriber::registry().with(warnings.clone()),
-            || visibility_column(&ms, requested),
+            || visibility_column(|column| columns.contains(&column), requested),
         );
         (chosen, warnings.0.lock().expect("warnings").clone())
     }
 
     #[test]
-    fn a_measurement_set_without_visibilities_has_no_column_to_image() {
+    fn an_observation_without_visibilities_has_no_column_to_image() {
         for requested in [None, Some(DataColumn::Corrected)] {
             assert!(matches!(
                 chosen(&[], requested).0,
@@ -669,7 +598,8 @@ mod tests {
 
     #[test]
     fn corrected_falls_back_to_data_with_a_warning_when_the_ms_has_no_corrected_data() {
-        let (column, warnings) = chosen(&[OptionalMainColumn::Data], Some(DataColumn::Corrected));
+        let (column, warnings) =
+            chosen(&[OwnerVisibilityColumn::Data], Some(DataColumn::Corrected));
         assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
         assert_eq!(
             warnings,
@@ -679,14 +609,17 @@ mod tests {
 
     #[test]
     fn an_unspecified_column_falls_back_to_data_without_a_warning() {
-        let (column, warnings) = chosen(&[OptionalMainColumn::Data], None);
+        let (column, warnings) = chosen(&[OwnerVisibilityColumn::Data], None);
         assert!(matches!(column, Ok(OwnerVisibilityColumn::Data)));
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
     fn corrected_images_corrected_data_when_the_ms_has_it() {
-        let both = [OptionalMainColumn::Data, OptionalMainColumn::CorrectedData];
+        let both = [
+            OwnerVisibilityColumn::Data,
+            OwnerVisibilityColumn::CorrectedData,
+        ];
         for requested in [None, Some(DataColumn::Corrected)] {
             let (column, warnings) = chosen(&both, requested);
             assert!(matches!(column, Ok(OwnerVisibilityColumn::CorrectedData)));

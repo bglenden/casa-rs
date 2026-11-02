@@ -229,6 +229,9 @@ mod tests {
             }
             Ok(series)
         }
+        fn pointing_bytes(&self) -> Result<usize, ObservationError> {
+            Ok(self.need)
+        }
     }
 
     /// A partition of antennas 0 and 1 whose times count from `origin`.

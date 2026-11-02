@@ -267,6 +267,24 @@ Regenerate them with `tools/ms-trial/make_ephemeris_fixtures.sh`, which
 starts from the committed `ms_trial.ms` and leaves the other fixtures
 alone.
 
+The **sources-and-lines fixtures** (#976, 21 and 17 KB) are another
+observation, of one field in two spectral windows:
+- **MSv2 `ms_trial_lines.ms`.** Simulated by
+  `crates/casa-ms/examples/ms_trial_lines.rs`: three VLA antennas, seven
+  10 s integrations, windows of four and three channels at 672 and
+  676 GHz, and a `SOURCE` stating the field's source with one line in the
+  first window and two in the second, each with its transition, rest
+  frequency and systemic velocity (both LSRK). `UVW`'s MEASINFO names
+  ITRF, as for `ms_trial.ms`.
+- **MSv4 `ms_trial_lines.ps.zarr`.** XRADIO's conversion with its default
+  partitioning, one dataset per window, without pointing.
+
+Regenerate them with `tools/ms-trial/make_lines_fixtures.sh`. The law
+`both_stores_state_a_fields_source_and_its_lines_by_window` reads both
+through their adapters: one source with a record per window, the same
+direction, transitions, rest frequencies and velocities (XRADIO's without a
+frame), and the MSv2 binds to its conversion.
+
 ### Fixture findings
 
 - casa-rs's synthetic writer leaves `UVW`'s MEASINFO without `Ref`; XRADIO
@@ -291,6 +309,18 @@ alone.
 - The synthetic writer's corruption panics for four correlations (it
   indexes antenna gains by correlation, for at most two), so noise and gains
   are applied by the fixture script.
+- XRADIO's converter writes the line names as `line_name`, where its
+  schema names the coordinate `line_names`, and names a source
+  `NAME_SOURCEID`; it takes a source's lines from the `SOURCE` rows of the
+  partition's window alone (never those for every window, −1), the first
+  in time.
+- Where `FEED` has no row for a window (the synthetic writer's `FEED`
+  names window 0 only), XRADIO writes that dataset's `antenna_xds` without
+  `ANTENNA_RECEPTOR_ANGLE` but with `polarization_type`. The reader then
+  gives its antennas no receptors, as the MSv2 adapter reads that `FEED`.
+- XRADIO writes a window whose channels descend (negative width) in
+  ascending order, so its partition does not bind to the MSv2's, whose
+  channels are in stored order (#1014). The lines fixture's windows ascend.
 - XRADIO relabels MSv2's `UVW` ITRF as the phase centre's frame (`fk5`),
   following CASA `fixvis`'s note that the label is usually wrong; names
   antennas `NAME_STATION` and fields `NAME_FIELDID`; and declares the
@@ -1711,6 +1741,7 @@ equal.
 | `a_weight_write_refuses_sigma_derived_weights` | An update session refuses a weight updater bound to a sigma-weighted traversal and binds a flag updater to it; a weight updater bound to the stored weights still refuses a patch from a sigma-weighted batch, which states its rule. |
 | `a_weight_write_binds_beside_an_msv4_fallback` | Beside an MSv4's `StoredWeights` fallback a weight updater binds; its batches state the stored rule and write back. |
 | `spectral_columns_without_content_are_read_past` | `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` added and never filled hold no content (casacore's `hasContent`): the stored weights are `WEIGHT` and the sigmas `SIGMA`, and with only `SIGMA_SPECTRUM` filled still `SIGMA`. |
+| `each_partition_reads_weight_spectrum_by_its_first_row` | With `WEIGHT_SPECTRUM` filled for one of two partitions (two sessions of one window), that partition's stored weights are its cells and the other's its `WEIGHT`, whether or not it holds MAIN's first row. CASA asks again at each new spectral window (`weightSpectrumExists`), so it answers once for these two. |
 | `sigma_weighted_batch_solves_equal_the_production_gaincal` | Example B with `SIGMA` not 1/√`WEIGHT` (casa-calibration): the batch-fed solve reading 1/σ² equals production to 1.3e-7 in weight; the one reading `WEIGHT` differs by 2,500×. |
 | `an_msv4_converts_to_an_msv2_of_every_acquisition` | 1/σ² of the converter's derived `SIGMA` gives the MSv4's weights back to 1e-6. |
 

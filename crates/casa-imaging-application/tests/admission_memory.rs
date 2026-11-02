@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     Admission, ApplicationDispatchError, HostResources, ImagingOutcome, ImagingRequest,
-    ResourcePolicy, RunContext, SourceRoute,
+    ResourcePolicy, RunContext,
 };
 use casa_ms::{
     SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
@@ -662,25 +662,21 @@ fn just_above(breaches: &mut Vec<String>, label: &str, request: &ImagingRequest)
     }
 }
 
-/// The observation-batch route (#932, step 4) holds no more than it is
-/// admitted: its batches, their geometry, the parallactic cache, the
+/// The observation's batches (#932, step 4) hold no more than they are
+/// admitted: the batches, their geometry, the parallactic cache, the
 /// opening and its index, and the channel-window survey of a cube's
 /// restricted waves. Continuum runs under natural and uniform weighting,
 /// at one worker and at four, a cube resident and in waves, and a window
 /// of 101 channels whole and sparsely selected (`0:0~1;100`), whose
 /// batches span every channel between the selected ones.
 #[test]
-fn the_observation_batch_route_stays_within_its_admission() {
-    if !alone("the_observation_batch_route_stays_within_its_admission") {
+fn the_batches_stay_within_their_admission() {
+    if !alone("the_batches_stay_within_their_admission") {
         return;
     }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
-    let batches = |mut request: ImagingRequest| {
-        request.source_route = SourceRoute::ObservationBatches;
-        request
-    };
     let mut breaches = Vec::new();
     for (label, controls) in [
         ("hogbom", json!({ "deconvolver": "hogbom" })),
@@ -697,7 +693,7 @@ fn the_observation_batch_route_stays_within_its_admission() {
             check(
                 &mut breaches,
                 &format!("batches {label} {imsize} px {workers} workers"),
-                &batches(request(&measurement_set, &image, imsize, controls.clone())),
+                &request(&measurement_set, &image, imsize, controls.clone()),
                 workers,
                 AMPLE,
             );
@@ -706,22 +702,22 @@ fn the_observation_batch_route_stays_within_its_admission() {
     check(
         &mut breaches,
         "batches cube resident",
-        &batches(cube(
+        &cube(
             &measurement_set,
             &root.path().join("batches-resident"),
             json!({}),
-        )),
+        ),
         4,
         AMPLE,
     );
     let waves = just_above(
         &mut breaches,
         "batches cube",
-        &batches(cube(
+        &cube(
             &measurement_set,
             &root.path().join("batches-waved"),
             json!({}),
-        )),
+        ),
     );
     assert!(
         waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
@@ -734,19 +730,19 @@ fn the_observation_batch_route_stays_within_its_admission() {
     check(
         &mut breaches,
         "batches continuum of 101 channels",
-        &batches(request(
+        &request(
             &wide,
             &wide_root.join("batches-continuum"),
             256,
             json!({ "deconvolver": "hogbom" }),
-        )),
+        ),
         4,
         AMPLE,
     );
     check(
         &mut breaches,
         "batches sparse linear cube",
-        &batches(request(
+        &request(
             &wide,
             &wide_root.join("batches-sparse"),
             256,
@@ -760,7 +756,7 @@ fn the_observation_batch_route_stays_within_its_admission() {
                 "interpolation": "linear",
                 "niter": 0,
             }),
-        )),
+        ),
         2,
         2 << 30,
     );
@@ -874,9 +870,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 }
 
 /// A cleaned run that writes its model to `MODEL_DATA`: its last pass
-/// predicts every selected sample and hands each block to the writer, on
-/// either route. The batch route runs first, so its first run creates and
-/// seeds `MODEL_DATA` (#932, step 5).
+/// predicts every selected sample and hands each block to the update
+/// session's writer. Its first run creates and seeds `MODEL_DATA` (#932,
+/// step 5).
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
     if !alone("a_visibility_write_stays_within_its_admission") {
@@ -886,23 +882,20 @@ fn a_visibility_write_stays_within_its_admission() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for route in [SourceRoute::ObservationBatches, SourceRoute::SelectedRows] {
-        for (imsize, workers) in [(256, 1), (1024, 4)] {
-            let mut savemodel = request(
-                &measurement_set,
-                &root.path().join(format!("savemodel-{route:?}-{imsize}")),
-                imsize,
-                json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
-            );
-            savemodel.source_route = route;
-            check(
-                &mut breaches,
-                &format!("savemodel {route:?} {imsize} px {workers} workers"),
-                &savemodel,
-                workers,
-                AMPLE,
-            );
-        }
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let savemodel = request(
+            &measurement_set,
+            &root.path().join(format!("savemodel-{imsize}")),
+            imsize,
+            json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+        );
+        check(
+            &mut breaches,
+            &format!("savemodel {imsize} px {workers} workers"),
+            &savemodel,
+            workers,
+            AMPLE,
+        );
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
@@ -1173,8 +1166,8 @@ fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
 }
 
 /// The fixed charges a run makes whatever its size, which the over-charge
-/// bound allows beside its proportion: the Measures catalogs (16 MiB), the
-/// walks and envelope of the MeasurementSet, a kernel set's index.
+/// bound allows beside its proportion: the Measures catalogs (16 MiB),
+/// compile's survey of the observation, a kernel set's index.
 const FIXED_ALLOWANCE: u64 = 64 << 20;
 /// How far a run's reservations may stand above what it holds, beyond
 /// [`FIXED_ALLOWANCE`] (#738).

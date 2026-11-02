@@ -17,7 +17,7 @@ use casa_types::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider}
 use casa_types::quanta::Unit;
 
 use super::BatchGeometryError;
-use crate::selected_observation_sample::AntennaResponseClass;
+use crate::sample_antennas::AntennaResponseClass;
 
 /// The observatory, antennas and fields of one observation, in the frames
 /// geometry needs, and the parallactic angles computed so far.

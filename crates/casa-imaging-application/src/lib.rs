@@ -10,20 +10,20 @@
 
 pub mod availability;
 mod compile;
-#[doc(hidden)]
-pub mod geometry_law;
 mod imaging;
 mod native;
+#[doc(hidden)]
+pub mod product_law;
 mod request;
 mod restart;
 #[doc(hidden)]
 pub mod restart_mask_law;
 #[doc(hidden)]
-pub mod route_law;
-#[doc(hidden)]
 pub mod source_law;
 #[doc(hidden)]
 pub mod start_model_law;
+#[doc(hidden)]
+pub mod store_law;
 mod tclean;
 
 pub use casa_imaging_deconvolution::{CleanStop, ResidualStatistics};
@@ -39,23 +39,21 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SourceRoute, SpecMode, UseMask, Weighting,
+    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
 };
 pub use tclean::TcleanRefusal;
 
-use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
+use std::{error::Error, fmt, path::PathBuf};
 
 use casa_imaging_deconvolution::MajorCycleCompletion;
 use casa_imaging_model::{
-    CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
-    SpectralWindowSelection, compile, compile_observation,
+    CompileProblemError, CompiledProblem, ProblemInput, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
     VisibilityProductCompletion,
 };
 use casa_imaging_runtime::run_phase;
-use casa_ms::resolve_selected_observation;
 use native::NativeInput;
 
 /// Boxed application failure accepted by the native application composition.
@@ -391,9 +389,10 @@ fn prepare_and_run(
 /// catalogs compiling loads for the run. They are admitted before compile
 /// opens anything, after the process's caches
 /// ([`casa_imaging_runtime::charge_process_caches`]);
-/// the MeasurementSet walks are admitted once its rows are known
-/// ([`compile::prepare`]) and released once the selected observation is
-/// resolved. The device the request resolves to is set in
+/// compile's survey of the observation is admitted once the partitions it
+/// reads are known ([`compile::prepare`]) and released once the problem
+/// compiles. The
+/// device the request resolves to is set in
 /// `resolved_backend` as soon as it is known.
 fn compile_run(
     request: &ImagingRequest,
@@ -429,12 +428,9 @@ fn compile_run(
     // The static restart-mask plan and its clone stay charged through all passes
     // and publication; ordinary minor-cycle mask charges cover their derived masks.
     resident.join(prepared.mask_resident);
-    let resolved = resolve_selected_observation(prepared.observation.clone())
+    let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
-    let (snapshot, access) = resolved.into_parts();
-    let observation = compile_observation(snapshot)
-        .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
-    drop(prepared.walks);
+    drop(prepared.survey);
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
@@ -457,8 +453,6 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
         observation: prepared.observation,
-        initial_access: access,
-        source_route: request.source_route,
         write_model_column: prepared.write_model_column,
         write_corrected_data: prepared.write_corrected_data,
         masks: prepared.masks,
@@ -466,50 +460,6 @@ fn compile_run(
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
     Ok((problem, input, native, resident))
-}
-
-pub(crate) fn visibility_write_selection(
-    problem: &CompiledProblem,
-    selected: Arc<ObservationSelection>,
-) -> Result<Arc<ObservationSelection>, ApplicationError> {
-    let Some(transform) = problem.visibility_transform() else {
-        return Ok(selected);
-    };
-    let spectral_windows = selected
-        .spectral_windows()
-        .iter()
-        .map(|selection| {
-            let output_channels = selection
-                .channel_indices()
-                .iter()
-                .copied()
-                .filter(|channel| {
-                    transform.rules().iter().any(|rule| {
-                        rule.spectral_window_id() == selection.spectral_window_id()
-                            && rule
-                                .channel_use(*channel)
-                                .is_some_and(|role| role.contributes_to_output())
-                    })
-                })
-                .collect::<Vec<_>>();
-            if output_channels.is_empty() {
-                return Err(boxed(
-                    "continuum transform selected no visibility-write output channels",
-                ));
-            }
-            Ok(SpectralWindowSelection::new(
-                selection.spectral_window_id(),
-                output_channels,
-            ))
-        })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
-    Ok(Arc::new(ObservationSelection::new(
-        selected.rows().clone(),
-        selected.rows_filter().clone(),
-        selected.data_descriptions().to_vec(),
-        spectral_windows,
-        selected.correlations().to_vec(),
-    )))
 }
 
 /// Failure before or within the installed whole-run implementation.
@@ -557,8 +507,4 @@ impl From<casa_imaging_runtime::Cancelled> for ApplicationDispatchError {
     fn from(_: casa_imaging_runtime::Cancelled) -> Self {
         Self::Cancelled
     }
-}
-
-fn boxed(message: &'static str) -> ApplicationError {
-    Box::new(io::Error::other(message))
 }

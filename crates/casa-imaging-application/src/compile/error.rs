@@ -48,24 +48,23 @@ pub enum PrepareError {
     /// read.
     #[error(transparent)]
     MeasurementSet(#[from] casa_ms::MsError),
-    /// The resource policy leaves too little memory for compile's walks of
-    /// the MeasurementSet's rows.
+    /// The resource policy leaves too little memory for opening the
+    /// observation or compile's survey of it.
     #[error(transparent)]
     Admission(#[from] casa_imaging_runtime::Admission),
-    /// The selected rows are not in ascending MAIN order or name a data
-    /// description twice out of sequence.
+    /// The selection cannot be read through the observation's partitions.
     #[error(transparent)]
-    SelectedRows(#[from] casa_imaging_model::SelectedRowSequenceError),
-    /// The selected observation could not be resolved against its
-    /// MeasurementSet.
+    Partitions(#[from] super::PartitionSelectionError),
+    /// The MeasurementSet could not be opened as an observation: a store
+    /// the observation boundary refuses, or rows its grids cannot hold.
     #[error(transparent)]
-    Resolution(#[from] casa_ms::ObservationOwnerError),
+    Opening(#[from] casa_observation::ObservationError),
     /// The resolved observation could not be compiled.
     #[error(transparent)]
     Observation(#[from] casa_imaging_model::CompileObservationError),
     /// A named, external or attached ephemeris could not be bound.
     #[error(transparent)]
-    Ephemeris(#[from] casa_ms::SelectedObservationEphemerisError),
+    Ephemeris(#[from] casa_ms::PhaseCentreEphemerisError),
     /// A direction could not be converted between frames.
     #[error(transparent)]
     Measures(#[from] casa_types::measures::MeasureError),
@@ -105,26 +104,42 @@ pub enum PrepareError {
         /// The output both domains name.
         path: PathBuf,
     },
-    /// The selection names no MAIN row.
-    #[error("selection resolved to no rows")]
-    NoSelectedRows,
-    /// The `spw` or `ddid` selection names no data description.
-    #[error("selection resolved to no data descriptions")]
-    NoSelectedDataDescriptions,
-    /// A requested `DATA_DESC_ID` is negative or binds a negative
-    /// spectral-window or polarization id.
+    /// The selection holds no sample.
+    #[error("selection resolved to no samples")]
+    NoSelectedSamples,
+    /// A `ddid` selection names a data description of an observation that
+    /// has none: an MSv4 processing set.
+    #[error("DATA_DESC_ID {ddid} is selected, but the observation has no data descriptions")]
+    NoDataDescriptions {
+        /// The data description.
+        ddid: i32,
+    },
+    /// An `intent` selector selects no observing mode: a pattern no mode
+    /// matches, or a state number the observation has no state for.
+    #[error("the intent selection {selector:?} matches no observing mode")]
+    UnmatchedIntent {
+        /// The selector, or the whole selection when it selects nothing.
+        selector: String,
+    },
+    /// An acquired sample has unusable coordinates; padding is excluded
+    /// using the store's acquisition index, not coordinate finiteness.
+    #[error(
+        "non-finite UVW in partition {partition} at time {time_mjd_seconds} on baseline {antennas:?}"
+    )]
+    NonFiniteUvw {
+        /// The observation partition.
+        partition: u32,
+        /// Seconds from MJD zero in the partition's time scale.
+        time_mjd_seconds: f64,
+        /// Catalogue antenna identifiers.
+        antennas: [u32; 2],
+    },
+    /// A requested `DATA_DESC_ID` is not a `DATA_DESCRIPTION` row, or binds
+    /// a negative spectral-window or polarization id.
     #[error("DATA_DESC_ID {ddid} does not bind a spectral window and polarization")]
     InvalidDataDescription {
         /// The data description.
         ddid: i32,
-    },
-    /// A selected MAIN row holds a negative id.
-    #[error("selected MAIN rows hold a negative {column} ({value})")]
-    NegativeMainId {
-        /// The MAIN column.
-        column: &'static str,
-        /// The stored value.
-        value: i32,
     },
     /// `channel_start` and `channel_count` select no channel, or run past
     /// the window's last channel.
@@ -162,13 +177,21 @@ pub enum PrepareError {
         /// The convention.
         convention: DopplerRef,
     },
-    /// A selected spectral window's `MEAS_FREQ_REF` is not a frequency frame.
-    #[error("SPW {spw_id} has an unknown frequency frame code {code}")]
-    UnknownSourceFrame {
+    /// A selected spectral window's axis does not describe channels.
+    #[error(
+        "SPW {spw_id}'s channel frequencies are not all finite and positive, or its first \
+         channel width is zero or not finite"
+    )]
+    SpectralWindowCoordinates {
         /// The spectral window.
         spw_id: usize,
-        /// The stored `MEAS_FREQ_REF`.
-        code: i32,
+    },
+    /// A continuum run's selected channels convert to no finite LSRK
+    /// interval.
+    #[error("the selected channels span no finite LSRK interval ({edges_hz:?} Hz)")]
+    SpectralEnvelope {
+        /// The edges they convert to.
+        edges_hz: [f64; 2],
     },
     /// The selected spectral windows are stored in different frames.
     #[error("selected spectral windows use different source frequency frames")]
@@ -277,12 +300,6 @@ pub enum PrepareError {
     /// The MeasurementSet has neither `CORRECTED_DATA` nor `DATA`.
     #[error("MS has neither CORRECTED_DATA nor DATA")]
     NoVisibilityColumn,
-    /// A selected polarization holds a correlation code with no law.
-    #[error("unsupported correlation code {code}")]
-    UnsupportedCorrelation {
-        /// The stored `CORR_TYPE`.
-        code: i32,
-    },
     /// The ANTENNA table is empty; a primary beam needs dish diameters.
     #[error("a primary-beam response requires ANTENNA dish metadata")]
     NoAntennaDishes,
@@ -354,9 +371,6 @@ pub enum PrepareError {
     /// Native EVLA AW images Stokes I or one circular parallel hand.
     #[error("native EVLA AW currently supports Stokes I or one circular parallel hand")]
     NativeAwPolarization,
-    /// The FEED table's `RECEPTOR_ANGLE` is not `Float64`.
-    #[error("native EVLA feed receptor angles require Float64 metadata")]
-    FeedAngleType,
     /// A FEED row has no finite first receptor angle.
     #[error("native EVLA feed has no finite receptor-zero angle")]
     FeedAngleNotFinite,
@@ -367,8 +381,8 @@ pub enum PrepareError {
     #[error("native EVLA request has no applicable antenna-zero feed metadata")]
     NoApplicableFeed,
     /// Native AW reads the parallactic angle of an unflagged
-    /// cross-correlation row, and the selection has none.
-    #[error("native AW has no unflagged cross-correlation row")]
+    /// cross-correlation sample, and the selection has none.
+    #[error("native AW has no unflagged cross-correlation sample")]
     NoCrossCorrelationRow,
     /// `cf_resident_mb` is larger than the address space.
     #[error("cf_resident_mb {megabytes} exceeds addressable memory")]

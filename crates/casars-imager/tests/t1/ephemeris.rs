@@ -4,8 +4,9 @@
 //! to a distant body's table, imaged tracking the body (`TRACKFIELD`),
 //! following the same body from a table given as the phase centre, as a
 //! cube in the body's rest frame, on a fixed centre, and without a phase
-//! centre. Each run holds the geometry law and the route law, so the
-//! observation-batch route images moving fields as today's route does.
+//! centre, each on the production route, whose batch geometry follows the
+//! body. The track's MSv4 conversion keeps that geometry to the store
+//! law's 1e-12.
 
 use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
@@ -54,7 +55,7 @@ fn body() -> Vec<EphemerisRow> {
 
 /// The track with its field following [`body`] (`FIELD.EPHEMERIS_ID` 0),
 /// its `PHASE_DIR` the offset from it.
-fn moving_track() -> Observation {
+pub(super) fn moving_track() -> Observation {
     let observation = Observation::synthesise(&[("point", POINT)]);
     let path = observation.measurement_set();
     let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");
@@ -92,7 +93,7 @@ fn path_text(path: &Path) -> String {
 
 /// Tracking the field's own body, an MFS image and a rest-frame cube.
 #[test]
-fn trackfield_images_agree_on_both_routes() {
+fn trackfield_images_mfs_and_a_rest_frame_cube() {
     let observation = moving_track();
     observation.image(
         "trackfield-mfs",
@@ -116,7 +117,7 @@ fn trackfield_images_agree_on_both_routes() {
 /// Stokes IV under `TRACKFIELD`, whose parallactic angles follow the moving
 /// field.
 #[test]
-fn a_fixed_centre_and_parallactic_angles_follow_the_moving_field_on_both_routes() {
+fn a_fixed_centre_and_parallactic_angles_follow_the_moving_field() {
     let observation = moving_track();
     let [ra, dec] = PHASE_CENTER_RAD;
     observation.image(
@@ -134,7 +135,7 @@ fn a_fixed_centre_and_parallactic_angles_follow_the_moving_field_on_both_routes(
 
 /// Following the body from a table given as the phase centre.
 #[test]
-fn a_table_phase_centre_agrees_on_both_routes() {
+fn a_table_phase_centre_follows_the_body() {
     let observation = moving_track();
     let table = table_outside(&observation);
     observation.image(

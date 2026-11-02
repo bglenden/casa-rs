@@ -443,8 +443,7 @@ pub fn run_major_cycle(
 /// Bytes the passes hold for a source whose largest block is `block`: the
 /// native blocks a pass's stream double-buffers and the model visibilities
 /// of one block, which a pass with a model predicts. They grow with the
-/// source's block, so the source's admission holds them
-/// ([`crate::finalize_source_access`]).
+/// source's block, so the source's admission holds them.
 #[must_use]
 pub const fn source_block_bytes(block: BlockShape) -> u64 {
     stream::bytes(block) + wave::prediction_bytes(block)
@@ -511,9 +510,8 @@ pub struct RowSamples {
 /// rather than its placement cap: each owner's buffer and the weight
 /// owner's can take every placement of a row with its native endpoints, and
 /// the chunk's prediction batch every degridded sample and the row's native
-/// terms. The source sizes its blocks with it
-/// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
-/// chunks exactly.
+/// terms. The source sizes its blocks with it; [`WaveDemand::bytes`]
+/// charges the chunks exactly.
 #[must_use]
 pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
     (workers as u64 + 1) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)

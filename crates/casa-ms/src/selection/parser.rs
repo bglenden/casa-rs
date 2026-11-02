@@ -6,8 +6,7 @@ use std::collections::BTreeSet;
 use casa_types::quanta::MvTime;
 
 use crate::selection::syntax::{
-    canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector, parse_numeric_range,
-    parse_numeric_range_endpoints,
+    canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector, parse_numeric_range_endpoints,
 };
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 use crate::subtables::{get_f64, has_column};
@@ -62,6 +61,41 @@ pub(crate) fn selection_from_options(
     Ok(selection)
 }
 
+/// One FIELD row as the field selector reads it: its stored `NAME` and its
+/// `FLAG_ROW`. Row `i` of a slice of these is `FIELD_ID` `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldSelectorRow<'a> {
+    /// The stored name; the selector compares it trimmed.
+    pub name: &'a str,
+    /// Whether the row is flagged: a flagged row matches no name or pattern,
+    /// following `MSFieldIndex`, though a numeric ID still selects it.
+    pub flagged: bool,
+}
+
+/// Resolve a field selector over `fields`, a FIELD table's rows in row
+/// order, as [`MeasurementSet::resolve_field_selector`] does over its own
+/// FIELD table. An observation catalogue states the same rows, so a
+/// consumer that holds one resolves fields without the MeasurementSet.
+///
+/// # Errors
+///
+/// As [`MeasurementSet::resolve_field_selector`], without its FIELD read.
+pub fn resolve_field_selector_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = resolve_field_predicate_rows(fields, value)?;
+    if ids.is_empty() {
+        return Err(MsError::InvalidInput(format!(
+            "field selector {value:?} did not match any existing fields"
+        )));
+    }
+    Ok(ids)
+}
+
 impl MeasurementSet {
     /// Resolve a field selector using FIELD metadata, without scanning MAIN.
     ///
@@ -80,14 +114,29 @@ impl MeasurementSet {
     /// Name matching trims stored names and
     /// excludes flagged FIELD rows, following `MSFieldIndex`.
     pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
-        match resolve_field_predicate(self, value)? {
-            None => Ok(Vec::new()),
-            Some(ids) if ids.is_empty() => Err(MsError::InvalidInput(format!(
-                "field selector {value:?} did not match any existing fields"
-            ))),
-            Some(ids) => Ok(ids),
+        if value.trim().is_empty() {
+            return Ok(Vec::new());
         }
+        let rows = field_selector_rows(self)?;
+        resolve_field_selector_rows(&borrow_field_rows(&rows), value)
     }
+}
+
+/// The FIELD table's names and flags, in row order.
+fn field_selector_rows(ms: &MeasurementSet) -> MsResult<Vec<(String, bool)>> {
+    let field = ms.field()?;
+    (0..field.row_count())
+        .map(|row| Ok((field.name(row)?, field.flag_row(row)?)))
+        .collect()
+}
+
+fn borrow_field_rows(rows: &[(String, bool)]) -> Vec<FieldSelectorRow<'_>> {
+    rows.iter()
+        .map(|(name, flagged)| FieldSelectorRow {
+            name,
+            flagged: *flagged,
+        })
+        .collect()
 }
 
 /// Preserve the difference between no predicate and an explicit empty match.
@@ -96,15 +145,28 @@ fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<
     if value.trim().is_empty() {
         return Ok(None);
     }
-    let (mut ids, names) = parse_field_selector(ms, value)?;
-    if !names.is_empty() {
-        let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-        ids.extend(resolve_field_names(ms, &names)?);
-    }
-    Ok(Some(dedup_i32(ids)))
+    let rows = field_selector_rows(ms)?;
+    resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
 }
 
-fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {
+/// The FIELD rows of `fields` that the nonempty selector `value` names,
+/// sorted and unique; possibly none.
+fn resolve_field_predicate_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    let (mut ids, names) = parse_field_selector(fields, value)?;
+    if !names.is_empty() {
+        let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+        ids.extend(resolve_field_names(fields, &names)?);
+    }
+    Ok(dedup_i32(ids))
+}
+
+fn parse_field_selector(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<(Vec<i32>, Vec<String>)> {
     let mut ranges = Vec::new();
     let mut names = Vec::new();
     for raw_part in value.split(',') {
@@ -118,7 +180,7 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
             )));
         }
         if part.contains('*') {
-            let matched = collect_matching_field_names(ms, part)?;
+            let matched = collect_matching_field_names(fields, part);
             if matched.is_empty() {
                 return Err(MsError::VersionError(format!(
                     "field selector {part:?} did not match any field names"
@@ -142,7 +204,7 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
     }
     let mut ids = Vec::new();
     if !ranges.is_empty() {
-        let count = ms.field()?.row_count();
+        let count = fields.len();
         if count > 0 {
             let last = i32::try_from(count - 1).unwrap_or(i32::MAX);
             // Merge before enumeration: neither width nor overlapping terms
@@ -669,13 +731,12 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
     Ok(if value.len() < 3 { 2000 + year } else { year })
 }
 
-fn resolve_field_names(ms: &MeasurementSet, names: &[&str]) -> MsResult<Vec<i32>> {
-    let field = ms.field()?;
+fn resolve_field_names(fields: &[FieldSelectorRow<'_>], names: &[&str]) -> MsResult<Vec<i32>> {
     let mut ids = Vec::new();
     for name in names {
         let start = ids.len();
-        for row in 0..field.row_count() {
-            if !field.flag_row(row)? && field.name(row)?.trim() == *name {
+        for (row, field) in fields.iter().enumerate() {
+            if !field.flagged && field.name.trim() == *name {
                 ids.push(row as i32);
             }
         }
@@ -688,51 +749,39 @@ fn resolve_field_names(ms: &MeasurementSet, names: &[&str]) -> MsResult<Vec<i32>
     Ok(dedup_i32(ids))
 }
 
-fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<Vec<String>> {
-    let field = ms.field()?;
-    let mut matches = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if !field.flag_row(row)? && matches_simple_glob(pattern, name.trim()) {
-            matches.push(name.trim().to_string());
-        }
-    }
-    Ok(dedup_strings(matches))
+fn collect_matching_field_names(fields: &[FieldSelectorRow<'_>], pattern: &str) -> Vec<String> {
+    let matches = fields
+        .iter()
+        .filter(|field| !field.flagged && matches_simple_glob(pattern, field.name.trim()))
+        .map(|field| field.name.trim().to_string())
+        .collect();
+    dedup_strings(matches)
 }
 
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
+    let modes = (0..state.row_count())
+        .map(|row| state.string(row, "OBS_MODE"))
+        .collect::<MsResult<Vec<_>>>()?;
     let mut ids = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
-        }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
-            continue;
-        }
-        let mut matched = false;
-        for row in 0..state.row_count() {
-            let obs_mode = state.string(row, "OBS_MODE")?;
-            let is_match = if part.contains('*') {
-                matches_simple_glob(part, &obs_mode)
-            } else {
-                obs_mode == part
-            };
-            if is_match {
-                ids.push(row as i32);
-                matched = true;
+    for selector in super::syntax::parse_intent_selector(value) {
+        match &selector {
+            super::syntax::IntentSelector::State(id) => ids.push(*id),
+            super::syntax::IntentSelector::Mode(pattern) => {
+                let before = ids.len();
+                ids.extend(
+                    modes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, mode)| selector.matches(mode))
+                        .map(|(row, _)| row as i32),
+                );
+                if ids.len() == before {
+                    return Err(MsError::VersionError(format!(
+                        "intent selector {pattern:?} did not match any STATE rows"
+                    )));
+                }
             }
-        }
-        if !matched {
-            return Err(MsError::VersionError(format!(
-                "intent selector {part:?} did not match any STATE rows"
-            )));
         }
     }
     Ok(dedup_i32(ids))
@@ -1018,7 +1067,7 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
+pub(super) fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
     if !pattern.contains('*') {
         return pattern == candidate;
     }
