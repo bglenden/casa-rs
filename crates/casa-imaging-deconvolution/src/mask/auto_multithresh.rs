@@ -638,6 +638,8 @@ fn dilate(mask: &[bool], constraint: &[bool], shape: [usize; 2], iterations: usi
     current
 }
 
+/// `SDMaskHandler::convolveMask` by the beam scaled by `smooth_factor`,
+/// then the cut at `cut` times the smoothed peak.
 fn smooth_and_cut(
     mask: &[bool],
     shape: [usize; 2],
@@ -648,43 +650,92 @@ fn smooth_and_cut(
     if smooth_factor == 0.0 || mask.iter().all(|value| !*value) {
         return mask.to_vec();
     }
+    // CASA cuts with `makeMaskByPerChanThreshold`, so a negative
+    // `cutthreshold` keeps the pixels below it: none.
+    let smoothed = smooth(mask, shape, smooth_factor, beam);
+    let peak = smoothed.iter().copied().fold(0.0_f64, f64::max);
+    threshold_mask(&smoothed, cut * peak)
+}
+
+/// The mask convolved with the unnormalized elliptical Gaussian of the
+/// beam scaled by `smooth_factor`.
+fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBeam) -> Vec<f64> {
     let sigma_major = smooth_factor * beam.major_fwhm_pixels / 2.354_820_045_030_949_3;
     let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
     // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
     // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
     let radius = (5.0 * sigma_major + 0.5) as isize + 1;
+    let side = 2 * radius.unsigned_abs() + 1;
     let cos_pa = beam.position_angle_rad.cos();
     let sin_pa = beam.position_angle_rad.sin();
+    let kernel = (-radius..=radius)
+        .flat_map(|dx| {
+            (-radius..=radius).map(move |dy| {
+                let (dx, dy) = (dx as f64, dy as f64);
+                let u = dx * cos_pa + dy * sin_pa;
+                let v = -dx * sin_pa + dy * cos_pa;
+                (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()
+            })
+        })
+        .collect::<Vec<_>>();
+    // Each output pixel sums the kernel at its offsets to the mask's set
+    // pixels; scattering from the set pixels visits only those.
     let mut smoothed = vec![0.0; mask.len()];
-    for x in 0..shape[0] {
-        for y in 0..shape[1] {
-            let mut value = 0.0;
-            for dx in -radius..=radius {
-                for dy in -radius..=radius {
-                    if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
-                        && mask[pixel[0] * shape[1] + pixel[1]]
-                    {
-                        let dx = dx as f64;
-                        let dy = dy as f64;
-                        let u = dx * cos_pa + dy * sin_pa;
-                        let v = -dx * sin_pa + dy * cos_pa;
-                        value +=
-                            (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
-                    }
+    for (index, _) in mask.iter().enumerate().filter(|(_, set)| **set) {
+        let pixel = [index / shape[1], index % shape[1]];
+        for (row, dx) in (-radius..=radius).enumerate() {
+            for (column, dy) in (-radius..=radius).enumerate() {
+                if let Some(target) = offset_mask_pixel(pixel, [-dx, -dy], shape) {
+                    smoothed[target[0] * shape[1] + target[1]] += kernel[row * side + column];
                 }
             }
-            smoothed[x * shape[1] + y] = value;
         }
     }
-    // CASA cuts with `makeMaskByPerChanThreshold`, so a negative
-    // `cutthreshold` keeps the pixels below it: none.
-    let peak = smoothed.iter().copied().fold(0.0_f64, f64::max);
-    threshold_mask(&smoothed, cut * peak)
+    smoothed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smoothing_scatters_the_gaussian_each_pixel_gathers() {
+        let shape = [13, 9];
+        let mask = (0..shape[0] * shape[1])
+            .map(|index| index % 7 == 0 || index % 11 == 3)
+            .collect::<Vec<_>>();
+        let beam = AutoMaskBeam::new(3.0, 1.5, 0.6, 0.1);
+        let smoothed = smooth(&mask, shape, 1.2, beam);
+        let (sigma_major, sigma_minor) = (
+            1.2 * 3.0 / 2.354_820_045_030_949_3,
+            1.2 * 1.5 / 2.354_820_045_030_949_3,
+        );
+        let radius = (5.0 * sigma_major + 0.5) as isize + 1;
+        for x in 0..shape[0] {
+            for y in 0..shape[1] {
+                let mut gathered = 0.0;
+                for dx in -radius..=radius {
+                    for dy in -radius..=radius {
+                        if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
+                            && mask[pixel[0] * shape[1] + pixel[1]]
+                        {
+                            let (dx, dy) = (dx as f64, dy as f64);
+                            let u = dx * 0.6_f64.cos() + dy * 0.6_f64.sin();
+                            let v = -dx * 0.6_f64.sin() + dy * 0.6_f64.cos();
+                            gathered += (-0.5
+                                * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2)))
+                            .exp();
+                        }
+                    }
+                }
+                let value = smoothed[x * shape[1] + y];
+                assert!(
+                    (value - gathered).abs() <= 1e-12 * gathered.max(1.0),
+                    "[{x}, {y}]"
+                );
+            }
+        }
+    }
 
     fn beam() -> AutoMaskBeam {
         AutoMaskBeam {
