@@ -232,12 +232,13 @@ pub(super) fn first_buffer_lsrk_factors(
     Ok(factors)
 }
 
-/// A cube's output axis: its frame and the centres of its first and last
-/// channels.
+/// A cube's output axis: its frame, the centres of its first and last
+/// channels, their count and the image's channel increment.
 pub(super) struct OutputAxis {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) centres_hz: [f64; 2],
     pub(super) channels: usize,
+    pub(super) increment_hz: f64,
 }
 
 /// CASA's nominal Briggs-cube density padding, per side
@@ -250,11 +251,13 @@ pub(super) struct OutputAxis {
 /// field's output interval is converted back to the window's frame at the
 /// epochs of its samples, then matched against the whole window with
 /// CASA's strict channel-edge overlap; a window it misses adds nothing.
+/// The output interval is widened by half its mean channel step,
+/// `|last − first| / max(nchan − 1, 1)`, which is zero for one channel.
 /// The padding is the largest swing of the matched ranges' ends plus the
-/// largest offset between the windows' lowest channels, in output channels
-/// rounded up, plus `max(min(4, nchan/10), 1)`, so it is at least one plane
-/// even when the frames agree. The selected channels' interpolation
-/// support does not redefine this nominal density domain.
+/// largest offset between the windows' lowest channels, in the image's
+/// channel increment rounded up, plus `max(min(4, nchan/10), 1)`, so it is
+/// at least one plane even when the frames agree. The selected channels'
+/// interpolation support does not redefine this nominal density domain.
 pub(super) fn cube_density_padding(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
@@ -282,10 +285,11 @@ pub(super) fn cube_density_padding(
         return Ok(extra_padding);
     }
     let [first, last] = output.centres_hz;
-    let increment = (last - first).abs() / output.channels.saturating_sub(1).max(1) as f64;
-    if output.channels < 2 || !increment.is_finite() || increment <= 0.0 {
+    let step = (last - first).abs() / output.channels.saturating_sub(1).max(1) as f64;
+    let increment = output.increment_hz.abs();
+    if !(step.is_finite() && increment.is_finite() && increment > 0.0) {
         return Err(PrepareError::CubeIncrement {
-            increment_hz: increment,
+            increment_hz: output.increment_hz,
         });
     }
     let interval = [first.min(last), first.max(last)];
@@ -311,7 +315,7 @@ pub(super) fn cube_density_padding(
                 (window, field),
                 output.frequency_reference,
                 interval,
-                increment,
+                step,
             )?
             else {
                 continue;
@@ -345,16 +349,16 @@ pub(super) fn cube_density_padding(
 
 /// The centres of the first and last channels of `window` that the output
 /// `interval` in frame `output_reference`, converted back to the window's
-/// frame at field `field`'s epochs in it and widened by half an
-/// `increment`, overlaps (`MSUtil::getSpwInFreqRange`), or `None` when it
-/// overlaps none.
+/// frame at field `field`'s epochs in it and widened by half a `step`,
+/// overlaps (`MSUtil::getSpwInFreqRange`), or `None` when it overlaps
+/// none.
 fn matched_range(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     (window, field): (&SourceSpectralWindow, i32),
     output_reference: FrequencyRef,
     interval: [f64; 2],
-    increment: f64,
+    step: f64,
 ) -> Result<Option<[f64; 2]>, PrepareError> {
     let native_min = window
         .frequencies_hz
@@ -384,8 +388,8 @@ fn matched_range(
         native[0] = native[0].min(a.min(b));
         native[1] = native[1].max(a.max(b));
     }
-    let lower = native[0] - 0.5 * increment;
-    let upper = native[1] + 0.5 * increment;
+    let lower = native[0] - 0.5 * step;
+    let upper = native[1] + 0.5 * step;
     let partial =
         (lower > native_min && lower < native_max) || (upper > native_min && upper < native_max);
     let full = lower < native_min && upper > native_max;

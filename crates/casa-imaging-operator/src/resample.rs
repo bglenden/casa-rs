@@ -170,7 +170,9 @@ impl SpectralAxis {
     }
 
     /// The axis extended by `planes_per_side` channels of the same width at
-    /// each end; the new first centre must stay positive.
+    /// each end. Its padding may reach zero or negative frequencies, as
+    /// `BriggsCubeWeightor`'s padded template does (it shifts the reference
+    /// pixel and keeps the increment); no sample reaches those planes.
     pub fn padded(self, planes_per_side: u32) -> Result<Self, OperatorError> {
         let channels = planes_per_side
             .checked_mul(2)
@@ -178,11 +180,17 @@ impl SpectralAxis {
             .ok_or(OperatorError::SpectralAxis {
                 reason: "the padded axis has too many channels",
             })?;
-        Self::new(
-            self.first_hz - f64::from(planes_per_side) * self.increment_hz,
-            self.increment_hz,
+        let first_hz = self.first_hz - f64::from(planes_per_side) * self.increment_hz;
+        if !first_hz.is_finite() {
+            return Err(OperatorError::SpectralAxis {
+                reason: "the padded axis's first channel centre must be finite",
+            });
+        }
+        Ok(Self {
+            first_hz,
+            increment_hz: self.increment_hz,
             channels,
-        )
+        })
     }
 
     /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel

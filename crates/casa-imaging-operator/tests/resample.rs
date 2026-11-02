@@ -790,6 +790,23 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
     );
 }
 
+/// `BriggsCubeWeightor` pads its density cube by shifting the template's
+/// reference pixel, so a cube of 1 GHz channels from 1 GHz pads down to
+/// 0 Hz and below (`test_stokes_weighting`'s `refim_twochan.ms`); the
+/// padded planes there receive no sample, and the image's channels keep
+/// their density planes.
+#[test]
+fn a_padded_density_axis_may_reach_zero_frequency() {
+    let resampler = SpectralResampler::channel_local(axis(1.0, 1.0, 2), SpectralKernel::Linear);
+    for padding in [1, 2] {
+        assert_eq!(
+            placed_with(&resampler, &[1.0, 2.0], Some(padding)),
+            [(padding, 1.0), (padding + 1, 2.0)],
+            "padding {padding}"
+        );
+    }
+}
+
 /// On identical output and native grids every output sample lies on a
 /// native channel, where casacore `InterpolateArray1D` takes that channel
 /// alone: a flagged non-finite neighbour must not reach it.

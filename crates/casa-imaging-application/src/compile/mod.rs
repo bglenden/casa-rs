@@ -557,14 +557,14 @@ fn primary_beam_model(
     })
 }
 
-/// CASA's padded per-channel density grid of a linearly interpolated
-/// cube with per-channel density.
+/// CASA's padded per-channel density grid of a cube with per-channel
+/// density.
 fn cube_density_padding(
     request: &ImagingRequest,
     surveyed: &Surveyed<'_>,
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
-    if !specification::cube_density_padded(request, spectral) {
+    if !specification::cube_density_padded(request) {
         return Ok(None);
     }
     Ok(Some(envelope::cube_density_padding(
@@ -578,6 +578,7 @@ fn cube_density_padding(
                     + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
             ],
             channels: spectral.output_channels,
+            increment_hz: spectral.increment_hz,
         },
     )?))
 }

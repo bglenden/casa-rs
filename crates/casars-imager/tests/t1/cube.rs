@@ -530,6 +530,46 @@ fn assert_interior_planes_match(
     }
 }
 
+/// `BriggsCubeWeightor` pads the per-channel density of every cube, one
+/// channel included (`estimateSwingChanPad` counts the swing in the image's
+/// own channel increment), so a one-channel Briggs cube of TOPO data images
+/// (#980; `test_onefield_pcwdT_and_pcwdF` was refused): its weights are
+/// Briggs weights, below natural weighting's.
+#[test]
+fn a_one_channel_cube_has_a_per_channel_briggs_density() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    let observation = Observation::synthesise_band(4, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let sumwt = |name: &str, weighting: serde_json::Value| {
+        let mut controls = json!({ "specmode": "cube", "nchan": 1, "start": 1, "niter": 0 });
+        controls
+            .as_object_mut()
+            .expect("controls")
+            .extend(weighting.as_object().expect("weighting").clone());
+        observation
+            .image(name, controls)
+            .1
+            .get(".sumwt")
+            .channel_values()[0]
+    };
+    let natural = sumwt("one-natural", json!({ "weighting": "natural" }));
+    let briggs = sumwt(
+        "one-briggs",
+        json!({ "weighting": "briggs", "robust": 0.5, "perchanweightdensity": true }),
+    );
+    assert!(
+        briggs > 0.0 && briggs < natural,
+        "Briggs sumwt {briggs}, natural {natural}"
+    );
+}
+
 /// A cube whose first window has 30 or more channels reads the data by its
 /// band (`SynthesisImager::tuneSelectData`), so a window its axis does not
 /// reach is not read at all (#980): over two adjacent 30-channel windows, a
