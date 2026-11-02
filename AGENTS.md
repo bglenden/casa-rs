@@ -34,7 +34,8 @@ task providers (ADR-0017); there is no GUI or terminal UI.
 - `TESTING.md`: which gates to run, CI, test data
 - `docs/agent-reference.md`: workstation, CASA/C++ oracle, data and storage
   locations, release recipes
-- `docs/adr/`: accepted decisions; binding, and not edited without approval
+- `docs/adr/`: accepted decisions; binding, and changed or added only after
+  external review (see Review)
 - `.agents/skills/`: casa-rs domain skills (e.g. imaging performance); generic
   workflows come from the user-level skills
 - `GLOSSARY.md`: domain vocabulary; use its terms
@@ -161,8 +162,8 @@ allows, and keep working on whatever does not depend on the answer:
    create);
 2. a change casacore C++ could not read, or one that stops casa-rs reading
    data it wrote before;
-3. editing an accepted ADR, or starting a new top-level app or product
-   family;
+3. implementing a design for a broad new capability, or changing or adding
+   an ADR, before its external review (see Review);
 4. taking the internal disk below about 40 GB free, once deleting your own
    disposable artifacts and running the `cleanup-disk` skill (where the
    host has it) cannot keep it above;
@@ -188,31 +189,42 @@ casa-rs's, and why), decided by its class:
 
 ## Review
 
-- Most changes need no review; a demonstration test shows they work. A bug
+Three levels, by how far a change reaches.
+
+- **Isolated fixes and features: a demonstration test, no review.** A bug
   fix carries a test that fails before the fix and passes after. A new
   feature carries a test that runs it end to end against an independent
   reference: CASA or casacore where they have the behaviour, otherwise an
   analytic result, never the code's own output. A change to on-disk bytes
   adds the casacore interop cases `TESTING.md` requires. The PR's Evidence
-  section names the test and what it showed.
-- Docs, tests, tooling, and refactors or performance work whose results
-  are checked unchanged need only green CI.
-- One independent review is kept for changes that are not isolated, where a
-  mistake would spread past the code changed: shared machinery that other
-  tasks rely on (table storage managers, the MeasurementSet layer, the
-  imaging operator and runtime, the task front end), or a change spanning
-  several of them.
-- The reviewer is a fresh agent without this conversation's context, which
-  the working agent starts itself and whose findings it reads directly: Astra
-  (`gpt-6-astra`) at `xhigh` in Codex; `CLAUDE.md` names Claude Code's.
-  Never ask the owner to run, relay or announce a review. Brief the reviewer
-  with the revision, the diff, the contracts it touches and the evidence,
-  and ask it to look for shallow or tautological tests too.
-- One round. Fix blocking and should-fix findings or answer them on the PR;
-  decline optional ones with a reason. A fix needs no second review unless it
-  adds a mechanism the reviewer did not see.
-- Start the review once the diff is stable, and keep working while it runs,
-  on this PR's remaining checks or the issue's next item.
+  section names the test and what it showed. Docs, tests, tooling, and
+  refactors or performance work whose results are checked unchanged need
+  only green CI.
+- **Changes that are not isolated: one local review.** These reach shared
+  machinery other tasks rely on (table storage managers, the
+  MeasurementSet layer, the imaging operator and runtime, the task front
+  end) or span several areas, as an imaging speedup touching FFTs, MS I/O
+  and the imager does. The agent in charge starts a fresh-context reviewer
+  on its own host, even when (as is normal) the reviewer is the more able
+  model: Fable at `xhigh` in Claude Code, Astra (`gpt-6-astra`) at `xhigh`
+  in Codex. It reads the findings itself; never ask the owner to run, relay
+  or announce this review.
+- **Designs for broad new capabilities, and ADR changes or additions:
+  external review before implementation.** A broad capability is a new
+  task or tool family, crate family, app or storage format, or a change to
+  architecture several areas depend on. The reviewer is a human or the
+  other vendor's model: Astra at `xhigh` for Claude-led work, Fable at
+  `xhigh` for Codex-led work. Post the design and a self-contained review
+  brief on its issue, ask the owner to arrange the review, and keep working
+  on whatever does not depend on it.
+
+Both reviews: brief the reviewer with the revision, the diff or design, the
+contracts it touches and the evidence, and ask it to look for shallow or
+tautological tests too. One round. Fix blocking and should-fix findings or
+answer them on the PR or issue; decline optional ones with a reason. A fix
+needs no second review unless it adds a mechanism the reviewer did not see.
+Start the review once the diff or design is stable, and keep working while
+it runs.
 
 ## Checks And Merging
 

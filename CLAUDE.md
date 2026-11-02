@@ -14,6 +14,7 @@
   one, also start a single background wait (`gh pr checks N --watch`, or a
   Monitor until-loop where `gh` is unavailable). The PR monitor's "do not
   poll CI" forbids repeated foreground checks, not that one background wait.
-- The independent review `AGENTS.md` requires is, in Claude Code, a fresh
-  `Agent` (not a fork) with model `fable` and effort `xhigh`. Run it in the
-  background and keep working.
+- `AGENTS.md`'s local review is, in Claude Code, a fresh `Agent` (not a
+  fork) with model `fable` and effort `xhigh`; run it in the background and
+  keep working. Its external review of Claude-led work is Astra at `xhigh`
+  or a human, which the owner arranges from the brief you post.

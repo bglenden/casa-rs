@@ -9,8 +9,9 @@ Work issue: #___
 ## Review
 
 `not required` (an isolated fix or feature with its demonstration test, docs,
-tests, tooling, or results checked unchanged), or the reviewer, the revision
-it reviewed, and how each finding was resolved.
+tests, tooling, or results checked unchanged), or `local` or `external`: the
+reviewer, the revision or design it reviewed, and how each finding was
+resolved.
 
 ## Decisions
 

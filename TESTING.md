@@ -547,9 +547,10 @@ For each piece of work:
 
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
-- changes that are not isolated (`AGENTS.md`, "Review") get one independent
-  review, which also looks for shallow or tautological tests; the rest
-  carry demonstration tests instead
+- changes that are not isolated get the local review, and designs for broad
+  new capabilities the external review, that `AGENTS.md` ("Review")
+  describes; both also look for shallow or tautological tests. Isolated
+  fixes and features carry demonstration tests instead
 - docs, interfaces, and boundary descriptions are reconciled with implementation
   before review
 - acceptance checks are not weakened; work that cannot be finished stays open
@@ -572,8 +573,8 @@ Work is not complete until:
 - unfinished acceptance items stay open on the issue, and decisions taken
   without the owner are listed on the PR (`AGENTS.md`, "Decide, Record,
   Continue")
-- the PR was marked ready with auto-merge enabled, after the independent
-  review `AGENTS.md` requires for it
+- the PR was marked ready with auto-merge enabled, after any review
+  `AGENTS.md` ("Review") requires for it
 
 A user's "merge as-is" for a pull request waives its review and check gates.
 Record the waiver on the pull request; do not describe waived evidence as
