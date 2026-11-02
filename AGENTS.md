@@ -92,7 +92,7 @@ The internal disk is small. Do not fill it.
 - Worktrees share the main `target/` (`CARGO_TARGET_DIR`) or delete their own
   `target/` when done; a separate build tree is tens of GB.
 - Check free space before large runs. If the internal disk would drop below
-  about 40 GB free, stop and ask.
+  about 40 GB free, free space first (stop list item 4 below), then ask.
 - Evidence needed later never lives only in a temporary directory.
 
 ## Work And Git
@@ -123,9 +123,13 @@ decided, afterwards, not by approving it first.
   the alternative not taken) and add the `owner-review` label. Nothing waits
   for that review; a decision the owner overturns becomes ordinary follow-up
   work.
-- Do not end a turn with an offer ("Shall I…", "tell me if you want…") or a
-  question whose answer you would act on anyway. If you have a
-  recommendation, act on it and record it.
+- Do not end a turn on a report, a recommendation, an offer ("Shall I…",
+  "tell me if you want…") or a question whose answer you would act on
+  anyway: act on the recommendation and record it. A loop's or tool's own
+  stopping rule is a checkpoint, not the end of the task.
+- Where a skill asks you to confirm an action on your own work (archiving or
+  reinitialising its history, a scope extension inside the stated goal),
+  this file is that confirmation.
 - A defect you find on the way is fixed in the PR when small, or filed as an
   issue; it is not just mentioned.
 - When one item is blocked (an unreachable host, missing data, a failing
@@ -135,10 +139,13 @@ decided, afterwards, not by approving it first.
 - Before ending a turn that waits on CI, a merge, a review or a run, arrange
   to be woken: the host's PR monitor, or one background wait (such as
   `gh pr checks N --watch`), which is not polling. Never leave the owner to
-  ask for status.
+  ask for status. Before a long or overnight run, check what fails cheaply
+  first (inputs, admission, a short dry run), and schedule it yourself.
 - Keep long work's state in one status comment on its issue, edited in place,
-  not in handoff documents in the tree. On resuming a branch, follow
-  `AGENTS.md` as it is on `origin/main`, not the branch's copy.
+  not in handoff documents in the tree. A handoff to another agent is that
+  comment plus a startup prompt that names no model or host-specific tool.
+  On resuming a branch, follow `AGENTS.md` as it is on `origin/main`, not
+  the branch's copy.
 - Remove your own leftovers (worktrees, branches, scratch, remote copies) as
   the last step, without asking.
 - Acceptance checks are not weakened to finish. Work that cannot be finished
@@ -146,7 +153,8 @@ decided, afterwards, not by approving it first.
   relaxation `TESTING.md` reserves for the owner (a matrix-row exception, a
   review-trigger rule) is such open work, not a reason to stop.
 
-Stop and ask only before:
+Ask the owner only before the following, asynchronously where the host
+allows, and keep working on whatever does not depend on the answer:
 
 1. deleting or overwriting anything outside the repository and your own
    scratch space (NAS or GLENDENNING data, releases, branches you did not
@@ -155,12 +163,14 @@ Stop and ask only before:
    data it wrote before;
 3. editing an accepted ADR, or starting a new top-level app or product
    family;
-4. taking the internal disk below about 40 GB free;
+4. taking the internal disk below about 40 GB free, once deleting your own
+   disposable artifacts and running the `cleanup-disk` skill (where the
+   host has it) cannot keep it above;
 5. handling credentials, secrets or non-public data.
 
-Everything else is decided and recorded: scope splits, API changes between
-workspace crates, task-provider contract versions, algorithm choices, and
-CASA deviations.
+Everything else is decided and recorded: scope splits and extensions within
+the stated goal, API changes between workspace crates, task-provider
+contract versions, algorithm choices, and CASA deviations.
 
 ### CASA deviations
 
