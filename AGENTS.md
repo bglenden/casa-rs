@@ -100,14 +100,23 @@ The internal disk is small. Do not fill it.
 
 - Issues and pull requests are the work record. PRs say `Work issue: #N` (or
   `Work source: <reason>`); use `Closes #N` only when merge should close it.
-- One PR per outcome, not per edit. Iterate as a draft; mark it ready once
-  (ready means merge when green).
+- A PR is the CI gate in front of `main`, not a document. One PR per
+  outcome, not per edit. It lands as one squashed commit whose message is
+  the PR's title and description, so write those as the commit message: a
+  subject line; what changed and why; `Evidence:`; `Decisions:`; and
+  `Review:` when there was one. Branch commits are working history and are
+  not kept.
+- A PR that needs no review opens ready, with auto-merge set at once. One
+  that needs a review opens as a draft until its findings are fixed.
+- Work longer than a day lands in increments at least daily, refusing what
+  is not finished yet, rather than growing one long branch. Merge `main`
+  into a branch that does live longer. After a squash merge, start new work
+  from `main`; do not reuse the merged branch.
 - Do not commit directly to `main`, except docs-only changes that pass
   `just docs-check`.
-- Merge `main` into long-lived branches regularly.
 - Remove the worktrees and branches you create once their work is merged or
-  pushed. `just tidy` lists leftovers already merged into `main`;
-  `just tidy --apply` removes them.
+  pushed. `just tidy` lists leftovers already merged into `main`, squashed
+  or not; `just tidy --apply` removes them.
 - The repository is public; copying its source to any host is fine. Never copy
   credentials, secrets, or non-public datasets.
 
@@ -120,8 +129,8 @@ decided, afterwards, not by approving it first.
   merge and cleanup, then take the next item of the same issue. Resumed work
   and PRs taken over follow the same rule.
 - A choice that is not on the stop list below is yours: make it, record it
-  and continue. List each one under `## Decisions` in the PR body (what, why,
-  the alternative not taken) and add the `owner-review` label. Nothing waits
+  and continue. List each one under `Decisions:` in the PR description
+  (what, why, the alternative not taken) and add the `owner-review` label. Nothing waits
   for that review; a decision the owner overturns becomes ordinary follow-up
   work.
 - Do not end a turn on a report, a recommendation, an offer ("Shall I…",
@@ -184,7 +193,7 @@ casa-rs's, and why), decided by its class:
   follows it.
 - A mode casa-rs does not implement yet: refuse it with an error that names
   an issue.
-- Anything else: choose, record it under `## Decisions` with `owner-review`,
+- Anything else: choose, record it under `Decisions:` with `owner-review`,
   and continue.
 
 ## Review
@@ -248,9 +257,10 @@ spend them deliberately:
   `-D warnings` and the tests of the crates you touched, and `just
   arch-check`. CI runs the whole workspace; run `just quick` locally only
   when the change reaches across many crates. One green run is enough.
-- When the checks are green and any required review is resolved, mark the
-  PR ready and run `gh pr merge --auto --merge`; GitHub merges it once the
-  required CI checks pass. Report that it is merging and move on.
+- Set auto-merge with `gh pr merge --auto --squash` when a PR opens ready,
+  or when a reviewed draft is marked ready; GitHub merges it once the
+  required CI checks pass. Ready means merge when green. Report that it is
+  merging and move on.
 - The agent that opens or takes over a PR watches it to merge: the host's PR
   monitor (`CLAUDE.md` names the Claude app's), or bounded CLI checks. Rerun
   a job that failed on a known flaky test (and note it on the flake's
@@ -258,11 +268,13 @@ spend them deliberately:
   draft, saying why, if the fix is not quick. A timing gate that misses by
   about its noise is rerun before anyone is asked about it.
 - "Merge as-is" from the owner waives the review and check gates for that
-  PR: merge with `gh pr merge --admin --merge` and record the waiver on it.
+  PR: merge with `gh pr merge --admin --squash` and record the waiver in
+  its description.
 - Missing test data or disk space is an environment problem, not a code
   regression; say so.
-- Done means CI is green, the PR body says what was run and what it showed,
-  the decisions are listed, and the docs match the code.
+- Done means CI is green, the PR description (the commit message) says what
+  was run and what it showed and lists the decisions, and the docs match the
+  code.
 
 ## Imaging
 

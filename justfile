@@ -136,7 +136,7 @@ arch-check:
 docs-check:
     bash scripts/docs-check.sh
 
-# List (or with --apply, remove) worktrees and local branches already merged into origin/main.
+# List (or with --apply, remove) worktrees and local branches already merged or squash-merged into origin/main.
 tidy *args:
     bash scripts/tidy-git.sh {{args}}
 
