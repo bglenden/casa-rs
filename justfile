@@ -140,9 +140,6 @@ docs-check:
 tidy *args:
     bash scripts/tidy-git.sh {{args}}
 
-graph:
-    bash scripts/generate-graphs.sh
-
 install-local *args:
     bash scripts/install-local.sh {{args}}
 
