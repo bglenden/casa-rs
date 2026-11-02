@@ -8,6 +8,9 @@ casa-rs is a native Rust implementation of casacore/CASA libraries and
 applications. Its user-facing surface is the Python package and the headless
 task providers (ADR-0017); there is no GUI or terminal UI.
 
+This file and `CLAUDE.md` hold standing rules only. Open work, status and
+history live in issues; `just docs-check` rejects issue references here.
+
 ## Core Contracts And Priorities
 
 - **Interoperability:** data written here must be readable by casacore C++,
@@ -44,8 +47,8 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 
 ## Commands And Toolchain
 
-- Rust 1.99 or newer (`rustup update stable`); set `CARGO_INCREMENTAL=0` for
-  raw cargo. Install `cargo-nextest` (`brew install cargo-nextest`) so tests run
+- Rust at least `Cargo.toml`'s `rust-version` (`rustup update stable`); set
+  `CARGO_INCREMENTAL=0` for raw cargo. Install `cargo-nextest` so tests run
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
 - `just quick` is the full local gate (CI runs the same); `just verify` is
   for milestones and releases; `just --list` shows everything else.
@@ -75,7 +78,7 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   `too_many_lines` threshold (`clippy.toml`, code lines only). Files stay
   under 1,500 lines (`scripts/check-file-length.py`, in `just arch-check`).
   Split new code rather than add an exception; the existing exceptions only
-  shrink (#705).
+  shrink.
 - No `TODO`, `FIXME`, `XXX`, or `HACK` without a GitHub issue reference.
 - A new third-party dependency is a recorded decision: why it is needed,
   that it is maintained, and a licence compatible with LGPL-3.0-or-later. A

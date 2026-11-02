@@ -41,6 +41,13 @@ grep -Fxq '@AGENTS.md' CLAUDE.md || {
   exit 1
 }
 
+# The always-loaded agent contract holds standing rules, not work state:
+# open-work lists and issue references go stale and belong in issues.
+if grep -nE '(^|[^&[:alnum:]])#[0-9]+' AGENTS.md CLAUDE.md; then
+  echo "docs-check: AGENTS.md and CLAUDE.md hold standing rules only; move issue references to the issues" >&2
+  exit 1
+fi
+
 for forbidden in \
   "README.md:Detailed phase and backlog tracking still lives in the phase-specific"
 do
