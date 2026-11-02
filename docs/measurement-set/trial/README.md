@@ -342,7 +342,7 @@ frame), and the MSv2 binds to its conversion.
 | Convert either store, as a task | `msconvert --vis SOURCE [--outputvis DEST] [--outformat msv2\|msv4] [--datagroups G ...] [--partitionscheme FIELD_ID\|SCAN_NUMBER ...] [--no-withpointing] [--chunks '[T, B, F, P]'] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--nthreads N] [--overwrite]` (`casars-msconvert`; also `casars.tasks.msconvert`). The supported surface over the same converter, with XRADIO's names (`obs.ms` ↔ `obs.ps.zarr`), its `partition_scheme` and `with_pointing`, each MSv4 dataset chunked as XRADIO chunks it, every loss taken and reported | Rust only |
 | Read passes (retention, threads) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_read_passes -- STORE [--passes N] [--workers W]` | Rust only |
 | Update pass (replacement and synchronization cost) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_update_pass -- COPY_OF_STORE` | Rust only; changes the store |
-| Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS`; `… compare --ours PS --theirs PS` | the pinned XRADIO environment |
+| Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS [--partition-scheme KEY ...] [--with-pointing]`; `… compare --ours PS --theirs PS [--chunks]` (pointing held where XRADIO holds it; with `--chunks`, XRADIO's chunk shapes) | the pinned XRADIO environment |
 | Ephemeris fixtures | `tools/ms-trial/make_ephemeris_fixtures.sh` | cargo, uv |
 | Ephemerides, Rust writes, XRADIO reads | `tools/ms-trial/check_ephemeris.sh` | cargo, uv |
 | Converted MSv2 against its original | `python tools/ms-trial/check_v2_readback.py ORIGINAL CONVERTED` | a CASA install's Python (casatools) |

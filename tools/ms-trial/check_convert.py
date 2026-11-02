@@ -4,10 +4,13 @@
 oracle.
 
     check_convert.py xradio-convert --ms MS --out XRADIO.ps.zarr
+            [--partition-scheme KEY ...] [--with-pointing]
         Time XRADIO's own conversion of an MSv2 (one dataset per partition,
-        no pointing), for comparison with `ms_trial_convert to-msv4`.
+        no pointing unless asked, XRADIO's default chunks), for comparison
+        with `ms_trial_convert to-msv4` or `msconvert`.
 
     check_convert.py compare --ours RUST.ps.zarr --theirs XRADIO.ps.zarr
+            [--chunks]
         Open the converter's processing set with XRADIO, run XRADIO's schema
         check, and compare every dataset with XRADIO's conversion of the
         same MSv2: datasets matched by spectral window, polarization, fields
@@ -16,7 +19,9 @@ oracle.
         group's fields' and sources'. Where XRADIO found no SOURCE row for a
         field in a window it names the source "Unknown" (or "Unknown_ID")
         and the converter may name it from the field; those are counted,
-        not mismatches.
+        not mismatches. Each dataset must hold pointing exactly when
+        XRADIO's does; with --chunks, its payload variables must be chunked
+        as XRADIO's are.
 
 Each prints a JSON report and exits non-zero on any mismatch.
 """
@@ -44,15 +49,15 @@ COORDINATES = [
 ]
 
 
-def xradio_convert(ms, out):
+def xradio_convert(ms, out, partition_scheme=(), with_pointing=False):
     from xradio.measurement_set import convert_msv2_to_processing_set
 
     started = time.perf_counter()
     convert_msv2_to_processing_set(
         in_file=str(ms),
         out_file=str(out),
-        partition_scheme=[],
-        with_pointing=False,
+        partition_scheme=list(partition_scheme),
+        with_pointing=with_pointing,
         persistence_mode="w",
     )
     seconds = time.perf_counter() - started
@@ -99,7 +104,14 @@ def compare_names(name, node, expected_name, expected, mismatches):
     return unknown
 
 
-def compare(ours, theirs):
+def chunk_shape(store, dataset, variable):
+    """The chunk shape of `variable` in `dataset` of the processing set at
+    `store`, as its zarr.json declares it."""
+    metadata = json.loads((Path(store) / dataset / variable / "zarr.json").read_text())
+    return metadata["chunk_grid"]["configuration"]["chunk_shape"]
+
+
+def compare(ours, theirs, chunks=False):
     results = []
 
     def record(check, ok, detail=None):
@@ -112,7 +124,10 @@ def compare(ours, theirs):
     by_key = {}
     for name in sorted(reference.children):
         by_key.setdefault(key(reference[name]), []).append(name)
-    record("XRADIO's datasets are told apart by the key", all(len(v) == 1 for v in by_key.values()))
+    shared = {name for names in by_key.values() if len(names) > 1 for name in names}
+    record("XRADIO's datasets told apart by the key, or by name where they share one",
+           not shared or shared <= set(mine.children),
+           {"sharing a key": sorted(shared)} if shared else None)
     record("the same number of datasets", len(mine.children) == len(reference.children),
            {"ours": len(mine.children), "theirs": len(reference.children)})
     mismatches = []
@@ -123,7 +138,18 @@ def compare(ours, theirs):
         if not match:
             mismatches.append({"dataset": name, "problem": "no XRADIO dataset with its key"})
             continue
+        # XRADIO's datasets can share a key (partitions that differ by what
+        # the key leaves out); the one of the same name is then the match.
+        if name in match:
+            match = [name]
         unknown += compare_names(name, node, match[0], reference[match[0]], mismatches)
+        if ("pointing_xds" in node.children) != ("pointing_xds" in reference[match[0]].children):
+            mismatches.append({"dataset": name, "problem": "pointing_xds where XRADIO's has none, or none where it has one"})
+        if chunks:
+            for var in VARIABLES:
+                a, b = chunk_shape(ours, name, var), chunk_shape(theirs, match[0], var)
+                if a != b:
+                    mismatches.append({"dataset": name, "chunks": var, "ours": a, "theirs": b})
         ds = node.ds.load()
         expected = reference[match[0]].ds.load()
         for coord in COORDINATES:
@@ -145,11 +171,17 @@ def main():
     convert = sub.add_parser("xradio-convert")
     convert.add_argument("--ms", type=Path, required=True)
     convert.add_argument("--out", type=Path, required=True)
+    convert.add_argument("--partition-scheme", nargs="*", default=[])
+    convert.add_argument("--with-pointing", action="store_true")
     comparison = sub.add_parser("compare")
     comparison.add_argument("--ours", type=Path, required=True)
     comparison.add_argument("--theirs", type=Path, required=True)
+    comparison.add_argument("--chunks", action="store_true")
     args = parser.parse_args()
-    ok = xradio_convert(args.ms, args.out) if args.mode == "xradio-convert" else compare(args.ours, args.theirs)
+    if args.mode == "xradio-convert":
+        ok = xradio_convert(args.ms, args.out, args.partition_scheme, args.with_pointing)
+    else:
+        ok = compare(args.ours, args.theirs, args.chunks)
     sys.exit(0 if ok else 1)
 
 
