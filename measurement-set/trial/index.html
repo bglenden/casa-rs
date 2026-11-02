@@ -1760,6 +1760,11 @@ the MSv2's order.</p>
 <td>Rust only</td>
 </tr>
 <tr>
+<td>Convert either store, as a task</td>
+<td><code>msconvert --vis SOURCE [--outputvis DEST] [--outformat msv2\|msv4] [--datagroups G ...] [--partitionscheme FIELD_ID\|SCAN_NUMBER ...] [--no-withpointing] [--chunks '[T, B, F, P]'] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--nthreads N] [--overwrite]</code> (<code>casars-msconvert</code>; also <code>casars.tasks.msconvert</code>). The supported surface over the same converter, with XRADIO's names (<code>obs.ms</code> ↔ <code>obs.ps.zarr</code>), its <code>partition_scheme</code> and <code>with_pointing</code>, each MSv4 dataset chunked as XRADIO chunks it, every loss taken and reported</td>
+<td>Rust only</td>
+</tr>
+<tr>
 <td>Read passes (retention, threads)</td>
 <td><code>cargo run --release -p casa-ms --features msv4 --example ms_trial_read_passes -- STORE [--passes N] [--workers W]</code></td>
 <td>Rust only</td>
@@ -1771,7 +1776,7 @@ the MSv2's order.</p>
 </tr>
 <tr>
 <td>Converter against XRADIO</td>
-<td><code>tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS</code>; <code>… compare --ours PS --theirs PS</code></td>
+<td><code>tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS [--partition-scheme KEY ...] [--with-pointing]</code>; <code>… compare --ours PS --theirs PS [--chunks]</code> (pointing held where XRADIO holds it; with <code>--chunks</code>, XRADIO's chunk shapes)</td>
 <td>the pinned XRADIO environment</td>
 </tr>
 <tr>

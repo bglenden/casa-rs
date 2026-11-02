@@ -1404,6 +1404,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.msconvert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        msconvert
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.msexplore" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2326,6 +2337,17 @@
     <span class="md-ellipsis">
       
         imsubimage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.msconvert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        msconvert
       
     </span>
   </a>
@@ -6684,6 +6706,59 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="sd">    ``keepaxes``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">imsubimage</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.msconvert" class="doc doc-heading">
+            <code class=" language-python"><span class="n">msconvert</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outputvis</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outformat</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">datagroups</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">partitionscheme</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">withpointing</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">codec</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nthreads</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.msconvert" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Convert between MeasurementSet v2 and MSv4, in either direction.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1095</span>
+<span class="normal">1096</span>
+<span class="normal">1097</span>
+<span class="normal">1098</span>
+<span class="normal">1099</span>
+<span class="normal">1100</span>
+<span class="normal">1101</span>
+<span class="normal">1102</span>
+<span class="normal">1103</span>
+<span class="normal">1104</span>
+<span class="normal">1105</span>
+<span class="normal">1106</span>
+<span class="normal">1107</span>
+<span class="normal">1108</span>
+<span class="normal">1109</span>
+<span class="normal">1110</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">msconvert</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">outputvis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">outformat</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">''</span><span class="p">,</span> <span class="s1">'msv2'</span><span class="p">,</span> <span class="s1">'msv4'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">datagroups</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">partitionscheme</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'FIELD_ID'</span><span class="p">,</span> <span class="s1">'SCAN_NUMBER'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s1">'FIELD_ID'</span><span class="p">,</span> <span class="s1">'SCAN_NUMBER'</span><span class="p">]]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s1">'FIELD_ID'</span><span class="p">,</span> <span class="s1">'SCAN_NUMBER'</span><span class="p">],</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">withpointing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">padding</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'flagged'</span><span class="p">,</span> <span class="s1">'omitted'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">chunks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">codec</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'blosc'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">,</span> <span class="s1">'zstd'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">nthreads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Convert between MeasurementSet v2 and MSv4, in either direction."""</span>
+    <span class="k">return</span> <span class="n">_run</span><span class="p">(</span><span class="s2">"msconvert"</span><span class="p">,</span> <span class="n">_explicit</span><span class="p">(</span><span class="nb">locals</span><span class="p">(),</span> <span class="p">(</span><span class="s1">'vis'</span><span class="p">,</span> <span class="s1">'outputvis'</span><span class="p">,</span> <span class="s1">'outformat'</span><span class="p">,</span> <span class="s1">'datagroups'</span><span class="p">,</span> <span class="s1">'partitionscheme'</span><span class="p">,</span> <span class="s1">'withpointing'</span><span class="p">,</span> <span class="s1">'padding'</span><span class="p">,</span> <span class="s1">'chunks'</span><span class="p">,</span> <span class="s1">'codec'</span><span class="p">,</span> <span class="s1">'nthreads'</span><span class="p">,</span> <span class="s1">'overwrite'</span><span class="p">)))</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

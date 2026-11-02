@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["to_msv2","to_msv4"],"struct":["ConversionOptions","ConversionReport"]};
+window.SIDEBAR_ITEMS = {"constant":["BLOSC_MAX_BUFFER_BYTES","DEFAULT_CHUNK_BYTES"],"fn":["selected_data_groups","to_msv2","to_msv4","to_msv4_with","xradio_chunks"],"struct":["ConversionOptions","ConversionReport","Msv4Conversion"],"type":["ChunkShape"]};

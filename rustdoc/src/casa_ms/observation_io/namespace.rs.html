@@ -163,7 +163,7 @@
 <a href=#163 id=163 data-nosnippet>163</a>    source: <span class="kw-2">&amp;</span>Path,
 <a href=#164 id=164 data-nosnippet>164</a>    options: <span class="kw-2">&amp;</span>OpenOptions,
 <a href=#165 id=165 data-nosnippet>165</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PersistedNamespace, ObservationError&gt; {
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>(subtables, spectral_windows, catalogue) = <span class="kw">if </span>source.join(<span class="string">"zarr.json"</span>).is_file() {
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>(subtables, spectral_windows, catalogue) = <span class="kw">if </span><span class="kw">super</span>::is_msv4_store(source) {
 <a href=#167 id=167 data-nosnippet>167</a>        msv4_subtables(source, options)<span class="question-mark">?
 <a href=#168 id=168 data-nosnippet>168</a>    </span>} <span class="kw">else </span>{
 <a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">let </span>observation = Msv2Observation::open_with(source, options)<span class="question-mark">?</span>;

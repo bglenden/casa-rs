@@ -867,7 +867,9 @@ configuration files and generated diagnostics:</p>
 <p><code>polarizations</code> maps to actual POLARIZATION metadata and MAIN <code>DATA</code>, <code>FLAG</code>,
 <code>WEIGHT</code>, and <code>SIGMA</code> shapes. Supported values are <code>1</code>, <code>2</code>, and <code>4</code>; VLA
 defaults to circular receptor metadata, while ALMA/ACA defaults to linear
-metadata.</p>
+metadata. Without <code>source_stokes_fractional_quv</code> the model is unpolarized:
+its parallel hands hold Stokes I and, with <code>4</code>, its cross hands are zero, as
+CASA predicts it.</p>
 <p><code>ms_channels</code> controls the generated MS spectral-window channel count.
 <code>image_channels</code> is persisted planning metadata for downstream imaging
 diagnostics and manifests; it does not change the MS channel count by itself.</p>

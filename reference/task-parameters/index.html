@@ -687,6 +687,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#ms-convert-msconvert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MS Convert (msconvert)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1275,6 +1286,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#ms-convert-msconvert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MS Convert (msconvert)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1303,9 +1325,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 542</li>
-<li>Surfaces: 26 (26 task, 0 session)</li>
-<li>Surface bindings: 780</li>
+<li>Concepts: 550</li>
+<li>Surfaces: 27 (27 task, 0 session)</li>
+<li>Surface bindings: 791</li>
 </ul>
 <table>
 <thead>
@@ -1526,6 +1548,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">9</td>
 <td>Import a FITS primary image into a CASA image</td>
+</tr>
+<tr>
+<td><a href="#surface-msconvert">MS Convert</a><br><code>msconvert</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>msconvert</code></td>
+<td style="text-align: right;">11</td>
+<td>Convert between MeasurementSet v2 and MSv4, in either direction.</td>
 </tr>
 </tbody>
 </table>
@@ -2123,7 +2153,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>path (measurement_set)</code></td>
 <td><code>"none"</code>; required when (mode="export_corrected_data")</td>
 <td>Input</td>
-<td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set.</td>
+<td>Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set.</td>
 </tr>
 <tr>
 <td><code>summary_paths</code></td>
@@ -4435,7 +4465,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>path (measurement_set)</code></td>
 <td><code>""</code>; required</td>
 <td>Output</td>
-<td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
+<td>Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
 </tr>
 <tr>
 <td><code>createmms</code></td>
@@ -4898,7 +4928,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>path (measurement_set)</code></td>
 <td><code>""</code>; required</td>
 <td>Output</td>
-<td>Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
+<td>Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out.</td>
 </tr>
 <tr>
 <td><code>keepmms</code></td>
@@ -8364,6 +8394,117 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>[]</code>; optional</td>
 <td>Output</td>
 <td>Restoring beam to set: major axis, minor axis and position angle.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-msconvert"></a></p>
+<h2 id="ms-convert-msconvert">MS Convert (<code>msconvert</code>)<a class="headerlink" href="#ms-convert-msconvert" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: MeasurementSet</li>
+<li>Provider family: <code>msconvert</code></li>
+<li>Summary: Convert between MeasurementSet v2 and MSv4, in either direction.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>outputvis</code></td>
+<td><code>parameter.outputvis@r1</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Output MeasurementSet path.<br><em>Surface:</em> Named as XRADIO names a processing set: an MSv4 output not ending in ps.zarr gains .ps.zarr. When outputvis is empty, msconvert writes beside vis, naming the output after it, its .ms, .zarr or .ps.zarr replaced by .ps.zarr for an MSv4 or .ms for an MSv2.</td>
+</tr>
+<tr>
+<td><code>outformat</code></td>
+<td><code>msconvert.outformat@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Format of the converted MeasurementSet: msv2 or msv4.</td>
+</tr>
+<tr>
+<td><code>datagroups</code></td>
+<td><code>msconvert.datagroups@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Data</td>
+<td>Data groups to convert; empty converts every one.</td>
+</tr>
+<tr>
+<td><code>partitionscheme</code></td>
+<td><code>msconvert.partitionscheme@r1</code></td>
+<td><code>array&lt;choice (2 values)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>MSv4 Output</td>
+<td>MSv2 into MSv4: further keys the MSv2 is partitioned by, as XRADIO's partition_scheme.</td>
+</tr>
+<tr>
+<td><code>withpointing</code></td>
+<td><code>msconvert.withpointing@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>MSv4 Output</td>
+<td>MSv4 output: convert the pointing, as XRADIO's with_pointing.</td>
+</tr>
+<tr>
+<td><code>padding</code></td>
+<td><code>msconvert.padding@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"flagged"</code>; optional</td>
+<td>MSv2 Output</td>
+<td>MSv2 output: what a grid cell no acquisition filled becomes.</td>
+</tr>
+<tr>
+<td><code>chunks</code></td>
+<td><code>msconvert.chunks@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>MSv4 Output</td>
+<td>MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default.</td>
+</tr>
+<tr>
+<td><code>codec</code></td>
+<td><code>msconvert.codec@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"blosc"</code>; optional</td>
+<td>MSv4 Output</td>
+<td>MSv4 output: compression of the visibilities, flags and weights.</td>
+</tr>
+<tr>
+<td><code>nthreads</code></td>
+<td><code>workers.msconvert@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>MSv4 Output</td>
+<td>MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
 </tr>
 </tbody>
 </table>
