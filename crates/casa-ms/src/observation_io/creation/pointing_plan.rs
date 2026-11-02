@@ -128,6 +128,7 @@ pub(super) fn planning_bytes(
 /// # Errors
 ///
 /// Any error opening an MSv2 source.
+#[cfg(feature = "msv4")]
 pub(crate) fn omitted(source: &Path) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
     let held = if source.join("zarr.json").is_file() {
         std::fs::read_dir(source)
