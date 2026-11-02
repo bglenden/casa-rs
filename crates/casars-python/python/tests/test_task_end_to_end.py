@@ -207,7 +207,7 @@ def test_a_missing_input_image_is_a_parameter_error(
     assert completion.returncode == 2
 
 
-def test_msconvert_converts_both_ways_and_names_its_losses(
+def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     require_executables("msconvert")
@@ -216,28 +216,25 @@ def test_msconvert_converts_both_ways_and_names_its_losses(
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         archive.extractall(tmp_path, **extract)
     monkeypatch.chdir(tmp_path)
-    # Every loss of a kind not accepted refuses the conversion at
-    # acceptloss, before anything is written; sigma is accepted by default.
-    with pytest.raises(tasks.TaskParameterError) as failure:
-        tasks.msconvert(vis="ms_trial.ms", outputvis="trial.ps.zarr")
-    refused = failure.value.completion
-    assert refused.parameter == "acceptloss", refused.describe()
-    assert "accept tables to convert anyway" in (refused.message or "")
-    assert not (tmp_path / "trial.ps.zarr").exists()
 
-    converted = tasks.msconvert(
-        vis="ms_trial.ms", outputvis="trial.ps.zarr", acceptloss=["sigma", "tables"]
-    )
+    # Without an outputvis, the output is named after vis for its format.
+    converted = tasks.msconvert(vis="ms_trial.ms")
     assert converted.successful, converted.describe()
     assert converted.value["informat"] == "msv2"
     assert converted.value["outformat"] == "msv4"
+    output = Path(converted.value["outputvis"]).resolve()
+    assert output == (tmp_path / "ms_trial.ms4").resolve()
     assert converted.value["partitions"] == 1
+    # What MSv4 cannot hold is taken and reported.
     assert "SIGMA is not carried" in converted.value["losses"]
-    assert (tmp_path / "trial.ps.zarr" / "zarr.json").is_file()
+    assert "HISTORY is not carried" in converted.value["losses"]
+    assert (tmp_path / "ms_trial.ms4" / "zarr.json").is_file()
 
-    # The default outformat is the other format: back to an MSv2.
-    back = tasks.msconvert(
-        vis="trial.ps.zarr", outputvis="back.ms", acceptloss=["sigma", "defaulted"]
-    )
+    # Back to MSv2, the other format; an existing output needs overwrite.
+    back = tasks.msconvert(vis="ms_trial.ms4")
     assert back.value["outformat"] == "msv2", back.describe()
-    assert (tmp_path / "back.ms" / "table.dat").is_file()
+    assert (tmp_path / "ms_trial.ms2" / "table.dat").is_file()
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.msconvert(vis="ms_trial.ms4")
+    assert failure.value.completion.parameter == "outputvis"
+    assert tasks.msconvert(vis="ms_trial.ms4", overwrite=True).successful

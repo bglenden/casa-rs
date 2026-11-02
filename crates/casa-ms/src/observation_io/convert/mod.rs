@@ -15,6 +15,7 @@
 //! data and weights, or, by the declared policy that reproduces an
 //! original sparse MSv2, as no row ([`PaddingRows`]).
 
+mod chunks;
 mod to_msv4;
 
 use std::path::Path;
@@ -24,8 +25,9 @@ use casa_observation::ObservationError;
 use super::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, default_memory_bytes,
 };
-pub use super::creation::{LOSS_REFUSAL, Loss, LossKind, PaddingRows};
-pub use to_msv4::to_msv4;
+pub use super::creation::{Loss, LossKind, PaddingRows};
+pub use chunks::{BLOSC_MAX_BUFFER_BYTES, DEFAULT_CHUNK_BYTES, xradio_chunks};
+pub use to_msv4::{ChunkShape, to_msv4, to_msv4_chunked};
 
 use super::Msv4Codec;
 

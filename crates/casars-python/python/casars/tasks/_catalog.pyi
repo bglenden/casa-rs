@@ -918,7 +918,6 @@ def msconvert(
     outputvis: StrPath = ...,
     outformat: Literal['', 'msv2', 'msv4'] = ...,
     datagroups: str | list[str] | tuple[str, ...] = ...,
-    acceptloss: Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted'] | list[Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted']] | tuple[Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted'], ...] = ...,
     padding: Literal['flagged', 'omitted'] = ...,
     chunks: list[int] | tuple[int, ...] = ...,
     codec: Literal['blosc', 'none', 'zstd'] = ...,

@@ -1240,3 +1240,20 @@ fn an_unused_moving_field_is_written_only_where_every_field_is() {
     assert_eq!(ephemeris.times_mjd().len(), super::COMET.len());
     assert!(out.join("FIELD/EPHEM0_comet.tab").is_dir());
 }
+
+/// A MeasurementSet is what a reader would take for one: the MSv2 and the
+/// processing set, but not a subtable of the one nor a dataset of the
+/// other.
+#[test]
+fn only_a_whole_measurement_set_is_one() {
+    use casa_ms::observation_io::is_measurement_set;
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let v4 = fixture(root.path(), "ms_trial.ps.zarr");
+    assert!(is_measurement_set(&v2));
+    assert!(is_measurement_set(&v4));
+    assert!(!is_measurement_set(&v2.join("ANTENNA")));
+    assert!(!is_measurement_set(&v4.join("ms_trial_0")));
+    assert!(!is_measurement_set(root.path()));
+    assert!(!is_measurement_set(&root.path().join("missing")));
+}

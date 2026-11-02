@@ -34,7 +34,7 @@ use casa_tables::{
 use casa_types::Value;
 
 use super::msv2_rows::sigma as derived_sigma;
-use super::{LOSS_REFUSAL, Loss, LossKind};
+use super::{Loss, LossKind};
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
 
@@ -201,7 +201,7 @@ pub(crate) fn refuse_unaccepted(
     let described: Vec<String> = refused.iter().map(ToString::to_string).collect();
     let named: Vec<&str> = kinds.iter().map(|kind| kind.name()).collect();
     Err(request_error(format!(
-        "{LOSS_REFUSAL}: {}; accept {} to convert anyway",
+        "the conversion would lose information: {}; accept {} to convert anyway",
         described.join("; "),
         named.join(", ")
     )))

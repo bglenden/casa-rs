@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 549
+- Concepts: 548
 - Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 790
+- Surface bindings: 789
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -42,7 +42,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
-| [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 10 | Convert between MeasurementSet v2 and MSv4, in either direction. |
+| [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 9 | Convert between MeasurementSet v2 and MSv4, in either direction. |
 
 <a id="surface-msexplore"></a>
 
@@ -1175,14 +1175,13 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Output | Output MeasurementSet path.<br><em>Surface:</em> When outputvis is empty, msconvert writes beside vis, naming the output after it: its .ms, .ms2, .ms4, .zarr or .ps.zarr replaced by .ms2 or .ms4 for the output format. |
 | <code>outformat</code> | <code>msconvert.outformat@r1</code> | <code>choice (3 values)</code> | <code>""</code>; optional | Output | Format of the converted MeasurementSet: msv2 or msv4. |
 | <code>datagroups</code> | <code>msconvert.datagroups@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data | Data groups to convert; empty converts every one. |
-| <code>acceptloss</code> | <code>msconvert.acceptloss@r1</code> | <code>array&lt;choice (7 values)&gt;</code> | <code>["sigma"]</code>; optional | Data | Kinds of information the conversion may lose. |
 | <code>padding</code> | <code>msconvert.padding@r1</code> | <code>choice (2 values)</code> | <code>"flagged"</code>; optional | MSv2 Output | MSv2 output: what a grid cell no acquisition filled becomes. |
 | <code>chunks</code> | <code>msconvert.chunks@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | MSv4 Output | MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default. |
 | <code>codec</code> | <code>msconvert.codec@r1</code> | <code>choice (3 values)</code> | <code>"blosc"</code>; optional | MSv4 Output | MSv4 output: compression of the visibilities, flags and weights. |
-| <code>nthreads</code> | <code>workers.msconvert@r1</code> | <code>integer</code> | <code>0</code>; optional | MSv4 Output | MSv4 output: partitions converted at once; 0 for every core. |
+| <code>nthreads</code> | <code>workers.msconvert@r1</code> | <code>integer</code> | <code>0</code>; optional | MSv4 Output | MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 _End of generated reference._

@@ -211,8 +211,17 @@ fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::rename(from, to)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is [`std::io::ErrorKind::Unsupported`].
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(target_os = "macos")]
-fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
+pub fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let staging = CString::new(staging.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
@@ -225,8 +234,17 @@ fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
         .ok_or_else(std::io::Error::last_os_error)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is [`std::io::ErrorKind::Unsupported`].
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(target_os = "linux")]
-fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
+pub fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let staging = CString::new(staging.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::other("staging path contains NUL"))?;
@@ -248,8 +266,17 @@ fn exchange_directories(staging: &Path, target: &Path) -> std::io::Result<()> {
         .ok_or_else(std::io::Error::last_os_error)
 }
 
+/// Exchange the directories at `staging` and `target` in one atomic call
+/// (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`):
+/// afterwards each path names what the other did, and no moment exists at
+/// which `target` is missing. Elsewhere it is [`std::io::ErrorKind::Unsupported`].
+///
+/// # Errors
+///
+/// When either path does not exist, they are on different filesystems, or
+/// the filesystem cannot exchange directories.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
+pub fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "atomic non-empty directory exchange is unavailable",

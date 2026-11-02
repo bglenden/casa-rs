@@ -5,8 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::Msv4Codec;
-use casa_ms::observation_io::convert::{LossKind, PaddingRows};
+use casa_ms::observation_io::convert::PaddingRows;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
+
+use crate::convert::BATCH_BYTES;
 
 /// A store's format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +47,37 @@ impl StoreFormat {
             Self::Msv4 => Self::Msv2,
         }
     }
+
+    /// The extension a default output of this format takes: `ms2` or
+    /// `ms4`.
+    #[must_use]
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Msv2 => "ms2",
+            Self::Msv4 => "ms4",
+        }
+    }
+}
+
+/// The extensions a default output's name drops from its input's, longest
+/// first; any case.
+const MEASUREMENT_SET_EXTENSIONS: [&str; 5] = [".ps.zarr", ".zarr", ".ms2", ".ms4", ".ms"];
+
+/// The output a conversion of `vis` into `outformat` writes when none is
+/// named: beside `vis`, named after it, its MeasurementSet extension
+/// (`.ms`, `.ms2`, `.ms4`, `.zarr` or `.ps.zarr`) replaced by `.ms2` or
+/// `.ms4` ([`StoreFormat::extension`]), or that extension added to a name
+/// without one: `obs.ms` becomes `obs.ms4`, `obs.ps.zarr` `obs.ms2`.
+/// `None` when `vis` names no file, or a name that is not UTF-8.
+#[must_use]
+pub fn default_outputvis(vis: &Path, outformat: StoreFormat) -> Option<PathBuf> {
+    let name = vis.file_name()?.to_str()?;
+    let lower = name.to_ascii_lowercase();
+    let stem = MEASUREMENT_SET_EXTENSIONS
+        .iter()
+        .find(|extension| lower.len() > extension.len() && lower.ends_with(*extension))
+        .map_or(name, |extension| &name[..name.len() - extension.len()]);
+    Some(vis.with_file_name(format!("{stem}.{}", outformat.extension())))
 }
 
 /// One conversion: its parameters read and checked, nothing done yet.
@@ -52,7 +85,7 @@ impl StoreFormat {
 pub struct MsconvertRequest {
     /// The store converted, which exists.
     pub vis: PathBuf,
-    /// The store written.
+    /// The store written: `outputvis`, or [`default_outputvis`].
     pub outputvis: PathBuf,
     /// The format of `vis`.
     pub informat: StoreFormat,
@@ -60,12 +93,11 @@ pub struct MsconvertRequest {
     pub outformat: StoreFormat,
     /// The data groups converted; `None` for every one.
     pub data_groups: Option<Vec<String>>,
-    /// The kinds of loss accepted.
-    pub accept: Vec<LossKind>,
     /// MSv2 output: what a padded grid cell becomes.
     pub padding: PaddingRows,
-    /// MSv4 output: the chunk shape, `None` for XRADIO's default
-    /// ([`crate::default_chunks`]).
+    /// MSv4 output: the chunk shape, `None` for XRADIO's, sized for each
+    /// dataset
+    /// ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
     pub chunks: Option<[u64; 4]>,
     /// MSv4 output: the payload codec.
     pub codec: Msv4Codec,
@@ -80,8 +112,9 @@ pub struct MsconvertRequest {
 /// # Errors
 ///
 /// A validation failure at the parameter that is wrong: `vis` missing, an
-/// unknown format, loss kind, padding or codec, a chunk shape not of four
-/// non-negative extents, or a negative `nthreads`.
+/// unknown format, padding or codec, no `outputvis` and none to derive (or
+/// only `vis` itself), a chunk shape not of four non-negative extents, or a
+/// negative `nthreads`.
 pub fn request_from(task: &TaskInvocation<'_>) -> Result<MsconvertRequest, TaskFailure> {
     let vis = task.workspace().join(task.input_path("vis")?);
     let informat = StoreFormat::of(&vis);
@@ -97,24 +130,50 @@ pub fn request_from(task: &TaskInvocation<'_>) -> Result<MsconvertRequest, TaskF
         }
     };
     let data_groups = names(task, "datagroups")?;
-    let accept = names(task, "acceptloss")?
-        .iter()
-        .map(|kind| kind.parse::<LossKind>())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|reason| invalid("acceptloss", reason))?;
     Ok(MsconvertRequest {
+        outputvis: outputvis(task, &vis, outformat)?,
         vis,
-        outputvis: task.workspace().join(task.path("outputvis")?),
         informat,
         outformat,
         data_groups: (!data_groups.is_empty()).then_some(data_groups),
-        accept,
         padding: padding(task)?,
         chunks: chunks(task)?,
         codec: codec(task)?,
         workers: workers(task)?,
         overwrite: task.flag("overwrite")?,
     })
+}
+
+/// `outputvis`, or the default beside `vis` when it is empty.
+fn outputvis(
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+    outformat: StoreFormat,
+) -> Result<PathBuf, TaskFailure> {
+    let named = task.text("outputvis")?.unwrap_or_default();
+    if !named.trim().is_empty() {
+        return Ok(task.workspace().join(named));
+    }
+    let derived = default_outputvis(vis, outformat).ok_or_else(|| {
+        invalid(
+            "outputvis",
+            format!(
+                "no output name follows from vis {}; name outputvis",
+                vis.display()
+            ),
+        )
+    })?;
+    if derived == vis {
+        return Err(invalid(
+            "outputvis",
+            format!(
+                "vis {} is already {}, and its default output would be itself; name outputvis",
+                vis.display(),
+                outformat.name()
+            ),
+        ));
+    }
+    Ok(derived)
 }
 
 fn invalid(parameter: &str, reason: impl Into<String>) -> TaskFailure {
@@ -188,15 +247,55 @@ fn chunks(task: &TaskInvocation<'_>) -> Result<Option<[u64; 4]>, TaskFailure> {
     Ok(Some(chunks))
 }
 
-/// Partitions converted at once: `nthreads`, or every core for 0.
+/// What one thread converting a partition into an MSv4 may hold, as the
+/// default thread count budgets it: its batches ([`BATCH_BYTES`]), the
+/// partial chunks it holds toward completion and their encoding.
+const THREAD_BYTES: usize = 4 * BATCH_BYTES;
+
+/// Partitions converted at once: `nthreads`, or for 0 as many as the cores
+/// and the host's memory budget allow, [`THREAD_BYTES`] each, and at least
+/// one.
 fn workers(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
     let threads = task.integer("nthreads")?;
     match usize::try_from(threads) {
-        Ok(0) => Ok(std::thread::available_parallelism().map_or(1, std::num::NonZero::get)),
+        Ok(0) => {
+            let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+            let memory =
+                casa_ms::observation_io::creation::default_memory_bytes().unwrap_or(THREAD_BYTES);
+            Ok((memory / THREAD_BYTES).clamp(1, cores))
+        }
         Ok(threads) => Ok(threads),
         Err(_) => Err(invalid(
             "nthreads",
             format!("nthreads is 0 (every core) or more, found {threads}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(vis: &str, outformat: StoreFormat) -> Option<String> {
+        default_outputvis(Path::new(vis), outformat).map(|path| path.display().to_string())
+    }
+
+    #[test]
+    fn the_default_output_replaces_the_inputs_extension() {
+        let (v2, v4) = (StoreFormat::Msv2, StoreFormat::Msv4);
+        assert_eq!(named("obs.ms", v4).as_deref(), Some("obs.ms4"));
+        assert_eq!(named("data/obs.ms", v4).as_deref(), Some("data/obs.ms4"));
+        assert_eq!(named("/data/obs.MS/", v4).as_deref(), Some("/data/obs.ms4"));
+        assert_eq!(named("obs.ps.zarr", v2).as_deref(), Some("obs.ms2"));
+        assert_eq!(named("obs.zarr", v2).as_deref(), Some("obs.ms2"));
+        assert_eq!(named("obs.ms4", v2).as_deref(), Some("obs.ms2"));
+        assert_eq!(named("obs.ms2", v4).as_deref(), Some("obs.ms4"));
+        // A name without one gains the extension; a bare extension is a name.
+        assert_eq!(named("obs", v4).as_deref(), Some("obs.ms4"));
+        assert_eq!(named("obs.v1", v2).as_deref(), Some("obs.v1.ms2"));
+        assert_eq!(named(".ms", v4).as_deref(), Some(".ms.ms4"));
+        // The same format names the input itself, which the task refuses.
+        assert_eq!(named("obs.ms4", v4).as_deref(), Some("obs.ms4"));
+        assert_eq!(named("/", v4), None);
     }
 }

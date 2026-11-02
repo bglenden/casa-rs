@@ -39,7 +39,7 @@ mod optional_subtables;
 
 /// The MS version number written by this crate.
 pub const MS_VERSION: f32 = 2.0;
-const CASACORE_MS_TABLE_TYPE: &str = "Measurement Set";
+pub(crate) const CASACORE_MS_TABLE_TYPE: &str = "Measurement Set";
 
 /// A MeasurementSet: main table + subtables.
 ///

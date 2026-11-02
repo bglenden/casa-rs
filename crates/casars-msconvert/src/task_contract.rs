@@ -75,7 +75,9 @@ pub fn msconvert_task_schema_bundle() -> TaskProviderContract {
 pub struct MsconvertTaskRequest {
     /// The store to convert: a MeasurementSet v2 or an MSv4 processing set.
     pub vis: PathBuf,
-    /// The new store.
+    /// The new store; empty for one beside `vis`, named after it with
+    /// `.ms2` or `.ms4`.
+    #[serde(default)]
     pub outputvis: PathBuf,
     /// `msv2` or `msv4`; empty for the other format than `vis`.
     #[serde(default)]
@@ -84,10 +86,6 @@ pub struct MsconvertTaskRequest {
     /// UVW; empty for every group, `base` first.
     #[serde(default)]
     pub datagroups: Vec<String>,
-    /// The kinds of loss accepted: `sigma`, `rowflags`, `flagcategories`,
-    /// `datagroups`, `tables`, `columns`, `defaulted`.
-    #[serde(default = "default_acceptloss")]
-    pub acceptloss: Vec<String>,
     /// MSv2 output: what a padded grid cell becomes, `flagged` or
     /// `omitted`.
     #[serde(default = "default_padding")]
@@ -99,16 +97,13 @@ pub struct MsconvertTaskRequest {
     /// MSv4 output: the payload codec, `blosc`, `zstd` or `none`.
     #[serde(default = "default_codec")]
     pub codec: String,
-    /// MSv4 output: partitions converted at once; 0 for every core.
+    /// MSv4 output: partitions converted at once; 0 for as many as the
+    /// cores and the memory allow.
     #[serde(default)]
     pub nthreads: i64,
     /// Replace an existing MeasurementSet at `outputvis`.
     #[serde(default)]
     pub overwrite: bool,
-}
-
-fn default_acceptloss() -> Vec<String> {
-    vec!["sigma".to_string()]
 }
 
 fn default_padding() -> String {
@@ -131,9 +126,10 @@ pub struct MsconvertTaskResult {
     /// The format of `outputvis`: `msv2` or `msv4`.
     pub outformat: String,
     /// MSv4 output: the chunk shape asked of every dataset, each axis then
-    /// clipped to the dataset's extent (0 for a whole axis).
+    /// clipped to the dataset's extent (0 for a whole axis); `None` for
+    /// XRADIO's, sized for each dataset.
     pub chunks: Option<[u64; 4]>,
-    /// The losses taken, every one of an accepted kind, as sentences.
+    /// What the output does not carry or states by default, as sentences.
     pub losses: Vec<String>,
     /// Partitions converted (MSv4 datasets).
     pub partitions: usize,

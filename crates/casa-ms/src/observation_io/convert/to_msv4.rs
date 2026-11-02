@@ -54,7 +54,9 @@ struct Converted {
 /// holds are a reported loss), with the phase centre at each time as XRADIO
 /// states it. Partitions are
 /// converted [`ConversionOptions::workers`] at a time; nothing appears at
-/// `destination` until every dataset is complete.
+/// `destination` until every dataset is complete. Every dataset is chunked
+/// as [`ConversionOptions::chunks`] says; [`to_msv4_chunked`] chunks each
+/// by its own extents.
 ///
 /// # Errors
 ///
@@ -69,6 +71,29 @@ pub fn to_msv4(
     source: &Path,
     destination: &Path,
     options: &ConversionOptions,
+) -> Result<ConversionReport, ObservationError> {
+    let chunks = options.chunks;
+    to_msv4_chunked(source, destination, options, &move |_| chunks)
+}
+
+/// The chunk shape `[time, baseline, frequency, polarization]` asked of a
+/// dataset of the given extents (in the same order), 0 for a whole axis;
+/// each axis is then clipped to the dataset's extent.
+pub type ChunkShape = dyn Fn([usize; 4]) -> [u64; 4] + Sync;
+
+/// [`to_msv4`], each dataset chunked as `chunk_shape` asks of its extents
+/// rather than as [`ConversionOptions::chunks`] says: with
+/// [`xradio_chunks`](super::xradio_chunks), as XRADIO's converter chunks
+/// it.
+///
+/// # Errors
+///
+/// As [`to_msv4`].
+pub fn to_msv4_chunked(
+    source: &Path,
+    destination: &Path,
+    options: &ConversionOptions,
+    chunk_shape: &ChunkShape,
 ) -> Result<ConversionReport, ObservationError> {
     let Named {
         observation,
@@ -106,6 +131,7 @@ pub fn to_msv4(
                             set: &set,
                             named: &named,
                             pointing: &pointing,
+                            chunk_shape,
                         },
                         observation.as_ref(),
                         *id,
@@ -313,6 +339,7 @@ struct Destination<'a> {
     set: &'a Msv4ProcessingSetWriter,
     named: &'a Catalogue,
     pointing: &'a PointingPlan,
+    chunk_shape: &'a ChunkShape,
 }
 
 /// Convert partition `id` into dataset `name` of the destination: its
@@ -330,6 +357,7 @@ fn partition(
         set,
         named,
         pointing,
+        chunk_shape,
     } = *destination;
     let grid = observation.grid(id, &groups[0])?;
     let entry = observation.catalogue().partition(id);
@@ -339,9 +367,10 @@ fn partition(
         entry.frequencies_hz.len(),
         entry.correlations.len(),
     ];
+    let requested = chunk_shape(extents);
     let chunks: [u64; 4] = std::array::from_fn(|axis| {
         let extent = extents[axis].max(1) as u64;
-        match options.chunks[axis] {
+        match requested[axis] {
             0 => extent,
             chunk => chunk.min(extent),
         }

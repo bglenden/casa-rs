@@ -10568,49 +10568,11 @@
       "semantic_role": "selection",
       "documentation": {
         "summary": "Data groups to convert; empty converts every one.",
-        "details": "An MSv2's groups are base (DATA), corrected (CORRECTED_DATA) and model (MODEL_DATA). The first group named carries the flags, weights and UVW; a group not converted is the loss datagroups.",
+        "details": "An MSv2's groups are base (DATA), corrected (CORRECTED_DATA) and model (MODEL_DATA). The first group named carries the flags, weights and UVW; a group not converted is reported as a loss.",
         "examples": [
           "[]",
           "[\"corrected\"]",
           "[\"base\", \"model\"]"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "msconvert.acceptloss",
-      "semantic_revision": 1,
-      "casa_name": "acceptloss",
-      "value_domain": {
-        "kind": "array",
-        "element": {
-          "kind": "choice",
-          "values": [
-            "sigma",
-            "rowflags",
-            "flagcategories",
-            "datagroups",
-            "tables",
-            "columns",
-            "defaulted"
-          ]
-        },
-        "min_items": 0,
-        "max_items": null,
-        "allow_scalar": true
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "output_policy",
-      "documentation": {
-        "summary": "Kinds of information the conversion may lose.",
-        "details": "Any other loss refuses the conversion before anything is written, naming every loss and its kind. sigma: MSv4 holds no SIGMA, and an MSv2 made from an MSv4 states SIGMA as 1/sqrt(WEIGHT). rowflags: FLAG_ROW folded into FLAG. flagcategories: FLAG_CATEGORY. datagroups: groups not converted. tables: subtables or sub-datasets the destination does not hold, and antennas no baseline names. columns: columns or variables it does not hold. defaulted: MSv2 columns the source does not state, written as MSv2's defaults, which an MSv2 destination finds by writing its subtables only once every other loss is accepted.",
-        "examples": [
-          "[\"sigma\"]",
-          "[\"sigma\", \"tables\"]"
         ]
       },
       "persistence_class": "profile"
@@ -10668,7 +10630,7 @@
       "semantic_role": "output_policy",
       "documentation": {
         "summary": "MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default.",
-        "details": "0 is a whole axis, and each extent is clipped to a dataset's. The default is XRADIO's converter's: every axis whole but time, with as many times as make a chunk of the largest variable about 128 MiB.",
+        "details": "0 is a whole axis, and each extent is clipped to a dataset's. The default is XRADIO's converter's: every axis whole but time, with as many times as make a chunk of the largest variable about 128 MiB, each dataset sized by itself.",
         "examples": [
           "[]",
           "[10, 0, 0, 0]"
@@ -10723,8 +10685,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "MSv4 output: partitions converted at once; 0 for every core.",
-        "details": "Each thread converts one partition. An MSv2 is written by one thread.",
+        "summary": "MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow.",
+        "details": "Each thread converts one partition and may hold about 1 GiB; 0 takes as many as the host's memory budget allows, at most one a core. An MSv2 is written by one thread.",
         "examples": [
           "0",
           "4"

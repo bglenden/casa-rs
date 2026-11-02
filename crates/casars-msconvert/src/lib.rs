@@ -14,20 +14,28 @@
 //! exactly, and padding stays padding.
 //!
 //! What the destination cannot hold is inventoried before anything is
-//! written, and every loss of a kind not named in `acceptloss` refuses the
-//! conversion, naming all of them. `acceptloss` defaults to `sigma`, the
-//! loss every conversion between the two formats takes: MSv4 holds no
-//! `SIGMA`, and an MSv2 made from an MSv4 states `SIGMA` as `1/√WEIGHT`.
+//! written. The task takes every such loss, as converting into the other
+//! format asks it to, and reports each: logged as a warning, and returned.
+//! Every conversion between the two formats loses `SIGMA`: MSv4 holds
+//! none, and an MSv2 made from an MSv4 states it as `1/√WEIGHT`. Most also
+//! lose subtables MSv4 does not hold (`HISTORY`, `WEATHER`, ...), or state
+//! in an MSv2 what an MSv4 leaves unstated, as MSv2's defaults.
+//!
+//! Without an `outputvis`, the output is written beside `vis`, named after
+//! it with `.ms2` or `.ms4` for its format ([`default_outputvis`]):
+//! `obs.ms` converts to `obs.ms4`, and `obs.ms4` back to `obs.ms2`.
 //!
 //! An MSv4 destination is named and laid out as XRADIO's converter lays
-//! out an MSv2: one dataset per partition, and by default XRADIO's chunk
-//! shape ([`default_chunks`]). Its partitions are converted `nthreads` at
-//! a time. An MSv2 destination is written by one thread.
+//! out an MSv2: one dataset per partition, and by default each chunked as
+//! XRADIO chunks it
+//! ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
+//! Its partitions are converted `nthreads` at a time, by default as many as
+//! the cores and the memory allow. An MSv2 destination is written by one
+//! thread.
 //!
 //! The task returns a record of what it did: the formats, the partitions
 //! converted and the losses taken.
 
-mod chunks;
 mod convert;
 mod request;
 mod task_contract;
@@ -35,9 +43,8 @@ mod task_contract;
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
-pub use chunks::{BLOSC_MAX_BUFFER_BYTES, DEFAULT_CHUNK_BYTES, PayloadShape, default_chunks};
 pub use convert::msconvert;
-pub use request::{MsconvertRequest, StoreFormat, request_from};
+pub use request::{MsconvertRequest, StoreFormat, default_outputvis, request_from};
 pub use task_contract::*;
 
 /// The front end of the `msconvert` binary, which hosts `msconvert`.
@@ -56,9 +63,9 @@ pub fn task_front_end()
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = request_from(task)?;
     let result = msconvert(&request)?;
-    // Each accepted loss is logged as a warning when it is taken.
+    // Each loss is logged as a warning when it is taken.
     let text = format!(
-        "Converted {} ({}) to {} ({}): partitions {}, accepted losses {}\n",
+        "Converted {} ({}) to {} ({}): partitions {}, losses {}\n",
         result.vis,
         result.informat,
         result.outputvis,

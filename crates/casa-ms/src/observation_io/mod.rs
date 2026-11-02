@@ -92,6 +92,25 @@ pub fn is_msv4_store(path: &Path) -> bool {
     path.join("zarr.json").is_file()
 }
 
+/// Whether the directory at `path` holds a MeasurementSet, as a reader
+/// would take it: an MSv4 processing set (a Zarr group whose root
+/// attributes say `type: processing_set`), or a MeasurementSet v2 (a
+/// casacore table whose `table.info` says `Type = Measurement Set`). A
+/// subtable, an image, a calibration table or a dataset inside a
+/// processing set is none.
+#[must_use]
+pub fn is_measurement_set(path: &Path) -> bool {
+    if is_msv4_store(path) {
+        return std::fs::read(path.join("zarr.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|root| root["attributes"]["type"] == "processing_set");
+    }
+    std::fs::read_to_string(path.join("table.info")).is_ok_and(|info| {
+        casa_tables::TableInfo::parse(&info).table_type == crate::ms::CASACORE_MS_TABLE_TYPE
+    })
+}
+
 /// Open the observation at `path`, choosing its adapter from the store
 /// ([`is_msv4_store`]): a Zarr processing set is MSv4, a casacore table
 /// directory is MSv2.

@@ -26177,7 +26177,7 @@
                 "parameter": "outputvis"
               },
               "cardinality": "one",
-              "optional": false,
+              "optional": true,
               "probe_supported": false
             }
           ]
@@ -26249,14 +26249,14 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
+          "surface_note": "When outputvis is empty, msconvert writes beside vis, naming the output after it: its .ms, .ms2, .ms4, .zarr or .ps.zarr replaced by .ms2 or .ms4 for the output format.",
           "projections": {
             "cli": {
               "positional": null,
@@ -26385,67 +26385,12 @@
           "reviewed_homonym": null
         },
         {
-          "name": "acceptloss",
-          "concept": {
-            "id": "msconvert.acceptloss",
-            "semantic_revision": 1
-          },
-          "order": 4,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "array",
-              "value": [
-                {
-                  "kind": "string",
-                  "value": "sigma"
-                }
-              ]
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--acceptloss"
-              ],
-              "false_flags": [],
-              "metavar": "KIND"
-            },
-            "provider": {
-              "field": "acceptloss",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "acceptloss",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Accepted Losses",
-              "group": "Data",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
           "name": "padding",
           "concept": {
             "id": "msconvert.padding",
             "semantic_revision": 1
           },
-          "order": 5,
+          "order": 4,
           "default": {
             "kind": "literal",
             "value": {
@@ -26495,7 +26440,7 @@
             "id": "msconvert.chunks",
             "semantic_revision": 1
           },
-          "order": 6,
+          "order": 5,
           "default": {
             "kind": "literal",
             "value": {
@@ -26545,7 +26490,7 @@
             "id": "msconvert.codec",
             "semantic_revision": 1
           },
-          "order": 7,
+          "order": 6,
           "default": {
             "kind": "literal",
             "value": {
@@ -26595,7 +26540,7 @@
             "id": "workers.msconvert",
             "semantic_revision": 1
           },
-          "order": 8,
+          "order": 7,
           "default": {
             "kind": "literal",
             "value": {
@@ -26648,7 +26593,7 @@
             "id": "output.overwrite",
             "semantic_revision": 1
           },
-          "order": 9,
+          "order": 8,
           "default": {
             "kind": "literal",
             "value": {

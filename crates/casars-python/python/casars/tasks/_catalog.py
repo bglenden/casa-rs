@@ -1098,7 +1098,6 @@ def msconvert(
     outputvis: StrPath | object = _UNSET,
     outformat: Literal['', 'msv2', 'msv4'] | object = _UNSET,
     datagroups: str | list[str] | tuple[str, ...] | object = _UNSET,
-    acceptloss: Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted'] | list[Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted']] | tuple[Literal['sigma', 'rowflags', 'flagcategories', 'datagroups', 'tables', 'columns', 'defaulted'], ...] | object = _UNSET,
     padding: Literal['flagged', 'omitted'] | object = _UNSET,
     chunks: list[int] | tuple[int, ...] | object = _UNSET,
     codec: Literal['blosc', 'none', 'zstd'] | object = _UNSET,
@@ -1106,7 +1105,7 @@ def msconvert(
     overwrite: bool | object = _UNSET,
 ) -> TaskCompletion:
     """Convert between MeasurementSet v2 and MSv4, in either direction."""
-    return _run("msconvert", _explicit(locals(), ('vis', 'outputvis', 'outformat', 'datagroups', 'acceptloss', 'padding', 'chunks', 'codec', 'nthreads', 'overwrite')))
+    return _run("msconvert", _explicit(locals(), ('vis', 'outputvis', 'outformat', 'datagroups', 'padding', 'chunks', 'codec', 'nthreads', 'overwrite')))
 
 TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert')
 

@@ -56,6 +56,7 @@ pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;
+pub use replace::exchange_directories;
 
 /// Information a conversion or a plan cannot carry into its destination.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -126,12 +127,6 @@ impl fmt::Display for Loss {
         }
     }
 }
-
-/// How the reason of a refusal to lose information begins: the
-/// [`ObservationError::InvalidRequest`](casa_observation::ObservationError::InvalidRequest)
-/// a plan or conversion returns when a loss is not accepted, which then
-/// describes every such loss and names their kinds ([`LossKind::name`]).
-pub const LOSS_REFUSAL: &str = "the conversion would lose information";
 
 /// What a caller accepts losing ([`Loss::kind`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

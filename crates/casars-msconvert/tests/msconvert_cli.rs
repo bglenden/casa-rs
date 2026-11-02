@@ -35,9 +35,11 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// What the MSv2 fixture loses into an MSv4: `SIGMA`, `HISTORY` and
-/// pointing columns.
-const INTO_MSV4: [&str; 4] = ["--acceptloss", "sigma", "--acceptloss", "tables"];
+/// Assert that `output` is a refusal whose message says `expected`.
+fn refused(output: &Output, expected: &str) {
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(output));
+    assert!(stderr(output).contains(expected), "{}", stderr(output));
+}
 
 /// The names in `directory`, sorted.
 fn names(directory: &Path) -> Vec<String> {
@@ -56,6 +58,24 @@ fn names(directory: &Path) -> Vec<String> {
     names
 }
 
+/// Every file under `path`, by relative path, with its bytes.
+fn snapshot(path: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(root: &Path, path: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).expect("list") {
+                walk(root, &entry.expect("entry").path(), files);
+            }
+        } else {
+            let relative = path.strip_prefix(root).expect("inside").to_path_buf();
+            files.push((relative, std::fs::read(path).expect("read")));
+        }
+    }
+    let mut files = Vec::new();
+    walk(path, path, &mut files);
+    files.sort();
+    files
+}
+
 /// The chunk shape of `dataset`'s `VISIBILITY` in the processing set at
 /// `path`.
 fn visibility_chunks(path: &Path, dataset: &str) -> Vec<u64> {
@@ -72,90 +92,79 @@ fn visibility_chunks(path: &Path, dataset: &str) -> Vec<u64> {
 }
 
 #[test]
-fn an_msv2_converts_to_an_msv4_and_back() {
+fn an_msv2_converts_to_an_msv4_and_back_under_default_names() {
     let root = tempfile::tempdir().expect("root");
     let v2 = fixture(root.path(), "ms_trial.ms");
     let rows = casa_ms::MeasurementSet::open(&v2).expect("ms").row_count();
 
-    let converted = msconvert(
-        root.path(),
-        &[
-            &["--vis", "ms_trial.ms", "--outputvis", "out.ps.zarr"][..],
-            &INTO_MSV4,
-        ]
-        .concat(),
-    );
+    let converted = msconvert(root.path(), &["--vis", "ms_trial.ms"]);
     assert!(converted.status.success(), "{}", stderr(&converted));
-    let v4 = root.path().join("out.ps.zarr");
+    let v4 = root.path().join("ms_trial.ms4");
+    assert!(casa_ms::observation_io::is_measurement_set(&v4));
     assert!(casa_ms::observation_io::is_msv4_store(&v4));
-    // XRADIO's default chunks: 12 times are far below 128 MiB, so the
-    // dataset is one chunk.
+    // XRADIO's chunks: 12 times are far below 128 MiB, so the dataset is
+    // one chunk.
     assert_eq!(visibility_chunks(&v4, "ms_trial_0"), [12, 10, 8, 4]);
     let summary = String::from_utf8_lossy(&converted.stdout);
     assert!(
         summary.contains("(msv2)") && summary.contains("(msv4)"),
         "{summary}"
     );
+    // What MSv4 does not hold is taken and reported, not refused.
+    let log = stderr(&converted);
+    for lost in [
+        "not carried into msv4: SIGMA is not carried",
+        "not carried into msv4: HISTORY is not carried",
+    ] {
+        assert!(log.contains(lost), "{log}");
+    }
 
-    // Back to MSv2: the empty outformat is the other format. An MSv2 states
-    // what the MSv4 does not, as MSv2's defaults.
-    let back = msconvert(
-        root.path(),
-        &[
-            "--vis",
-            "out.ps.zarr",
-            "--outputvis",
-            "back.ms",
-            "--acceptloss",
-            "sigma,defaulted",
-        ],
-    );
+    // Back to MSv2: the other format, named for it.
+    let back = msconvert(root.path(), &["--vis", "ms_trial.ms4"]);
     assert!(back.status.success(), "{}", stderr(&back));
-    let back = casa_ms::MeasurementSet::open(root.path().join("back.ms")).expect("back");
+    let back = casa_ms::MeasurementSet::open(root.path().join("ms_trial.ms2")).expect("back");
     assert_eq!(back.row_count(), rows, "every acquisition, one row each");
+    assert_eq!(
+        names(root.path()),
+        ["ms_trial.ms", "ms_trial.ms2", "ms_trial.ms4"]
+    );
 }
 
 #[test]
-fn an_unaccepted_loss_refuses_naming_every_kind_and_writes_nothing() {
+fn a_default_name_that_would_be_the_input_is_refused() {
     let root = tempfile::tempdir().expect("root");
     fixture(root.path(), "ms_trial.ms");
-    let before = names(root.path());
-    let refused = msconvert(
-        root.path(),
-        &["--vis", "ms_trial.ms", "--outputvis", "out.ps.zarr"],
+    assert!(
+        msconvert(root.path(), &["--vis", "ms_trial.ms"])
+            .status
+            .success()
     );
-    assert_eq!(refused.status.code(), Some(2), "a refusal");
-    let message = stderr(&refused);
-    for described in [
-        "HISTORY is not carried",
-        "POINTING",
-        "accept tables to convert anyway",
-    ] {
-        assert!(message.contains(described), "{message}");
-    }
-    assert!(message.contains("acceptloss is now [sigma]"), "{message}");
-    assert_eq!(names(root.path()), before, "nothing is written");
+    let before = names(root.path());
+    refused(
+        &msconvert(
+            root.path(),
+            &[
+                "--vis",
+                "ms_trial.ms4",
+                "--outformat",
+                "msv4",
+                "--overwrite",
+            ],
+        ),
+        "would be itself",
+    );
+    assert_eq!(names(root.path()), before);
 }
 
 #[test]
 fn an_existing_output_is_replaced_only_when_overwrite_is_set() {
     let root = tempfile::tempdir().expect("root");
     fixture(root.path(), "ms_trial.ms");
-    let args = [
-        &["--vis", "ms_trial.ms", "--outputvis", "out.ps.zarr"][..],
-        &INTO_MSV4,
-    ]
-    .concat();
+    let args = ["--vis", "ms_trial.ms", "--outputvis", "out.ps.zarr"];
     assert!(msconvert(root.path(), &args).status.success());
     let first = names(root.path());
 
-    let refused = msconvert(root.path(), &args);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(
-        stderr(&refused).contains("set overwrite=True"),
-        "{}",
-        stderr(&refused)
-    );
+    refused(&msconvert(root.path(), &args), "set overwrite=True");
 
     // Re-chunked in place: the old store replaced, nothing left beside it.
     let replaced = msconvert(
@@ -169,51 +178,76 @@ fn an_existing_output_is_replaced_only_when_overwrite_is_set() {
 }
 
 #[test]
-fn overwrite_replaces_only_a_measurement_set_other_than_the_input() {
+fn overwrite_replaces_only_a_whole_measurement_set_apart_from_the_input() {
     let root = tempfile::tempdir().expect("root");
-    fixture(root.path(), "ms_trial.ms");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let source = snapshot(&v2);
+    let convert = |output: &str| {
+        msconvert(
+            root.path(),
+            &["--vis", "ms_trial.ms", "--outputvis", output, "--overwrite"],
+        )
+    };
+    // Inside the input, existing or not: a subtable would be destroyed,
+    // and a new store would change it.
+    refused(&convert("ms_trial.ms/ANTENNA"), "is vis or lies inside it");
+    refused(&convert("ms_trial.ms/new.ms4"), "is vis or lies inside it");
+    refused(
+        &convert("./ms_trial.ms/../ms_trial.ms"),
+        "is vis or lies inside it",
+    );
+    // Neither a directory, a casacore table that is not a MeasurementSet,
+    // nor a link is replaced.
     let junk = root.path().join("junk");
     std::fs::create_dir(&junk).expect("junk");
     std::fs::write(junk.join("keep"), b"kept").expect("keep");
-    let refused = msconvert(
-        root.path(),
-        &[
-            &["--vis", "ms_trial.ms", "--outputvis", "junk", "--overwrite"][..],
-            &INTO_MSV4,
-        ]
-        .concat(),
-    );
-    assert_eq!(refused.status.code(), Some(2));
+    refused(&convert("junk"), "is not a MeasurementSet");
+    let table = root.path().join("antenna.tab");
+    std::fs::create_dir(&table).expect("table");
+    for entry in std::fs::read_dir(v2.join("ANTENNA")).expect("ANTENNA") {
+        let entry = entry.expect("entry");
+        std::fs::copy(entry.path(), table.join(entry.file_name())).expect("copy");
+    }
+    let antenna = snapshot(&table);
+    refused(&convert("antenna.tab"), "is not a MeasurementSet");
+    // A link to the input is the input; a link to another MeasurementSet
+    // is refused, not followed.
+    std::os::unix::fs::symlink(&v2, root.path().join("self.ms")).expect("link");
+    refused(&convert("self.ms"), "is vis or lies inside it");
+    let other = fixture(root.path(), "ms_trial.ps.zarr");
+    let other_before = snapshot(&other);
+    std::os::unix::fs::symlink(&other, root.path().join("link.ms")).expect("link");
+    refused(&convert("link.ms"), "is a symbolic link");
+    // A MeasurementSet holding the input is not replaced by its
+    // conversion, and anything else holding it is no MeasurementSet.
     assert!(
-        stderr(&refused).contains("is not a MeasurementSet"),
-        "{}",
-        stderr(&refused)
+        msconvert(
+            root.path(),
+            &["--vis", "ms_trial.ms", "--outputvis", "outer.ms4"]
+        )
+        .status
+        .success()
     );
-    assert_eq!(std::fs::read(junk.join("keep")).expect("kept"), b"kept");
+    fixture(&root.path().join("outer.ms4"), "ms_trial.ms");
+    refused(
+        &msconvert(
+            root.path(),
+            &[
+                "--vis",
+                "outer.ms4/ms_trial.ms",
+                "--outputvis",
+                "outer.ms4",
+                "--overwrite",
+            ],
+        ),
+        "holds vis",
+    );
+    refused(&convert("."), "is not a MeasurementSet");
 
-    let rows = casa_ms::MeasurementSet::open(root.path().join("ms_trial.ms"))
-        .expect("ms")
-        .row_count();
-    let refused = msconvert(
-        root.path(),
-        &[
-            "--vis",
-            "ms_trial.ms",
-            "--outputvis",
-            "ms_trial.ms",
-            "--outformat",
-            "msv2",
-            "--overwrite",
-        ],
-    );
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(
-        stderr(&refused).contains("is vis or holds it"),
-        "{}",
-        stderr(&refused)
-    );
-    let kept = casa_ms::MeasurementSet::open(root.path().join("ms_trial.ms")).expect("kept");
-    assert_eq!(kept.row_count(), rows);
+    assert_eq!(snapshot(&v2), source, "the input is untouched");
+    assert_eq!(snapshot(&table), antenna);
+    assert_eq!(snapshot(&other), other_before);
+    assert_eq!(std::fs::read(junk.join("keep")).expect("kept"), b"kept");
 }
 
 #[test]
@@ -224,62 +258,36 @@ fn invalid_parameters_are_refused_at_their_parameter() {
     for (args, expected) in [
         (&["--chunks", "[5, 0, 0]"][..], "four extents"),
         (&["--chunks", "[5, -1, 0, 0]"][..], "chunks"),
-        (&["--acceptloss", "row-flags"][..], "acceptloss"),
         (&["--outformat", "msv3"][..], "outformat"),
         (&["--codec", "gzip"][..], "codec"),
+        (&["--padding", "dropped"][..], "padding"),
         (&["--nthreads", "-1"][..], "nthreads"),
     ] {
-        let refused = msconvert(root.path(), &[&base[..], args].concat());
-        assert_eq!(refused.status.code(), Some(2), "{args:?}");
-        assert!(
-            stderr(&refused).contains(expected),
-            "{args:?}: {}",
-            stderr(&refused)
+        refused(
+            &msconvert(root.path(), &[&base[..], args].concat()),
+            expected,
         );
     }
-    let missing = msconvert(
-        root.path(),
-        &["--vis", "missing.ms", "--outputvis", "out.ms"],
+    refused(
+        &msconvert(root.path(), &["--vis", "missing.ms"]),
+        "does not exist",
     );
-    assert_eq!(missing.status.code(), Some(2));
-    assert!(
-        stderr(&missing).contains("does not exist"),
-        "{}",
-        stderr(&missing)
-    );
-    assert!(!root.path().join("out.ps.zarr").exists());
+    assert_eq!(names(root.path()), ["ms_trial.ms"]);
 }
 
 #[test]
 fn an_msv4_from_xradio_converts_to_an_msv2() {
     let root = tempfile::tempdir().expect("root");
     fixture(root.path(), "ms_trial.ps.zarr");
-    let refused = msconvert(
-        root.path(),
-        &["--vis", "ms_trial.ps.zarr", "--outputvis", "out.ms"],
-    );
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(
-        stderr(&refused).contains("accept defaulted to convert anyway"),
-        "{}",
-        stderr(&refused)
-    );
     let converted = msconvert(
         root.path(),
-        &[
-            "--vis",
-            "ms_trial.ps.zarr",
-            "--outputvis",
-            "out.ms",
-            "--acceptloss",
-            "sigma",
-            "--acceptloss",
-            "defaulted",
-            "--padding",
-            "omitted",
-        ],
+        &["--vis", "ms_trial.ps.zarr", "--padding", "omitted"],
     );
     assert!(converted.status.success(), "{}", stderr(&converted));
-    let ms = casa_ms::MeasurementSet::open(root.path().join("out.ms")).expect("ms");
+    // An MSv2 states SIGMA, and what the MSv4 leaves unstated, itself.
+    let log = stderr(&converted);
+    assert!(log.contains("SIGMA is derived from WEIGHT"), "{log}");
+    assert!(log.contains("MSv2's default is written"), "{log}");
+    let ms = casa_ms::MeasurementSet::open(root.path().join("ms_trial.ms2")).expect("ms");
     assert_eq!(ms.row_count(), 120);
 }

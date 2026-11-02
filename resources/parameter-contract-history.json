@@ -697,11 +697,6 @@
       "fingerprint": "a53688cb39e149ff96fdf179a3ede65dd1e2b16f781031b0141002eaf425a1ab"
     },
     {
-      "id": "msconvert.acceptloss",
-      "semantic_revision": 1,
-      "fingerprint": "572a41cb01c4125a0240e54d6d506dd1517885105594fe4cfdefacc958e37969"
-    },
-    {
       "id": "msconvert.chunks",
       "semantic_revision": 1,
       "fingerprint": "98888dac07213bdfd7a7123bfc55a1572414dec19f269498620d912aea38f737"
@@ -4371,7 +4366,7 @@
     {
       "id": "msconvert",
       "contract_version": 1,
-      "fingerprint": "eb3124d322aacb2dca4812d23569ca8e764726cbf7fe00f5cd2dc35537cbb35f"
+      "fingerprint": "eb51451440e8ccb17ede02ac091051070b716b2b2b375fd830af71d3559f0fd2"
     },
     {
       "id": "msexplore",
