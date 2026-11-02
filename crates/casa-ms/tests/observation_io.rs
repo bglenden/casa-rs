@@ -4,6 +4,9 @@
 //! from the MSv2, read through both adapters into the same batches.
 
 #[cfg(unix)]
+#[path = "observation_io/channel_order.rs"]
+mod channel_order;
+#[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]
