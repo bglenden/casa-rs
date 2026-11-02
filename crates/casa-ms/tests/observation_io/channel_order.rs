@@ -119,10 +119,10 @@ fn a_descending_window_binds_to_xradios_ascending_conversion() {
             "partition {index}"
         );
         reversed += usize::from(descends);
-        let windows = if count > 1 {
+        let windows: Vec<Range<usize>> = if count > 1 {
             vec![0..count, 2..6, count / 2..count - 1, count - 1..count]
         } else {
-            vec![0..count]
+            std::iter::once(0..count).collect()
         };
         for channels in windows {
             let expected = read(&v2, partition, channels.clone());
