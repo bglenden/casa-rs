@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_types::measures::frame::MeasFrame;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_types::measures::position::MPosition;
 <a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use super</span>::{FieldMotion, MsCalEngine};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use super</span>::{FeedMount, FieldMotion, MsCalEngine};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="kw">crate</span>::error::MsResult;
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">impl </span>MsCalEngine {
@@ -51,57 +51,63 @@
 <a href=#51 id=51 data-nosnippet>51</a>            .iter()
 <a href=#52 id=52 data-nosnippet>52</a>            .map(casa_observation::AntennaEntry::alt_az)
 <a href=#53 id=53 data-nosnippet>53</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>observatory_position = MPosition::casa_array_reference(
-<a href=#55 id=55 data-nosnippet>55</a>            catalogue
-<a href=#56 id=56 data-nosnippet>56</a>                .observations
-<a href=#57 id=57 data-nosnippet>57</a>                .first()
-<a href=#58 id=58 data-nosnippet>58</a>                .map(|observation| observation.telescope.as_str()),
-<a href=#59 id=59 data-nosnippet>59</a>            antenna_positions.first(),
-<a href=#60 id=60 data-nosnippet>60</a>            measures.as_ref(),
-<a href=#61 id=61 data-nosnippet>61</a>        );
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_directions = Vec::with_capacity(catalogue.fields.len());
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_phase_offsets = Vec::with_capacity(catalogue.fields.len());
-<a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_reference_epochs = Vec::with_capacity(catalogue.fields.len());
-<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_motions = Vec::with_capacity(catalogue.fields.len());
-<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">for </span>field <span class="kw">in </span><span class="kw-2">&amp;</span>catalogue.fields {
-<a href=#67 id=67 data-nosnippet>67</a>            <span class="kw">let </span>(longitude, latitude) = field.phase_centre.as_angles();
-<a href=#68 id=68 data-nosnippet>68</a>            field_phase_offsets.push([longitude, latitude]);
-<a href=#69 id=69 data-nosnippet>69</a>            field_directions.push(<span class="kw">if </span>field.phase_centre.refer() == DirectionRef::J2000 {
-<a href=#70 id=70 data-nosnippet>70</a>                field.phase_centre.clone()
-<a href=#71 id=71 data-nosnippet>71</a>            } <span class="kw">else </span>{
-<a href=#72 id=72 data-nosnippet>72</a>                <span class="kw">let </span>frame = MeasFrame::new()
-<a href=#73 id=73 data-nosnippet>73</a>                    .with_position(observatory_position.clone())
-<a href=#74 id=74 data-nosnippet>74</a>                    .with_measures(Arc::clone(<span class="kw-2">&amp;</span>measures));
-<a href=#75 id=75 data-nosnippet>75</a>                <span class="kw">let </span>frame = <span class="kw">match </span><span class="kw-2">&amp;</span>field.reference_epoch {
-<a href=#76 id=76 data-nosnippet>76</a>                    <span class="prelude-val">Some</span>(epoch) =&gt; frame.with_epoch(epoch.clone()),
-<a href=#77 id=77 data-nosnippet>77</a>                    <span class="prelude-val">None </span>=&gt; frame,
-<a href=#78 id=78 data-nosnippet>78</a>                };
-<a href=#79 id=79 data-nosnippet>79</a>                field.phase_centre.convert_to(DirectionRef::J2000, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?
-<a href=#80 id=80 data-nosnippet>80</a>            </span>});
-<a href=#81 id=81 data-nosnippet>81</a>            field_reference_epochs.push(field.reference_epoch.clone());
-<a href=#82 id=82 data-nosnippet>82</a>            field_motions.push(<span class="kw">match </span><span class="kw-2">&amp;</span>field.ephemeris {
-<a href=#83 id=83 data-nosnippet>83</a>                <span class="prelude-val">Some</span>(ephemeris) =&gt; FieldMotion::Ephemeris(Arc::clone(ephemeris)),
-<a href=#84 id=84 data-nosnippet>84</a>                <span class="prelude-val">None </span>=&gt; FieldMotion::Fixed,
-<a href=#85 id=85 data-nosnippet>85</a>            });
-<a href=#86 id=86 data-nosnippet>86</a>        }
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>time_reference = catalogue
-<a href=#88 id=88 data-nosnippet>88</a>            .partitions
-<a href=#89 id=89 data-nosnippet>89</a>            .first()
-<a href=#90 id=90 data-nosnippet>90</a>            .map_or(EpochRef::UTC, |partition| partition.time_scale);
-<a href=#91 id=91 data-nosnippet>91</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#92 id=92 data-nosnippet>92</a>            antenna_positions: antenna_positions.into_boxed_slice(),
-<a href=#93 id=93 data-nosnippet>93</a>            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
-<a href=#94 id=94 data-nosnippet>94</a>            field_directions: field_directions.into_boxed_slice(),
-<a href=#95 id=95 data-nosnippet>95</a>            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
-<a href=#96 id=96 data-nosnippet>96</a>            field_motions: field_motions.into_boxed_slice(),
-<a href=#97 id=97 data-nosnippet>97</a>            field_reference_epochs: field_reference_epochs.into_boxed_slice(),
-<a href=#98 id=98 data-nosnippet>98</a>            observatory_position,
-<a href=#99 id=99 data-nosnippet>99</a>            time_reference,
-<a href=#100 id=100 data-nosnippet>100</a>            measures: <span class="prelude-val">Some</span>(measures),
-<a href=#101 id=101 data-nosnippet>101</a>            azel_cache: RwLock::new(HashMap::new()),
-<a href=#102 id=102 data-nosnippet>102</a>            hadec_cache: RwLock::new(HashMap::new()),
-<a href=#103 id=103 data-nosnippet>103</a>            parallactic_angle_cache: RwLock::new(HashMap::new()),
-<a href=#104 id=104 data-nosnippet>104</a>        })
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>}
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>antenna_feed_mounts = catalogue
+<a href=#55 id=55 data-nosnippet>55</a>            .antennas
+<a href=#56 id=56 data-nosnippet>56</a>            .iter()
+<a href=#57 id=57 data-nosnippet>57</a>            .map(|antenna| FeedMount::parse(<span class="kw-2">&amp;</span>antenna.mount))
+<a href=#58 id=58 data-nosnippet>58</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">let </span>observatory_position = MPosition::casa_array_reference(
+<a href=#60 id=60 data-nosnippet>60</a>            catalogue
+<a href=#61 id=61 data-nosnippet>61</a>                .observations
+<a href=#62 id=62 data-nosnippet>62</a>                .first()
+<a href=#63 id=63 data-nosnippet>63</a>                .map(|observation| observation.telescope.as_str()),
+<a href=#64 id=64 data-nosnippet>64</a>            antenna_positions.first(),
+<a href=#65 id=65 data-nosnippet>65</a>            measures.as_ref(),
+<a href=#66 id=66 data-nosnippet>66</a>        );
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_directions = Vec::with_capacity(catalogue.fields.len());
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_phase_offsets = Vec::with_capacity(catalogue.fields.len());
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_reference_epochs = Vec::with_capacity(catalogue.fields.len());
+<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_motions = Vec::with_capacity(catalogue.fields.len());
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">for </span>field <span class="kw">in </span><span class="kw-2">&amp;</span>catalogue.fields {
+<a href=#72 id=72 data-nosnippet>72</a>            <span class="kw">let </span>(longitude, latitude) = field.phase_centre.as_angles();
+<a href=#73 id=73 data-nosnippet>73</a>            field_phase_offsets.push([longitude, latitude]);
+<a href=#74 id=74 data-nosnippet>74</a>            field_directions.push(<span class="kw">if </span>field.phase_centre.refer() == DirectionRef::J2000 {
+<a href=#75 id=75 data-nosnippet>75</a>                field.phase_centre.clone()
+<a href=#76 id=76 data-nosnippet>76</a>            } <span class="kw">else </span>{
+<a href=#77 id=77 data-nosnippet>77</a>                <span class="kw">let </span>frame = MeasFrame::new()
+<a href=#78 id=78 data-nosnippet>78</a>                    .with_position(observatory_position.clone())
+<a href=#79 id=79 data-nosnippet>79</a>                    .with_measures(Arc::clone(<span class="kw-2">&amp;</span>measures));
+<a href=#80 id=80 data-nosnippet>80</a>                <span class="kw">let </span>frame = <span class="kw">match </span><span class="kw-2">&amp;</span>field.reference_epoch {
+<a href=#81 id=81 data-nosnippet>81</a>                    <span class="prelude-val">Some</span>(epoch) =&gt; frame.with_epoch(epoch.clone()),
+<a href=#82 id=82 data-nosnippet>82</a>                    <span class="prelude-val">None </span>=&gt; frame,
+<a href=#83 id=83 data-nosnippet>83</a>                };
+<a href=#84 id=84 data-nosnippet>84</a>                field.phase_centre.convert_to(DirectionRef::J2000, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?
+<a href=#85 id=85 data-nosnippet>85</a>            </span>});
+<a href=#86 id=86 data-nosnippet>86</a>            field_reference_epochs.push(field.reference_epoch.clone());
+<a href=#87 id=87 data-nosnippet>87</a>            field_motions.push(<span class="kw">match </span><span class="kw-2">&amp;</span>field.ephemeris {
+<a href=#88 id=88 data-nosnippet>88</a>                <span class="prelude-val">Some</span>(ephemeris) =&gt; FieldMotion::Ephemeris(Arc::clone(ephemeris)),
+<a href=#89 id=89 data-nosnippet>89</a>                <span class="prelude-val">None </span>=&gt; FieldMotion::Fixed,
+<a href=#90 id=90 data-nosnippet>90</a>            });
+<a href=#91 id=91 data-nosnippet>91</a>        }
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">let </span>time_reference = catalogue
+<a href=#93 id=93 data-nosnippet>93</a>            .partitions
+<a href=#94 id=94 data-nosnippet>94</a>            .first()
+<a href=#95 id=95 data-nosnippet>95</a>            .map_or(EpochRef::UTC, |partition| partition.time_scale);
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#97 id=97 data-nosnippet>97</a>            antenna_positions: antenna_positions.into_boxed_slice(),
+<a href=#98 id=98 data-nosnippet>98</a>            antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+<a href=#99 id=99 data-nosnippet>99</a>            antenna_feed_mounts: antenna_feed_mounts.into_boxed_slice(),
+<a href=#100 id=100 data-nosnippet>100</a>            field_directions: field_directions.into_boxed_slice(),
+<a href=#101 id=101 data-nosnippet>101</a>            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+<a href=#102 id=102 data-nosnippet>102</a>            field_motions: field_motions.into_boxed_slice(),
+<a href=#103 id=103 data-nosnippet>103</a>            field_reference_epochs: field_reference_epochs.into_boxed_slice(),
+<a href=#104 id=104 data-nosnippet>104</a>            observatory_position,
+<a href=#105 id=105 data-nosnippet>105</a>            time_reference,
+<a href=#106 id=106 data-nosnippet>106</a>            measures: <span class="prelude-val">Some</span>(measures),
+<a href=#107 id=107 data-nosnippet>107</a>            azel_cache: RwLock::new(HashMap::new()),
+<a href=#108 id=108 data-nosnippet>108</a>            hadec_cache: RwLock::new(HashMap::new()),
+<a href=#109 id=109 data-nosnippet>109</a>            parallactic_angle_cache: RwLock::new(HashMap::new()),
+<a href=#110 id=110 data-nosnippet>110</a>        })
+<a href=#111 id=111 data-nosnippet>111</a>    }
+<a href=#112 id=112 data-nosnippet>112</a>}
 </code></pre></div></section></main></body></html>
