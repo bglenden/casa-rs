@@ -40,7 +40,7 @@
     },
     "spw": {
       "status": "Partial",
-      "scope": "Copied as spectral-window/channel selector; selected-channel derived cube extents are refused in limited nchan/start/width cases (issue 980).",
+      "scope": "The text reaches casa-ms's port of CASA 6.7.6.14's spectral-window grammar (casacore aaf72eb7 MSSpwGram/MSSpwParse/MSSpwIndex: IDs, ranges, steps, ; lists, exact names, patterns, quoted and /.../ patterns, frequency and stepped frequency ranges with units, ~f, >, < and <>, : channel lists with ranges, steps, -1 and frequency ranges, ( ) ), resolved on a MeasurementSet over SPECTRAL_WINDOW and DATA_DESCRIPTION: the MAIN rows of the data descriptions CASA keeps, and per window the union of its getChanList ranges, with CASA's clamps logged; 1,552 cases match CASA's ms.msselect and msselectedindices exactly (resources/casa-compat/evidence/msselection-spw-casa-20261102.json). Every refusal CASA makes is refused; velocity units are refused as CASA disables them. Refused although CASA accepts them, as their imaging is not established: a parenthesized expression (every MAIN row, some windows' channels), a window whose rows are kept but none of whose channel ranges found a channel, and overlapping channel ranges of one window. The parameter catalog's selector normalization (ms.selection.spw revision 1) makes blank text and none unset and collapses whitespace, also inside quotes, so those CASA refusals and names are not exact (#980). Selected-channel derived cube extents are refused in limited nchan/start/width cases (#980).",
       "evidence": [
         "signature",
         "reader"

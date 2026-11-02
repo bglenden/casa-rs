@@ -112,6 +112,10 @@ pub(super) struct Survey {
     /// LSRK, where CASA grids the samples, and in the image's `outframe`,
     /// which its header records.
     pub(super) continuum: Option<(WindowChannels, SpectralEnvelope, SpectralEnvelope)>,
+    /// The channels the request's `spw` names per window
+    /// ([`super::selection::SpwChoice::channels`]), set after the survey as
+    /// [`continuum`](Self::continuum) is.
+    pub(super) spw_channels: WindowChannels,
 }
 
 impl Survey {
@@ -453,6 +457,7 @@ pub(super) fn survey(
             w: facts.w,
             epochs: facts.epochs,
             continuum: None,
+            spw_channels: WindowChannels::new(),
         },
         reservation,
     })

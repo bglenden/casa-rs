@@ -2923,3 +2923,53 @@ casa-rs reads an antenna and feed's rows in the window, else its rows for
 every window, and states no receptors where it has neither. Where `FEED`'s
 rows are all -1 or all name windows, which is how CASA's simulator, ALMA
 and casa-rs's MSv2 writer write it, the receptors are the same.
+
+## `spw` "no match" warnings refuse the expression
+
+- Date noted: 2026-11-02
+- Status: CASA behaviour casa-rs follows for parity (#980, `casa-ms`
+  `selection::spw_expr`)
+- Affected code: casacore `ms/MSSel/MSSSpwErrorHandler.h`,
+  `MSSelection.cc` (`initErrorHandler`, `setErrorHandler`)
+
+`MSSSpwErrorHandler` only logs its reports (`handleError` posts a `WARN`), so
+a `spw` term matching nothing (`0,7` on a 4-window MeasurementSet, an unknown
+name) looks meant to be a warning. But it does not override `clone()`, and
+`MSSelection` installs `mssEH->clone()`, a base `MSSelectionErrorHandler`,
+which throws: CASA 6.7.6.14 refuses `0,7` with "Spw Expression: No match
+found for 7," (`resources/casa-compat/evidence/msselection-spw-casa-20261102.json`).
+casa-rs refuses it too.
+
+## A `spw` frequency range with a negative step can loop forever
+
+- Date noted: 2026-11-02
+- Status: CASA bug casa-rs does not follow (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc` (`matchFrequencyRange`)
+
+A stepped window range `f0~f1^s` with `s < 0` steps by each window's least
+`CHAN_WIDTH`, in single precision. A window whose widths are negative then
+steps away from `f1` and never leaves the loop; a step too small to move a
+single-precision frequency stalls it. CASA 6.7.6.14's `ms.msselect` does not
+return for `4GHz~5GHz^-1MHz` on a MeasurementSet with a descending window
+(`not_returning` in the evidence file). casa-rs refuses such expressions.
+
+## `spw` channel quirks casa-rs follows
+
+- Date noted: 2026-11-02
+- Status: CASA quirks casa-rs follows for parity (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc`, `MSSpwParse.cc`,
+  `MSSpwGram.yy`
+
+A single window frequency (`1.4GHz`) matches a window within its largest
+*signed* `CHAN_WIDTH` of the window's midpoint, so never a window whose widths
+are negative. A channel range in hertz reads the channel order from the sign
+of the first `CHAN_WIDTH`, not from the frequencies. When a window's first
+frequency channel range finds no channel, `selectChannelsFromIDList` skips
+one range instead of the window's ranges, so the next window takes the
+skipped window's later ranges (`0~2:4.5GHz~4.55GHz;0~1` gives window 2 the
+ranges `0~1` and `-1~63`). In a window list, a frequency replaces the list
+but not its write position (`100GHz~101GHz;0` lists the matched windows, then
+window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
+row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
+refuses the parenthesized form and a window kept without channels, whose
+imaging in CASA is not established.

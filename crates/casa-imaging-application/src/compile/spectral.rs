@@ -24,7 +24,7 @@ use casa_types::measures::{
 
 use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
-use super::selection::{SourceSpectralWindow, WindowChannels, explicit_spw_channels, one_window};
+use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
 use super::survey::Survey;
 use crate::{ImagingRequest, SpecMode};
 
@@ -335,8 +335,10 @@ fn cube_law(
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
     let (setup, support) = cube_setup(survey, window, output_channels, &axis, frame)?;
     let mut selected = support.indices;
-    let explicit = explicit_spw_channels(request, window.spw_id, &window.frequencies_hz)?
-        .map(|channels| channels.into_iter().collect::<BTreeSet<_>>());
+    let explicit = survey
+        .spw_channels
+        .get(&window.spw_id)
+        .map(|channels| channels.iter().copied().collect::<BTreeSet<_>>());
     if let Some(explicit) = &explicit {
         selected.retain(|channel| explicit.contains(channel));
     }
