@@ -566,8 +566,8 @@ mod tests {
         let each_f32 = relative(&weight_image(&f32_operator, &samples, true), &reference);
         assert!(summed_f32 <= 1.0e-6, "summed on f32 grids: {summed_f32}");
         assert!(
-            each_f32 > 10.0 * summed_f32,
-            "per sample on f32 grids drifts: {each_f32} against {summed_f32}"
+            each_f32 <= 1.0e-6,
+            "compensated per-sample f32 grids: {each_f32}"
         );
     }
 

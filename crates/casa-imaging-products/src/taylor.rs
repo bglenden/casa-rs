@@ -762,7 +762,16 @@ pub(crate) fn analytic_vla_primary_beam(
         increment_rad,
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = vla_band_voltage_table(frequency_hz)?;
+    // CASA's SynthesisImager::makePBImage chooses the legacy VLA aperture
+    // once, from output channel zero. PBMath1D then scales that same aperture
+    // by each plane's frequency, even when the cube crosses a band boundary.
+    let first_frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(0)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = vla_band_voltage_table(first_frequency_hz)?;
     Ok(summed_beams(shape, &centres, |plane, centre| {
         add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
     }))
@@ -813,18 +822,26 @@ fn add_annular_aperture_power(
 }
 
 fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
-    // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
-    // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
-    // Other legacy-VLA bands retain their explicit unsupported boundary.
-    if vla_band_supported(frequency_hz) {
-        Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
-    } else {
-        Err(ProductsError::UnsupportedProblem)
+    if !vla_band_supported(frequency_hz) {
+        return Err(ProductsError::UnsupportedProblem);
     }
+    // PBMath::whichCommonPBtoUse selects VLA_NVSS outside the named open
+    // intervals. All named bands share one aperture; SIMapper::addPB applies
+    // BeamSquint::NONE, so their different squint parameters do not enter here.
+    let (diameter_m, obstruction_m) = if VlaBand::of(frequency_hz).is_some() {
+        (25.0, 2.36)
+    } else {
+        (24.5, 0.0)
+    };
+    Ok(AnnularApertureVoltageTable::new(
+        diameter_m,
+        obstruction_m,
+        0.8564 * 60.0,
+    ))
 }
 
 fn vla_band_supported(frequency_hz: f64) -> bool {
-    matches!(VlaBand::of(frequency_hz), Some(VlaBand::L | VlaBand::Q))
+    frequency_hz.is_finite() && frequency_hz > 0.0
 }
 
 pub(crate) fn primary_beam_frequency_supported(
@@ -914,19 +931,19 @@ mod tests {
     }
 
     #[test]
-    fn beam_coverage_preserves_the_existing_open_band_boundaries() {
+    fn beam_coverage_includes_vla_nvss_and_keeps_evla_band_limits() {
         use crate::AnalyticPrimaryBeamModel::{CasaEvlaCommon, CasaVlaBand};
         for (model, frequency_hz, supported) in [
-            (CasaVlaBand, 1.0e9, false),
+            (CasaVlaBand, 1.0e9, true),
             (CasaVlaBand, 1.4e9, true),
-            (CasaVlaBand, 2.0e9, false),
-            (CasaVlaBand, 8.0e9, false),
-            (CasaVlaBand, 35.0e9, false),
+            (CasaVlaBand, 2.0e9, true),
+            (CasaVlaBand, 8.0e9, true),
+            (CasaVlaBand, 35.0e9, true),
             (CasaVlaBand, 44.0e9, true),
             (CasaVlaBand, 45.022e9, true),
             (CasaVlaBand, 54.880e9, true),
-            (CasaVlaBand, 55.0e9, false),
-            (CasaVlaBand, 55.008e9, false),
+            (CasaVlaBand, 55.0e9, true),
+            (CasaVlaBand, 55.008e9, true),
             (CasaEvlaCommon, 0.9e9, false),
             (CasaEvlaCommon, 1.4e9, true),
             (CasaEvlaCommon, 3.0e9, true),
@@ -1083,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
+    fn vla_named_bands_share_the_casa_annular_airy_lookup() {
         let frequency_hz = 45_469_370_205.156_37;
         let table = super::vla_band_voltage_table(frequency_hz)
             .expect("issue #607 representative frequency is in VLA Q band");
@@ -1092,28 +1109,53 @@ mod tests {
         let voltage = table.evaluate(29.919_033_706_45);
         assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
 
-        // The L band shares the same CASA annular aperture inside its open
-        // 1--2 GHz interval.
-        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
-        assert_eq!(l_band.maximum_radius(), table.maximum_radius());
-        assert_eq!(
-            l_band.evaluate(29.919_033_706_45).to_bits(),
-            table.evaluate(29.919_033_706_45).to_bits()
-        );
+        for ghz in [0.05, 0.3, 1.5, 5.0, 9.0, 15.0, 25.0, 45.0] {
+            let band = super::vla_band_voltage_table(ghz * 1e9).expect("named VLA band");
+            assert_eq!(band.maximum_radius(), table.maximum_radius());
+            for radius in [0.0, 10.0, 29.919_033_706_45, 50.0, 52.0] {
+                assert_eq!(band.evaluate(radius), table.evaluate(radius));
+            }
+        }
+    }
 
-        for unsupported_hz in [
-            f64::NAN,
-            55.0e9,
-            35.0e9,
-            25.0e9,
-            15.0e9,
-            9.0e9,
-            5.0e9,
-            2.0e9,
-            1.0e9,
-            0.3e9,
-            0.05e9,
+    #[test]
+    fn vla_unassigned_intervals_and_exact_band_edges_select_nvss() {
+        let nvss = super::AnnularApertureVoltageTable::new(24.5, 0.0, 0.8564 * 60.0);
+        let named = super::vla_band_voltage_table(1.5e9).unwrap();
+        assert_ne!(nvss.evaluate(30.0), named.evaluate(30.0));
+        for ghz in [
+            0.1,
+            0.15,
+            0.2,
+            0.4,
+            0.999_981_059_496_862_4,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            7.0,
+            11.0,
+            19.0,
+            35.0,
+            55.0,
+            55.008,
+            100.0,
         ] {
+            let table = super::vla_band_voltage_table(ghz * 1e9).expect("VLA NVSS");
+            assert_eq!(table.maximum_radius(), nvss.maximum_radius());
+            for radius in [0.0, 10.0, 30.0, 50.0, 52.0] {
+                assert_eq!(table.evaluate(radius), nvss.evaluate(radius), "{ghz} GHz");
+            }
+        }
+    }
+
+    #[test]
+    fn vla_invalid_frequencies_fail_closed() {
+        for unsupported_hz in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            assert!(!super::primary_beam_frequency_supported(
+                crate::AnalyticPrimaryBeamModel::CasaVlaBand,
+                unsupported_hz,
+            ));
             assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
         }
     }

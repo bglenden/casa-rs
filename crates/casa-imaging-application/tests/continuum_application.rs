@@ -950,7 +950,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         let imaging = request(
             &measurement_set,
             &image_name,
-            json!({ "niter": niter, "outlierfile": outlier_file }),
+            json!({
+                "niter": niter,
+                "outlierfile": outlier_file,
+                "hogbom_iteration_mode": "strict",
+            }),
         );
 
         let result = execute(&imaging).expect("execute T31 multi-domain application");

@@ -71,7 +71,7 @@ fn device_accumulator() -> (GridAccumulator, Cells) {
     // SAFETY: `memory` holds `len` zeroed cells and keeps them in place
     // while the box owns it; only the stand-in device and these cells reach
     // them.
-    let cells = unsafe { DeviceCells::new(address, len, Box::new(memory)) };
+    let cells = unsafe { DeviceCells::new(address, len, len, Box::new(memory)) };
     let acc = GridAccumulator::with_storage(layout, GridStorage::Device(cells));
     (acc, Cells(address, len))
 }

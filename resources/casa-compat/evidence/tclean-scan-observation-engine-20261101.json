@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "record": "tclean-scan-observation-compact-engine-preview",
+  "date": "2026-11-01",
+  "state": "All39 scoped engine product/count/sample rows pass; two raw f32 CLEAN cyclethreshold failures unaccepted; production provider32 unchanged; final-source/public Python selection not accepted",
+  "native_revision": "291e107317a91d6687594671bc4328a5822373d1",
+  "binary_sha256": "02b3cf93d6236937d5e8de75fe2f8a3b7801bf6fbece3db17af591cf9e5e641e",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "scope": "12 initial-imaging cases and one10-step CLEAN conjunction perCPU64/CPU32/Metal32: actual observation subsets, scan/observation conjunction, lists/duplicates/ascending ranges and bothselectdata values. Standard single-term StokesI MFS only.",
+  "comparison": "Exact image-directory inventory/masks, finite valid support, NRMS1e-3 andsumwt5e-5, selectedWCS/restfreq/units/Stokes/frames, beamaxes1e-3/PA0.01deg, exact iteration/major/stop and selected samplecounts; maxpsfsidelobe/cyclethreshold1e-6relative+1e-8absolute. Whole-file output inventory and other return keys not established.",
+  "raw_receipts": {
+    "compact-engine-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scan-observation-20261101/compact-engine-cpu64/receipt.json",
+      "sha256": "253217bce8fe56d6b2cd0849ea1f7664fcaa859eafb31c0277177bfa62ef1490",
+      "cases": 13,
+      "product_count_sample_passed": 13,
+      "all_original_checks_passed": 13,
+      "clean_conjunction_scalars": {
+        "maxpsfsidelobe": {
+          "native": 0.185397669672966,
+          "casa": 0.185397669672966,
+          "passed": true
+        },
+        "cyclethreshold": {
+          "native": 0.057847533375024796,
+          "casa": 0.05784747377038002,
+          "passed": true
+        }
+      }
+    },
+    "compact-engine-cpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scan-observation-20261101/compact-engine-cpu32/receipt.json",
+      "sha256": "463e5cbadce1c5cfa0e4b9cfe510596ea240f05de3d6d180601a2b1a78ded215",
+      "cases": 13,
+      "product_count_sample_passed": 13,
+      "all_original_checks_passed": 12,
+      "clean_conjunction_scalars": {
+        "maxpsfsidelobe": {
+          "native": 0.185397669672966,
+          "casa": 0.185397669672966,
+          "passed": true
+        },
+        "cyclethreshold": {
+          "native": 0.05784754455089569,
+          "casa": 0.05784747377038002,
+          "passed": false
+        }
+      }
+    },
+    "compact-engine-gpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scan-observation-20261101/compact-engine-gpu32/receipt.json",
+      "sha256": "0b61a77eace8bbe2b246261482782a63a1378b9e986f3c5b642927dc429ff709",
+      "cases": 13,
+      "product_count_sample_passed": 13,
+      "all_original_checks_passed": 12,
+      "clean_conjunction_scalars": {
+        "maxpsfsidelobe": {
+          "native": 0.185397669672966,
+          "casa": 0.185397669672966,
+          "passed": true
+        },
+        "cyclethreshold": {
+          "native": 0.05784754455089569,
+          "casa": 0.05784747377038002,
+          "passed": false
+        }
+      }
+    }
+  },
+  "scalar_disposition": "37/39 aggregate raw rows pass. Of3 nonzero CLEANthreshold rows, CPU64 passes; CPU32 andMetal32 each fail at0.05784754455089569 versusCASA0.05784747377038002 (7.078051567077637e-8Jy/beam,1.2235714ppm,19FloatULPs). No existing exact-output waiver applies; no new waiver or tolerance change.",
+  "build": "Homebrew FFTW3.3.11 static scalar libraries; baseline and preview have0NEON n1fv symbols. No performance claim; driver elapsed includes comparison I/O.",
+  "fixture": {
+    "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scan-observation-20261101/input.ms",
+    "main_rows": 52650,
+    "flagged_rows": 0,
+    "channels": 2,
+    "four_group_counts": [
+      13338,
+      13338,
+      12987,
+      12987
+    ],
+    "imsize": [
+      256,
+      256
+    ],
+    "cell": "0.012arcsec",
+    "geometry": "Four coincident fields, two observations, two scans per observation; exact physical rows recorded in fixture and CASA oracle JSON."
+  },
+  "domain": "Pinned actual tclean probes refuse malformed CSV/signs/negative/equal-or-reversed ranges/blanks/none, while padded IDs succeed. Lowlevel msselect false on invalid parse is not a success; only actual task exceptions establish refusals. >1 is CASA-valid scan grammar still unfinished natively.",
+  "memory": "Compact interval allocation depends on expression termcount, not width. Narrow/MAX allocation equality and actual retained-owner charge laws pass; no huge expanding CASA or old-native baseline was executed. Rowfacts+8B retained, default stored reads remain69B/row; optional scan lane raises conservative maximum to73B/row, reducing maximum reservation-derived rowcount about5.48%.",
+  "visual": "All39 pair contact sheets inspected on common CASA/native scales with labelled differences and square geometry. Dirty CLEANmask absence is explicit in both; no asymmetric absence.",
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/scan-observation-engine-20261101.tar",
+    "bytes": 161300480,
+    "sha256": "7b35ca58b0ebee3cc6d8fa2f503a45a617084cec9d76a95103484d175d14accf",
+    "members": 4398,
+    "manifest_sha256": "6eff1529294a2e015364e963cc91834f28528be264708991a130002fa6cc3c82",
+    "verification": "Each archived member checked; NAS reread hash matches",
+    "state": "Engine preview only: all39 products/counts/sample counts pass;37/39 raw selected-scalar rows pass, two new f32 CLEAN cyclethreshold failures unaccepted. Production provider32 unchanged; no public Python or final-source acceptance.",
+    "native_revision": "291e107317a91d6687594671bc4328a5822373d1"
+  },
+  "unfinished": [
+    "Final-source and public Python/frontend selection acceptance",
+    "Remaining comparison/operator grammar and legacy FIELD-range expansion",
+    "Antenna/time/multi-MS and broader modes/metadata/returns",
+    "Two original scalar failures; no automatic acceptance",
+    "Whole tclean completion and representative/runtime-prediction closeout"
+  ]
+}

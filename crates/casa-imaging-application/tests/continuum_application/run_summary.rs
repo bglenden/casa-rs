@@ -319,6 +319,31 @@ fn a_preparation_failure_records_the_device_the_request_resolved_to() {
 }
 
 #[test]
+fn an_unreadable_outlier_file_still_records_a_failed_preparation() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let mut imaging = request(
+        &measurement_set,
+        &root.path().join("new"),
+        json!({ "niter": 0 }),
+    );
+    imaging.outlierfile = Some(root.path().join("absent.outliers"));
+    let path = root.path().join("failed.summary.json");
+    let error =
+        casa_imaging_application::execute(&imaging, summarised(&path, ResourcePolicy::Balanced))
+            .err()
+            .expect("missing outlier file");
+    assert!(
+        matches!(error, ApplicationDispatchError::Preparation(_)),
+        "{error}"
+    );
+    assert_the_last_phase_failed(&read_summary(&path));
+    assert!(error.to_string().contains("outlier file"), "{error}");
+    assert!(!root.path().join("new.model").exists());
+}
+
+#[test]
 fn a_run_that_fails_after_its_cycles_keeps_their_record() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");

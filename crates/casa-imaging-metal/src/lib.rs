@@ -68,12 +68,24 @@ const SAMPLE_BYTES: usize = 40;
 const SOURCE_BYTES: usize = 24;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 
-/// The most device memory one backend's ring holds for blocks of `npol`
-/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
+/// The most host/device memory one backend's ring holds for blocks of `npol`
+/// visibility polarizations;
+/// its kernel copies add [`kernel_bytes`], and a
 /// native prediction its batch ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
-    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let host = backend::ring_host_bytes();
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    let host = 0;
+    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64 + host
+}
+
+/// Additional device-grid bytes for compensated f32 accumulation (#991).
+/// Two correction grids each hold an f32 complex pair per accumulation cell.
+#[must_use]
+pub const fn accumulator_extra_bytes(cells: u64) -> u64 {
+    cells.saturating_mul(16)
 }
 
 /// Device bytes of one kernel table record (`records::TableRecord`).

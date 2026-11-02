@@ -127,8 +127,8 @@ fn uniform_and_briggs_weights_follow_the_casa_formulae() {
 /// `x = 3 ∓ 0.7` with its conjugate:
 /// - standard (truncate): 2.3 → 2 and 3.7 → 3, where a half-cell origin
 ///   gives 2.8 → 2 and 4.2 → 4;
-/// - cube build (`nint(x + 1) − 1`): 3.3 → 2 and 4.7 → 4, where a half-cell
-///   origin gives 3.8 → 3; the cube lookup rounds 2.3 → 2, not 2.8 → 3.
+/// - cube build (`nint(x + 1) − 1`, `u` negated): 4.7 → 4 and 3.3 → 2, where
+///   a half-cell origin gives 3.8 → 3; the cube lookup rounds 3.7 → 4.
 #[test]
 fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
     let odd = |rule| DensityGridShape {
@@ -154,10 +154,12 @@ fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
 }
 
 #[test]
-fn cube_cells_round_and_mirror_v() {
-    // Build: x = round(4 − 8e-3·u + 1) − 1, y = round(4 − 8e-3·v + 1) − 1,
-    // away from rounding ties. (−250, 125) → (6, 3), conjugate (2, 5);
-    // (−200, 50) → (6.6 → 6, 4.6 → 4), conjugate (3.4 → 2, 5.4 → 4).
+fn cube_cells_round_the_negated_uv() {
+    // CASA's cube weightor negates u and v (`FTMachine::negateUV` for the
+    // build, `u = −uvw·f` for the lookup). Build: x = round(4 + 8e-3·u + 1) − 1,
+    // y = round(4 − 8e-3·v + 1) − 1, away from rounding ties. (−250, 125) →
+    // (2, 3), conjugate (6, 5); (−200, 50) → (3.4 → 2, 4.6 → 4), conjugate
+    // (6.6 → 6, 5.4 → 4).
     let buffer = density_buffer(&[(-250.0, 125.0, 1.0), (-200.0, 50.0, 1.0)]);
     let grid = build_density_grid(
         std::iter::once(buffer.block()),
@@ -165,13 +167,13 @@ fn cube_cells_round_and_mirror_v() {
     );
     let cells = grid.plane(0);
     let at = |x: usize, y: usize| cells[y * 8 + x];
-    assert_eq!(at(6, 3), 1.0);
-    assert_eq!(at(2, 5), 1.0);
-    assert_eq!(at(6, 4), 1.0);
+    assert_eq!(at(2, 3), 1.0);
+    assert_eq!(at(6, 5), 1.0);
     assert_eq!(at(2, 4), 1.0);
+    assert_eq!(at(6, 4), 1.0);
     assert_eq!(cells.iter().sum::<f64>(), 4.0);
     assert_eq!(grid.sum_weights(), &[2.0]);
-    // Lookup: x = round(4 − 8e-3·u), y = round(4 − 8e-3·v) in single precision.
+    // Lookup: x = round(4 + 8e-3·u), y = round(4 − 8e-3·v) in single precision.
     assert_eq!(grid.lookup(0, uv(-250.0, 125.0)), Some(1.0));
     assert_eq!(grid.lookup(0, uv(-200.0, 50.0)), Some(1.0));
     assert_eq!(grid.lookup(0, uv(100.0, 100.0)), Some(0.0));
@@ -185,6 +187,43 @@ fn cube_cells_round_and_mirror_v() {
     let expected = 1.0 / (f2 + 1.0);
     assert!((f64::from(weight(&briggs, -250.0, 125.0, 1.0)) - expected).abs() < 1e-7);
     assert_eq!(weight(&briggs, 100.0, 100.0, 1.0), 0.0);
+}
+
+/// A sample of `refim_point.ms` (row 32452, channel 4) whose `Float` cell
+/// coordinate is exactly 51.5 in CASA's orientation: CASA 6.7.6.14's cube
+/// weightor rounds it half away from zero to cell 52 and weighs it from
+/// that cell's density. A lookup in the mirrored orientation computes
+/// 48.5, rounds to 49 and reads the cell CASA calls 51 (#980).
+#[test]
+fn a_float_tie_rounds_in_casas_orientation() {
+    let cell_rad = 8.0 / 206_264.806_247_096_36;
+    let shape = DensityGridShape {
+        width: 100,
+        height: 100,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-cell_rad, cell_rad],
+        rule: DensityCellRule::Cube,
+    };
+    let tie = DensityUv::casa(
+        [96.620_773_734_500_32, -870.029_305_110_418_4, 0.0],
+        1_199_986_794.390_933,
+    );
+    let scale_x = (100.0 * -cell_rad) as f32;
+    assert_eq!(
+        scale_x * -tie.u + 50.0,
+        51.5,
+        "the sample is an exact Float tie"
+    );
+    // Cells 52 and 51 of row 64, built from double coordinates far from
+    // their own rounding ties: x = round(u·100·Δ + 51) − 1, y = round(14 + 51) − 1.
+    let per_cell = 1.0 / (100.0 * cell_rad);
+    let row_v = -14.0 * per_cell;
+    let buffer = density_buffer(&[(2.0 * per_cell, row_v, 1.0), (per_cell, row_v, 2.0)]);
+    let grid = build_density_grid(std::iter::once(buffer.block()), shape);
+    assert_eq!(grid.plane(0)[64 * 100 + 52], 1.0);
+    assert_eq!(grid.plane(0)[64 * 100 + 51], 2.0);
+    assert_eq!(grid.lookup(0, tie), Some(1.0), "CASA reads cell 52");
 }
 
 #[test]

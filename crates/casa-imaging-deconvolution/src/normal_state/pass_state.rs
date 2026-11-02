@@ -285,7 +285,11 @@ impl PassNormalState {
         {
             return Err(NormalStateError::InvalidSlab);
         }
-        let validity = sum_weights.iter().map(|weight| validity(*weight)).collect();
+        let validity = sum_weights
+            .iter()
+            .zip(&published_sum_weights)
+            .map(|(weight, published)| validity(*weight, *published))
+            .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
             self.roles[domain].clone(),
@@ -364,7 +368,8 @@ impl PassNormalState {
         };
         let validity = sum_weights[..polarizations]
             .iter()
-            .map(|weight| validity(*weight))
+            .zip(&published_sum_weights[..polarizations])
+            .map(|(weight, published)| validity(*weight, *published))
             .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
@@ -405,9 +410,11 @@ fn all_finite(images: &PassImages) -> bool {
 }
 
 /// A plane whose accumulated weight is zero is unmapped whether or not
-/// samples reached it: nothing downstream distinguishes the two cases.
-fn validity(sum_weight: f64) -> SpectralChannelValidity {
-    if sum_weight > 0.0 {
+/// samples reached it: nothing downstream distinguishes the two cases. So
+/// is a plane whose published `.sumwt` is at most CASA's empty-plane bound,
+/// which CASA zeroes rather than divides ([`super::casa_divides_plane`]).
+fn validity(sum_weight: f64, published_sum_weight: f64) -> SpectralChannelValidity {
+    if sum_weight > 0.0 && super::casa_divides_plane(published_sum_weight) {
         SpectralChannelValidity::Valid
     } else {
         SpectralChannelValidity::Unmapped

@@ -75,6 +75,8 @@ pub(crate) struct Prepared {
     pub(crate) geometry: GeometryInput,
     pub(crate) model_lifecycle: ModelLifecycleRequirements,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
+    /// Static restart-mask support, including the run's clone, kept through publication.
+    pub(crate) mask_resident: casa_imaging_runtime::Reservation,
     /// The main domain's start model ([`StartModel`]).
     pub(crate) start_model: Option<StartModel>,
     /// A direction-dependent gridder's residual units, which bind every
@@ -102,6 +104,15 @@ struct Surveyed<'a> {
     engine: &'a MsCalEngine,
     survey: &'a Survey,
     spectral: &'a PreparedSpectralAxis,
+}
+
+/// Check outlier output prefixes with the same parser compile uses (#944).
+pub(crate) fn check_outlier_outputs(path: &std::path::Path) -> Result<(), PrepareError> {
+    let outputs = outliers::read_output_prefixes(path)?;
+    for output in outputs {
+        crate::restart::check_prefix(&output)?;
+    }
+    Ok(())
 }
 
 /// Compile `request` against its MeasurementSet.
@@ -154,7 +165,10 @@ pub(crate) fn prepare(
     let moving_rest_frame = moving_rest_frame(request, &centre, &frame)?;
     let spectral = spectral::prepare_axis(
         request,
-        catalogue,
+        (
+            store.msv2().map(Msv2Observation::measurement_set),
+            catalogue,
+        ),
         &survey,
         &frame,
         moving_rest_frame.as_ref(),
@@ -169,7 +183,7 @@ pub(crate) fn prepare(
     let surveyed = &surveyed_observation;
     let (continuum_transform, channels) = continuum_selection(request, surveyed, &centre)?;
     let observation_info = direction::observation_info(catalogue, &survey, &centre, &engine)?;
-    let domains = domains::prepare_domains(
+    let mut domains = domains::prepare_domains(
         request,
         &centre,
         ImageSpectralCoordinate {
@@ -212,7 +226,7 @@ pub(crate) fn prepare(
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
-    let start_model = request
+    let mut start_model = request
         .startmodel
         .as_deref()
         .map(|path| {
@@ -224,6 +238,35 @@ pub(crate) fn prepare(
             )
         })
         .transpose()?;
+    let mut mask_resident = casa_imaging_runtime::Reservation::none();
+    if request.tclean_restart {
+        let template = casa_images::RegridTemplate {
+            coordinates: domains[0].coordinates.clone(),
+            shape: vec![domains[0].image_size[0], domains[0].image_size[1], 1, 1],
+        };
+        for path in crate::restart::products(&request.imagename)? {
+            if path.extension().is_some_and(|suffix| suffix == "model") {
+                start_model = Some(StartModel::restart(&path, &domains[0])?);
+            } else {
+                crate::restart::check_grid(&path, &template)?;
+                if path.extension().is_some_and(|suffix| suffix == "mask") {
+                    let input = crate::restart::MaskInput::open(&path)?;
+                    let mut charge = casa_imaging_runtime::admit(
+                        &context.host,
+                        &context.policy,
+                        &casa_imaging_runtime::Demand {
+                            phase: "restart CLEAN mask",
+                            memory: input.reading_bytes(),
+                        },
+                    )?;
+                    let retained = input.retained_bytes();
+                    domains[0].mask = domains::DomainMask::PixelSupport(input.read()?);
+                    charge.retain(retained);
+                    mask_resident.join(charge);
+                }
+            }
+        }
+    }
     let geometry = geometry(request, &domains, &centre, &spectral);
     let snapshot = snapshot_input(request, (store, columns), survey, &channels)?;
     // A moving phase centre names a body and a table alike; the table, when
@@ -242,6 +285,7 @@ pub(crate) fn prepare(
             NumericPrecision::F64,
         ),
         masks: domains::mask_plans(&domains)?,
+        mask_resident,
         start_model,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(

@@ -26,7 +26,7 @@ pub(crate) const MAX_POLS: usize = 4;
 const _: () = {
     assert!(size_of::<SampleRecord>() == crate::SAMPLE_BYTES);
     assert!(size_of::<TableRecord>() == 16);
-    assert!(size_of::<Params>() == 144);
+    assert!(size_of::<Params>() == 152);
     assert!(size_of::<casa_imaging_operator::NativeTerm>() == 20);
     assert!(size_of::<casa_imaging_operator::NativeSource>() == 24);
 };
@@ -100,6 +100,8 @@ pub(crate) struct Params {
     pub grid_shape: [u32; 2],
     pub adjoint: [[i8; 16]; 2],
     pub forward: [[i8; 16]; 2],
+    /// Float offset of the experimental rounding-loss grid; zero otherwise.
+    pub compensation: u64,
 }
 
 /// The [`Params::stride`] that spreads an accumulating dispatch of

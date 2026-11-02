@@ -1,0 +1,169 @@
+{
+  "kind": "small lifecycle/refusal oracle; not representative science",
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "oracle_python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+  "casars_revision": "ad40d127779ef75d5bfbe30475be85e61e52bf3a",
+  "recipe_revision": "16465844c78ef7ef27c51b5ab59799992430c4ea",
+  "revision_scope": "production crate sources, runtime resources and Cargo manifests/lock; test-only changes are separate",
+  "command": [
+    "tools/casa-compat/tclean_lifecycle_probe.py",
+    "--work",
+    "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2",
+    "--imager",
+    "/Users/brianglendenning/SoftwareProjects/casa-rs/target/release/casars-imager",
+    "--revision",
+    "ad40d127779ef75d5bfbe30475be85e61e52bf3a",
+    "--stokes",
+    "--out",
+    "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/lifecycle-stokes-final-2.json"
+  ],
+  "inputs": "record_casa_returns.make_ms; noiseless unit DATA",
+  "parameters": {
+    "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/point.ms",
+    "datacolumn": "data",
+    "imsize": [
+      64
+    ],
+    "cell": "2arcsec",
+    "weighting": "natural",
+    "niter": 10,
+    "gain": 0.1,
+    "threshold": "0Jy",
+    "pblimit": -0.1
+  },
+  "native_backend": "cpu",
+  "native_gridprecision": "f64",
+  "casa": {
+    "first_iterdone": 10,
+    "second_iterdone": 10,
+    "first_model_flux": 0.686189591884613,
+    "second_model_flux": 0.901522696018219,
+    "startmodel_conflict": {
+      "type": "RuntimeError",
+      "message": "Invalid Image Parameter set : Model casa.model exists, but a starting model of casa.model is also being requested. Please either reset startmodel='' to use what already exists, or delete casa.model so that it uses the new model specified in startmodel."
+    },
+    "restart_false_prefixes": [
+      "casa_2",
+      "casa_3"
+    ]
+  },
+  "native": {
+    "first_status": "succeeded",
+    "repeated": {
+      "exit_code": 1,
+      "reply": {
+        "status": "failed",
+        "surface": "tclean",
+        "kind": "execution",
+        "message": "imaging application preparation failed: existing image product \"/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/native-output/image.psf\": CASA restart is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
+      },
+      "stderr": "SEVERE casa_task_runtime::front_end (file crates/casa-task-runtime/src/front_end/mod.rs, line 728) tclean failed task=tclean error=imaging application preparation failed: existing image product \"/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/native-output/image.psf\": CASA restart is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel\n"
+    },
+    "unchanged_output_files": 43
+  },
+  "stokes_startmodel": {
+    "products": {
+      "image.image": {
+        "nrms": 2.8400941993559445e-07,
+        "mask_mismatch": 0,
+        "beam": [
+          [
+            8.909094,
+            8.80156,
+            1.077416
+          ],
+          [
+            8.909093,
+            8.801561,
+            1.077484
+          ]
+        ]
+      },
+      "image.model": {
+        "nrms": 8.65441086637584e-12,
+        "mask_mismatch": 0,
+        "beam": null
+      },
+      "image.psf": {
+        "nrms": 1.33386098532478e-07,
+        "mask_mismatch": 0,
+        "beam": [
+          [
+            8.909094,
+            8.80156,
+            1.077416
+          ],
+          [
+            8.909093,
+            8.801561,
+            1.077484
+          ]
+        ]
+      },
+      "image.residual": {
+        "nrms": 4.1139281970916387e-07,
+        "mask_mismatch": 0,
+        "beam": null
+      },
+      "image.sumwt": {
+        "nrms": 0.0,
+        "mask_mismatch": 0,
+        "beam": null,
+        "sumwt": [
+          576.0,
+          576.0
+        ]
+      }
+    },
+    "model_fluxes": [
+      0.9015226960338234,
+      0.901522696018219
+    ],
+    "model_centroids_xy": [
+      [
+        32.0,
+        32.0
+      ],
+      [
+        32.0,
+        32.0
+      ]
+    ],
+    "output_model_stokes": [
+      [
+        "I"
+      ],
+      [
+        "I"
+      ]
+    ],
+    "warning_observed": true,
+    "casa_members": [
+      "image.image",
+      "image.model",
+      "image.pb",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "native_members": [
+      "image.image",
+      "image.model",
+      "image.psf",
+      "image.residual",
+      "image.sumwt"
+    ],
+    "missing_native_members": [
+      "image.pb"
+    ],
+    "extra_native_members": [],
+    "scope": "single Q-labelled seed into I; small production-path T1.5 diagnostic, not representative T2"
+  },
+  "casa_absolute_restart_false_error": {
+    "type": "RuntimeError",
+    "message": "Error in making PSF : Directory: olumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/casa_2.psf does not exist and cannot be created"
+  },
+  "casa_preservation_scope": "all prior product bytes except table.lock and appended image-history logtables",
+  "result": "passed lifecycle assertions; restart equivalence remains unfinished"
+}

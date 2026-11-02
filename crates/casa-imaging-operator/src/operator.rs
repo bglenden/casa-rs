@@ -63,10 +63,17 @@ impl Basis {
 
     /// The Taylor expansion variable `(ν − ν₀)/ν₀` at `freq_hz`; 0 for
     /// other bases.
+    ///
+    /// CASA's `MultiTermFTNew` narrows each channel frequency to `Float`
+    /// before forming the variable against its `Double` reference frequency,
+    /// for both gridding weights and model prediction (#980).
     #[must_use]
     pub fn spectral(self, freq_hz: f64) -> f32 {
         match self {
-            Self::Taylor { reference_hz, .. } => ((freq_hz - reference_hz) / reference_hz) as f32,
+            Self::Taylor { reference_hz, .. } => {
+                let freq_hz = f64::from(freq_hz as f32);
+                ((freq_hz - reference_hz) / reference_hz) as f32
+            }
             Self::Constant | Self::ChannelLocal { .. } => 0.0,
         }
     }

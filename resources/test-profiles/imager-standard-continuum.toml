@@ -2,7 +2,7 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 32
 
 [parameters]
 vis = ["representative-continuum.ms"]
@@ -19,4 +19,3 @@ weighting = "briggs"
 robust = -0.25
 niter = 500
 parallel = true
-write_pb = true

@@ -97,6 +97,30 @@ fn add_minimal_data_description(ms: &mut MeasurementSet) {
         .unwrap();
 }
 
+fn add_minimal_fields(ms: &mut MeasurementSet, count: usize) {
+    for id in 0..count {
+        let direction = Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1])));
+        let row = RecordValue::new(vec![
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String(format!("field-{id}"))),
+            ),
+            RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("DELAY_DIR", direction.clone()),
+            RecordField::new("PHASE_DIR", direction.clone()),
+            RecordField::new("REFERENCE_DIR", direction),
+        ]);
+        ms.subtable_mut(SubtableId::Field)
+            .unwrap()
+            .add_row(row)
+            .unwrap();
+    }
+}
+
 fn resolve_rows(ms: &MeasurementSet, selection: &MsSelection) -> Vec<usize> {
     ms.resolve_selection(
         selection,
@@ -243,6 +267,7 @@ fn save_preserves_existing_measure_reference_keywords() {
 fn selection_round_trip() {
     let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
     add_minimal_data_description(&mut ms);
+    add_minimal_fields(&mut ms, 3);
 
     let i = |v: i32| Value::Scalar(ScalarValue::Int32(v));
     let f = |v: f64| Value::Scalar(ScalarValue::Float64(v));

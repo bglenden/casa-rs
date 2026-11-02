@@ -31,8 +31,16 @@ mod msv4;
 mod mtmfs;
 #[path = "t1/non_square.rs"]
 mod non_square;
+#[path = "t1/pb_default.rs"]
+mod pb_default;
+#[path = "t1/restart.rs"]
+mod restart;
 #[path = "t1/routes.rs"]
 mod routes;
+#[path = "t1/selection.rs"]
+mod selection;
+#[path = "t1/selection_numeric.rs"]
+mod selection_numeric;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]

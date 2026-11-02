@@ -29,6 +29,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # arch-check resolves the reviewed CASA-compatibility evidence at
+          # its pinned commits (scripts/casa_compat_semantics.py).
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

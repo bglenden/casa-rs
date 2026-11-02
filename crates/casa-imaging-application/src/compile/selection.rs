@@ -35,26 +35,25 @@ pub(super) struct SourceSpectralWindow {
 /// Selected source channels per spectral window id.
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
-/// The request's per-sample predicates: its fields, UV-distance intervals
-/// and the observing modes its `intent` selector names
-/// ([`intents::resolve`]), with the states a state number named.
+/// The request's per-sample predicates: its fields, UV-distance intervals,
+/// scan numbers, observation identifiers and the observing modes its
+/// `intent` selector names ([`intents::resolve`]), with the states a state
+/// number named.
+///
+/// The field selector resolves against the catalogue's fields
+/// ([`resolve_fields`]); scan and observation text against CASA's strict
+/// numeric grammar, kept as inclusive intervals so a wide range holds no
+/// more than its terms.
 pub(super) fn row_selection(
     request: &ImagingRequest,
     catalogue: &Catalogue,
 ) -> Result<(RowSelection, BTreeSet<StateId>), PrepareError> {
-    let fields = match &request.field {
-        Some(ids) => IdSelection::Only(
-            ids.iter()
-                .map(|id| {
-                    u32::try_from(*id).map_err(|_| PrepareError::NegativeId {
-                        selector: "field",
-                        value: *id,
-                    })
-                })
-                .collect::<Result<_, _>>()?,
-        ),
+    let fields = match request.field.as_deref() {
+        Some(selector) => resolve_fields(selector, catalogue)?,
         None => IdSelection::All,
     };
+    let scans = numeric_row_ids(request.scan.as_deref(), "scan")?;
+    let observations = numeric_row_ids(request.observation.as_deref(), "observation")?;
     let uv_distances = match request.uvrange.as_deref() {
         Some(text) => UvSelection::Ranges(
             parse_uv_distance_intervals(text)?
@@ -71,7 +70,65 @@ pub(super) fn row_selection(
         }
         None => (IntentSelection::All, BTreeSet::new()),
     };
-    Ok((RowSelection::new(fields, uv_distances, intents), states))
+    Ok((
+        RowSelection::new(fields, uv_distances, intents).with_scan_observation(scans, observations),
+        states,
+    ))
+}
+
+/// The fields `selector` names among `catalogue`'s, through the shared
+/// FIELD selector ([`casa_ms::resolve_field_selector_rows`]): IDs and
+/// ranges bounded by the fields that exist, exact names and simple `*`
+/// patterns over unflagged fields. An MSv2 catalogue's field `i` is
+/// `FIELD_ID` `i`; an MSv4's fields are numbered in its catalogue's order
+/// and named as stored (XRADIO appends the MSv2 field number), with no row
+/// flags. Empty text selects every field; a nonempty selector that matches
+/// none is refused, as imaging never reads an empty selection.
+fn resolve_fields(selector: &str, catalogue: &Catalogue) -> Result<IdSelection, PrepareError> {
+    let rows = catalogue
+        .fields
+        .iter()
+        .map(|field| casa_ms::FieldSelectorRow {
+            name: &field.name,
+            flagged: field.flagged.unwrap_or(false),
+        })
+        .collect::<Vec<_>>();
+    let ids = casa_ms::resolve_field_selector_rows(&rows, selector)?;
+    if ids.is_empty() {
+        return Ok(IdSelection::All);
+    }
+    Ok(IdSelection::Only(
+        ids.into_iter()
+            .map(|id| u32::try_from(id).expect("a resolved FIELD_ID is nonnegative"))
+            .collect(),
+    ))
+}
+
+/// The scan numbers or observation identifiers `text` names, as inclusive
+/// intervals ([`casa_ms::parse_numeric_row_id_ranges`]); absent or empty
+/// text selects every one.
+fn numeric_row_ids(text: Option<&str>, label: &str) -> Result<IdSelection, PrepareError> {
+    let Some(text) = text.filter(|text| !text.is_empty()) else {
+        return Ok(IdSelection::All);
+    };
+    let ranges = casa_ms::parse_numeric_row_id_ranges(text, label)?;
+    if ranges.is_empty() {
+        return Err(casa_ms::MsError::InvalidInput(format!(
+            "{label} selector must contain nonnegative IDs"
+        ))
+        .into());
+    }
+    Ok(IdSelection::Ranges(
+        ranges
+            .into_iter()
+            .map(|(start, end)| {
+                (
+                    u32::try_from(start).expect("a parsed row ID is nonnegative"),
+                    u32::try_from(end).expect("a parsed row ID is nonnegative"),
+                )
+            })
+            .collect(),
+    ))
 }
 
 /// One `uvrange` interval as the model states it.

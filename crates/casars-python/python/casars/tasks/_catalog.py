@@ -268,8 +268,8 @@ def tclean(
     ddid: str = 'none',
     channel_start: int | Literal['none'] = 'none',
     channel_count: int | Literal['none'] = 'none',
-    hogbom_iteration_mode: str = 'strict',
-    write_pb: bool = False,
+    hogbom_iteration_mode: str = 'casa-inclusive',
+    write_pb: bool = True,
     fitspw: str = 'none',
     fitorder: int = 0,
     save_continuum_residual: bool = False,
@@ -291,8 +291,6 @@ def tclean(
     """Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
     CASA's ``tclean``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #944:
-    ``restart``.
     Accepted only at CASA's default, where CASA reads them, until #980:
     ``timerange``, ``antenna``, ``scan``, ``observation``, ``projection``,
     ``reffreq``, ``psfphasecenter``, ``vptable``, ``computepastep``,

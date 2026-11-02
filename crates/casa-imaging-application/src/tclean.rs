@@ -84,7 +84,7 @@ impl ImagingRequest {
 fn tclean_parameter(field: &str) -> &str {
     match field {
         "phasecenter_field" => "phasecenter",
-        "mask_box" | "mask_image" => "mask",
+        "mask_box" | "mask_image" | "explicit_empty_mask" => "mask",
         "minor_cycle_length" => "cycleniter",
         other => other,
     }
@@ -330,18 +330,10 @@ impl<'a> Tclean<'a> {
         self.copy(&["vis", "imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
-        self.ignore(&["selectdata", "timerange", "antenna", "scan", "observation"])?;
+        self.ignore(&["selectdata", "timerange", "antenna"])?;
         let field = self.text("field")?;
-        // `none` is the catalog's absence, as `''` is CASA's.
-        if field != "none" && field.chars().any(|c| c.is_ascii_alphabetic() || c == '*') {
-            return Err(TcleanRefusal::not_yet(
-                "field",
-                format!("{field:?} (casa-rs selects fields by id)"),
-                980,
-            ));
-        }
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
+        for name in ["spw", "uvrange", "intent", "scan", "observation"] {
             let value = self.text(name)?;
             self.set(name, value);
         }
@@ -720,10 +712,6 @@ impl<'a> Tclean<'a> {
             n => n,
         };
         self.set("minor_cycle_length", length);
-        if niter > 0 && self.values.get("nmajor").and_then(Value::as_i64) == Some(0) {
-            // CASA makes the residual and stops, at stopcode 9.
-            return Err(TcleanRefusal::not_yet("nmajor", "0", 980));
-        }
         Ok(())
     }
 
@@ -752,6 +740,10 @@ impl<'a> Tclean<'a> {
         } else {
             (Vec::new(), None)
         };
+        self.set(
+            "explicit_empty_mask",
+            modes.user_mask && !entries.is_empty() && boxes.is_empty() && image.is_none(),
+        );
         self.set(
             "mask_box",
             if boxes.is_empty() {
@@ -838,7 +830,7 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
         .map(|corners| {
             let corners = corners
                 .split(',')
-                .map(|corner| corner.trim().parse::<u64>().ok())
+                .map(|corner| corner.trim().parse::<i64>().ok())
                 .collect::<Option<Vec<_>>>()?;
             let [x0, y0, x1, y1] = corners.as_slice() else {
                 return None;
@@ -864,7 +856,7 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
             .trim()
             .strip_suffix("pix")
             .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.fract() == 0.0 && *number >= 0.0)
+            .filter(|number| number.fract() == 0.0)
             .ok_or_else(refused)
     };
     let mut boxes = Vec::new();

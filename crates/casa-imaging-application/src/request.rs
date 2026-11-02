@@ -29,6 +29,13 @@ use serde_json::Value;
 /// One imaging run's parameters, as the catalog resolved them.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ImagingRequest {
+    /// Task-only continuation, established by output preflight, never a catalog value.
+    #[serde(skip)]
+    pub(crate) tclean_restart: bool,
+    /// A supplied region file with no regions means zero support, not no mask.
+    /// Internal reader provenance only; this is never a catalog parameter.
+    #[serde(default)]
+    pub(crate) explicit_empty_mask: bool,
     /// The MeasurementSet.
     #[serde(deserialize_with = "single")]
     pub vis: PathBuf,
@@ -56,10 +63,11 @@ pub struct ImagingRequest {
     /// A CASA outlier file naming further image domains.
     #[serde(deserialize_with = "optional")]
     pub outlierfile: Option<PathBuf>,
-    /// Selected `FIELD_ID`s, from identifiers and ranges such as
-    /// `0,3~5`; `None` selects every field.
-    #[serde(deserialize_with = "field_ids")]
-    pub field: Option<Vec<i32>>,
+    /// Field selector: IDs/ranges, exact names and simple `*` name patterns.
+    /// Resolved once against FIELD metadata during compilation; `None`
+    /// selects every field.
+    #[serde(deserialize_with = "optional")]
+    pub field: Option<String>,
     /// The `FIELD_ID` whose phase centre is the image centre.
     #[serde(deserialize_with = "optional")]
     pub phasecenter_field: Option<i32>,
@@ -82,6 +90,12 @@ pub struct ImagingRequest {
     /// CASA baseline-length selection.
     #[serde(deserialize_with = "optional")]
     pub uvrange: Option<String>,
+    /// CASA numeric scan-number selection, resolved by the MeasurementSet owner.
+    #[serde(default, deserialize_with = "optional")]
+    pub scan: Option<String>,
+    /// CASA numeric observation-ID selection, resolved by the MeasurementSet owner.
+    #[serde(default, deserialize_with = "optional")]
+    pub observation: Option<String>,
     /// CASA observing-intent selection.
     #[serde(deserialize_with = "optional")]
     pub intent: Option<String>,
@@ -119,7 +133,8 @@ pub struct ImagingRequest {
     /// Absolute stopping threshold in Jy/beam.
     #[serde(deserialize_with = "threshold_jy")]
     pub threshold: f64,
-    /// Major-cycle limit; `None` is CASA's `nmajor = -1`.
+    /// Major-cycle limit after the initial pass; zero is initial-only,
+    /// and `None` is CASA's `nmajor = -1`.
     #[serde(deserialize_with = "major_cycle_limit")]
     pub nmajor: Option<usize>,
     /// Minor-cycle loop gain.
@@ -162,9 +177,9 @@ pub struct ImagingRequest {
     pub minbeamfrac: f64,
     /// Auto-multithresh growth iterations.
     pub growiterations: usize,
-    /// Inclusive pixel boxes `[x0, y0, x1, y1]` that may be cleaned.
+    /// Inclusive signed pixel boxes `[x0, y0, x1, y1]`, clipped to the image.
     #[serde(deserialize_with = "mask_boxes")]
-    pub mask_box: Vec<[usize; 4]>,
+    pub mask_box: Vec<[i64; 4]>,
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
@@ -419,6 +434,53 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// Check the bounded default `tclean` restart lifecycle (#944).
+    /// Task entry points call this before creating a run summary.
+    ///
+    /// # Errors
+    ///
+    /// An existing main/outlier scientific product, unreadable output
+    /// directory or invalid outlier-name file.
+    pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
+        crate::restart::check(self)
+    }
+
+    /// Clone this request with task continuation enabled after output preflight.
+    /// Lower-level execution of the original request retains atomic replacement.
+    ///
+    /// # Errors
+    /// An unsupported existing product or a conflicting explicit start model.
+    pub fn with_tclean_restart(&self) -> Result<Self, crate::PrepareError> {
+        self.check_tclean_output_prefixes()?;
+        let mut request = self.clone();
+        request.tclean_restart = !crate::restart::products(&self.imagename)?.is_empty();
+        Ok(request)
+    }
+
+    /// Apply CASA's task output policy before summary creation or execution.
+    /// `restart=true` keeps bounded continuation; `false` selects the next
+    /// single-main-image namespace and protects every existing chosen product.
+    ///
+    /// # Errors
+    /// Unsupported coordinated outlier numbering, invalid numbered names,
+    /// unreadable directories, or an occupied chosen scientific namespace.
+    pub fn with_tclean_output_policy(&self, restart: bool) -> Result<Self, crate::PrepareError> {
+        if restart {
+            return self.with_tclean_restart();
+        }
+        if let Some(path) = &self.outlierfile {
+            return Err(crate::PrepareError::Restart {
+                path: path.clone(),
+                reason: "restart=False coordinated outlier numbering is unfinished (#944)".into(),
+            });
+        }
+        let mut request = self.clone();
+        request.imagename = crate::restart::next_prefix(&self.imagename)?;
+        crate::restart::check_prefix(&request.imagename)?;
+        request.tclean_restart = false;
+        Ok(request)
+    }
+
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
@@ -463,10 +525,10 @@ impl ImagingRequest {
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
             return invalid("deconvolver, specmode", "mtmfs images a continuum (mfs)");
         }
-        if self.solves() && (self.minor_cycle_length == 0 || self.nmajor == Some(0)) {
+        if self.solves() && self.minor_cycle_length == 0 {
             return invalid(
-                "minor_cycle_length, nmajor",
-                "a solving run needs minor-cycle iterations and a major cycle",
+                "minor_cycle_length",
+                "a solving run needs minor-cycle iterations",
             );
         }
         if self.savemodel && !self.solves() && self.startmodel.is_none() {
@@ -475,9 +537,10 @@ impl ImagingRequest {
                 "MODEL_DATA needs a solved model or a start model",
             );
         }
-        if (self.mask_image.is_some() && !self.mask_box.is_empty())
+        let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
+        if (self.mask_image.is_some() && has_boxes)
             || (self.usemask == UseMask::AutoMultithresh
-                && (self.mask_image.is_some() || !self.mask_box.is_empty()))
+                && (self.mask_image.is_some() || has_boxes))
         {
             return invalid(
                 "usemask, mask_image, mask_box",
@@ -826,17 +889,8 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
     }
 }
 
-fn field_ids<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<i32>>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(None),
-        text => casa_ms::parse_numeric_id_selector(text, "field")
-            .map(Some)
-            .map_err(D::Error::custom),
-    }
-}
-
 /// Boxes `x0,y0,x1,y1` separated by `;`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 4]>, D::Error> {
+fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[i64; 4]>, D::Error> {
     let value = Value::deserialize(deserializer)?;
     let text = value
         .as_str()
@@ -846,7 +900,7 @@ fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 
     }
     text.split(';')
         .map(|corners| {
-            comma_list::<usize>(corners)?
+            comma_list::<i64>(corners)?
                 .try_into()
                 .map_err(|_| format!("a mask box has four corners, not {corners:?}"))
         })

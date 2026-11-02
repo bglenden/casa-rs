@@ -53,11 +53,11 @@ fn every_tclean_parameter_is_read() {
     }
 }
 
-/// Every field the reader makes is one the request requires: a field the
-/// request does not read would be dropped silently (the flattened gridder
-/// rules out `deny_unknown_fields`).
+/// Every reader field is required or explicitly consumed internal provenance:
+/// the flattened gridder rules out `deny_unknown_fields`, so silently dropped
+/// fields need this law, including the optional empty-mask provenance flag.
 #[test]
-fn every_request_field_is_required() {
+fn every_request_field_is_required_or_consumed_internal_provenance() {
     for overrides in modes() {
         let values = resolved(overrides.clone()).expect("catalog values");
         let (fields, _) = read(&values).expect("tclean values");
@@ -66,6 +66,34 @@ fn every_request_field_is_required() {
         for name in fields.keys() {
             let mut without = fields.clone();
             without.remove(name);
+            if matches!(name.as_str(), "scan" | "observation") {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("internal selector defaults to unset");
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), json!("1,3~5"));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("internal selector is consumed");
+                let (default, explicit) = if name == "scan" {
+                    (default.scan, explicit.scan)
+                } else {
+                    (default.observation, explicit.observation)
+                };
+                assert_eq!(default, None);
+                assert_eq!(explicit.as_deref(), Some("1,3~5"));
+                continue;
+            }
+            if name == "explicit_empty_mask" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("internal mask provenance defaults to false");
+                assert!(!default.explicit_empty_mask);
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), Value::Bool(true));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("internal mask provenance is read");
+                assert!(explicit.explicit_empty_mask);
+                assert_ne!(explicit, default);
+                continue;
+            }
             assert!(
                 serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
                 "{overrides}: the request does not read {name}"
@@ -304,8 +332,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "nterms",
             "#980",
         ),
-        (json!({ "niter": 10, "nmajor": 0 }), "nmajor", "#980"),
-        (json!({ "field": "J1331+305" }), "field", "#980"),
         (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
@@ -374,5 +400,69 @@ fn values_casa_rs_cannot_honour_are_refused() {
             parameter,
             "{overrides}"
         );
+    }
+}
+
+#[test]
+fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints() {
+    let crtf = request(json!({"mask": "box[[3pix,4pix],[-2pix,-1pix]]"}));
+    assert_eq!(format!("{:?}", crtf.mask_box), "[[-2, -1, 3, 4]]");
+    let legacy = request(json!({"mask": "-2,-1,3,4"}));
+    assert_eq!(format!("{:?}", legacy.mask_box), "[[-2, -1, 3, 4]]");
+    // Integer-valued decimal CRTF syntax already worked and stays supported.
+    let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
+    assert_eq!(format!("{:?}", decimal.mask_box), "[[-2, -1, 3, 4]]");
+    for mask in [
+        "box[[-2.5pix,0pix],[3pix,4pix]]",
+        "box[[1deg,2deg],[3deg,4deg]]",
+    ] {
+        let error = refusal(json!({"mask": mask}));
+        assert_eq!(error.parameter, "mask");
+        assert!(error.message.contains("#980"));
+    }
+    let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
+    assert_eq!(error.parameter, "mask");
+    assert!(error.message.contains("#980"));
+}
+
+#[test]
+fn tclean_accepts_zero_major_limit_without_changing_iteration_intent() {
+    for niter in [0, 10] {
+        let value = request(json!({"niter": niter, "nmajor": 0}));
+        assert_eq!(value.niter, niter);
+        assert_eq!(value.nmajor, Some(0));
+    }
+}
+
+#[test]
+fn zero_major_limit_is_valid_but_zero_minor_cycle_length_is_not() {
+    let mut value = request(json!({"niter": 10, "nmajor": 1}));
+    value.nmajor = Some(0);
+    value
+        .validate()
+        .expect("the initial major pass alone may be requested");
+    value.minor_cycle_length = 0;
+    assert!(
+        value.validate().is_err(),
+        "a zero minor-cycle limit remains invalid"
+    );
+}
+
+#[test]
+fn native_scan_observation_preview_consumes_text_without_activating_catalog() {
+    for selectdata in [false, true] {
+        let mut values = resolved(json!({"selectdata": selectdata})).unwrap();
+        values.insert("scan".to_string(), json!("1,3~5"));
+        values.insert("observation".to_string(), json!("0"));
+        let request = ImagingRequest::from_tclean(&values).unwrap();
+        assert_eq!(request.scan.as_deref(), Some("1,3~5"));
+        assert_eq!(request.observation.as_deref(), Some("0"));
+    }
+    for (parameter, value) in [("scan", "1"), ("observation", "0")] {
+        let error = resolved(json!({parameter: value}))
+            .expect_err("production catalog still refuses non-default selectors")
+            .to_string();
+        assert!(error.contains(parameter), "{error}");
+        assert!(error.contains("#980"), "{error}");
     }
 }

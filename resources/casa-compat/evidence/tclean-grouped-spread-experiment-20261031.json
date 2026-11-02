@@ -1,0 +1,1766 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "casars_revision": "40bddd122825d758f194e48add6f0ce3540daa73",
+  "command": "CASA Python -I /private/tmp/probe-tclean-grouped-refim.py",
+  "build_control": "cargo build --release -p casars-imager",
+  "build_prototype": "cargo build --release -p casars-imager -p casa-imaging-metal --features casa-imaging-metal/grouped-spread-prototype",
+  "prototype": "Bit-identical located spread records reduced in host f64, including preweighted values/independent weights and zero-weight masking; bounded6357248-byte per-backend scratch charged; no extra grid; host-ring allocation explicitly charged; actual host/device scratch law passes with and without grouping",
+  "scope": "Two small standard-MFS niter0 cases, one worker; ABBA control/prototype observations per case; compact64 and ordinary refim_point100, not representative T2",
+  "cases": {
+    "compact": {
+      "parameters": {
+        "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/alma_ephemobj_icrs.ms",
+        "field": "J0006-0623",
+        "spw": "0",
+        "datacolumn": "data",
+        "imsize": [
+          64
+        ],
+        "cell": "0.1arcsec",
+        "niter": 0,
+        "weighting": "natural",
+        "pblimit": -0.1
+      },
+      "casa_reference": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-991-current/casa",
+      "runs": {
+        "control-a": {
+          "wall_seconds": 0.8032564580062171,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.056784291,
+              "process_peak_rss_bytes": 42500096,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002837625,
+              "process_peak_rss_bytes": 42893312,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.337243584,
+              "process_peak_rss_bytes": 250593280,
+              "peak_reserved_bytes": 477556933,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.047533042,
+              "process_peak_rss_bytes": 250593280,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.00022077080431729347,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845538,
+                  4.392311,
+                  -89.132294
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.018838708225672483,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845538,
+                  4.392311,
+                  -89.132294
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": false
+            },
+            "image.residual": {
+              "nrms": 0.00022077080431729347,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "grouped-a": {
+          "wall_seconds": 0.7701646670029731,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.040508791,
+              "process_peak_rss_bytes": 42614784,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002777542,
+              "process_peak_rss_bytes": 42860544,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.3038415,
+              "process_peak_rss_bytes": 251838464,
+              "peak_reserved_bytes": 483914181,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.0697375,
+              "process_peak_rss_bytes": 251838464,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 1.6376258290958212e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748331,
+                  4.386524,
+                  -89.166954
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 1.8785883007856027e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748331,
+                  4.386524,
+                  -89.166954
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 1.6376258290958212e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "grouped-b": {
+          "wall_seconds": 0.5307532089937013,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.036961667,
+              "process_peak_rss_bytes": 41369600,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.004752875,
+              "process_peak_rss_bytes": 41746432,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.348265833,
+              "process_peak_rss_bytes": 251592704,
+              "peak_reserved_bytes": 483914181,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.057971541,
+              "process_peak_rss_bytes": 251592704,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 1.6376258290958212e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748331,
+                  4.386524,
+                  -89.166954
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 1.8785883007856027e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748331,
+                  4.386524,
+                  -89.166954
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 1.6376258290958212e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "control-b": {
+          "wall_seconds": 0.5527372499927878,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.038110167,
+              "process_peak_rss_bytes": 41205760,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002653416,
+              "process_peak_rss_bytes": 41598976,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.333787667,
+              "process_peak_rss_bytes": 250871808,
+              "peak_reserved_bytes": 477556933,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.042891417,
+              "process_peak_rss_bytes": 250871808,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.00021943742309662746,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845522,
+                  4.392316,
+                  -89.132294
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.018837265800955943,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845522,
+                  4.392316,
+                  -89.132294
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": false
+            },
+            "image.residual": {
+              "nrms": 0.00021943742309662746,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        }
+      }
+    },
+    "refim-point": {
+      "parameters": {
+        "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/refim_point.ms",
+        "datacolumn": "data",
+        "imsize": [
+          100
+        ],
+        "cell": "8arcsec",
+        "specmode": "mfs",
+        "gridder": "standard",
+        "weighting": "natural",
+        "niter": 0,
+        "pblimit": -0.1
+      },
+      "casa_reference": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/grouped-spread-refim-current/casa-refim",
+      "runs": {
+        "control-a": {
+          "wall_seconds": 0.751412083991454,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.057334833,
+              "process_peak_rss_bytes": 54083584,
+              "peak_reserved_bytes": 321499094,
+              "reserved_bytes": 321499094
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002159334,
+              "process_peak_rss_bytes": 54083584,
+              "peak_reserved_bytes": 321506274,
+              "reserved_bytes": 321506274
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.575246125,
+              "process_peak_rss_bytes": 315113472,
+              "peak_reserved_bytes": 383949742,
+              "reserved_bytes": 335544931
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.034479417,
+              "process_peak_rss_bytes": 315113472,
+              "peak_reserved_bytes": 335544931,
+              "reserved_bytes": 101223553
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.0007040637002644928,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.528423,
+                  48.276073,
+                  -87.567802
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.0009735462313567967,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.528423,
+                  48.276073,
+                  -87.567802
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 0.0007040637002644928,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                6435720.0,
+                6435720.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "grouped-a": {
+          "wall_seconds": 1.2883430829970166,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.054097209,
+              "process_peak_rss_bytes": 53821440,
+              "peak_reserved_bytes": 321499094,
+              "reserved_bytes": 321499094
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002071584,
+              "process_peak_rss_bytes": 53821440,
+              "peak_reserved_bytes": 321506274,
+              "reserved_bytes": 321506274
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 1.119854,
+              "process_peak_rss_bytes": 323534848,
+              "peak_reserved_bytes": 390306990,
+              "reserved_bytes": 335544931
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.028756167,
+              "process_peak_rss_bytes": 323534848,
+              "peak_reserved_bytes": 335544931,
+              "reserved_bytes": 101223553
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.0006231005375065865,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.529694,
+                  48.277218,
+                  -87.568115
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.0005527017131504196,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.529694,
+                  48.277218,
+                  -87.568115
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 0.0006231005375065865,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                6435720.0,
+                6435720.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "grouped-b": {
+          "wall_seconds": 1.4745494579983642,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.062840375,
+              "process_peak_rss_bytes": 53919744,
+              "peak_reserved_bytes": 321499094,
+              "reserved_bytes": 321499094
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.003534416,
+              "process_peak_rss_bytes": 53919744,
+              "peak_reserved_bytes": 321506274,
+              "reserved_bytes": 321506274
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 1.289837041,
+              "process_peak_rss_bytes": 321503232,
+              "peak_reserved_bytes": 390306990,
+              "reserved_bytes": 335544931
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.035906917,
+              "process_peak_rss_bytes": 321503232,
+              "peak_reserved_bytes": 335544931,
+              "reserved_bytes": 101223553
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.0006189285706673265,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.529697,
+                  48.277218,
+                  -87.568123
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.0005586724207702002,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.529697,
+                  48.277218,
+                  -87.568123
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 0.0006189285706673265,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                6435720.0,
+                6435720.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "control-b": {
+          "wall_seconds": 0.7007348749903031,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.061470917,
+              "process_peak_rss_bytes": 52527104,
+              "peak_reserved_bytes": 321499094,
+              "reserved_bytes": 321499094
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.003874125,
+              "process_peak_rss_bytes": 52527104,
+              "peak_reserved_bytes": 321506274,
+              "reserved_bytes": 321506274
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.501938,
+              "process_peak_rss_bytes": 313671680,
+              "peak_reserved_bytes": 383949742,
+              "reserved_bytes": 335544931
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.028867916,
+              "process_peak_rss_bytes": 313671680,
+              "peak_reserved_bytes": 335544931,
+              "reserved_bytes": 101223553
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.0007077847157318883,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.528427,
+                  48.276073,
+                  -87.56778
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.0009750418503678232,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  51.528427,
+                  48.276073,
+                  -87.56778
+                ],
+                [
+                  51.583118,
+                  48.284912,
+                  -88.434052
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 0.0007077847157318883,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                6435720.0,
+                6435720.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "timing_validity": "Contended: overlapped Rust compilation and broader Metal tests; use these runs for scientific comparisons, not performance conclusions. A quiet timing window is required.",
+  "outcome": "Retired: ordinary-data regression; no production adoption or full scientific acceptance.",
+  "quiet_timing": {
+    "casars_revision": "40bddd122825d758f194e48add6f0ce3540daa73",
+    "scope": "Same-source default versus experimental grouped Metal/f32, W1; four observations each per workload in ABBAABBA order. No simultaneous agent builds or tests. Timed task-process wall and recorded major-cycle boundary; CASA products are in the separate science receipt.",
+    "command": "python3 /private/tmp/time-grouped-spread-quiet.py",
+    "cases": {
+      "compact": {
+        "parameters": {
+          "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/alma_ephemobj_icrs.ms",
+          "field": "J0006-0623",
+          "spw": "0",
+          "datacolumn": "data",
+          "imsize": [
+            64
+          ],
+          "cell": "0.1arcsec",
+          "niter": 0,
+          "weighting": "natural",
+          "pblimit": -0.1
+        },
+        "runs": [
+          {
+            "build": "control",
+            "wall_seconds": 0.3322209999896586,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.039119084,
+                "process_peak_rss_bytes": 41353216,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.003120208,
+                "process_peak_rss_bytes": 41648128,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.209797208,
+                "process_peak_rss_bytes": 251396096,
+                "peak_reserved_bytes": 477556933,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.027330208,
+                "process_peak_rss_bytes": 251396096,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.2833168340002885,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.031028083,
+                "process_peak_rss_bytes": 41369600,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.003182333,
+                "process_peak_rss_bytes": 41746432,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.172670875,
+                "process_peak_rss_bytes": 252428288,
+                "peak_reserved_bytes": 483914181,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.0272065,
+                "process_peak_rss_bytes": 252428288,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.29570045800937805,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.026551166,
+                "process_peak_rss_bytes": 41566208,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002528417,
+                "process_peak_rss_bytes": 41943040,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.170768209,
+                "process_peak_rss_bytes": 252248064,
+                "peak_reserved_bytes": 483914181,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.053991083,
+                "process_peak_rss_bytes": 252248064,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.2815777500072727,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.026458375,
+                "process_peak_rss_bytes": 40796160,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002491083,
+                "process_peak_rss_bytes": 41205760,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.185085959,
+                "process_peak_rss_bytes": 251772928,
+                "peak_reserved_bytes": 477556933,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.024434708,
+                "process_peak_rss_bytes": 251772928,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.28199816700362135,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.026806542,
+                "process_peak_rss_bytes": 41009152,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002512125,
+                "process_peak_rss_bytes": 41402368,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.186707792,
+                "process_peak_rss_bytes": 251772928,
+                "peak_reserved_bytes": 477556933,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023978417,
+                "process_peak_rss_bytes": 251772928,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.2658797920012148,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.026722459,
+                "process_peak_rss_bytes": 41287680,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.00261175,
+                "process_peak_rss_bytes": 41648128,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.170037708,
+                "process_peak_rss_bytes": 252362752,
+                "peak_reserved_bytes": 483914181,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.024878875,
+                "process_peak_rss_bytes": 252362752,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.2638128339895047,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.026323458,
+                "process_peak_rss_bytes": 41156608,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002494208,
+                "process_peak_rss_bytes": 41533440,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.170620459,
+                "process_peak_rss_bytes": 251936768,
+                "peak_reserved_bytes": 483914181,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023781833,
+                "process_peak_rss_bytes": 251936768,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.28410550000262447,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.02676175,
+                "process_peak_rss_bytes": 41189376,
+                "peak_reserved_bytes": 417019053,
+                "reserved_bytes": 417019053
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002496334,
+                "process_peak_rss_bytes": 41582592,
+                "peak_reserved_bytes": 417024953,
+                "reserved_bytes": 417024953
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.189367042,
+                "process_peak_rss_bytes": 252100608,
+                "peak_reserved_bytes": 477556933,
+                "reserved_bytes": 429419706
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023620958,
+                "process_peak_rss_bytes": 252100608,
+                "peak_reserved_bytes": 429419706,
+                "reserved_bytes": 100892929
+              }
+            ]
+          }
+        ]
+      },
+      "refim-point": {
+        "parameters": {
+          "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/refim_point.ms",
+          "datacolumn": "data",
+          "imsize": [
+            100
+          ],
+          "cell": "8arcsec",
+          "specmode": "mfs",
+          "gridder": "standard",
+          "weighting": "natural",
+          "niter": 0,
+          "pblimit": -0.1
+        },
+        "runs": [
+          {
+            "build": "control",
+            "wall_seconds": 0.3456662919925293,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.051285541,
+                "process_peak_rss_bytes": 49414144,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.001848292,
+                "process_peak_rss_bytes": 49414144,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.226276083,
+                "process_peak_rss_bytes": 311590912,
+                "peak_reserved_bytes": 383949742,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.024018292,
+                "process_peak_rss_bytes": 311590912,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.6528896670060931,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.044445334,
+                "process_peak_rss_bytes": 49741824,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.00194025,
+                "process_peak_rss_bytes": 49741824,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.486065083,
+                "process_peak_rss_bytes": 320258048,
+                "peak_reserved_bytes": 390306990,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.078413834,
+                "process_peak_rss_bytes": 320258048,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.6261327500105835,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.043600417,
+                "process_peak_rss_bytes": 49692672,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002022541,
+                "process_peak_rss_bytes": 49692672,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.513935125,
+                "process_peak_rss_bytes": 320241664,
+                "peak_reserved_bytes": 390306990,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023962458,
+                "process_peak_rss_bytes": 320241664,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.37722020799992606,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.058117375,
+                "process_peak_rss_bytes": 49610752,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.004686875,
+                "process_peak_rss_bytes": 49610752,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.24313275,
+                "process_peak_rss_bytes": 311345152,
+                "peak_reserved_bytes": 383949742,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.02359725,
+                "process_peak_rss_bytes": 311345152,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.33105241700832266,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.044422459,
+                "process_peak_rss_bytes": 49594368,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.001996833,
+                "process_peak_rss_bytes": 49594368,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.218957542,
+                "process_peak_rss_bytes": 311820288,
+                "peak_reserved_bytes": 383949742,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023225208,
+                "process_peak_rss_bytes": 311820288,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.5968833749939222,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.043587542,
+                "process_peak_rss_bytes": 49659904,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002011125,
+                "process_peak_rss_bytes": 49659904,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.484389,
+                "process_peak_rss_bytes": 320290816,
+                "peak_reserved_bytes": 390306990,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023962292,
+                "process_peak_rss_bytes": 320290816,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "grouped",
+            "wall_seconds": 0.5985163750010543,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.044492917,
+                "process_peak_rss_bytes": 49627136,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002011083,
+                "process_peak_rss_bytes": 49627136,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.48618875,
+                "process_peak_rss_bytes": 320225280,
+                "peak_reserved_bytes": 390306990,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023761334,
+                "process_peak_rss_bytes": 320225280,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          },
+          {
+            "build": "control",
+            "wall_seconds": 0.32674516600673087,
+            "backend": "metal",
+            "precision": "f32",
+            "workers": 1,
+            "phases": [
+              {
+                "name": "preparation",
+                "completed": true,
+                "seconds": 0.04364075,
+                "process_peak_rss_bytes": 49627136,
+                "peak_reserved_bytes": 321499094,
+                "reserved_bytes": 321499094
+              },
+              {
+                "name": "setup",
+                "completed": true,
+                "seconds": 0.002009666,
+                "process_peak_rss_bytes": 49627136,
+                "peak_reserved_bytes": 321506274,
+                "reserved_bytes": 321506274
+              },
+              {
+                "name": "major cycle 1",
+                "completed": true,
+                "seconds": 0.21421175,
+                "process_peak_rss_bytes": 311705600,
+                "peak_reserved_bytes": 383949742,
+                "reserved_bytes": 335544931
+              },
+              {
+                "name": "products",
+                "completed": true,
+                "seconds": 0.023764959,
+                "process_peak_rss_bytes": 311705600,
+                "peak_reserved_bytes": 335544931,
+                "reserved_bytes": 101223553
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "timing_summary": {
+    "compact": {
+      "control": {
+        "wall_median_seconds": 0.2830518335031229,
+        "major_cycle_median_seconds": 0.188037417
+      },
+      "grouped": {
+        "wall_median_seconds": 0.27459831300075166,
+        "major_cycle_median_seconds": 0.170694334
+      },
+      "wall_ratio": 0.9701343729247457,
+      "major_cycle_ratio": 0.9077679151485046
+    },
+    "refim-point": {
+      "control": {
+        "wall_median_seconds": 0.338359354500426,
+        "major_cycle_median_seconds": 0.22261681249999998
+      },
+      "grouped": {
+        "wall_median_seconds": 0.6123245625058189,
+        "major_cycle_median_seconds": 0.4861269165
+      },
+      "wall_ratio": 1.8096871103501528,
+      "major_cycle_ratio": 2.1836936349989293
+    }
+  },
+  "verification": {
+    "t0": "6 contribution/guard regressions passed, including signed weights, masked NaNs and multi-polarization overflow.",
+    "memory": "Actual host-plus-device scratch law passed in candidate and control; identified and repaired a separately uncharged Vec<Slot> host ring allocation.",
+    "broader_gate": "109 tests: 103 passed, six Metal selected-observation versus observation-batch route-law failures at the existing 1e-6 bound. Not a green gate or a GPU-versus-CPU science acceptance.",
+    "science": "Compact candidate products pass recorded finite, mask, NRMS, beam and sumwt checks. Ordinary refim_point candidate passes NRMS/masks/finite/sumwt but fails beam axis/position-angle limits, as does its control. Not full scientific acceptance.",
+    "independent_review": "Separate agent reviewed retained ring charge/counting law with no actionable findings. No additional external review was submitted.",
+    "limits": "Small standard-MFS niter0 W1 only; no representative T2, deconvolution or whole-task acceptance. Raw grouping bounds were not established for arbitrary CF gains/Taylor powers. Candidate removed, no tolerance changed."
+  },
+  "durable_archive": "/Volumes/home/casa-rs/tclean/20261031/grouped-spread-experiment-20261031.tar"
+}

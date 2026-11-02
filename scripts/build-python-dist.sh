@@ -7,7 +7,7 @@ cd "$repo_root"
 
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 out_dir="${1:-dist/python}"
-tmp_root="$(mktemp -d)"
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
   rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__

@@ -25,7 +25,7 @@ const POINT: Component = Component {
 };
 
 /// `casars-imager --json-run -` with tclean `values`, in `directory`.
-fn json_run(directory: &Path, values: Value) -> TaskReply {
+pub(super) fn json_run(directory: &Path, values: Value) -> TaskReply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
         .args(["--json-run", "-"])
         .current_dir(directory)
@@ -140,6 +140,30 @@ fn entry<'a>(value: &'a CasaValue, key: &str) -> &'a CasaValue {
         .value
 }
 
+fn scalar(value: &CasaValue, key: &str) -> f64 {
+    let CasaValue::Float { value } = entry(value, key) else {
+        panic!("{key} is a float");
+    };
+    value.0
+}
+
+fn last_minor_threshold(value: &CasaValue) -> f64 {
+    let mut plane = entry(value, "summaryminor");
+    for _ in 0..3 {
+        let CasaValue::Dict { entries } = plane else {
+            panic!("minor summary dictionary")
+        };
+        plane = &entries[0].value;
+    }
+    let CasaValue::List { items } = entry(plane, "cycleThresh") else {
+        panic!("threshold list")
+    };
+    let CasaValue::Float { value } = items.last().unwrap() else {
+        panic!("threshold float")
+    };
+    value.0
+}
+
 #[test]
 fn tclean_returns_casas_summary_record() {
     let observation = Observation::synthesise(&[("point", POINT)]);
@@ -194,13 +218,14 @@ fn tclean_returns_casas_summary_record() {
         panic!("nmajordone is an int");
     };
     assert_eq!(major.len(), usize::try_from(*majors).expect("count"));
-    // CASA's cyclethreshold is the one it computes after the last major
-    // cycle, which the report does not hold (Astra's #1015 F6); a dirty
-    // run's is CASA's integer zero.
+    // CASA's cyclethreshold comes from the final major-cycle residual,
+    // not the preceding minor cycle's controls; dirty remains integer zero.
     let CasaValue::Float { value: cycle } = entry(&clean, "cyclethreshold") else {
         panic!("cyclethreshold is a float");
     };
-    assert!(cycle.0.is_nan(), "{cycle:?}");
+    assert!(cycle.0.is_finite() && cycle.0 > 0.0, "{cycle:?}");
+    assert!(cycle.0 < last_minor_threshold(&clean));
+    assert!(scalar(&clean, "maxpsfsidelobe").is_finite());
     assert_eq!(
         entry(&dirty, "cyclethreshold"),
         &CasaValue::Int { value: 0 }
@@ -256,6 +281,9 @@ fn tclean_returns_casas_summary_record() {
         }
     );
     assert_eq!(entry(&above, "threshold"), &CasaValue::float(100.0));
+    assert!(scalar(&above, "cyclethreshold") > 0.0);
+    assert!(scalar(&above, "cyclethreshold") < 100.0);
+    assert!(scalar(&above, "maxpsfsidelobe").is_finite());
 }
 
 #[test]
@@ -263,7 +291,6 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
-        (json!({ "restart": false }), "restart", "#944"),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (
@@ -289,4 +316,105 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
             other => panic!("{parameter}: {other:?}"),
         }
     }
+}
+
+#[test]
+fn restart_false_is_resolved_and_coordinated_outliers_remain_refused() {
+    use casars_imager::{ImagingParameters, resolve_request, run};
+    let directory = tempfile::tempdir().unwrap();
+    let values = json!({
+        "vis": "absent.ms", "imagename": directory.path().join("image"),
+        "cell": "1arcsec", "restart": false,
+    });
+    let (parameters, request) =
+        resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
+    assert_eq!(parameters.0["restart"], json!(false));
+    let mut outlier = request;
+    outlier.outlierfile = Some(directory.path().join("outliers.txt"));
+    let error = run(parameters, &outlier).unwrap_err();
+    assert!(
+        error.contains("coordinated outlier") && error.contains("#944"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn zero_major_limit_stops_before_minor_work_with_casa_stop_precedence() {
+    use casa_images::PagedImage;
+    use casars_imager::ImagerRunTaskResult;
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    observation.image("nmajor-seed", json!({"niter": 0}));
+    let seed_path = observation.scratch("nmajor-seed.model");
+    let geometry = observation.geometry();
+    let seed = {
+        let mut image = PagedImage::<f32>::open(&seed_path).unwrap();
+        let mut pixels = image.get().unwrap();
+        pixels[[geometry.image_size[0] / 2, geometry.image_size[1] / 2, 0, 0]] = 0.25;
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+        pixels
+    };
+    let directory = observation.scratch("nmajor-zero");
+    std::fs::create_dir_all(&directory).unwrap();
+    let empty = directory.join("empty.crtf");
+    std::fs::write(&empty, "#CRTF\n").unwrap();
+    let base = json!({
+        "vis": observation.measurement_set(), "imsize": geometry.image_size,
+        "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+        "backend": "cpu", "niter": 10, "nmajor": 0, "threshold": "0Jy", "gain": 0.1,
+    });
+    for (name, extra, iterations, majors, stop) in [
+        ("initial", json!({}), 0, 1, 9),
+        ("threshold", json!({"threshold": "100Jy"}), 0, 1, 2),
+        ("empty", json!({"mask": empty}), 0, 1, 7),
+        ("seeded", json!({"startmodel": seed_path}), 0, 1, 9),
+        ("dirty", json!({"niter": 0}), 0, 1, 3),
+        // Fix the minor budget so this synthetic sky is a deterministic control.
+        ("one-major", json!({"nmajor": 1, "cycleniter": 3}), 3, 2, 9),
+    ] {
+        let mut values = base.clone();
+        values["imagename"] = json!(directory.join(name));
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let (value, result) = match json_run(&directory, values) {
+            TaskReply::Succeeded { value, result, .. } => (value, result),
+            other => panic!("{name}: expected initial products, got {other:?}"),
+        };
+        for (key, expected) in [
+            ("iterdone", iterations),
+            ("nmajordone", majors),
+            ("stopcode", stop),
+        ] {
+            assert_eq!(
+                entry(&value, key),
+                &CasaValue::Int { value: expected },
+                "{name}:{key}"
+            );
+        }
+        let result: ImagerRunTaskResult = serde_json::from_value(result).unwrap();
+        let model = PagedImage::<f32>::open(directory.join(format!("{name}.model")))
+            .unwrap()
+            .get()
+            .unwrap();
+        assert_eq!(i64::try_from(result.run.major_cycles).unwrap(), majors);
+        if iterations == 0 {
+            assert!(result.run.minor_cycles.is_empty(), "{name}: no minor work");
+            assert_eq!(result.run.actual_minor_iterations, 0);
+            if name == "seeded" {
+                assert_eq!(model, seed);
+            } else {
+                assert!(model.iter().all(|&pixel| pixel == 0.0));
+            }
+        } else {
+            assert!(model.sum() > 0.0);
+        }
+    }
+    assert_eq!(
+        PagedImage::<f32>::open(seed_path).unwrap().get().unwrap(),
+        seed
+    );
 }

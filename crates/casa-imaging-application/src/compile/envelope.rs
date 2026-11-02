@@ -4,14 +4,19 @@
 //! selected samples ([`Epoch`]): a continuum run's spectral envelope and a
 //! cube's density padding.
 //!
-//! A sample's channels are converted towards its field's direction at its
-//! time, as CASA's visibility iterator converts them; a field that follows
-//! an ephemeris is converted towards its direction at the time, not its
-//! `PHASE_DIR`, which is then an offset.
+//! A cube's samples are converted towards their field's direction at
+//! their time, as CASA's visibility iterator converts them; a field that
+//! follows an ephemeris is converted towards its direction at the time, not
+//! its `PHASE_DIR`, which is then an offset. A continuum envelope converts
+//! towards each field's reference direction instead, as CASA's
+//! `MSUtil::getFreqRangeInSpw` does ([`continuum_direction`]).
+
+use std::collections::BTreeMap;
 
 use casa_ms::derived::engine::MsCalEngine;
 use casa_observation::Catalogue;
 use casa_types::measures::PreparedFrequencyConversion;
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
 
@@ -52,6 +57,28 @@ fn epoch_frame(
         catalogue.fields[field].phase_centre.clone()
     };
     Ok(engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?)
+}
+
+/// The direction a continuum envelope converts field `field_id`'s samples
+/// towards: `MSUtil::getFreqRangeInSpw` asks `phaseDirMeas(field)` with no
+/// time, which for a field following an ephemeris is its geocentric
+/// direction at its reference epoch (MSv2 `FIELD.TIME`; the field's first
+/// selected time `first_time_mjd_seconds` on a store without one), in the
+/// ephemeris frame and including `PHASE_DIR`'s offset
+/// ([`MsCalEngine::moving_field_reference_direction`]); a fixed field's is
+/// its stored phase centre. Only the conversion epoch follows the samples.
+fn continuum_direction(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    field_id: i32,
+    first_time_mjd_seconds: f64,
+) -> Result<MDirection, PrepareError> {
+    let field = usize::try_from(field_id).expect("a surveyed field is a FIELD row");
+    Ok(
+        match engine.moving_field_reference_direction(field, first_time_mjd_seconds)? {
+            Some(direction) => direction,
+            None => catalogue.fields[field].phase_centre.clone(),
+        },
+    )
 }
 
 /// The lower and upper edges of `channels` of `window`: each channel's
@@ -106,6 +133,8 @@ pub(super) fn continuum_envelope(
 ) -> Result<SpectralEnvelope, PrepareError> {
     let output = FrequencyRef::LSRK;
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
+    // Each field's direction, once: only the conversion epoch varies.
+    let mut directions = BTreeMap::<i32, MDirection>::new();
     let mut fold = |hz: f64| {
         edges_hz[0] = edges_hz[0].min(hz);
         edges_hz[1] = edges_hz[1].max(hz);
@@ -123,7 +152,29 @@ pub(super) fn continuum_envelope(
         }
         let mut converter = MFrequencyConverter::new(source, output);
         for epoch in survey.window_epochs(window.spw_id) {
-            let frame = epoch_frame((catalogue, engine), *epoch)?;
+            let direction = match directions.get(&epoch.field_id) {
+                Some(direction) => direction.clone(),
+                None => {
+                    // Only a moving field without its own reference epoch
+                    // (an MSv4's) reads its first selected time; finding it
+                    // scans every window's epochs, so fixed fields skip it.
+                    let field =
+                        usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+                    let first = if engine.field_moves(field) {
+                        survey
+                            .first_time_of(epoch.field_id)
+                            .unwrap_or(epoch.time_mjd_seconds)
+                    } else {
+                        epoch.time_mjd_seconds
+                    };
+                    let direction =
+                        continuum_direction((catalogue, engine), epoch.field_id, first)?;
+                    directions.insert(epoch.field_id, direction.clone());
+                    direction
+                }
+            };
+            let frame =
+                engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
             fold(converter.convert_hz(lower_hz, &frame)?.hz());
             fold(converter.convert_hz(upper_hz, &frame)?.hz());
         }

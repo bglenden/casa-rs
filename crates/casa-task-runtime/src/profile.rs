@@ -37,6 +37,7 @@ pub struct ParameterProfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedProfile {
     pub values: BTreeMap<String, ParameterValue>,
+    /// Migrated explicit values, under canonical names, before normalization.
     pub explicit_overrides: BTreeMap<String, ParameterValue>,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -197,6 +198,7 @@ pub fn resolve_profile(
         })
         .collect::<BTreeSet<_>>();
     let mut canonical = BTreeMap::new();
+    let mut explicit_overrides = BTreeMap::new();
     let mut failures = Vec::new();
 
     for (source_name, value) in parameters {
@@ -236,8 +238,9 @@ pub fn resolve_profile(
             validate_value(&value, concept, &binding.refinements)?;
             Ok(value)
         }) {
-            Ok(value) => {
-                canonical.insert(binding.name.clone(), value);
+            Ok(normalized) => {
+                canonical.insert(binding.name.clone(), normalized);
+                explicit_overrides.insert(binding.name.clone(), value);
             }
             Err(error) => {
                 let note = error.binding_note(binding);
@@ -269,7 +272,7 @@ pub fn resolve_profile(
     diagnostics.retain(|diagnostic| diagnostic.level != DiagnosticLevel::Error);
     Ok(ResolvedProfile {
         values,
-        explicit_overrides: canonical,
+        explicit_overrides,
         diagnostics,
     })
 }
@@ -795,6 +798,8 @@ pub enum ProfileError {
 
 #[cfg(test)]
 mod tests {
+    mod provenance;
+
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, ContextRole, ParameterCatalog, ParameterConcept, ParameterConceptId,
         ParameterConceptRef, ParameterDocs, ParameterPresentation, ParameterProjections,
@@ -929,39 +934,6 @@ mod tests {
             unimplemented: None,
             unimplemented_forms: None,
         }
-    }
-
-    #[test]
-    fn sparse_round_trip_normalizes_scalar_pair_and_quantity_units() {
-        let bundle = bundle(SurfaceKind::Task);
-        let source = r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-imsize = 1024
-cell = "0.0002777777777777778deg"
-"#;
-        let resolved = resolve_profile(&parse_profile(source).unwrap(), &bundle).unwrap();
-        assert_eq!(
-            resolved.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
-        );
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
-        );
-        let rendered = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(rendered.contains("imsize = [1024, 1024]"));
-        assert!(!rendered.contains("cell ="));
-        assert_eq!(
-            resolve_profile(&parse_profile(&rendered).unwrap(), &bundle)
-                .unwrap()
-                .values,
-            resolved.values
-        );
     }
 
     #[test]
@@ -1335,114 +1307,6 @@ flag_panel = 17
         let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
         assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
         assert!(saved.contains("flag_panel = \"17\""));
-    }
-
-    #[test]
-    fn multi_hop_migrations_transform_and_preserve_explicit_old_values() {
-        let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.contract_version = 3;
-        definition.migrations = vec![
-            SurfaceMigration {
-                from_contract: 1,
-                to_contract: 2,
-                steps: vec![
-                    MigrationStep::Transform {
-                        parameter: "imsize".into(),
-                        transform: MigrationTransform::ScalarToArray { length: 2 },
-                    },
-                    MigrationStep::ReplaceValue {
-                        parameter: "cell".into(),
-                        from: ParameterValue::String("60arcsec".into()),
-                        to: ParameterValue::String("1arcmin".into()),
-                    },
-                ],
-                changed_defaults: vec!["imsize".into()],
-            },
-            SurfaceMigration {
-                from_contract: 2,
-                to_contract: 3,
-                steps: vec![MigrationStep::Transform {
-                    parameter: "cell".into(),
-                    transform: MigrationTransform::QuantityUnit {
-                        canonical_unit: "arcsec".into(),
-                    },
-                }],
-                changed_defaults: vec!["cell".into()],
-            },
-        ];
-        definition
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.name == "imsize")
-            .unwrap()
-            .default = DefaultSpec::Literal {
-            value: ParameterValue::Integer(1024),
-        };
-        definition
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.name == "cell")
-            .unwrap()
-            .default = DefaultSpec::Literal {
-            value: ParameterValue::String("2arcsec".into()),
-        };
-
-        let old = parse_profile(
-            r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-imsize = 128
-cell = "60arcsec"
-"#,
-        )
-        .unwrap();
-        let resolved = resolve_profile(&old, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(128); 2])
-        );
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("60arcsec".into()); 2])
-        );
-        assert_eq!(resolved.explicit_overrides, resolved.values);
-        assert_eq!(
-            resolved
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code == DiagnosticCode::Migrated)
-                .count(),
-            2
-        );
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code != DiagnosticCode::DefaultChanged)
-        );
-
-        let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains("contract = 3"));
-        assert!(saved.contains("imsize = [128, 128]"));
-        assert!(saved.contains("cell = [\"60arcsec\", \"60arcsec\"]"));
-
-        let mut incompatible = bundle.clone();
-        let SurfaceDefinition::Task(definition) = &mut incompatible.surface;
-        definition.migrations[1].steps = vec![MigrationStep::Transform {
-            parameter: "cell".into(),
-            transform: MigrationTransform::QuantityUnit {
-                canonical_unit: "s".into(),
-            },
-        }];
-        assert!(matches!(
-            resolve_profile(&old, &incompatible),
-            Err(ProfileError::Normalization(NormalizationError::Quantity(_)))
-        ));
     }
 
     #[test]

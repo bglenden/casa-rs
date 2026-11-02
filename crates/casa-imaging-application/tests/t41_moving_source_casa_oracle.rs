@@ -152,6 +152,54 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     Ok(())
 }
 
+/// CASA 6.7.6.14 `tclean(field="1", spw="0", specmode="mfs")` with the
+/// default phase centre and output frame records this MFS spectral
+/// increment. `MSUtil::getFreqRangeInSpw` converts towards
+/// `phaseDirMeas(field)` at `FIELD.TIME` while the conversion epoch follows
+/// each selected integration; converting towards the body's direction at
+/// each integration's time instead misses it.
+#[test]
+#[ignore = "requires the slow-parity ALMA ephemeris MeasurementSet"]
+fn moving_field_mfs_envelope_matches_casa_field_origin_direction() -> Result<(), Box<dyn Error>> {
+    const CASA_INCREMENT_HZ: f64 = 125_020_996.111_328_12;
+    let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
+        .ok_or("the slow-parity ALMA ephemeris MeasurementSet is unavailable")?;
+    let staging = tempfile::tempdir()?;
+    let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
+    copy_tree(&source, &measurement_set)?;
+    let prefix = staging.path().join("moving-mfs");
+    let request = imaging::request(json!({
+        "vis": measurement_set,
+        "imagename": prefix,
+        "imsize": 64,
+        "cell": "0.1arcsec",
+        "field": "1",
+        "spw": "0",
+        "datacolumn": "DATA",
+        "specmode": "mfs",
+        "niter": 0,
+    }));
+    // The envelope spans field 1's selected rows whatever this small grid
+    // keeps of them; the gridded count is not compared here.
+    execute(&request, imaging::context(request.resource_policy()))?;
+    let image = PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", prefix.display())))?;
+    let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(2) else {
+        return Err("the MFS PSF has no spectral coordinate".into());
+    };
+    assert_eq!(spectral.world_frequency_ref(), FrequencyRef::LSRK);
+    let increment = image.coordinates().coordinate(2).increment()[0];
+    let relative_error = (increment - CASA_INCREMENT_HZ).abs() / CASA_INCREMENT_HZ;
+    eprintln!(
+        "moving MFS increment: native={increment:.8} CASA={CASA_INCREMENT_HZ:.8} \
+         relative_error={relative_error:.3e}"
+    );
+    assert!(
+        relative_error <= 2.0e-10,
+        "MFS increment differs from CASA: {relative_error:.3e}"
+    );
+    Ok(())
+}
+
 /// How the dirty products under `rust_prefix` depart from CASA's.
 fn compare_with_casa(
     rust_prefix: &Path,

@@ -525,6 +525,10 @@ impl Observation {
 /// derived from the data, and the imager's fixed `conjbeams` and
 /// `mosweight`.
 fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
+    // These component laws predate default PB production and include moving
+    // fields and frequencies outside the analytic PB's implemented scope.
+    // The production default and explicit opt-out have their own pb_default T1.
+    fields.entry("write_pb").or_insert_with(|| json!(false));
     fields.entry("cycleniter").or_insert_with(|| json!(1000));
     match fields.get("gridder").and_then(Value::as_str) {
         Some("wproject") => {

@@ -15,8 +15,8 @@ pub enum DensityCellRule {
     /// `VisImagingWeight`: single-precision coordinates truncated toward
     /// zero, `v` not mirrored.
     Standard,
-    /// `BriggsCubeWeightor`: rounded coordinates with `v` mirrored, built in
-    /// double and looked up in single precision.
+    /// `BriggsCubeWeightor`: rounded coordinates of the negated `u` and `v`,
+    /// built in double and looked up in single precision.
     Cube,
 }
 
@@ -118,13 +118,14 @@ impl DensityGridShape {
     /// The cell a density placement adds to. Standard placements carry
     /// [`DensityUv`] coordinates; cube placements carry the double
     /// coordinates CASA grids its weight density with (`GridFT::put`'s
-    /// `locuvw`: `nint(scale·u + offset + 1)` in Fortran indexing).
+    /// `locuvw`: `nint(scale·u + offset + 1)` in Fortran indexing, of the
+    /// `u` and `v` that `FTMachine::negateUV` negated).
     fn build_cell(&self, plane: usize, u: f64, v: f64) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, u as f32, v as f32),
             DensityCellRule::Cube => {
                 let [origin_x, origin_y] = self.origin().map(|origin| origin as f64);
-                let x = (u * self.width as f64 * self.increment_rad[0] + origin_x + 1.0).round()
+                let x = (-u * self.width as f64 * self.increment_rad[0] + origin_x + 1.0).round()
                     as isize
                     - 1;
                 let y = (-v * self.height as f64 * self.increment_rad[1] + origin_y + 1.0).round()
@@ -136,14 +137,18 @@ impl DensityGridShape {
     }
 
     /// The cell a lookup reads: `BriggsCubeWeightor::getWeightUniform`
-    /// rounds `uscale·u + uorigin` in `Float`, with `v` mirrored.
+    /// rounds `uscale·u + uorigin` in `Float` with `u = −uvw_u·f` and
+    /// `v = −uvw_v·f`, as its grid was built. Evaluating that expression in
+    /// CASA's orientation matters only at an exact `Float` tie (`k + ½`),
+    /// where rounding half away from zero is not mirror-symmetric: a
+    /// mirrored lookup reads the neighbouring cell there.
     fn lookup_cell(&self, plane: usize, uv: DensityUv) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, uv.u, uv.v),
             DensityCellRule::Cube => {
                 let [scale_x, scale_y] = self.scale();
                 let [origin_x, origin_y] = self.origin().map(|origin| origin as f32);
-                let x = (scale_x * uv.u + origin_x).round();
+                let x = (scale_x * -uv.u + origin_x).round();
                 let y = (scale_y * -uv.v + origin_y).round();
                 self.cell_index(plane, x as isize, y as isize)
             }

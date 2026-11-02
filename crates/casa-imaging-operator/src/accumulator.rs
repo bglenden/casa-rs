@@ -13,7 +13,7 @@ use crate::geometry::GridGeometry;
 /// Arithmetic precision of a grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GridPrecision {
-    /// Interleaved `f32` complex cells.
+    /// Interleaved `f32` complex cells with compensated accumulation.
     F32,
     /// Interleaved `f64` complex cells (default; taps and values stay `f32`).
     F64,
@@ -296,6 +296,7 @@ impl PartialEq for GridStorage {
 pub struct DeviceCells {
     cells: std::ptr::NonNull<Complex32>,
     len: usize,
+    clear_len: usize,
     owner: Box<dyn std::any::Any + Send + Sync>,
     /// Waits for device work that may still write the cells.
     pending: std::sync::Mutex<Option<DeferredWork>>,
@@ -318,8 +319,10 @@ impl DeviceCells {
     ///
     /// # Safety
     ///
-    /// `cells` must point to `len` initialised, aligned `Complex32` values
-    /// that stay valid for as long as `owner` lives, and nothing may read or
+    /// `cells` must point to `clear_len >= len` initialised, aligned
+    /// `Complex32` values. The first `len` are exposed to the host; a reset
+    /// also zeros any trailing device accumulation scratch. All values must
+    /// stay valid for as long as `owner` lives, and nothing may read or
     /// write them except through the returned value: a device may write
     /// them only while its backend holds `&mut` access to this value, or
     /// afterwards while the work it recorded with [`Self::defer`] runs.
@@ -327,11 +330,14 @@ impl DeviceCells {
     pub unsafe fn new(
         cells: std::ptr::NonNull<Complex32>,
         len: usize,
+        clear_len: usize,
         owner: Box<dyn std::any::Any + Send + Sync>,
     ) -> Self {
+        assert!(clear_len >= len, "clear span includes exposed device cells");
         Self {
             cells,
             len,
+            clear_len,
             owner,
             pending: std::sync::Mutex::new(None),
         }
@@ -394,6 +400,13 @@ impl DeviceCells {
         // SAFETY: `new`'s contract; `&mut self` is the only access and the
         // device's work is done.
         unsafe { std::slice::from_raw_parts_mut(self.cells.as_ptr(), self.len) }
+    }
+
+    fn clear(&mut self) {
+        self.settle();
+        // SAFETY: the constructor guarantees this full initialized span;
+        // exclusive access and settlement exclude host/device access.
+        unsafe { self.cells.as_ptr().write_bytes(0, self.clear_len) };
     }
 
     /// The allocation that keeps the cells alive.
@@ -461,7 +474,7 @@ impl GridStorage {
         match self {
             Self::F32(cells) => cells.fill(Complex32::default()),
             Self::F64(cells) => cells.fill(Complex64::default()),
-            Self::Device(cells) => cells.cells_mut().fill(Complex32::default()),
+            Self::Device(cells) => cells.clear(),
         }
     }
 }
@@ -614,6 +627,15 @@ pub struct GridAccumulator {
     storage: GridStorage,
     sumwt: Vec<f64>,
     sums_weights: bool,
+    // Lazily allocated only by CPU f32 gridding or a host merge (#991).
+    correction: Vec<Complex32>,
+}
+
+pub(crate) struct CpuGridParts<'a, T> {
+    pub layout: &'a AccumulatorLayout,
+    pub cells: &'a mut [Complex<T>],
+    pub correction: &'a mut [Complex32],
+    pub sumwt: Option<&'a mut [f64]>,
 }
 
 impl GridAccumulator {
@@ -641,6 +663,7 @@ impl GridAccumulator {
             storage,
             sumwt,
             sums_weights: true,
+            correction: Vec::new(),
         }
     }
 
@@ -707,6 +730,7 @@ impl GridAccumulator {
     pub fn reset(&mut self) {
         self.storage.fill_zero();
         self.sumwt.fill(0.0);
+        self.correction.fill(Complex32::default());
     }
 
     /// Add `other`'s cells and `sumwt` into this accumulator.
@@ -739,16 +763,25 @@ impl GridAccumulator {
                 reason: "tile lies outside the target",
             });
         }
+        // The production region merge writes a host accumulator. Explicit
+        // generic device destinations still synchronize through cells_mut;
+        // ordinary Metal owners never allocate a host correction here.
+        self.prepare_correction();
+        let mine = &self.layout;
         match self.storage.precision() {
-            GridPrecision::F32 => add_tiles(
+            GridPrecision::F32 => add_tiles::<f32, true>(
                 f32::cells_mut(&mut self.storage),
                 f32::cells(&other.storage),
+                &mut self.correction,
+                &other.correction,
                 mine,
                 theirs,
             ),
-            GridPrecision::F64 => add_tiles(
+            GridPrecision::F64 => add_tiles::<f64, false>(
                 f64::cells_mut(&mut self.storage),
                 f64::cells(&other.storage),
+                &mut self.correction,
+                &other.correction,
                 mine,
                 theirs,
             ),
@@ -768,19 +801,46 @@ impl GridAccumulator {
         (&self.layout, &self.storage, sumwt)
     }
 
-    /// Layout, cells and `sumwt` for a kernel at precision `T`; `sumwt` is
-    /// `None` when the accumulator does not sum weights.
-    pub(crate) fn parts_mut<T: GridScalar>(
-        &mut self,
-    ) -> (&AccumulatorLayout, &mut [Complex<T>], Option<&mut [f64]>) {
+    /// Extra bytes kept by a CPU f32 accumulator through finishing.
+    /// Models and device owners do not use this host correction; charge
+    /// them separately.
+    #[must_use]
+    pub const fn cpu_correction_bytes(cells: u64, precision: GridPrecision) -> u64 {
+        if matches!(precision, GridPrecision::F32) {
+            cells * size_of::<Complex32>() as u64
+        } else {
+            0
+        }
+    }
+
+    fn prepare_correction(&mut self) {
+        if Self::cpu_correction_bytes(self.layout.cells() as u64, self.precision()) != 0
+            && self.correction.is_empty()
+        {
+            self.correction
+                .resize(self.layout.cells(), Complex32::default());
+        }
+    }
+
+    /// CPU kernel views at precision `T`. Correction is empty for f64;
+    /// `sumwt` is absent when this accumulator skips weights.
+    pub(crate) fn parts_mut<T: GridScalar>(&mut self) -> CpuGridParts<'_, T> {
+        self.prepare_correction();
         let sumwt = self.sums_weights.then_some(self.sumwt.as_mut_slice());
-        (&self.layout, T::cells_mut(&mut self.storage), sumwt)
+        CpuGridParts {
+            layout: &self.layout,
+            cells: T::cells_mut(&mut self.storage),
+            correction: &mut self.correction,
+            sumwt,
+        }
     }
 }
 
-fn add_tiles<T: GridScalar>(
+fn add_tiles<T: GridScalar, const COMPENSATED: bool>(
     target: &mut [Complex<T>],
     source: &[Complex<T>],
+    correction: &mut [Complex32],
+    source_correction: &[Complex32],
     mine: &AccumulatorLayout,
     theirs: &AccumulatorLayout,
 ) {
@@ -796,9 +856,111 @@ fn add_tiles<T: GridScalar>(
         for y in 0..source_ny {
             let target_row = &mut target_block[(y + dy) * target_nx + dx..][..source_nx];
             let source_row = &source_block[y * source_nx..][..source_nx];
-            for (cell, value) in target_row.iter_mut().zip(source_row) {
-                *cell = *cell + *value;
+            for (x, (cell, value)) in target_row.iter_mut().zip(source_row).enumerate() {
+                let target_index = block * mine.block_cells() + (y + dy) * target_nx + dx + x;
+                crate::compensation::add::<T, COMPENSATED>(cell, correction, target_index, *value);
+                if COMPENSATED && !source_correction.is_empty() {
+                    let low = source_correction[block * theirs.block_cells() + y * source_nx + x];
+                    crate::compensation::add::<T, COMPENSATED>(
+                        cell,
+                        correction,
+                        target_index,
+                        Complex::new(T::from_f32(low.re), T::from_f32(low.im)),
+                    );
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod correction_laws {
+    use super::*;
+    use crate::{GridPadding, ImageExtent, PaddingFactor};
+
+    fn layout(tile: Option<Tile>) -> AccumulatorLayout {
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [16, 16],
+                increment_rad: [-0.001, 0.001],
+                reference_pixel: [8, 8],
+            },
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        )
+        .expect("geometry");
+        AccumulatorLayout::new(
+            geometry,
+            PlaneRange::single(0),
+            1,
+            ModeSet::DATA,
+            1,
+            1,
+            tile,
+        )
+    }
+
+    #[test]
+    fn correction_is_lazy_reused_reset_and_charged_per_host_f32_cell() {
+        for precision in [GridPrecision::F32, GridPrecision::F64] {
+            let mut acc = GridAccumulator::new(layout(None), precision);
+            assert_eq!(acc.correction.capacity(), 0);
+            acc.prepare_correction();
+            let cells = acc.layout.cells();
+            assert_eq!(
+                acc.correction.len(),
+                if precision == GridPrecision::F32 {
+                    cells
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                GridAccumulator::cpu_correction_bytes(cells as u64, precision),
+                (acc.correction.len() * size_of::<Complex32>()) as u64
+            );
+            let allocation = acc.correction.as_ptr();
+            acc.prepare_correction();
+            assert_eq!(acc.correction.as_ptr(), allocation);
+            acc.correction.fill(Complex32::new(0.25, -0.5));
+            acc.reset();
+            assert_eq!(acc.correction.as_ptr(), allocation);
+            assert!(
+                acc.correction
+                    .iter()
+                    .all(|value| *value == Complex32::default())
+            );
+        }
+    }
+
+    #[test]
+    fn region_merge_transfers_both_source_parts_and_preserves_target_loss() {
+        let tile = Tile {
+            origin: [3, 5],
+            shape: [2, 2],
+        };
+        let mut source = GridAccumulator::new(layout(Some(tile)), GridPrecision::F32);
+        let mut target = GridAccumulator::new(layout(None), GridPrecision::F32);
+        let index = 5 * target.layout.tile.shape[0] + 3;
+        source.prepare_correction();
+        f32::cells_mut(&mut source.storage)[0] = Complex32::new(1.0e8, -1.0e8);
+        source.correction[0] = Complex32::new(1.0, -1.0);
+        target
+            .merge_from(&source)
+            .expect("merge source high and low");
+        source.reset();
+        f32::cells_mut(&mut source.storage)[0] = Complex32::new(-1.0e8, 1.0e8);
+        target.merge_from(&source).expect("merge cancellation");
+        assert_eq!(
+            f32::cells(&target.storage)[index],
+            Complex32::new(1.0, -1.0)
+        );
+        assert_eq!(target.correction.len(), target.layout.cells());
+        target.reset();
+        assert!(
+            target
+                .correction
+                .iter()
+                .all(|value| *value == Complex32::default())
+        );
     }
 }

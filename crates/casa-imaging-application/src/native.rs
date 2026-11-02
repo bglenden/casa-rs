@@ -320,6 +320,7 @@ pub(crate) fn run(
     Ok(move |summary| ImagingOutcome {
         problem,
         minor_cycles: outcome.minor_cycles,
+        final_residual_statistics: outcome.final_residual_statistics,
         stop: outcome.stop,
         major_cycle_count: outcome.major_cycle_count,
         total_minor_iterations: outcome.total_minor_iterations,

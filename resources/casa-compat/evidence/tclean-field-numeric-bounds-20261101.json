@@ -1,0 +1,218 @@
+{
+  "scope": "FIELD numeric-selector boundedness and single-term standard-MFS niter=0 acceptance slice; existing public provider field scope only, not whole tclean task acceptance or provider-contract expansion",
+  "head": "5132cb79c4c8d722fbba285ce4f5ac84e0004f6e",
+  "owned_files": [
+    "crates/casa-ms/src/selection/parser.rs",
+    "crates/casa-ms/src/selection/syntax.rs",
+    "crates/casa-ms/tests/field_selection_oracle.rs",
+    "crates/casa-ms/tests/spectral_envelope_memory.rs"
+  ],
+  "binary_sha256": "349e6a775a8074d0732e1c67660fcfb15f9c91b6511a6b6cfd5582c0e4f29ac2",
+  "binary_caveat": "Frozen public probe also contains separate single-term normalization WIP. This niter=0 wave does not exercise it.",
+  "dependency": {
+    "archive": "/Volumes/home/casa-rs/tclean/20261031/scan-observation-engine-20261101.tar",
+    "sha256": "7b35ca58b0ebee3cc6d8fa2f503a45a617084cec9d76a95103484d175d14accf",
+    "verified_by_reread": true,
+    "content": "Contains input.ms and fixture metadata; referenced without duplicating the dataset."
+  },
+  "results": {
+    "oracle-task": {
+      "wide_safe": {
+        "field": "0~10",
+        "expected_rows": 52650,
+        "passed": true,
+        "exit_code": 0
+      },
+      "equal_endpoint": {
+        "field": "0~0",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "mixed_missing_id": {
+        "field": "0,99",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "reversed": {
+        "field": "1~0",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "missing": {
+        "field": "99",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "outside_range": {
+        "field": "9~10",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "comma_only": {
+        "field": ",",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "negative": {
+        "field": "-1",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      }
+    },
+    "candidate-cpu64": {
+      "wide_safe": {
+        "field": "0~10",
+        "expected_rows": 52650,
+        "passed": true,
+        "exit_code": 0
+      },
+      "equal_endpoint": {
+        "field": "0~0",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "mixed_missing_id": {
+        "field": "0,99",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "reversed": {
+        "field": "1~0",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "missing": {
+        "field": "99",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "outside_range": {
+        "field": "9~10",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "comma_only": {
+        "field": ",",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      },
+      "negative": {
+        "field": "-1",
+        "expected_rows": null,
+        "passed": true,
+        "exit_code": 1
+      }
+    },
+    "candidate-cpu32": {
+      "wide_safe": {
+        "field": "0~10",
+        "expected_rows": 52650,
+        "passed": true,
+        "exit_code": 0
+      },
+      "equal_endpoint": {
+        "field": "0~0",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "mixed_missing_id": {
+        "field": "0,99",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      }
+    },
+    "candidate-gpu32": {
+      "wide_safe": {
+        "field": "0~10",
+        "expected_rows": 52650,
+        "passed": true,
+        "exit_code": 0
+      },
+      "equal_endpoint": {
+        "field": "0~0",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      },
+      "mixed_missing_id": {
+        "field": "0,99",
+        "expected_rows": 13338,
+        "passed": true,
+        "exit_code": 0
+      }
+    }
+  },
+  "maximum_product_nrms": 1.3379817908017488e-06,
+  "comparison_scope": {
+    "products": "Recorded inventory, shapes, masks, finite pixels, NRMS <=0.001; sumwt max absolute difference <=5e-5 times CASA maximum; recorded beam comparison",
+    "metadata_subset": [
+      "brightness unit",
+      "Stokes",
+      "axis units",
+      "coordinate reference codes",
+      "reference value",
+      "reference pixel",
+      "increment",
+      "rest frequency"
+    ],
+    "exact_selected_returns": [
+      "iterdone",
+      "nmajordone",
+      "stopcode"
+    ],
+    "sample_counts": "expected selected MAIN rows times 2 equals native gridded_samples; this wave is not an independent exact physical-row identity check"
+  },
+  "visual_review": {
+    "source": "Root reports direct inspection of all nine shared-scale case comparisons in three contact sheets",
+    "result": "No discrepancies reported; not independently re-reviewed during packaging"
+  },
+  "native_resource_law": {
+    "range_widths": [
+      "0~1",
+      "0~2147483647"
+    ],
+    "duplicate_overlaps": true,
+    "peak_bytes": 72,
+    "retained_bytes": 4,
+    "retained_capacity_ids": 1,
+    "scope": "Actual heap on one-field fixture; native INT_MAX boundedness only, not CASA science and not a complete admission-budget law"
+  },
+  "verification": {
+    "old_pinned_field_oracle": "passed",
+    "focused_tests": "2 field tests and 4 memory tests passed; settle helper expected ignored",
+    "clippy": "passed with -D warnings",
+    "initial_failure": "Portable fixture assumed four FIELD rows; actual two. Corrected fixture expectation. Original failure log preserved.",
+    "independent_review": "Root reports clear"
+  },
+  "remaining_gaps": [
+    "numeric-name/CODE fallback unfinished",
+    "whole task acceptance unfinished",
+    "metadata comparison is a subset",
+    "no complete admission-budget law claimed"
+  ],
+  "reproduction": "Archive preserves original absolute-path recipes and reader helper. Restore dependency input.ms/metadata under expected scan-observation-20261101 path or update recipe paths; restore reader helper to repository tools/imaging path; recipes require pinned CASA 6.7.6.14/6.7.6-14 plus NumPy/Matplotlib. No rerun performed during packaging.",
+  "source_capture": "Four-file patch plus full tracked HEAD diff and untracked Rust-source diff/snapshots. Unrelated preexisting apps/casa/data/ms excluded; git status preserved. No MAIN edits, commits, Cargo, or rolling-summary mutation.",
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/field-numeric-bounds-20261101.tar",
+    "sha256": "17354bfd7a7a0884e2d7ab83fed82d55d43f08213e4fedb0a160ed00bb385459",
+    "bytes": 41216000,
+    "member_payloads_verified": 922,
+    "manifest": "manifest.json",
+    "verification": "All member sizes and SHA256 content hashes reread from NAS tar; archive SHA256 independently reread from NAS after close."
+  }
+}

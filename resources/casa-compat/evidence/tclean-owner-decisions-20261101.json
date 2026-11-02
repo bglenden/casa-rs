@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-01",
+  "record": "tclean-owner-approved-comparison-decisions",
+  "work_issues": [
+    980,
+    991
+  ],
+  "weight_rule": {
+    "rule": "tclean-weak-taylor-weight-v1",
+    "owner_decision": "Approve the scoped comparison rule",
+    "approved": true,
+    "scope": "Two-term Stokes-I MFS mosaic/AW weak weight.tt1 only",
+    "maximum_reference_rho_l2": 0.001,
+    "maximum_reference_rho_pb": 0.001,
+    "maximum_e2": 1e-06,
+    "maximum_emax_reference_pb": 1e-06,
+    "guards": "The reviewed accumulator guards, reference-only PB support, and all other original checks remain. No model or metadata waiver.",
+    "proposal": "docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md"
+  },
+  "model_case": {
+    "rule": "tclean-reviewed-weak-model-output-v1",
+    "owner_decision": "Accept this specific reviewed output",
+    "approved": true,
+    "disposition": "accepted_by_identity_bound_owner_review",
+    "scope": "Only this unchanged clean8/cpu32 result; future outputs are not automatically approved",
+    "raw_passed": false,
+    "raw_failure": "image.model.tt1",
+    "raw_model_tt1_nrms": 0.0012759712077457415,
+    "raw_receipt_sha256": "d8b2d4cbdd9b8a096819ee1a6d47372eddc66e968db85b5ca7c5435d2b308864",
+    "measurement_sha256": "2e3e0f013e545ef8c35f00fae54e688e59fa1b8aac2de9aaa28b3b3f68e5f8f8",
+    "native_revision": "b6a87fa91271e5bf809b86c68e40a979974c1368",
+    "binary_sha256": "c32e26cdde18cc0f5f17b327ed623f658227f64ba1522d77cd9801ad896be153",
+    "input_identity": {
+      "tree_sha256_excluding_table_lock": "e1f1e030a1d1968b627863b3b5386e03fc7ed5770760698a1f6b603f4e885548",
+      "file_count_excluding_table_lock": 215,
+      "bytes_excluding_table_lock": 31216574,
+      "selected_rows": 41760,
+      "selected_correlation_channel_samples": 1336320,
+      "frequency_min_hz": 84430929999.9,
+      "frequency_max_hz": 100055930000.0,
+      "fractional_frequency_span": 0.1693887575527978,
+      "active_spw_polarization_rows": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          3,
+          0
+        ]
+      ],
+      "selected_rows_per_active_ddid": [
+        10440,
+        10440,
+        10440,
+        10440
+      ]
+    },
+    "parameters": {
+      "cell": "1.0arcsec",
+      "cyclefactor": 1.0,
+      "cycleniter": 2,
+      "datacolumn": "data",
+      "deconvolver": "mtmfs",
+      "field": "0",
+      "gain": 0.1,
+      "gridder": "standard",
+      "imsize": 512,
+      "interactive": false,
+      "maxpsffraction": 0.8,
+      "minpsffraction": 0.05,
+      "niter": 8,
+      "nterms": 2,
+      "parallel": false,
+      "pbcor": true,
+      "pblimit": 0.2,
+      "phasecenter": 0,
+      "savemodel": "none",
+      "scales": [
+        0,
+        5
+      ],
+      "smallscalebias": 0.0,
+      "specmode": "mfs",
+      "spw": "0~3",
+      "stokes": "I",
+      "threshold": "0Jy",
+      "weighting": "natural",
+      "restoringbeam": "common"
+    },
+    "model_payload_identities": {
+      "casa": [
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "5526e26797bce987fc1a46d15d012a757b65328ce9673afce2ff0ea48c8f0178",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        },
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "3afa79a8d7a6bb095623a314ea1d259441c3a3eff5a9c6082a62cf7223341bdf",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        }
+      ],
+      "cpu32": [
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "cff23b434b2a6e06d8b887a3dfdad5d81c2e48b733f648567372be21263703ff",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        },
+        {
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "values_f32_c_order_sha256": "c45d56343bbabadcc54836184269abe1a19e9d7649b4921af6806f96a667818a",
+          "mask_sha256": "f317dd9d6ba01c465d82e4c4d55d01d270dda69db4a01a64c587a5593ac6084d"
+        }
+      ]
+    },
+    "interval_hz": [
+      84305555030.36191,
+      100180604526.17267
+    ],
+    "maximum_ideal_published_model_relative_difference": 5.746867501651647e-07,
+    "limit": 1e-06,
+    "other_checks": "All 18 other original product checks remain; original #607 alpha PB-support criterion is explicit",
+    "proposal": "docs/Planning/tclean-weak-model-review-proposal-20261031.md",
+    "raw_archive": "/Volumes/home/casa-rs/tclean/20261031/t2-mtmfs-failure-archive-20261031.tar",
+    "raw_archive_sha256": "8a3a1346568e35cb6fe4aa4db9a21d45a1a154be9f8ffbc97147ab68aa1e50e0",
+    "finalization": "Existing bound JSON measurements checked once; no image-array rereads or new science run during owner disposition"
+  },
+  "task_status": "Unfinished: these decisions do not close tclean or waive other gates",
+  "authority": "Explicit owner replies in this chat on2026-11-01",
+  "independent_review": "Separate-agent reviews support both scoped decisions; no additional external review was submitted or counted as a pass"
+}

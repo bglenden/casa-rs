@@ -8,6 +8,7 @@ signatures or defaults.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
@@ -99,6 +100,14 @@ def documented_template(surface: str) -> str:
     return _native().parameter_template_toml(surface)
 
 
+def _warn_migration_diagnostics(snapshot: Any) -> None:
+    # Rust owns the conversion and message. Display the original snapshot before
+    # managed profile rendering or Mapping expansion can discard its notices.
+    for diagnostic in snapshot["diagnostics"]:
+        if diagnostic["code"] == "migrated" and diagnostic["parameter"] is not None:
+            warnings.warn(diagnostic["message"], UserWarning, stacklevel=3)
+
+
 class SurfaceParameters(MutableMapping[str, ParameterData]):
     """Mutable resolved parameters for exactly one catalog surface.
 
@@ -134,6 +143,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         self._unset: set[str] = set()
         self._snapshot: Any = None
         self._refresh()
+        _warn_migration_diagnostics(self._snapshot)
 
     @classmethod
     def defaults(
@@ -175,6 +185,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         snapshot = _native().parameter_last(surface, str(root), False)
         if snapshot is None or snapshot["profile_toml"] is None:
             raise FileNotFoundError(f"no Last parameter profile exists for {surface!r}")
+        _warn_migration_diagnostics(snapshot)
         return cls(
             surface,
             base_source="last",
@@ -197,6 +208,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             raise FileNotFoundError(
                 f"no Last Successful parameter profile exists for {surface!r}"
             )
+        _warn_migration_diagnostics(snapshot)
         return cls(
             surface,
             base_source="last_successful",
@@ -369,7 +381,9 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
                     f"managed parameter profile disappeared for {self.surface!r}"
                 )
             self._profile_toml = snapshot["profile_toml"]
+            _warn_migration_diagnostics(snapshot)
         self.revert()
+        _warn_migration_diagnostics(self._snapshot)
 
     def to_toml(self) -> str:
         """Render required values and semantic differences from current defaults."""

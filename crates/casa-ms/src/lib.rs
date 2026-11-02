@@ -147,12 +147,13 @@ pub(crate) use selected_pointing::{
 };
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, IntentSelector, SpwSelector, parse_intent_selector,
-    parse_numeric_id_selector, parse_spw_selector,
+    parse_numeric_id_selector, parse_numeric_row_id_ranges, parse_spw_selector,
 };
 pub use selection::{
-    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
-    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, UvDistanceInterval,
-    UvDistanceLimit, parse_uv_distance_intervals, validate_ms_selector_edit,
+    FieldSelectorRow, MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget,
+    MsSelectionRowBlock, MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow,
+    UvDistanceInterval, UvDistanceLimit, parse_uv_distance_intervals, resolve_field_selector_rows,
+    validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,

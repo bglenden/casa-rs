@@ -259,6 +259,13 @@ parity work that surfaced this CASA-side issue.
 In the current CASA `tclean(..., deconvolver='hogbom')` path, `niter=1` appears able to commit
 two clean components inside a single minor cycle while still reporting `iterdone = 1`.
 
+Since provider contract 31 (owner approved 2026-10-31), casa-rs defaults its
+extra `hogbom_iteration_mode` option to `casa-inclusive` to reproduce this
+behavior. Explicit `strict` limits physical updates to the requested budget.
+Migrating an older profile warns when that option was omitted and adopts the
+inclusive default; explicit values are preserved. CASA's 92 parameter defaults
+are unchanged.
+
 The effect is not limited to the top-level `niter=1` case. Any CASA Hogbom
 minor-cycle call that enters `hclean` with a positive `cycleNiter` may commit
 one more component than the reported minor-cycle count. In a Cotton-Schwab run,
@@ -2526,11 +2533,29 @@ image depends on the value and the baselines, and a small enough one does
 not. casa-rs refuses a `uvtaper` entry without a unit and asks for an angle
 or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
+## `tclean` corrupts an absolute directory when numbering a restart
+
+- Date noted: 2026-10-31
+- Status: CASA bug; owner approved preserving the correct directory (#944).
+  Native `restart=False` numbering is still unfinished.
+- Affected build/code: CASA 6.7.6.14, casatasks
+  `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
+
+With existing products and `restart=False`, CASA finds the next shared
+numbered image prefix. Its Python helper removes the first two characters
+of each directory with `dirnames[immod][2:]`, assuming a `./` prefix. For an
+absolute imagename under `/Volumes/`, this instead produces `olumes/` and
+fails to create the numbered PSF. Relative prefixes in the same probe
+correctly produce `_2` and `_3`. The exact build, parameters and failure
+are recorded on #944 and in the lifecycle receipt linked from the generated
+compatibility reference. The approved casa-rs target keeps the requested
+absolute directory; this decision is not evidence that restart is complete.
+
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28
-- Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
-  review)
+- Status: CASA behavior retained with a warning (owner decision #980,
+  2026-10-31; supersedes #970's refusal)
 - Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
   (`setModelImageOne`, `regridToModelImage`) and casacore
   `images/Images/ImageRegrid.tcc`
@@ -2539,8 +2564,12 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 axes only. `ImageRegrid` copies the Stokes axis without comparing its
 coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
 Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
-requires the start model's Stokes to be the image's, plane for plane, a
-single plane included (`casa_imaging_application`'s `StartModel`).
+now matches this positional copy for equal-count Stokes axes and warns when
+the labels differ (`casa_imaging_application`'s `StartModel`). The owner
+requested matching CASA with a warning on 2026-10-31 (#980), replacing the
+earlier refusal. This is not a physical polarization conversion; published
+coordinates still describe the requested target image. Unequal-plane-count
+forms remain unassessed for equivalence.
 
 A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is

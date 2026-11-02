@@ -178,6 +178,14 @@ name = "existing_outputs"
 path = "tests/existing_outputs.rs"
 
 [[test]]
+name = "field_selection_oracle"
+path = "tests/field_selection_oracle.rs"
+
+[[test]]
+name = "selector_width_memory"
+path = "tests/selector_width_memory.rs"
+
+[[test]]
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]

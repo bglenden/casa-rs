@@ -15,7 +15,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_imaging_model::{CorrelationProduct, PartitionSelection, RowSelection, UvSelection};
+use casa_imaging_model::{
+    CorrelationProduct, IdSelection, PartitionSelection, RowSelection, UvSelection,
+};
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{
@@ -89,6 +91,10 @@ pub(super) struct Survey {
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
     pub(super) source_frequency_reference: casa_types::measures::frequency::FrequencyRef,
     pub(super) fields: BTreeSet<i32>,
+    /// The field of CASA's first visibility buffer: the least
+    /// (`DATA_DESC_ID`, `FIELD_ID`) of the selected samples, an MSv4's
+    /// window standing for its data description ([`FirstVisibility`]).
+    pub(super) first_visibility_field_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
     /// The earliest selected time: the anchor of the spectral frame and of
     /// the image's observation date.
@@ -135,9 +141,28 @@ pub(super) struct SurveyPlan<'a> {
     pub(super) first_cross: bool,
 }
 
+/// The key CASA's visibility iterator orders its first buffer by, less
+/// `ARRAY_ID`: (`DATA_DESC_ID`, `FIELD_ID`). CASA sorts by `ARRAY_ID`
+/// first; neither store's partitions carry it (the MSv2 adapter partitions
+/// as XRADIO's converter does), so a selection spanning several arrays may
+/// name another first field than CASA's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct FirstVisibility {
+    description: u32,
+    field_id: i32,
+}
+
+impl FirstVisibility {
+    /// Keep the least of the keys observed.
+    fn observe(first: &mut Option<Self>, key: Self) {
+        *first = Some(first.map_or(key, |prior| prior.min(key)));
+    }
+}
+
 /// The facts gathered over every partition.
 struct Facts {
     fields: BTreeSet<i32>,
+    first_visibility: Option<FirstVisibility>,
     observation_ids: BTreeSet<i32>,
     time_bounds_mjd_seconds: [f64; 2],
     w: WRange,
@@ -145,8 +170,33 @@ struct Facts {
 }
 
 impl SurveyPlan<'_> {
+    /// Whether the survey reads UVW: for the W range, a UV-distance
+    /// interval's test, or to tell the MSv2 adapter's padding (NaN UVW)
+    /// from the samples a scan selection counts per time.
     fn reads_uvw(&self) -> bool {
-        self.w_range || !matches!(self.row_selection.uv_distances(), UvSelection::All)
+        self.w_range
+            || !matches!(self.row_selection.uv_distances(), UvSelection::All)
+            || self.scans_tested()
+    }
+
+    /// Whether each time's scan is tested: a scan selection holds some of a
+    /// partition's scans, so its times are selected one by one.
+    fn scans_tested(&self) -> bool {
+        !self.row_selection.scans().is_all()
+    }
+
+    /// Whether the scan of time `time` of `batch` is selected.
+    fn scan_holds(&self, batch: &VisibilityBatch<'_>, time: usize) -> Result<bool, PrepareError> {
+        scan_holds(self.row_selection.scans(), batch, time)
+    }
+
+    /// The data description standing for `candidate`'s in the first
+    /// visibility key: an MSv2's `DATA_DESC_ID`, else its window.
+    fn description(&self, candidate: &Candidate) -> u32 {
+        self.msv2.map_or_else(
+            || u32::try_from(candidate.spectral_window).expect("a window id fits u32"),
+            |ms| ms.data_description_id(candidate.id),
+        )
     }
 
     /// Whether the store holds its own padding, which only a NaN weight
@@ -180,7 +230,7 @@ impl SurveyPlan<'_> {
                 time_centroid: false,
                 interval: false,
                 exposure: false,
-                scan: false,
+                scan: self.scans_tested(),
             },
             weights: WeightRequest::Stored,
             channels: if flags || self.stored_padding() {
@@ -189,7 +239,7 @@ impl SurveyPlan<'_> {
                 0..1
             },
             times: TimeSelection::All,
-            fields: field_selection(self.row_selection.fields()),
+            fields: field_selection(self.observation.catalogue(), self.row_selection.fields()),
             correlations: CorrelationRequest {
                 deliver: Deliver::All,
                 flags_from: FlagsFrom::Delivered,
@@ -259,6 +309,7 @@ pub(super) fn survey(
     )?;
     let mut facts = Facts {
         fields: BTreeSet::new(),
+        first_visibility: None,
         observation_ids: BTreeSet::new(),
         time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
         w: WRange::EMPTY,
@@ -330,6 +381,13 @@ pub(super) fn survey(
             spectral_windows,
             source_frequency_reference,
             fields: facts.fields,
+            first_visibility_field_id: usize::try_from(
+                facts
+                    .first_visibility
+                    .expect("a survey holding samples observed a first visibility")
+                    .field_id,
+            )
+            .expect("a FIELD row is nonnegative"),
             observation_ids: facts.observation_ids,
             first_time_mjd_seconds: facts.time_bounds_mjd_seconds[0],
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
@@ -362,8 +420,9 @@ fn survey_partition(
     facts: &mut Facts,
 ) -> Result<u64, PrepareError> {
     let uv = plan.row_selection.uv_distances();
-    let tested = !matches!(uv, UvSelection::All);
+    let tested = !matches!(uv, UvSelection::All) || plan.scans_tested();
     let counted = tested || plan.stored_padding();
+    let description = plan.description(candidate);
     let mut traversal = plan.observation.bind_read(request)?;
     let estimate = traversal_samples(&traversal.estimate);
     let mut samples = if counted { 0 } else { estimate };
@@ -377,6 +436,9 @@ fn survey_partition(
             continue;
         };
         for time in 0..batch.times() {
+            if !plan.scan_holds(&batch, time)? {
+                continue;
+            }
             let selected = if plan.reads_uvw() || plan.stored_padding() {
                 let held = observe_time(plan, candidate, &batch, time, &mut facts.w)?;
                 samples += if counted { held } else { 0 };
@@ -390,6 +452,13 @@ fn survey_partition(
             let time_mjd_seconds = batch.time.seconds_since(time, origin);
             let field_id = i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id");
             facts.fields.insert(field_id);
+            FirstVisibility::observe(
+                &mut facts.first_visibility,
+                FirstVisibility {
+                    description,
+                    field_id,
+                },
+            );
             let bounds = &mut facts.time_bounds_mjd_seconds;
             bounds[0] = bounds[0].min(time_mjd_seconds);
             bounds[1] = bounds[1].max(time_mjd_seconds);
@@ -469,6 +538,31 @@ fn stored_padding(batch: &VisibilityBatch<'_>, sample: usize) -> bool {
         .all(|weight| !weight.is_finite())
 }
 
+/// Whether `scans` holds the scan number of time `time` of `batch`. A batch
+/// carries its times' scans when the request asks for them, which the
+/// survey does whenever `scans` constrains them; a scan the store names
+/// without a casacore number (an MSv4 scan name that is not a decimal
+/// integer) is never selected by number.
+fn scan_holds(
+    scans: &IdSelection,
+    batch: &VisibilityBatch<'_>,
+    time: usize,
+) -> Result<bool, PrepareError> {
+    if scans.is_all() {
+        return Ok(true);
+    }
+    let Some(times) = batch.scan.as_ref() else {
+        return Err(PrepareError::Opening(
+            casa_observation::ObservationError::InvalidStore {
+                reason: "a scan-selected batch carries no scans".to_string(),
+            },
+        ));
+    };
+    Ok(batch.catalogue.scans[times[time].0 as usize]
+        .number
+        .is_some_and(|number| scans.holds(i64::from(number))))
+}
+
 /// The samples `estimate`'s one partition delivers that are not padding.
 fn traversal_samples(estimate: &casa_observation::Estimate) -> u64 {
     let partition = estimate
@@ -513,12 +607,15 @@ fn first_cross_sample(
             if baseline.is_auto() {
                 continue;
             }
+            let time = sample / batch.samples_per_time();
+            if !plan.scan_holds(&batch, time)? {
+                continue;
+            }
             if let Some(uvw) = batch.group.uvw
                 && !uv.holds(uvw.metres_at(sample), candidate.wavelength_m)
             {
                 continue;
             }
-            let time = sample / batch.samples_per_time();
             let time_mjd_seconds = batch.time.seconds_since(time, origin);
             let unflagged = match plan.msv2 {
                 Some(ms) => {
@@ -550,6 +647,36 @@ fn first_cross_sample(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_first_visibility_follows_description_then_field_order() {
+        use super::FirstVisibility;
+        let keys = [(4, 1), (2, 9), (2, 7), (3, 0)];
+        for reversed in [false, true] {
+            let mut first = None;
+            for index in 0..keys.len() {
+                let (description, field_id) = keys[if reversed {
+                    keys.len() - 1 - index
+                } else {
+                    index
+                }];
+                FirstVisibility::observe(
+                    &mut first,
+                    FirstVisibility {
+                        description,
+                        field_id,
+                    },
+                );
+            }
+            assert_eq!(
+                first,
+                Some(FirstVisibility {
+                    description: 2,
+                    field_id: 7
+                })
+            );
+        }
+    }
+
     use casa_imaging_model::{IdSelection, IntentSelection};
     use casa_ms::MeasurementSet;
     use casa_types::{ArrayValue, ScalarValue, Value};
@@ -629,6 +756,7 @@ mod tests {
             };
             let mut facts = Facts {
                 fields: BTreeSet::new(),
+                first_visibility: None,
                 observation_ids: BTreeSet::new(),
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -787,6 +915,7 @@ mod tests {
             };
             let mut facts = Facts {
                 fields: BTreeSet::new(),
+                first_visibility: None,
                 observation_ids: BTreeSet::new(),
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -853,6 +982,114 @@ mod tests {
             rows,
             "an acquisition the MSv4 holds as padding is not a selected sample"
         );
+    }
+
+    /// The samples and epoch times `observation`'s survey selects under
+    /// `row_selection`, over every partition.
+    fn surveyed_under(
+        observation: &Msv2Observation,
+        row_selection: RowSelection,
+    ) -> (u64, Vec<f64>) {
+        let plan = SurveyPlan {
+            observation,
+            msv2: Some(observation),
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection,
+            w_range: false,
+            first_cross: false,
+        };
+        let catalogue = observation.catalogue();
+        let (mut total, mut times) = (0, Vec::new());
+        for id in catalogue.partition_ids() {
+            let entry = catalogue.partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                first_visibility: None,
+                observation_ids: BTreeSet::new(),
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, entry, false, 1 << 20);
+            total += survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            )
+            .expect("the survey reads");
+            times.extend(
+                facts
+                    .epochs
+                    .into_values()
+                    .flatten()
+                    .map(|epoch| epoch.time_mjd_seconds),
+            );
+        }
+        (total, times)
+    }
+
+    /// A scan selection counts only the selected scan's samples, and every
+    /// epoch the survey keeps lies within that scan: the counts are CASA
+    /// 6.7.6.14's rows for `scan='1'` and `scan='3'` on `mssel_test_small.ms`
+    /// (`tclean-selection-casa-20261031.json`), out of 1,058.
+    #[test]
+    fn a_scan_selection_surveys_only_its_scans_times() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("mssel_test_small.ms");
+        let ms = MeasurementSet::open(&path).expect("the MeasurementSet");
+        let main = ms.main_table();
+        let scan_times = |scan: i32| {
+            let times = (0..main.row_count())
+                .filter(|row| {
+                    matches!(
+                        main.cell_accessor(*row, "SCAN_NUMBER").unwrap().scalar().unwrap(),
+                        casa_types::ScalarValue::Int32(number) if *number == scan
+                    )
+                })
+                .map(
+                    |row| match main.cell_accessor(row, "TIME").unwrap().scalar().unwrap() {
+                        casa_types::ScalarValue::Float64(time) => *time,
+                        other => panic!("TIME is {other:?}"),
+                    },
+                )
+                .collect::<Vec<_>>();
+            let lower = times.iter().copied().fold(f64::INFINITY, f64::min);
+            let upper = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            [lower, upper]
+        };
+        let observation = Msv2Observation::open(&path).expect("the MeasurementSet opens");
+        let all = RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All);
+        assert_eq!(surveyed_under(&observation, all.clone()).0, 1_058);
+        for (scan, rows) in [(1, 322), (3, 736)] {
+            let selection = all
+                .clone()
+                .with_scan_observation(IdSelection::Only(vec![scan]), IdSelection::All);
+            let (samples, times) = surveyed_under(&observation, selection);
+            assert_eq!(samples, rows, "scan {scan}");
+            let [lower, upper] = scan_times(scan as i32);
+            assert!(!times.is_empty());
+            assert!(
+                times.iter().all(|time| (lower..=upper).contains(time)),
+                "scan {scan}: an epoch outside {lower}..={upper}"
+            );
+        }
     }
 
     #[test]

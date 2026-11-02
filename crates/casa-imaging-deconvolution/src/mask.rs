@@ -153,11 +153,12 @@ pub fn direction_world_to_pixel(
     }
 }
 
-/// Inclusive pixel box in the named mask coordinate grid.
+/// Inclusive signed pixel box in the named mask coordinate grid.
+/// Materialization intersects these bounds with the target image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaskBox {
-    blc: [usize; 2],
-    trc: [usize; 2],
+    blc: [i64; 2],
+    trc: [i64; 2],
 }
 
 /// Deferred static mask construction evaluated at an exact major-cycle boundary.
@@ -318,7 +319,7 @@ impl AutoMaskBeam {
 
 impl MaskBox {
     /// Construct an inclusive non-inverted box.
-    pub fn new(blc: [usize; 2], trc: [usize; 2]) -> Result<Self, MaskError> {
+    pub fn new(blc: [i64; 2], trc: [i64; 2]) -> Result<Self, MaskError> {
         if blc[0] > trc[0] || blc[1] > trc[1] {
             return Err(MaskError::InvertedBox);
         }
@@ -327,13 +328,13 @@ impl MaskBox {
 
     /// Return the inclusive lower corner.
     #[must_use]
-    pub const fn blc(self) -> [usize; 2] {
+    pub const fn blc(self) -> [i64; 2] {
         self.blc
     }
 
     /// Return the inclusive upper corner.
     #[must_use]
-    pub const fn trc(self) -> [usize; 2] {
+    pub const fn trc(self) -> [i64; 2] {
         self.trc
     }
 }
@@ -622,7 +623,8 @@ impl ReconstructionMask {
         ))
     }
 
-    /// Compile target-grid pixel boxes into one static mask.
+    /// Compile target-grid pixel boxes into one static mask, clipping each box
+    /// to the target. An empty union is valid zero support (CASA stop code 7).
     pub fn from_boxes(
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
@@ -630,23 +632,29 @@ impl ReconstructionMask {
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
         let mut support = vec![false; shape[0] * shape[1]];
+        let upper = shape.map(|length| i64::try_from(length - 1).unwrap_or(i64::MAX));
         for region in boxes {
-            if region.trc[0] >= shape[0] || region.trc[1] >= shape[1] {
-                return Err(MaskError::OutsideTarget);
+            // LCBox clips each bound; SDMaskHandler skips an empty intersection
+            // into its initially zero mask. This never expands to FullPlane.
+            let blc = region.blc.map(|value| value.max(0));
+            let trc = [region.trc[0].min(upper[0]), region.trc[1].min(upper[1])];
+            if blc[0] > trc[0] || blc[1] > trc[1] {
+                continue;
             }
-            for x in region.blc[0]..=region.trc[0] {
-                for y in region.blc[1]..=region.trc[1] {
+            let [x0, y0] = blc.map(|value| usize::try_from(value).expect("clipped pixel index"));
+            let [x1, y1] = trc.map(|value| usize::try_from(value).expect("clipped pixel index"));
+            for x in x0..=x1 {
+                for y in y0..=y1 {
                     support[x * shape[1] + y] = true;
                 }
             }
-        }
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
         }
         Ok(Self::new(coordinate, shape, support))
     }
 
     /// Exact target-grid support already reprojected by the geometry owner.
+    /// Empty support is valid: CASA stops with zero-mask code7, preserving the
+    /// residual and publishing the empty mask without applying components.
     pub fn from_reprojected_support(
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
@@ -655,9 +663,6 @@ impl ReconstructionMask {
         validate_shape(target_shape)?;
         if support.len() != target_shape[0] * target_shape[1] {
             return Err(MaskError::ShapeMismatch);
-        }
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
         }
         Ok(Self::new(target_coordinate, target_shape, support.to_vec()))
     }
@@ -906,9 +911,6 @@ pub enum MaskError {
     /// A pixel box is inverted.
     #[error("mask box requires blc <= trc")]
     InvertedBox,
-    /// A static box lies outside its named grid.
-    #[error("mask box lies outside the target grid")]
-    OutsideTarget,
     /// The support's shape or direction coordinate does not match the
     /// target grid.
     #[error("mask shape or direction coordinate differs from the target grid")]
@@ -916,9 +918,6 @@ pub enum MaskError {
     /// Shape is empty or overflows addressable storage.
     #[error("mask shape must be finite and non-empty")]
     InvalidShape,
-    /// Empty reconstruction masks fail visibly; no full-image fallback exists.
-    #[error("reconstruction mask is empty")]
-    EmptyMask,
     /// Auto-mask residual state contained a non-finite sample.
     #[error("auto-mask residual contains a non-finite sample")]
     NonfiniteResidual,
@@ -1153,5 +1152,31 @@ mod tests {
             sidelobe_fraction: 0.0,
         };
         assert_eq!(smooth_and_cut(&[true], [1, 1], 1.0, beam, 1.0), [false]);
+    }
+    #[test]
+    fn reprojected_zero_support_is_a_valid_empty_clean_mask() {
+        let grid = coordinate([0.0, 0.0]);
+        let mask = ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 6])
+            .expect("an explicit zero mask stops cleaning, rather than failing");
+        assert_eq!(mask.shape(), [2, 3]);
+        assert!(mask.support().iter().all(|cleanable| !cleanable));
+        assert!(matches!(
+            ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 5]),
+            Err(MaskError::ShapeMismatch)
+        ));
+    }
+    #[test]
+    fn boxes_clip_to_target_and_empty_intersections_remain_zero() {
+        let grid = coordinate([0.0, 0.0]);
+        let upper =
+            ReconstructionMask::from_boxes(grid, [3, 2], [MaskBox::new([1, 0], [10, 10]).unwrap()])
+                .unwrap();
+        assert_eq!(upper.support(), &[false, false, true, true, true, true]);
+        let outside =
+            ReconstructionMask::from_boxes(grid, [3, 2], [MaskBox::new([3, 0], [10, 10]).unwrap()])
+                .unwrap();
+        assert_eq!(outside.support(), &[false; 6]);
+        let empty = ReconstructionMask::from_boxes(grid, [3, 2], []).unwrap();
+        assert_eq!(empty.support(), &[false; 6]);
     }
 }

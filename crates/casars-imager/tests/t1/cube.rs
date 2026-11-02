@@ -186,3 +186,78 @@ fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs()
         rms(&natural)
     );
 }
+
+/// CASA zeroes a plane whose `.sumwt` is positive but at most 1e-7
+/// (`SIImageStore::divideImageByWeightVal`): its PSF, residual, model and
+/// image are zero and nothing is cleaned there. Native channels 6 to 8 carry
+/// weights small enough that image channel 7, which linear interpolation
+/// takes only from them, sums to about 1e-8; every other channel keeps the
+/// row's `WEIGHT` and images as before (#980).
+#[test]
+fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
+    use casa_ms::{MeasurementSet, OptionalMainColumn};
+    use casa_types::{ArrayValue, Value};
+    const TINY: std::ops::Range<usize> = 6..9;
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    if !ms
+        .main_table()
+        .schema()
+        .unwrap()
+        .contains_column("WEIGHT_SPECTRUM")
+    {
+        let schema = casa_ms::column_def::build_table_schema(&[
+            *OptionalMainColumn::WeightSpectrum.column_def(),
+        ])
+        .unwrap();
+        ms.main_table_mut()
+            .add_column(schema.column("WEIGHT_SPECTRUM").unwrap().clone(), None)
+            .unwrap();
+    }
+    let rows = ms.row_count();
+    for row in 0..rows {
+        let ArrayValue::Float32(weight) = ms.weight_column().get(row).unwrap().clone() else {
+            panic!("Float WEIGHT");
+        };
+        let ArrayValue::Bool(flags) = ms.flag_column().get(row).unwrap().clone() else {
+            panic!("boolean FLAG");
+        };
+        let npol = weight.len();
+        let tiny = 1.0e-7 / (8.0 * (npol * rows) as f32);
+        let spectrum = ndarray::ArrayD::from_shape_fn(flags.raw_dim(), |index| {
+            if TINY.contains(&index[1]) {
+                tiny
+            } else {
+                weight[[index[0]]]
+            }
+        });
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "WEIGHT_SPECTRUM")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Float32(spectrum)))
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+
+    let products = image(&observation, "empty-bound", json!({"weighting": "natural"}));
+    let sumwt = products.get(".sumwt").channel_values();
+    assert!(
+        sumwt[7] > 0.0 && f64::from(sumwt[7]) <= 1.0e-7,
+        "channel 7 sumwt {} is not a positive empty-bound weight",
+        sumwt[7]
+    );
+    for suffix in [".psf", ".residual", ".model", ".image"] {
+        let plane = products.get(suffix).plane(7);
+        assert!(
+            plane.iter().all(|value| *value == 0.0),
+            "{suffix} channel 7 is not CASA's zero plane"
+        );
+    }
+    let (peak_jy, peak_pixel, _) = peak(&products.get(".image").plane(3));
+    assert_eq!(peak_pixel, component_pixel(POINT));
+    assert!(
+        peak_jy > 0.5,
+        "an ordinary channel images: peak {peak_jy} Jy"
+    );
+}

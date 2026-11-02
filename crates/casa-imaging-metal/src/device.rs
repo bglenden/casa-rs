@@ -42,6 +42,7 @@ pub(crate) struct Device {
     pub native: Pipeline,
     /// The cell noise (`casa_numerics::cell_noise`).
     pub noise: Pipeline,
+    pub fold: Pipeline,
 }
 
 // SAFETY: Metal documents `MTLDevice`, `MTLCommandQueue` and
@@ -119,6 +120,7 @@ impl Device {
             residual: pipeline("residual"),
             native: pipeline("native_model"),
             noise: pipeline(cell_noise::METAL_KERNEL),
+            fold: pipeline("fold_grid"),
             device,
             queue,
         })

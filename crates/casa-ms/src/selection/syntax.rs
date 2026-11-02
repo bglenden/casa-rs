@@ -96,24 +96,103 @@ impl ChannelSelection {
 
 /// Parse a CASA-style numeric id selector such as `0,2~4`.
 pub fn parse_numeric_id_selector(value: &str, label: &str) -> MsResult<Vec<i32>> {
-    let mut values = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
+    Ok(parse_numeric_id_ranges(value, label)?
+        .into_iter()
+        .flat_map(|(start, end)| start..=end)
+        .collect())
+}
+
+/// Raw numeric terms preserve the distinction between a literal and a range,
+/// including endpoint order, until each selector applies its range semantics.
+enum NumericIdTerm {
+    Id(i32),
+    Range(i32, i32),
+}
+
+/// Legacy APIs permit empty list terms and Rust's explicit positive sign;
+/// the scan/observation grammar preserves CASA's stricter lexical rules.
+#[derive(Clone, Copy)]
+enum NumericIdSyntax {
+    Legacy,
+    Row,
+}
+
+fn parse_numeric_id_terms(
+    value: &str,
+    label: &str,
+    syntax: NumericIdSyntax,
+) -> MsResult<Vec<NumericIdTerm>> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| matches!(syntax, NumericIdSyntax::Row) || !part.is_empty())
+        .map(|part| {
+            if matches!(syntax, NumericIdSyntax::Row) && (part.is_empty() || part.contains('+')) {
+                return Err(MsError::InvalidInput(format!(
+                    "{label} selector {part:?} is not a supported numeric id or range"
+                )));
+            }
+            if let Some((start, end)) = parse_numeric_range_endpoints(part) {
+                return Ok(NumericIdTerm::Range(start, end));
+            }
+            part.parse::<i32>().map(NumericIdTerm::Id).map_err(|_| {
+                MsError::VersionError(format!(
+                    "{label} selector {part:?} is not a supported numeric id or range"
+                ))
+            })
+        })
+        .collect()
+}
+
+/// Legacy numeric selectors normalize range direction before expansion.
+fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
+    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Legacy)?
+        .into_iter()
+        .map(|term| match term {
+            NumericIdTerm::Id(id) => (id, id),
+            NumericIdTerm::Range(start, end) => (start.min(end), start.max(end)),
+        })
+        .collect();
+    Ok(canonical_numeric_ranges(ranges))
+}
+
+/// Parse the numeric scan/observation subset into compact inclusive intervals.
+/// CASA's MSScanParse and MSObservationParse reject negative, equal and reversed
+/// range bounds; a single nonnegative literal remains valid. Storage is bounded
+/// by the expression's term count, independently of interval width.
+///
+/// # Errors
+///
+/// An empty term, an explicit `+` sign, a term that is not a number or
+/// `a~b` range, a negative ID, or range bounds that are equal or reversed.
+pub fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
+    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Row)?
+        .into_iter()
+        .map(|term| match term {
+            NumericIdTerm::Id(id) if id >= 0 => Ok((id, id)),
+            NumericIdTerm::Range(start, end) if start >= 0 && end > start => Ok((start, end)),
+            _ => Err(MsError::InvalidInput(format!(
+                "{label} selector requires nonnegative IDs and strictly increasing range bounds"
+            ))),
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    Ok(canonical_numeric_ranges(ranges))
+}
+
+pub(super) fn canonical_numeric_ranges(mut values: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
+    values.sort_unstable();
+    let mut count = 0;
+    for index in 0..values.len() {
+        let (start, end) = values[index];
+        if count > 0 && start <= values[count - 1].1.saturating_add(1) {
+            values[count - 1].1 = values[count - 1].1.max(end);
+        } else {
+            values[count] = (start, end);
+            count += 1;
         }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            values.extend(start..=end);
-            continue;
-        }
-        let parsed = part.parse::<i32>().map_err(|_| {
-            MsError::VersionError(format!(
-                "{label} selector {part:?} is not a supported numeric id or range"
-            ))
-        })?;
-        values.push(parsed);
     }
-    Ok(dedup_i32(values))
+    values.truncate(count);
+    values
 }
 
 /// Parse a CASA-style spectral-window selector.
@@ -259,10 +338,16 @@ pub fn parse_intent_selector(text: &str) -> Vec<IntentSelector> {
     selectors
 }
 
-pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
+pub(super) fn parse_numeric_range_endpoints(value: &str) -> Option<(i32, i32)> {
     let (start, end) = value.split_once('~')?;
-    let start = start.trim().parse::<i32>().ok()?;
-    let end = end.trim().parse::<i32>().ok()?;
+    Some((
+        start.trim().parse::<i32>().ok()?,
+        end.trim().parse::<i32>().ok()?,
+    ))
+}
+
+pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
+    let (start, end) = parse_numeric_range_endpoints(value)?;
     let (start, end) = if start <= end {
         (start, end)
     } else {
@@ -282,6 +367,84 @@ pub(super) fn dedup_i32(values: Vec<i32>) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_intervals_are_bounded_by_terms_and_preserve_the_grammar() {
+        let ranges = parse_numeric_id_ranges("0~2147483647", "scan").unwrap();
+        assert_eq!(ranges, [(0, i32::MAX)]);
+        assert_eq!(
+            ranges.capacity(),
+            parse_numeric_id_ranges("0~1", "scan").unwrap().capacity()
+        );
+        assert_eq!(
+            parse_numeric_id_ranges("9, 3~1, 2~5,, 8,2147483647~2147483646", "scan").unwrap(),
+            [(1, 5), (8, 9), (i32::MAX - 1, i32::MAX)]
+        );
+        assert_eq!(
+            parse_numeric_id_selector("3~1,2,,7", "scan").unwrap(),
+            [1, 2, 3, 7]
+        );
+        assert_eq!(
+            parse_numeric_id_ranges("-2147483648~2147483647", "scan").unwrap(),
+            [(i32::MIN, i32::MAX)]
+        );
+        for text in [">1", "*", "1~2~3", "2147483648", "x"] {
+            assert!(parse_numeric_id_ranges(text, "scan").is_err());
+        }
+    }
+
+    #[test]
+    fn row_id_ranges_apply_casas_strict_bounds_without_changing_legacy_ids() {
+        assert_eq!(
+            parse_numeric_row_id_ranges("1,3~5,4", "scan").unwrap(),
+            [(1, 1), (3, 5)]
+        );
+        assert_eq!(
+            parse_numeric_row_id_ranges("0~2147483647", "observation").unwrap(),
+            [(0, i32::MAX)]
+        );
+        for value in ["1~1", "3~1", "-1", "-1~3", "0~0"] {
+            assert!(
+                parse_numeric_row_id_ranges(value, "scan").is_err(),
+                "{value}"
+            );
+            assert!(
+                parse_numeric_row_id_ranges(value, "observation").is_err(),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            parse_numeric_id_selector("1~1,3~1", "legacy").unwrap(),
+            [1, 2, 3]
+        );
+        assert_eq!(parse_numeric_range("1~0"), Some((0, 1)));
+        assert_eq!(parse_numeric_range("0~0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn row_id_lexical_rules_preserve_legacy_numeric_syntax() {
+        for text in [
+            "", " ", ",1", "1,", "1,,2", ",", "+1", "+0~1", "0~+1", "none", "None",
+        ] {
+            assert!(
+                parse_numeric_row_id_ranges(text, "scan").is_err(),
+                "{text:?}"
+            );
+            assert!(
+                parse_numeric_row_id_ranges(text, "observation").is_err(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            parse_numeric_row_id_ranges(" 1 , 3 ~ 5 ", "scan").unwrap(),
+            [(1, 1), (3, 5)]
+        );
+        assert_eq!(
+            parse_numeric_id_selector(",+1,1,,+2~+3,", "legacy").unwrap(),
+            [1, 2, 3]
+        );
+        assert!(parse_numeric_id_selector(" ", "legacy").unwrap().is_empty());
+    }
 
     #[test]
     fn parse_numeric_id_selector_deduplicates_ranges() {

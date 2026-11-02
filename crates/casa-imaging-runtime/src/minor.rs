@@ -688,10 +688,9 @@ impl Physical<'_> {
     }
 }
 
-/// Read `key` as a view: residual and PSF normalised by the term-0 PSF peak
-/// (or the residual in CASA's flat-noise or flat-sky units under a
-/// direction-dependent response), and the support. `None` for a plane with
-/// no valid data.
+/// Read `key` as a view: the single-term or Taylor-family residual and
+/// unit-peak PSF, with the requested direction-dependent response, and support.
+/// `None` for a plane with no valid data.
 fn load<'a>(
     inputs: &Inputs<'a>,
     key: PlaneKey,
@@ -753,8 +752,8 @@ fn load<'a>(
     }))
 }
 
-/// One plane's residual and PSF. Without a response both are divided by the
-/// PSF peak; with one the residual takes CASA's normalisation
+/// One plane's residual and PSF. Without a response the residual divides by
+/// sumwt and the PSF by its peak; with one the residual takes CASA's normalisation
 /// (`SIImageStore::divideResidualByWeight`) and the components convert back
 /// with `divideModelByWeight`. The residual divides by the published sum of
 /// weights and the weight image by the normal one; for one term both are
@@ -778,8 +777,11 @@ fn read_single<'a>(
     let peak = psf_peak_value(&psf, shape)?;
     let raw = plane.residual();
     let Some(response) = setup.response else {
+        // CASA divides the residual by sumwt and normalizes the PSF by its
+        // own peak (SIImageStore::divideResidualByWeight and normPSF).
+        let sum_weight = plane.sum_weight();
         return Ok(PlaneTerms {
-            residual: vec![raw.iter().map(|value| value.re / peak).collect()],
+            residual: vec![raw.iter().map(|value| value.re / sum_weight).collect()],
             psf: vec![normalise(psf, peak)],
             response: None,
         });

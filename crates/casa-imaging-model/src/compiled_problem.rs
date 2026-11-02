@@ -752,9 +752,9 @@ pub enum ReconstructionAlgorithm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HogbomIterationAccounting {
     /// Apply and report no more components than the requested budget.
-    #[default]
     Strict,
     /// Admit CASA's inclusive terminal component while preserving the reported budget.
+    #[default]
     CasaInclusive,
 }
 
@@ -801,7 +801,7 @@ impl ReconstructionControls {
         }
     }
 
-    /// Bind the reported per-cycle iteration budget and optional total major-cycle bound.
+    /// Bind the iteration budget and post-initial major-cycle bound (zero is initial-only).
     #[must_use]
     pub const fn with_cycle_limits(
         mut self,
@@ -870,7 +870,7 @@ impl ReconstructionControls {
         self.cycle_iteration_limit
     }
 
-    /// Return the explicit total major-cycle bound.
+    /// Return the post-initial major-cycle bound; zero stops after the initial pass.
     #[must_use]
     pub const fn maximum_major_cycles(self) -> Option<usize> {
         self.maximum_major_cycles
@@ -2218,14 +2218,13 @@ fn validate_reconstruction(
         });
     }
     if contract.controls.cycle_iteration_limit == Some(0)
-        || contract.controls.maximum_major_cycles == Some(0)
         || contract
             .controls
             .noise_sigma
             .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "cycle limits must be positive and nsigma must be finite and non-negative",
+            reason: "minor-cycle limit must be positive and nsigma must be finite and non-negative",
         });
     }
     if contract.controls.cycle_threshold.is_some_and(|rule| {

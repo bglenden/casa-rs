@@ -20,20 +20,40 @@ pub enum IdSelection {
     All,
     /// Select exactly these identifiers.
     Only(Vec<u32>),
+    /// Inclusive identifier intervals, stored in space proportional to their count.
+    /// Compilation normalizes endpoints and merges overlapping or adjacent intervals.
+    Ranges(Vec<(u32, u32)>),
 }
 
 impl IdSelection {
-    /// Return selected identifiers, or `None` when every identifier is selected.
+    /// Return an explicit identifier list, or `None` for all IDs or interval storage.
     #[must_use]
-    pub fn ids(&self) -> Option<&[u32]> {
+    pub fn explicit_ids(&self) -> Option<&[u32]> {
         match self {
-            Self::All => None,
+            Self::All | Self::Ranges(_) => None,
             Self::Only(ids) => Some(ids),
         }
     }
 
+    /// Whether every identifier is selected without a predicate.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Bytes in owned vector allocations; the enclosing owner charges the enum itself.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        match self {
+            Self::All => Some(0),
+            Self::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
+            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(u32, u32)>()),
+        }
+    }
+
     /// Whether the selection holds identifier `value`; a negative one is
-    /// never selected by a list. A canonical list is sorted.
+    /// never selected by a list or interval. Lists must be sorted and intervals
+    /// canonical (sorted and disjoint), as guaranteed after compilation.
     #[must_use]
     pub fn holds(&self, value: i64) -> bool {
         match self {
@@ -41,6 +61,10 @@ impl IdSelection {
             Self::Only(ids) => {
                 u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
             }
+            Self::Ranges(ranges) => u32::try_from(value).is_ok_and(|value| {
+                let index = ranges.partition_point(|&(start, _)| start <= value);
+                index > 0 && value <= ranges[index - 1].1
+            }),
         }
     }
 
@@ -51,6 +75,28 @@ impl IdSelection {
             if ids.is_empty() {
                 return Err(CompileObservationError::EmptyIdSelection { selector });
             }
+        }
+        if let Self::Ranges(ranges) = self {
+            if ranges.is_empty() {
+                return Err(CompileObservationError::EmptyIdSelection { selector });
+            }
+            for (start, end) in ranges.iter_mut() {
+                if *start > *end {
+                    std::mem::swap(start, end);
+                }
+            }
+            ranges.sort_unstable();
+            let mut count = 0;
+            for index in 0..ranges.len() {
+                let (start, end) = ranges[index];
+                if count > 0 && start <= ranges[count - 1].1.saturating_add(1) {
+                    ranges[count - 1].1 = ranges[count - 1].1.max(end);
+                } else {
+                    ranges[count] = (start, end);
+                    count += 1;
+                }
+            }
+            ranges.truncate(count);
         }
         Ok(())
     }
@@ -75,10 +121,12 @@ pub enum IntentSelection {
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
 ///
 /// These are the MeasurementSet selections the imager exposes: field, UV
-/// distance and scan intent.
+/// distance, scan intent, scan number and observation identifier.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
+    scans: IdSelection,
+    observations: IdSelection,
     uv_distances: UvSelection,
     intents: IntentSelection,
 }
@@ -93,9 +141,32 @@ impl RowSelection {
     ) -> Self {
         Self {
             fields,
+            scans: IdSelection::All,
+            observations: IdSelection::All,
             uv_distances,
             intents,
         }
+    }
+
+    /// Constrain scan numbers and observation identifiers, conjunctively with
+    /// the other row predicates. Compilation canonicalizes both ID sets.
+    #[must_use]
+    pub fn with_scan_observation(mut self, scans: IdSelection, observations: IdSelection) -> Self {
+        self.scans = scans;
+        self.observations = observations;
+        self
+    }
+
+    /// Return resolved scan numbers.
+    #[must_use]
+    pub const fn scans(&self) -> &IdSelection {
+        &self.scans
+    }
+
+    /// Return resolved observation identifiers.
+    #[must_use]
+    pub const fn observations(&self) -> &IdSelection {
+        &self.observations
     }
 
     /// Return resolved field identifiers.
@@ -118,6 +189,8 @@ impl RowSelection {
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.fields.canonicalize("field")?;
+        self.scans.canonicalize("scan")?;
+        self.observations.canonicalize("observation")?;
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}

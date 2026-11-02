@@ -17,7 +17,7 @@ case "${1:-}" in
 esac
 
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
-tmp_root="$(mktemp -d)"
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
   rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
@@ -98,12 +98,13 @@ echo "==> Installing the built wheel and running Python tests"
 test_installed "$wheel_venv" "$tests_dir"
 
 # A development build is enough to prove that the sdist is complete and
-# builds; the shared target directory saves recompiling its dependencies.
+# builds. Use a fresh target: reproducible sdist timestamps can make Cargo
+# reuse stale workspace artifacts from a previous archive in a shared target.
 sdist_venv="$tmp_root/sdist-venv"
 echo "==> Installing from the sdist and running the binding tests"
 "$python_bin" -m venv "$sdist_venv"
 MATURIN_PEP517_ARGS="--profile dev" \
-  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target}" \
+  CARGO_TARGET_DIR="$tmp_root/sdist-target" \
   "$sdist_venv/bin/python" -m pip install "${sdists[0]}[$extras]"
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \

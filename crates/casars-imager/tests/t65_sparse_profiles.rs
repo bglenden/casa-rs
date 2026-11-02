@@ -41,8 +41,11 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 1);
+    assert_eq!(bundle.surface.migrations().len(), 4);
     assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
+    assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
+    assert_eq!(bundle.surface.migrations()[2].from_contract, 30);
+    assert_eq!(bundle.surface.migrations()[3].from_contract, 31);
     assert!(
         bundle
             .surface
@@ -110,7 +113,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
         assert_eq!(request.vis, PathBuf::from(measurement_set));
         match name {
             "vlass-single" => {
-                assert_eq!(request.field.as_deref(), Some(&[1525][..]));
+                assert_eq!(request.field.as_deref(), Some("1525"));
                 assert_eq!(request.spw.as_deref(), Some("2~17"));
                 assert!(!request.parallel);
                 let Gridder::Awproject(AwProjection {
@@ -127,16 +130,16 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                 assert_eq!(cfcache, &PathBuf::from("cf-cache/vlass-spw2-17"));
             }
             "vlass-all" => {
-                let fields = request.field.as_deref().expect("expanded FIELD_IDs");
-                assert_eq!(fields.len(), 63);
-                assert_eq!(fields.first(), Some(&1107));
-                assert_eq!(fields.last(), Some(&1562));
+                assert_eq!(
+                    request.field.as_deref(),
+                    Some("1107~1127,1512~1532,1542~1562")
+                );
                 assert!(matches!(request.gridder, Gridder::Awproject(_)));
             }
             "standard-continuum" => {
                 assert_eq!(request.imsize, [1024; 2]);
                 assert_eq!(request.cell, [0.25; 2]);
-                assert_eq!(request.field.as_deref(), Some(&[0, 1, 2][..]));
+                assert_eq!(request.field.as_deref(), Some("0~2"));
                 assert_eq!(request.stokes, [PolarizationCoordinate::StokesQ]);
                 assert_eq!(request.deconvolver, Deconvolver::Multiscale);
                 assert_eq!(request.scales, [0.0, 4.0, 12.0]);
@@ -215,7 +218,7 @@ fn imager_profiles_reject_stale_contract_aliases_and_non_profile_authority() {
     let bundle = builtin_surface_bundle("tclean").unwrap();
     let current = bundle.surface.contract_version();
     // Contract 28, the imager's last, migrates; older ones are refused.
-    let stale = profile_source(current - 2, "");
+    let stale = profile_source(27, "");
     assert_diagnostic(&stale, &bundle, DiagnosticCode::UnsupportedContract);
 
     let alias = profile_source(current, "polarization = \"Q\"\n");
@@ -294,7 +297,15 @@ fn an_imager_profile_migrates_to_tclean() -> Result<(), Box<dyn Error>> {
         .filter(|diagnostic| diagnostic.code == DiagnosticCode::DefaultChanged)
         .filter_map(|diagnostic| diagnostic.parameter.clone())
         .collect::<Vec<_>>();
-    assert_eq!(warned, ["nterms", "perchanweightdensity"]);
+    assert_eq!(
+        warned,
+        [
+            "nterms",
+            "perchanweightdensity",
+            "write_pb",
+            "hogbom_iteration_mode"
+        ]
+    );
     let request = request_from_profile("old", source)?;
     assert_eq!(request.phasecenter_field, Some(3));
     assert_eq!(request.mask_box, [[1, 2, 10, 12]]);

@@ -6,10 +6,8 @@
 //!
 //! Values the report does not hold are `nan`, CASA's floats marked
 //! unavailable rather than given another value:
-//! - the PSF sidelobe (`maxpsfsidelobe`), a dirty run's peak residual and the
-//!   peaks outside the mask (`startPeakResNM`, `peakResNM`);
-//! - the top-level `cyclethreshold`, which CASA computes for the cycle after
-//!   the last major cycle;
+//! - a dirty run's peak residual and the peaks outside the mask
+//!   (`startPeakResNM`, `peakResNM`);
 //! - the model flux of a run that starts from a model (`startmodel`), whose
 //!   own flux the report does not hold; otherwise the model flux is the
 //!   components' signed first-term flux, as CASA sums the model;
@@ -24,7 +22,7 @@
 //! above the peak, or an empty mask) holds an empty `summaryminor`, `{0:
 //! {}}`, as CASA's does.
 
-use casa_imaging_application::ImagingRequest;
+use casa_imaging_application::{ImagingRequest, ResidualStatistics};
 use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 use serde_json::{Map, Value};
 
@@ -34,14 +32,25 @@ use crate::{
 
 /// `tclean`'s return for `request`, made from tclean's resolved `values`
 /// and run as `run` reports; `fullsummary` adds each minor cycle's full
-/// detail.
+/// detail. `statistics` is the final convergence check's measured state,
+/// including when cleaning stops before executing a minor cycle.
 pub fn tclean_record(
     request: &ImagingRequest,
     run: &ImagerRunReport,
     values: &Map<String, Value>,
+    statistics: Option<&ResidualStatistics>,
 ) -> CasaValue {
     let fullsummary = values.get("fullsummary").and_then(Value::as_bool) == Some(true);
     let cycles = &run.minor_cycles;
+    let (max_psf_sidelobe, cycle_threshold) =
+        statistics.map_or((f64::NAN, f64::NAN), |statistics| {
+            final_scalars(
+                statistics,
+                request.cyclefactor,
+                request.minpsffraction,
+                request.maxpsffraction,
+            )
+        });
     let dirty = request.niter == 0;
     // CASA's dirty summary holds integer zeros in place of these floats.
     let float_or_zero = |value: f64| {
@@ -70,9 +79,7 @@ pub fn tclean_record(
             "cycleniter",
             int(if dirty { 0 } else { request.minor_cycle_length }),
         ),
-        // CASA's is the threshold it computes after the last major cycle,
-        // for a cycle the run does not run, which the report does not hold.
-        ("cyclethreshold", float_or_zero(f64::NAN)),
+        ("cyclethreshold", float_or_zero(cycle_threshold)),
         ("interactiveiterdone", iterations.clone()),
         ("interactivemode", CasaValue::Bool { value: false }),
         ("interactiveniter", int(0)),
@@ -83,7 +90,7 @@ pub fn tclean_record(
             "maxpsffraction",
             float_or_zero(single(request.maxpsffraction)),
         ),
-        ("maxpsfsidelobe", float_or_zero(f64::NAN)),
+        ("maxpsfsidelobe", float_or_zero(max_psf_sidelobe)),
         (
             "minpsffraction",
             float_or_zero(single(request.minpsffraction)),
@@ -103,6 +110,24 @@ pub fn tclean_record(
         ("threshold", threshold),
         ("stopDescription", CasaValue::string(description)),
     ])
+}
+
+/// CASA `getDetailsRecord` recomputes the raw automatic threshold. The
+/// global threshold clamps only `getMinorCycleControls`' local copy, not
+/// this summary value. Reproduce the reporting state's Float arithmetic
+/// without changing the native controller's scientific computations.
+fn final_scalars(
+    statistics: &ResidualStatistics,
+    cyclefactor: f64,
+    minimum: f64,
+    maximum: f64,
+) -> (f64, f64) {
+    let sidelobe = statistics.psf_sidelobe as f32;
+    let fraction = (sidelobe * cyclefactor as f32)
+        .max(minimum as f32)
+        .min(maximum as f32);
+    let threshold = statistics.peak as f32 * fraction;
+    (f64::from(sidelobe), f64::from(threshold))
 }
 
 /// A dirty run's `threshold`, as CASA's echoes the parameter: as the caller
@@ -328,6 +353,31 @@ fn int(value: usize) -> CasaValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pinned CASA 6.7.6.14 values, with final peaks read from its saved
+    /// residuals. The final iteration-limit peak differs from the preceding
+    /// minor cycle's peak; an empty mask uses the valid unmasked peak.
+    #[test]
+    fn final_scalar_summary_uses_casa_float_arithmetic_and_final_peaks() {
+        for (peak, mask_sum, expected) in [
+            (0.20589078962802887, 4096, 0.16471263766288757),
+            (0.7290002703666687, 4096, 0.583200216293335),
+            (1.0000007152557373, 4096, 0.8000006079673767),
+            (1.0000007152557373, 0, 0.8000006079673767),
+        ] {
+            let statistics = ResidualStatistics {
+                peak,
+                peak_no_mask: peak,
+                psf_sidelobe: 0.9974840879440308,
+                nsigma_threshold: 0.0,
+                mask_sum,
+            };
+            assert_eq!(
+                final_scalars(&statistics, 1.0, 0.05, 0.8),
+                (0.9974840879440308, expected)
+            );
+        }
+    }
 
     fn report(clean_stop_reason: Option<ImagerCleanStopReason>) -> ImagerRunReport {
         ImagerRunReport {

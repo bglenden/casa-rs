@@ -200,8 +200,9 @@ pub fn compare_stores(
 }
 
 /// The time (MJD days) and first antenna's pointing direction of each MAIN
-/// row `request` selects (its partitions and fields; a UV-distance interval
-/// is not applied), from its batch geometry: under a
+/// row `request` selects (its partitions, fields and scans, as the run
+/// tests them; a UV-distance interval is not applied), from its batch
+/// geometry: under a
 /// pointing law that follows the phase-tracking centre, the phase centre
 /// at the row's time. What CASA oracles of a moving phase centre compare
 /// (T41's `TRACKFIELD`).
@@ -231,7 +232,13 @@ pub fn row_pointing(
         &problem,
         observation,
         (&partitions, &selection.fields),
-        |batch, sample| main_row(observation, batch, sample),
+        |batch, sample| {
+            let time = sample / batch.samples_per_time();
+            if !selection.scan_holds(batch, time).ok()? {
+                return None;
+            }
+            main_row(observation, batch, sample)
+        },
         PlanInputs {
             measures,
             phase_table,
@@ -335,6 +342,9 @@ fn batch_rows(
                 values: false,
                 weights: false,
                 time_centroid: centroids,
+                // Each time's scan, for a law that tests the run's scan
+                // selection ([`row_pointing`]).
+                scan: true,
                 ..Roles::PAYLOAD
             },
             channels: 0..entry.frequencies_hz.len(),
