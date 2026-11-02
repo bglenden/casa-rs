@@ -28,6 +28,9 @@ use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
 
 mod catalogue;
+mod feed_angle;
+
+use feed_angle::FeedMount;
 
 /// Engine for computing derived quantities from MS metadata.
 ///
@@ -52,6 +55,8 @@ pub struct MsCalEngine {
     antenna_positions: Box<[MPosition]>,
     /// Whether each antenna uses an alt-az mount.
     antenna_mount_alt_az: Box<[bool]>,
+    /// How each antenna's mount turns its feed ([`Self::feed_parallactic_angle`]).
+    antenna_feed_mounts: Box<[FeedMount]>,
     /// Field phase directions (constant term, J2000).
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
@@ -139,11 +144,13 @@ impl MsCalEngine {
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
         let mut antenna_mount_alt_az = Vec::with_capacity(n_ant);
+        let mut antenna_feed_mounts = Vec::with_capacity(n_ant);
         for row in 0..n_ant {
             let pos = ant.position(row)?;
             antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
             let mount = ant.mount(row)?;
             antenna_mount_alt_az.push(casa_observation::alt_az_mount(&mount));
+            antenna_feed_mounts.push(FeedMount::parse(&mount));
         }
 
         let observatory_position =
@@ -169,6 +176,7 @@ impl MsCalEngine {
         Ok(Self {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            antenna_feed_mounts: antenna_feed_mounts.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: Box::new([]),
@@ -218,6 +226,8 @@ impl MsCalEngine {
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         let antenna_mount_alt_az = vec![true; antenna_positions.len()].into_boxed_slice();
+        let antenna_feed_mounts =
+            vec![FeedMount::AltAz; antenna_positions.len()].into_boxed_slice();
         let field_phase_offsets = field_directions
             .iter()
             .map(|direction| {
@@ -228,6 +238,7 @@ impl MsCalEngine {
             .into_boxed_slice();
         Self {
             antenna_mount_alt_az,
+            antenna_feed_mounts,
             antenna_positions: antenna_positions.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
@@ -541,8 +552,25 @@ impl MsCalEngine {
     /// PA = atan2(cos(lat) * sin(HA),
     ///            sin(lat) * cos(dec) - cos(lat) * sin(dec) * cos(HA))
     ///
+    /// Zero unless the antenna's mount is alt-az (any `ALT-AZ…` mount); a
+    /// Nasmyth or beam-waveguide mount's extra feed rotation is in
+    /// [`Self::feed_parallactic_angle`].
+    ///
     /// Cf. C++ `MSCalEngine::getPA`.
     pub fn parallactic_angle(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        antenna_id: usize,
+    ) -> MsResult<f64> {
+        if !self.antenna_is_alt_az(antenna_id)? {
+            return Ok(0.0);
+        }
+        self.sky_parallactic_angle(time_mjd_sec, field_id, antenna_id)
+    }
+
+    /// The field's parallactic angle at the antenna, whatever its mount.
+    fn sky_parallactic_angle(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
@@ -551,10 +579,6 @@ impl MsCalEngine {
         let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
         if let Some(value) = cached_geometry_value(&self.parallactic_angle_cache, key) {
             return Ok(value);
-        }
-        if !self.antenna_is_alt_az(antenna_id)? {
-            store_geometry_value(&self.parallactic_angle_cache, key, 0.0);
-            return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
         let value = self
