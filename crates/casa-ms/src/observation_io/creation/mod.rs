@@ -56,7 +56,7 @@ pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;
-pub use replace::exchange_directories;
+pub use replace::Replacement;
 
 /// Information a conversion or a plan cannot carry into its destination.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

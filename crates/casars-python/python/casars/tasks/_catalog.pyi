@@ -918,6 +918,8 @@ def msconvert(
     outputvis: StrPath = ...,
     outformat: Literal['', 'msv2', 'msv4'] = ...,
     datagroups: str | list[str] | tuple[str, ...] = ...,
+    partitionscheme: Literal['FIELD_ID', 'SCAN_NUMBER'] | list[Literal['FIELD_ID', 'SCAN_NUMBER']] | tuple[Literal['FIELD_ID', 'SCAN_NUMBER'], ...] = ...,
+    withpointing: bool = ...,
     padding: Literal['flagged', 'omitted'] = ...,
     chunks: list[int] | tuple[int, ...] = ...,
     codec: Literal['blosc', 'none', 'zstd'] = ...,

@@ -1,39 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Running one checked conversion ([`msconvert`]): the output's guards,
 //! the converter, and an existing MeasurementSet exchanged for its
-//! replacement in one atomic step.
+//! replacement in one atomic step ([`Replacement`]).
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_ms::observation_io::convert::{
-    ConversionOptions, ConversionReport, LossKind, to_msv2, to_msv4, to_msv4_chunked, xradio_chunks,
+    ChunkShape, ConversionOptions, ConversionReport, LossKind, Msv4Conversion, to_msv2,
+    to_msv4_with, xradio_chunks,
 };
-use casa_ms::observation_io::creation::exchange_directories;
-use casa_ms::observation_io::is_measurement_set;
+use casa_ms::observation_io::creation::Replacement;
 use casa_observation::ObservationError;
 use casa_task_runtime::TaskFailure;
 use casa_types::quanta::MvTime;
 
+use crate::BATCH_BYTES;
 use crate::request::{MsconvertRequest, StoreFormat};
 use crate::task_contract::MsconvertTaskResult;
-
-/// The most bytes one time range of every selected group's batches holds:
-/// the trial's measured budget.
-pub(crate) const BATCH_BYTES: usize = 256 << 20;
 
 /// Convert as `request` says.
 ///
 /// `outputvis` never lies inside `vis`. It must not exist, or, with
 /// `overwrite`, must be a MeasurementSet (v2 or v4, not a link) that does
-/// not hold `vis`. An existing one is replaced only once its replacement is
+/// not hold `vis`, on a filesystem that exchanges directories, and an MSv2
+/// no other process writes; it is held so ([`Replacement::hold`]) before
+/// anything is converted. It is replaced only once its replacement is
 /// complete: the conversion is written beside it under a hidden name, the
 /// two are exchanged in one atomic call, and the old store is removed. A
-/// conversion that fails leaves `outputvis` as it was. An MSv4 output
-/// without a chunk shape is chunked as XRADIO chunks each dataset
-/// ([`xradio_chunks`]). Every loss the output's format imposes is taken,
-/// and each is logged as a warning and returned.
+/// conversion that fails leaves `outputvis` as it was. An MSv2 converted
+/// into an MSv4 is partitioned as `request.partition_scheme` says, its
+/// pointing carried or not, and each dataset chunked by `request.chunks`
+/// or, without one, as XRADIO chunks it ([`xradio_chunks`]). Every loss the
+/// output's format imposes is taken, and each is logged as a warning and
+/// returned.
 ///
 /// # Errors
 ///
@@ -57,7 +58,7 @@ pub fn msconvert(request: &MsconvertRequest) -> Result<MsconvertTaskResult, Task
         creator: format!("casa-rs msconvert {}", env!("CARGO_PKG_VERSION")),
         creation_date: utc_now(),
     };
-    let target = if replacing {
+    let target = if replacing.is_some() {
         let target = unused_sibling(&request.outputvis)?;
         tracing::info!(
             "msconvert: converting into {}, to take the place of {}",
@@ -68,16 +69,28 @@ pub fn msconvert(request: &MsconvertRequest) -> Result<MsconvertTaskResult, Task
     } else {
         request.outputvis.clone()
     };
-    let converted = match (request.outformat, request.chunks) {
-        (StoreFormat::Msv4, None) => {
-            to_msv4_chunked(&request.vis, &target, &options, &xradio_chunks)
+    let converted = match request.outformat {
+        StoreFormat::Msv4 => {
+            let fixed;
+            let chunk_shape: &ChunkShape = match request.chunks {
+                Some(chunks) => {
+                    fixed = move |_| chunks;
+                    &fixed
+                }
+                None => &xradio_chunks,
+            };
+            let conversion = Msv4Conversion {
+                partition_scheme: request.partition_scheme,
+                pointing: request.pointing,
+                chunk_shape,
+            };
+            to_msv4_with(&request.vis, &target, &options, &conversion)
         }
-        (StoreFormat::Msv4, Some(_)) => to_msv4(&request.vis, &target, &options),
-        (StoreFormat::Msv2, _) => to_msv2(&request.vis, &target, &options),
+        StoreFormat::Msv2 => to_msv2(&request.vis, &target, &options),
     };
     let report = converted.map_err(failure)?;
-    if replacing {
-        replace(&target, &request.outputvis)?;
+    if let Some(replacement) = replacing {
+        replace(replacement, &target)?;
     }
     for loss in &report.losses {
         tracing::warn!(
@@ -88,9 +101,9 @@ pub fn msconvert(request: &MsconvertRequest) -> Result<MsconvertTaskResult, Task
     Ok(result(request, &report, started))
 }
 
-/// Whether `outputvis` exists and is to be replaced; a refusal when it
-/// may not be written or replaced.
-fn guard_output(request: &MsconvertRequest) -> Result<bool, TaskFailure> {
+/// The MeasurementSet at `outputvis` held for replacement when it exists;
+/// a refusal when `outputvis` may not be written or replaced.
+fn guard_output(request: &MsconvertRequest) -> Result<Option<Replacement>, TaskFailure> {
     let output = &request.outputvis;
     let refuse = |reason: String| Err(TaskFailure::validation(reason).at("outputvis"));
     // Written inside vis, a conversion would change it, and replacing a
@@ -101,25 +114,12 @@ fn guard_output(request: &MsconvertRequest) -> Result<bool, TaskFailure> {
             output.display()
         ));
     }
-    let Ok(metadata) = std::fs::symlink_metadata(output) else {
-        return Ok(false);
-    };
+    if std::fs::symlink_metadata(output).is_err() {
+        return Ok(None);
+    }
     if !request.overwrite {
         return refuse(format!(
             "outputvis {} exists; set overwrite=True to replace it",
-            output.display()
-        ));
-    }
-    if metadata.file_type().is_symlink() {
-        return refuse(format!(
-            "outputvis {} is a symbolic link; name the MeasurementSet it links to",
-            output.display()
-        ));
-    }
-    if !metadata.is_dir() || !is_measurement_set(output) {
-        return refuse(format!(
-            "outputvis {} exists and is not a MeasurementSet; msconvert replaces only a \
-             MeasurementSet v2 or an MSv4 processing set",
             output.display()
         ));
     }
@@ -129,7 +129,12 @@ fn guard_output(request: &MsconvertRequest) -> Result<bool, TaskFailure> {
             output.display()
         ));
     }
-    Ok(true)
+    // A whole MeasurementSet, not a link, on a filesystem that exchanges
+    // directories, and an MSv2 no other process writes, held so until it
+    // is replaced.
+    Replacement::hold(output)
+        .map(Some)
+        .or_else(|error| refuse(format!("outputvis: {error}")))
 }
 
 /// Whether `inner` is `outer` or lies inside it, by file identity (device
@@ -183,25 +188,27 @@ fn unused_sibling(path: &Path) -> Result<PathBuf, TaskFailure> {
         .ok_or_else(|| TaskFailure::execution(format!("no unused name beside {}", path.display())))
 }
 
-/// Exchange the complete store at `converted` with the one at `output` in
-/// one atomic call, then remove the old store, which `converted` then
-/// names. If the exchange fails, `output` is unchanged and the conversion
-/// is kept, complete, where it is.
-fn replace(converted: &Path, output: &Path) -> Result<(), TaskFailure> {
-    exchange_directories(converted, output).map_err(|error| {
-        TaskFailure::execution(format!(
+/// Exchange the complete store at `converted` for the one `replacement`
+/// holds, in one atomic call, and remove the old store. If the exchange
+/// fails, the output is unchanged and the conversion is kept, complete,
+/// where it is.
+fn replace(replacement: Replacement, converted: &Path) -> Result<(), TaskFailure> {
+    let output = replacement.path().to_path_buf();
+    match replacement.publish(converted) {
+        Ok(None) => Ok(()),
+        Ok(Some(leftover)) => {
+            tracing::warn!(
+                "msconvert: the replaced store, now at {}, could not be removed",
+                leftover.display()
+            );
+            Ok(())
+        }
+        Err(error) => Err(TaskFailure::execution(format!(
             "replace {}: {error}; it is unchanged, and the conversion is complete at {}",
             output.display(),
             converted.display()
-        ))
-    })?;
-    if let Err(error) = std::fs::remove_dir_all(converted) {
-        tracing::warn!(
-            "msconvert: the replaced store, now at {}, could not be removed: {error}",
-            converted.display()
-        );
+        ))),
     }
-    Ok(())
 }
 
 /// The current time, UTC, ISO 8601 to the second.
@@ -277,9 +284,9 @@ mod tests {
         assert!(within(&vis, &vis));
         assert!(within(&vis.join("ANTENNA"), &vis));
         // A path not yet made is judged by its nearest existing ancestor.
-        assert!(within(&vis.join("new.ms4"), &vis));
-        assert!(within(&vis.join("x/y/new.ms4"), &vis));
-        assert!(!within(&root.path().join("a.ms4"), &vis));
+        assert!(within(&vis.join("new.ps.zarr"), &vis));
+        assert!(within(&vis.join("x/y/new.ps.zarr"), &vis));
+        assert!(!within(&root.path().join("a.ps.zarr"), &vis));
         assert!(within(&vis, root.path()));
         // Through a link, and through `..`.
         let link = root.path().join("link");

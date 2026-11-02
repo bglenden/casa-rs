@@ -27,9 +27,25 @@ use super::creation::{
 };
 pub use super::creation::{Loss, LossKind, PaddingRows};
 pub use chunks::{BLOSC_MAX_BUFFER_BYTES, DEFAULT_CHUNK_BYTES, xradio_chunks};
-pub use to_msv4::{ChunkShape, to_msv4, to_msv4_chunked};
+pub use to_msv4::{ChunkShape, Msv4Conversion, to_msv4, to_msv4_with};
 
 use super::Msv4Codec;
+
+/// The data groups a conversion into an MSv4 of the observation
+/// `catalogue` describes selects from `requested`, or every group of it,
+/// `base` first, for `None`; refused as [`to_msv4`] refuses them: no group,
+/// a group selected twice, or one a partition lacks. A caller can check a
+/// request with it before converting.
+///
+/// # Errors
+///
+/// [`ObservationError::InvalidRequest`] naming the group refused.
+pub fn selected_data_groups(
+    catalogue: &casa_observation::Catalogue,
+    requested: Option<&[String]>,
+) -> Result<Vec<String>, ObservationError> {
+    super::creation::losses::selected_groups(catalogue, requested)
+}
 
 /// How a conversion reads its source and stores its destination.
 #[derive(Clone, Debug)]

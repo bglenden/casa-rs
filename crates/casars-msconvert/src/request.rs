@@ -4,11 +4,11 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::observation_io::Msv4Codec;
-use casa_ms::observation_io::convert::PaddingRows;
+use casa_ms::observation_io::convert::{PaddingRows, selected_data_groups};
+use casa_ms::observation_io::{Msv4Codec, OpenOptions, PartitionScheme, open};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use crate::convert::BATCH_BYTES;
+use crate::THREAD_BYTES;
 
 /// A store's format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,27 +48,28 @@ impl StoreFormat {
         }
     }
 
-    /// The extension a default output of this format takes: `ms2` or
-    /// `ms4`.
+    /// The extension XRADIO's convention gives a store of this format:
+    /// `.ms` for a MeasurementSet v2, `.ps.zarr` for a processing set.
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
-            Self::Msv2 => "ms2",
-            Self::Msv4 => "ms4",
+            Self::Msv2 => ".ms",
+            Self::Msv4 => ".ps.zarr",
         }
     }
 }
 
 /// The extensions a default output's name drops from its input's, longest
 /// first; any case.
-const MEASUREMENT_SET_EXTENSIONS: [&str; 5] = [".ps.zarr", ".zarr", ".ms2", ".ms4", ".ms"];
+const MEASUREMENT_SET_EXTENSIONS: [&str; 3] = [".ps.zarr", ".zarr", ".ms"];
 
 /// The output a conversion of `vis` into `outformat` writes when none is
-/// named: beside `vis`, named after it, its MeasurementSet extension
-/// (`.ms`, `.ms2`, `.ms4`, `.zarr` or `.ps.zarr`) replaced by `.ms2` or
-/// `.ms4` ([`StoreFormat::extension`]), or that extension added to a name
-/// without one: `obs.ms` becomes `obs.ms4`, `obs.ps.zarr` `obs.ms2`.
-/// `None` when `vis` names no file, or a name that is not UTF-8.
+/// named, by XRADIO's convention: beside `vis`, named after it, its
+/// extension (`.ms`, `.zarr` or `.ps.zarr`, any case) replaced by
+/// `.ps.zarr` for a processing set or `.ms` for a MeasurementSet v2
+/// ([`StoreFormat::extension`]), or that extension added to a name without
+/// one: `obs.ms` becomes `obs.ps.zarr`, and `obs.ps.zarr` `obs.ms`. `None`
+/// when `vis` names no file, or a name that is not UTF-8.
 #[must_use]
 pub fn default_outputvis(vis: &Path, outformat: StoreFormat) -> Option<PathBuf> {
     let name = vis.file_name()?.to_str()?;
@@ -77,7 +78,26 @@ pub fn default_outputvis(vis: &Path, outformat: StoreFormat) -> Option<PathBuf> 
         .iter()
         .find(|extension| lower.len() > extension.len() && lower.ends_with(*extension))
         .map_or(name, |extension| &name[..name.len() - extension.len()]);
-    Some(vis.with_file_name(format!("{stem}.{}", outformat.extension())))
+    Some(vis.with_file_name(format!("{stem}{}", outformat.extension())))
+}
+
+/// `outputvis` as XRADIO's converter names a processing set it writes: a
+/// path that does not end in `ps.zarr` gains `.ps.zarr`, by text, so `out`
+/// is written as `out.ps.zarr` (and `.` as `..ps.zarr`, as XRADIO writes
+/// it). A trailing `/` is no part of the name.
+#[must_use]
+pub fn processing_set_path(outputvis: &str) -> PathBuf {
+    let trimmed = outputvis.trim_end_matches('/');
+    let path = if trimmed.is_empty() {
+        outputvis
+    } else {
+        trimmed
+    };
+    if path.ends_with("ps.zarr") {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(format!("{path}{}", StoreFormat::Msv4.extension()))
+    }
 }
 
 /// One conversion: its parameters read and checked, nothing done yet.
@@ -93,6 +113,10 @@ pub struct MsconvertRequest {
     pub outformat: StoreFormat,
     /// The data groups converted; `None` for every one.
     pub data_groups: Option<Vec<String>>,
+    /// MSv2 into MSv4: the keys the MSv2 is further partitioned by.
+    pub partition_scheme: PartitionScheme,
+    /// MSv4 output: whether pointing is converted.
+    pub pointing: bool,
     /// MSv2 output: what a padded grid cell becomes.
     pub padding: PaddingRows,
     /// MSv4 output: the chunk shape, `None` for XRADIO's, sized for each
@@ -113,8 +137,9 @@ pub struct MsconvertRequest {
 ///
 /// A validation failure at the parameter that is wrong: `vis` missing, an
 /// unknown format, padding or codec, no `outputvis` and none to derive (or
-/// only `vis` itself), a chunk shape not of four non-negative extents, or a
-/// negative `nthreads`.
+/// only `vis` itself), a data group the conversion would refuse, a
+/// partition scheme or pointing choice the conversion does not make, a
+/// chunk shape not of four non-negative extents, or a negative `nthreads`.
 pub fn request_from(task: &TaskInvocation<'_>) -> Result<MsconvertRequest, TaskFailure> {
     let vis = task.workspace().join(task.input_path("vis")?);
     let informat = StoreFormat::of(&vis);
@@ -129,13 +154,16 @@ pub fn request_from(task: &TaskInvocation<'_>) -> Result<MsconvertRequest, TaskF
             ));
         }
     };
-    let data_groups = names(task, "datagroups")?;
+    let data_groups = data_groups(task, &vis, outformat)?;
+    let msv2_into_msv4 = informat == StoreFormat::Msv2 && outformat == StoreFormat::Msv4;
     Ok(MsconvertRequest {
         outputvis: outputvis(task, &vis, outformat)?,
         vis,
         informat,
         outformat,
-        data_groups: (!data_groups.is_empty()).then_some(data_groups),
+        data_groups,
+        partition_scheme: partition_scheme(task, msv2_into_msv4)?,
+        pointing: pointing(task, outformat)?,
         padding: padding(task)?,
         chunks: chunks(task)?,
         codec: codec(task)?,
@@ -152,6 +180,10 @@ fn outputvis(
 ) -> Result<PathBuf, TaskFailure> {
     let named = task.text("outputvis")?.unwrap_or_default();
     if !named.trim().is_empty() {
+        let named = match outformat {
+            StoreFormat::Msv4 => processing_set_path(&named),
+            StoreFormat::Msv2 => PathBuf::from(named),
+        };
         return Ok(task.workspace().join(named));
     }
     let derived = default_outputvis(vis, outformat).ok_or_else(|| {
@@ -167,13 +199,84 @@ fn outputvis(
         return Err(invalid(
             "outputvis",
             format!(
-                "vis {} is already {}, and its default output would be itself; name outputvis",
-                vis.display(),
-                outformat.name()
+                "the default {} output name for vis {} would be vis itself; name outputvis",
+                outformat.name(),
+                vis.display()
             ),
         ));
     }
     Ok(derived)
+}
+
+/// The data groups named, checked against the source as the conversion
+/// checks them, which opens it only when some are named: each in every
+/// partition, none twice, and into an MSv2 `base` first (it becomes
+/// `DATA`).
+fn data_groups(
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+    outformat: StoreFormat,
+) -> Result<Option<Vec<String>>, TaskFailure> {
+    let named = names(task, "datagroups")?;
+    if named.is_empty() {
+        return Ok(None);
+    }
+    if outformat == StoreFormat::Msv2 && named[0] != "base" {
+        return Err(invalid(
+            "datagroups",
+            format!(
+                "an MSv2 output's first data group is base, its DATA; found {}",
+                named[0]
+            ),
+        ));
+    }
+    let observation = open(vis, &OpenOptions::default())
+        .map_err(|error| invalid("vis", format!("open {}: {error}", vis.display())))?;
+    selected_data_groups(observation.catalogue(), Some(&named))
+        .map_err(|error| invalid("datagroups", error.to_string()))?;
+    Ok(Some(named))
+}
+
+/// The keys an MSv2 converted into an MSv4 is further partitioned by,
+/// XRADIO's `partition_scheme`: `FIELD_ID` and `SCAN_NUMBER`. Refused for
+/// any other conversion, which has no MSv2 to partition.
+fn partition_scheme(
+    task: &TaskInvocation<'_>,
+    msv2_into_msv4: bool,
+) -> Result<PartitionScheme, TaskFailure> {
+    let mut scheme = PartitionScheme::default();
+    for key in names(task, "partitionscheme")? {
+        match key.to_ascii_uppercase().as_str() {
+            "FIELD_ID" => scheme.fields = true,
+            "SCAN_NUMBER" => scheme.scans = true,
+            _ => {
+                return Err(invalid(
+                    "partitionscheme",
+                    format!("unknown partition key {key:?}; expected FIELD_ID or SCAN_NUMBER"),
+                ));
+            }
+        }
+    }
+    if scheme != PartitionScheme::default() && !msv2_into_msv4 {
+        return Err(invalid(
+            "partitionscheme",
+            "partitionscheme partitions an MSv2 converted into an MSv4",
+        ));
+    }
+    Ok(scheme)
+}
+
+/// Whether pointing is converted: XRADIO's `with_pointing`, an MSv4
+/// output's choice; an MSv2 output always carries it.
+fn pointing(task: &TaskInvocation<'_>, outformat: StoreFormat) -> Result<bool, TaskFailure> {
+    let pointing = task.flag("withpointing")?;
+    if !pointing && outformat == StoreFormat::Msv2 {
+        return Err(invalid(
+            "withpointing",
+            "withpointing=False leaves pointing out of an MSv4 output; an MSv2 output carries it",
+        ));
+    }
+    Ok(pointing)
 }
 
 fn invalid(parameter: &str, reason: impl Into<String>) -> TaskFailure {
@@ -247,11 +350,6 @@ fn chunks(task: &TaskInvocation<'_>) -> Result<Option<[u64; 4]>, TaskFailure> {
     Ok(Some(chunks))
 }
 
-/// What one thread converting a partition into an MSv4 may hold, as the
-/// default thread count budgets it: its batches ([`BATCH_BYTES`]), the
-/// partial chunks it holds toward completion and their encoding.
-const THREAD_BYTES: usize = 4 * BATCH_BYTES;
-
 /// Partitions converted at once: `nthreads`, or for 0 as many as the cores
 /// and the host's memory budget allow, [`THREAD_BYTES`] each, and at least
 /// one.
@@ -281,21 +379,38 @@ mod tests {
     }
 
     #[test]
-    fn the_default_output_replaces_the_inputs_extension() {
+    fn the_default_output_follows_xradios_names() {
         let (v2, v4) = (StoreFormat::Msv2, StoreFormat::Msv4);
-        assert_eq!(named("obs.ms", v4).as_deref(), Some("obs.ms4"));
-        assert_eq!(named("data/obs.ms", v4).as_deref(), Some("data/obs.ms4"));
-        assert_eq!(named("/data/obs.MS/", v4).as_deref(), Some("/data/obs.ms4"));
-        assert_eq!(named("obs.ps.zarr", v2).as_deref(), Some("obs.ms2"));
-        assert_eq!(named("obs.zarr", v2).as_deref(), Some("obs.ms2"));
-        assert_eq!(named("obs.ms4", v2).as_deref(), Some("obs.ms2"));
-        assert_eq!(named("obs.ms2", v4).as_deref(), Some("obs.ms4"));
+        assert_eq!(named("obs.ms", v4).as_deref(), Some("obs.ps.zarr"));
+        assert_eq!(
+            named("data/obs.ms", v4).as_deref(),
+            Some("data/obs.ps.zarr")
+        );
+        assert_eq!(
+            named("/data/obs.MS/", v4).as_deref(),
+            Some("/data/obs.ps.zarr")
+        );
+        assert_eq!(named("obs.ps.zarr", v2).as_deref(), Some("obs.ms"));
+        assert_eq!(named("obs.zarr", v2).as_deref(), Some("obs.ms"));
         // A name without one gains the extension; a bare extension is a name.
-        assert_eq!(named("obs", v4).as_deref(), Some("obs.ms4"));
-        assert_eq!(named("obs.v1", v2).as_deref(), Some("obs.v1.ms2"));
-        assert_eq!(named(".ms", v4).as_deref(), Some(".ms.ms4"));
+        assert_eq!(named("obs", v4).as_deref(), Some("obs.ps.zarr"));
+        assert_eq!(named("obs.v1", v2).as_deref(), Some("obs.v1.ms"));
+        assert_eq!(named(".ms", v4).as_deref(), Some(".ms.ps.zarr"));
         // The same format names the input itself, which the task refuses.
-        assert_eq!(named("obs.ms4", v4).as_deref(), Some("obs.ms4"));
+        assert_eq!(named("obs.ps.zarr", v4).as_deref(), Some("obs.ps.zarr"));
+        assert_eq!(named("obs.ms", v2).as_deref(), Some("obs.ms"));
         assert_eq!(named("/", v4), None);
+    }
+
+    #[test]
+    fn a_processing_set_is_named_as_xradio_names_it() {
+        let path = |text: &str| processing_set_path(text).display().to_string();
+        assert_eq!(path("out"), "out.ps.zarr");
+        assert_eq!(path("data/out.zarr"), "data/out.zarr.ps.zarr");
+        assert_eq!(path("out.ps.zarr"), "out.ps.zarr");
+        assert_eq!(path("out.ps.zarr/"), "out.ps.zarr");
+        assert_eq!(path("outps.zarr"), "outps.zarr");
+        assert_eq!(path("."), "..ps.zarr");
+        assert_eq!(path("/"), "/.ps.zarr");
     }
 }

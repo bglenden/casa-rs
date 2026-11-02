@@ -21,12 +21,18 @@
 //! lose subtables MSv4 does not hold (`HISTORY`, `WEATHER`, ...), or state
 //! in an MSv2 what an MSv4 leaves unstated, as MSv2's defaults.
 //!
-//! Without an `outputvis`, the output is written beside `vis`, named after
-//! it with `.ms2` or `.ms4` for its format ([`default_outputvis`]):
-//! `obs.ms` converts to `obs.ms4`, and `obs.ms4` back to `obs.ms2`.
+//! Stores are named as XRADIO names them. Without an `outputvis`, the
+//! output is written beside `vis`, named after it with `.ps.zarr` for an
+//! MSv4 or `.ms` for an MSv2 ([`default_outputvis`]): `obs.ms` converts to
+//! `obs.ps.zarr`, and `obs.ps.zarr` back to `obs.ms`. An MSv4 `outputvis`
+//! not ending in `ps.zarr` gains `.ps.zarr`, as XRADIO's converter names
+//! it ([`processing_set_path`]).
 //!
 //! An MSv4 destination is named and laid out as XRADIO's converter lays
-//! out an MSv2: one dataset per partition, and by default each chunked as
+//! out an MSv2, with its options: one dataset per partition, the MSv2
+//! partitioned further by `partitionscheme` (XRADIO's `partition_scheme`),
+//! its pointing converted unless `withpointing` is off (`with_pointing`),
+//! and by default each dataset chunked as
 //! XRADIO chunks it
 //! ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
 //! Its partitions are converted `nthreads` at a time, by default as many as
@@ -44,8 +50,19 @@ use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 pub use convert::msconvert;
-pub use request::{MsconvertRequest, StoreFormat, default_outputvis, request_from};
+pub use request::{
+    MsconvertRequest, StoreFormat, default_outputvis, processing_set_path, request_from,
+};
 pub use task_contract::*;
+
+/// The most bytes one time range of every selected group's batches holds:
+/// the trial's measured budget.
+const BATCH_BYTES: usize = 256 << 20;
+
+/// What one thread converting a partition into an MSv4 may hold, as the
+/// default thread count budgets it: its batches ([`BATCH_BYTES`]), the
+/// partial chunks it holds toward completion and their encoding.
+const THREAD_BYTES: usize = 4 * BATCH_BYTES;
 
 /// The front end of the `msconvert` binary, which hosts `msconvert`.
 pub fn task_front_end()

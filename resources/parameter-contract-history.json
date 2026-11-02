@@ -722,6 +722,16 @@
       "fingerprint": "7f64d91b597a0d0a6eac5d02a53362bc8a83e68141196d09c060fa76e8d32f33"
     },
     {
+      "id": "msconvert.partitionscheme",
+      "semantic_revision": 1,
+      "fingerprint": "2106298579bd8adef03cede8cea78b9afc18fc2ca5d6de1a93a372387774de57"
+    },
+    {
+      "id": "msconvert.withpointing",
+      "semantic_revision": 1,
+      "fingerprint": "060548412024b6d8dd51ded0e02f54773e1709f3489697de4b999e66eef850b5"
+    },
+    {
       "id": "msexplore.output",
       "semantic_revision": 1,
       "fingerprint": "1cb3c9aa251fc9aa4671da80e54de72c60b3689f30f50922bef48729f708ed22"
@@ -4366,7 +4376,7 @@
     {
       "id": "msconvert",
       "contract_version": 1,
-      "fingerprint": "eb51451440e8ccb17ede02ac091051070b716b2b2b375fd830af71d3559f0fd2"
+      "fingerprint": "fb48a3bbda57e85fd7b43eb486607f7774d84bc42d89a7b2423783b4e8ff171b"
     },
     {
       "id": "msexplore",

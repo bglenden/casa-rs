@@ -75,8 +75,10 @@ pub fn msconvert_task_schema_bundle() -> TaskProviderContract {
 pub struct MsconvertTaskRequest {
     /// The store to convert: a MeasurementSet v2 or an MSv4 processing set.
     pub vis: PathBuf,
-    /// The new store; empty for one beside `vis`, named after it with
-    /// `.ms2` or `.ms4`.
+    /// The new store; empty for one beside `vis`, named after it as XRADIO
+    /// names stores: `.ps.zarr` for an MSv4, `.ms` for an MSv2. An MSv4
+    /// output not ending in `ps.zarr` gains `.ps.zarr`, as XRADIO's
+    /// converter names it.
     #[serde(default)]
     pub outputvis: PathBuf,
     /// `msv2` or `msv4`; empty for the other format than `vis`.
@@ -86,6 +88,13 @@ pub struct MsconvertTaskRequest {
     /// UVW; empty for every group, `base` first.
     #[serde(default)]
     pub datagroups: Vec<String>,
+    /// MSv2 into MSv4: further keys the MSv2 is partitioned by, XRADIO's
+    /// `partition_scheme`: `FIELD_ID`, `SCAN_NUMBER`.
+    #[serde(default)]
+    pub partitionscheme: Vec<String>,
+    /// MSv4 output: convert the pointing, XRADIO's `with_pointing`.
+    #[serde(default = "default_true")]
+    pub withpointing: bool,
     /// MSv2 output: what a padded grid cell becomes, `flagged` or
     /// `omitted`.
     #[serde(default = "default_padding")]
@@ -104,6 +113,10 @@ pub struct MsconvertTaskRequest {
     /// Replace an existing MeasurementSet at `outputvis`.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_padding() -> String {

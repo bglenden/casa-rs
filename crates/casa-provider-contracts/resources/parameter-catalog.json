@@ -10578,6 +10578,63 @@
       "persistence_class": "profile"
     },
     {
+      "id": "msconvert.partitionscheme",
+      "semantic_revision": 1,
+      "casa_name": "partitionscheme",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "choice",
+          "values": [
+            "FIELD_ID",
+            "SCAN_NUMBER"
+          ]
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 into MSv4: further keys the MSv2 is partitioned by, as XRADIO's partition_scheme.",
+        "details": "Every MSv4 dataset holds one spectral window and polarization setup, observing mode, observation and ephemeris; FIELD_ID also splits by field and SCAN_NUMBER by scan. Empty, XRADIO's default, splits no further, as rapidly moving mosaics need. Only an MSv2 converted into an MSv4 is partitioned.",
+        "examples": [
+          "[]",
+          "[\"FIELD_ID\"]",
+          "[\"FIELD_ID\", \"SCAN_NUMBER\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.withpointing",
+      "semantic_revision": 1,
+      "casa_name": "withpointing",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: convert the pointing, as XRADIO's with_pointing.",
+        "details": "Pointing can be most of a large MeasurementSet's conversion time and size. Without it, the MSv4 holds no pointing_xds and the source's pointing is reported lost. An MSv2 output always carries pointing.",
+        "examples": [
+          "true",
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "msconvert.padding",
       "semantic_revision": 1,
       "casa_name": "padding",

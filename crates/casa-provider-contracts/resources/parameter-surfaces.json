@@ -26256,7 +26256,7 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": "When outputvis is empty, msconvert writes beside vis, naming the output after it: its .ms, .ms2, .ms4, .zarr or .ps.zarr replaced by .ms2 or .ms4 for the output format.",
+          "surface_note": "Named as XRADIO names a processing set: an MSv4 output not ending in ps.zarr gains .ps.zarr. When outputvis is empty, msconvert writes beside vis, naming the output after it, its .ms, .zarr or .ps.zarr replaced by .ps.zarr for an MSv4 or .ms for an MSv2.",
           "projections": {
             "cli": {
               "positional": null,
@@ -26385,12 +26385,114 @@
           "reviewed_homonym": null
         },
         {
+          "name": "partitionscheme",
+          "concept": {
+            "id": "msconvert.partitionscheme",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--partitionscheme"
+              ],
+              "false_flags": [],
+              "metavar": "KEY"
+            },
+            "provider": {
+              "field": "partitionscheme",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "partitionscheme",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Partition Scheme",
+              "group": "MSv4 Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "withpointing",
+          "concept": {
+            "id": "msconvert.withpointing",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--withpointing"
+              ],
+              "false_flags": [
+                "--no-withpointing"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "withpointing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "withpointing",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Convert Pointing",
+              "group": "MSv4 Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
           "name": "padding",
           "concept": {
             "id": "msconvert.padding",
             "semantic_revision": 1
           },
-          "order": 4,
+          "order": 6,
           "default": {
             "kind": "literal",
             "value": {
@@ -26440,7 +26542,7 @@
             "id": "msconvert.chunks",
             "semantic_revision": 1
           },
-          "order": 5,
+          "order": 7,
           "default": {
             "kind": "literal",
             "value": {
@@ -26490,7 +26592,7 @@
             "id": "msconvert.codec",
             "semantic_revision": 1
           },
-          "order": 6,
+          "order": 8,
           "default": {
             "kind": "literal",
             "value": {
@@ -26540,7 +26642,7 @@
             "id": "workers.msconvert",
             "semantic_revision": 1
           },
-          "order": 7,
+          "order": 9,
           "default": {
             "kind": "literal",
             "value": {
@@ -26593,7 +26695,7 @@
             "id": "output.overwrite",
             "semantic_revision": 1
           },
-          "order": 8,
+          "order": 10,
           "default": {
             "kind": "literal",
             "value": {

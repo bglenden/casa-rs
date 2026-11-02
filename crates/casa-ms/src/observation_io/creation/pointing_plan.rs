@@ -121,6 +121,32 @@ pub(super) fn planning_bytes(
     Ok(antennas * size_of::<AntennaId>() + grid.max(reading))
 }
 
+/// A conversion that carries no pointing, as XRADIO's
+/// `with_pointing=False` converts: nothing read, and the source's pointing,
+/// if it holds any, the loss.
+///
+/// # Errors
+///
+/// Any error opening an MSv2 source.
+pub(crate) fn omitted(source: &Path) -> Result<(PointingPlan, Vec<Loss>), ObservationError> {
+    let held = if source.join("zarr.json").is_file() {
+        std::fs::read_dir(source)
+            .map_err(storage)?
+            .filter_map(Result::ok)
+            .any(|dataset| dataset.path().join("pointing_xds/zarr.json").is_file())
+    } else {
+        crate::MeasurementSet::open_retained_read(source)
+            .map_err(storage)?
+            .subtable(SubtableId::Pointing)
+            .is_some_and(|table| table.row_count() > 0)
+    };
+    Ok(if held {
+        lost_whole("POINTING", "not converted")
+    } else {
+        (PointingPlan::default(), Vec::new())
+    })
+}
+
 /// What converting `observation` (at `source`) into `destination` carries
 /// of its pointing, each read within `budget` bytes, and the losses that
 /// implies.
