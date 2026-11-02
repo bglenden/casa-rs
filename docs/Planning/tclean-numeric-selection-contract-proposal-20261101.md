@@ -40,8 +40,9 @@ their refusals. No persisted format or diagnostic schema changes.
 
 ## Concrete candidate and evidence
 
-A verified durable source/patch/gate copy is preserved on NAS under
-`/Volumes/home/casa-rs/tclean/20261031/scan-observation-contract-proposal-20261101.tar`.
+A verified durable source/patch/gate copy is preserved on the NAS home share at
+`casa-rs/tclean/20261031/scan-observation-contract-proposal-20261101.tar`.
+The cloud mount or download path is environment-specific.
 
 - [Unapplied full patch](tclean-provider33-candidate-20261101.patch.gz),
   gzip-compressed to preserve exact patch whitespace; uncompressed SHA256
@@ -72,6 +73,16 @@ A verified durable source/patch/gate copy is preserved on NAS under
   and supplied local changes. Separate review of the prepared patch and repaired
   warning/fixture findings has no outstanding finding. Review advice is not owner
   approval.
+
+The review's portable findings are: keep each existing selector concept ID
+and add a revision with identity normalization for tclean; carry distinctions
+in the resolved value rather than hidden input provenance; migrate only the
+exact legacy `"none"` value and surface the warning before Mapping expansion;
+remove fixture overrides that can conceal a normalization failure; and record
+richer grammar as unsupported forms. Existing consumers retain revision 1.
+The linked review conversation may not be accessible from a cloud session; its
+recommendations and their limits are summarized here. A fresh independent review
+is still required at the acceptance boundary.
 
 After approval, apply this exact candidate, rebuild the extension and selected
 task binary coherently, verify real kwargs/profile/draft/Mapping/save-reload paths
