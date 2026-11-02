@@ -130,9 +130,6 @@ fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for overrides in [
         // CASA projects with any projection in every mode.
         json!({ "projection": "NCP" }),
-        // CASA parses reffreq in every mode ("Error in converting garbage
-        // to a Quantity" in a cube).
-        json!({ "specmode": "cube", "nchan": 4, "reffreq": "1.4GHz" }),
         // CASA estimates noise from every residual when fastnoise=False.
         json!({ "fastnoise": false }),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
@@ -647,6 +644,33 @@ fn mfs_reads_its_frame_and_rest_frequencies() {
             request(overrides.clone()).restfreq,
             [1.4e9, 1.6e9],
             "{overrides}"
+        );
+    }
+}
+
+/// `reffreq` as `SynthesisParamsImage::fromRecord` reads it: a frequency
+/// quantity in every mode, empty or zero for the band's midpoint; a value
+/// without a frequency unit is refused as CASA's conversion to Hz fails.
+#[test]
+fn reffreq_is_read_as_a_frequency_in_every_mode() {
+    assert_eq!(request(json!({})).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "" })).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "0Hz" })).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "1.4GHz" })).reffreq, Some(1.4e9));
+    assert_eq!(
+        request(json!({ "reffreq": "1400 MHz", "deconvolver": "mtmfs" })).reffreq,
+        Some(1.4e9)
+    );
+    // A cube reads it too, and its axis ignores it.
+    assert_eq!(
+        request(json!({ "specmode": "cube", "nchan": 4, "reffreq": "1.4GHz" })).reffreq,
+        Some(1.4e9)
+    );
+    for text in ["1.4", "1Jy", "garbage", "-1GHz"] {
+        assert_eq!(
+            refusal(json!({ "reffreq": text })).parameter,
+            "reffreq",
+            "{text}"
         );
     }
 }

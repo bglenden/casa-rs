@@ -442,7 +442,8 @@ impl<'a> Tclean<'a> {
     }
 
     fn spectral(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        self.ignore(&["reffreq"])?;
+        // CASA reads reffreq in every mode; a cube ignores it after reading.
+        self.copy(&["reffreq"])?;
         self.copy(&["channel_start", "perchanweightdensity"])?;
         let nchan = self.integer("nchan")?;
         let count = self.value("channel_count")?.clone();

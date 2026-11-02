@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 34,
+      "contract_version": 35,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -8397,8 +8397,7 @@
             "provider": {"field": "reffreq"},
             "python": {"name": "reffreq"},
             "presentation": {"label": "Reference Frequency", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "nchan",
@@ -9859,6 +9858,12 @@
             {"kind": "replace_value", "parameter": "antenna", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
             {"kind": "replace_value", "parameter": "timerange", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
           ],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 34,
+          "to_contract": 35,
+          "steps": [],
           "changed_defaults": []
         }
       ]

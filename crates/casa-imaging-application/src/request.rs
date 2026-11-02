@@ -139,6 +139,12 @@ pub struct ImagingRequest {
     /// source's line (`SynthesisParamsImage::buildCoordinateSystemCore`).
     #[serde(deserialize_with = "rest_frequencies_hz")]
     pub restfreq: Vec<f64>,
+    /// A continuum image's reference frequency in Hz (`reffreq`): the
+    /// header's spectral reference and an `mtmfs` Taylor expansion's
+    /// reference. `None` (empty or zero) takes the band's midpoint, as
+    /// `SynthesisParamsImage::getImFreq` does; a cube reads but ignores it.
+    #[serde(deserialize_with = "reference_frequency_hz")]
+    pub reffreq: Option<f64>,
     /// One restoring beam per plane, one common beam, or a beam given by
     /// its axes and angle.
     #[serde(deserialize_with = "restoring_beam")]
@@ -1064,6 +1070,35 @@ fn interpolation<'de, D: Deserializer<'de>>(
             "interpolation {other:?} is neither nearest nor linear"
         ))),
     }
+}
+
+/// `reffreq` as `SynthesisParamsImage::fromRecord` reads it: casacore's
+/// quantity reader, in Hz; empty or zero is unset (`getImFreq`). A value
+/// without a frequency unit is refused, as CASA's conversion to Hz fails.
+fn reference_frequency_hz<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let text = match Value::deserialize(deserializer)? {
+        Value::String(text) => text,
+        value => return Err(unexpected(&value, "a frequency")),
+    };
+    if unset(&text) {
+        return Ok(None);
+    }
+    let quantity = text
+        .trim()
+        .parse::<Quantity>()
+        .map_err(|error| D::Error::custom(format!("reffreq {text:?}: {error}")))?;
+    let hz = Unit::new("Hz").expect("Hz is a casacore unit");
+    let value = quantity.get_value_in(&hz).map_err(|error| {
+        D::Error::custom(format!("reffreq {text:?} is not a frequency: {error}"))
+    })?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(D::Error::custom(format!(
+            "reffreq {text:?} is not a frequency"
+        )));
+    }
+    Ok((value != 0.0).then_some(value))
 }
 
 /// Rest frequencies: one text, a list of texts, or unset.

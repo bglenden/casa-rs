@@ -107,6 +107,18 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// A continuum `reffreq` with an `outframe` other than LSRK: CASA
+    /// converts the header's reference to LSRK for gridding and Taylor
+    /// expansion through the image's frame conversion, which casa-rs does
+    /// not yet do for a given reference.
+    #[error(
+        "reffreq with outframe={outframe:?} is not implemented by casa-rs yet (#980): give \
+         outframe='LSRK' or no reffreq"
+    )]
+    ReferenceFrequencyOutsideLsrk {
+        /// The requested output frame.
+        outframe: casa_types::measures::frequency::FrequencyRef,
+    },
     /// A `timerange` selects an MSv4 processing set's times: CASA's time
     /// grammar takes a partial time's defaults from the first MAIN row the
     /// other selections select, which an MSv4 has no counterpart of.

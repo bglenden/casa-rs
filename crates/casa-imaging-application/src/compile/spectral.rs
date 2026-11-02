@@ -160,8 +160,27 @@ fn continuum_law(
         .as_ref()
         .expect("the survey reduces the spectral envelope of every continuum run");
     let [lower_hz, upper_hz] = envelope.edges_hz();
-    let reference_frequency_hz = envelope.midpoint_hz();
     let [recorded_lower_hz, recorded_upper_hz] = recorded.edges_hz();
+    // `getImFreq`: a given reffreq is the reference at pixel 0, with the
+    // band widened by twice its offset from the band's centre (CAS-9518).
+    let reference = |midpoint_hz: f64, width_hz: f64| match request.reffreq {
+        Some(reference_hz) => (
+            reference_hz,
+            width_hz + 2.0 * (reference_hz - midpoint_hz).abs(),
+        ),
+        None => (midpoint_hz, width_hz),
+    };
+    if request.reffreq.is_some() && request.outframe != FrequencyRef::LSRK {
+        return Err(PrepareError::ReferenceFrequencyOutsideLsrk {
+            outframe: request.outframe,
+        });
+    }
+    let (reference_frequency_hz, increment_hz) =
+        reference(envelope.midpoint_hz(), upper_hz - lower_hz);
+    let (image_reference_hz, image_increment_hz) = reference(
+        recorded.midpoint_hz(),
+        recorded_upper_hz - recorded_lower_hz,
+    );
     let field_id = survey.first_visibility_field_id;
     let spw_id = survey.spectral_windows[0].spw_id;
     let image_rest_frequency_hz = match (request.restfreq.first(), msv2) {
@@ -184,13 +203,13 @@ fn continuum_law(
         selected_source_channels: channels.clone(),
         output_frequency_reference: FrequencyRef::LSRK,
         reference_frequency_hz,
-        increment_hz: upper_hz - lower_hz,
+        increment_hz,
         output_channels: 1,
         rest_frequency: RestFrequency::NotApplicable,
         image: ImageSpectralCoordinate {
             frequency_reference: request.outframe,
-            reference_frequency_hz: recorded.midpoint_hz(),
-            increment_hz: recorded_upper_hz - recorded_lower_hz,
+            reference_frequency_hz: image_reference_hz,
+            increment_hz: image_increment_hz,
             rest_frequency_hz: image_rest_frequency_hz,
             additional_rest_frequencies_hz: Vec::new(),
         },

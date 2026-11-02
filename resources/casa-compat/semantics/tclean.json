@@ -229,7 +229,8 @@
       ]
     },
     "reffreq": {
-      "scope": "Read and ignored by reader; catalog refuses non-default in every mode (issue 980).",
+      "status": "Partial",
+      "scope": "Contract 35: read in every mode as a frequency quantity (empty or zero is the band's midpoint; no frequency unit is refused). A continuum image's header reference is reffreq at pixel 0 with the band widened by twice its offset from the band's centre (getImFreq, CAS-9518), and mtmfs expands about it. A cube reads and ignores it. reffreq with outframe other than LSRK is refused (#980): CASA converts the header reference to LSRK through the image's frame conversion.",
       "evidence": [
         "signature",
         "reader"

@@ -102,9 +102,9 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(34, "tclean", name, None), name, "");
+        assert_transports(&profile_session(35, "tclean", name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(34, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(35, "tclean", name, Some(text)), name, text);
         }
     }
 }
@@ -125,7 +125,7 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
 
 #[test]
 fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
-    for version in 28..=33 {
+    for version in 28..=34 {
         for surface in ["tclean", "imager"] {
             for name in SELECTORS {
                 assert_transports(&profile_session(version, surface, name, None), name, "");
