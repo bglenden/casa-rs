@@ -279,6 +279,17 @@ fn pointing(task: &TaskInvocation<'_>, outformat: StoreFormat) -> Result<bool, T
     Ok(pointing)
 }
 
+/// The threads `nthreads=0` takes on a host of `cores` cores and
+/// `physical_bytes` of memory: as many as half the memory holds at 1 GiB
+/// each (a conservative bound; a thread measured about
+/// 100 MB on a 1.4 GB MSv2 of 32 windows), at most one a core, and at
+/// least one. Unknown memory gives one.
+#[must_use]
+pub fn default_workers(cores: usize, physical_bytes: Option<usize>) -> usize {
+    let budget = physical_bytes.map_or(THREAD_BYTES, |bytes| bytes / 2);
+    (budget / THREAD_BYTES).clamp(1, cores.max(1))
+}
+
 fn invalid(parameter: &str, reason: impl Into<String>) -> TaskFailure {
     TaskFailure::validation(reason).at(parameter)
 }
@@ -350,18 +361,15 @@ fn chunks(task: &TaskInvocation<'_>) -> Result<Option<[u64; 4]>, TaskFailure> {
     Ok(Some(chunks))
 }
 
-/// Partitions converted at once: `nthreads`, or for 0 as many as the cores
-/// and the host's memory budget allow, [`THREAD_BYTES`] each, and at least
-/// one.
+/// Partitions converted at once: `nthreads`, or for 0
+/// [`default_workers`] of this host's cores and physical memory.
 fn workers(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
     let threads = task.integer("nthreads")?;
     match usize::try_from(threads) {
-        Ok(0) => {
-            let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-            let memory =
-                casa_ms::observation_io::creation::default_memory_bytes().unwrap_or(THREAD_BYTES);
-            Ok((memory / THREAD_BYTES).clamp(1, cores))
-        }
+        Ok(0) => Ok(default_workers(
+            std::thread::available_parallelism().map_or(1, std::num::NonZero::get),
+            casa_ms::selection::system_physical_memory_bytes(),
+        )),
         Ok(threads) => Ok(threads),
         Err(_) => Err(invalid(
             "nthreads",
@@ -400,6 +408,21 @@ mod tests {
         assert_eq!(named("obs.ps.zarr", v4).as_deref(), Some("obs.ps.zarr"));
         assert_eq!(named("obs.ms", v2).as_deref(), Some("obs.ms"));
         assert_eq!(named("/", v4), None);
+    }
+
+    #[test]
+    fn the_default_threads_are_what_half_the_memory_holds() {
+        const GIB: usize = 1 << 30;
+        // 15 GiB and 4 cores: 7 threads' worth of memory, so every core.
+        assert_eq!(default_workers(4, Some(15 * GIB)), 4);
+        // 24 GiB and 8 cores (a Mac mini): 12 threads' worth, so 8.
+        assert_eq!(default_workers(8, Some(24 * GIB)), 8);
+        // 64 cores and 32 GiB: 16 threads.
+        assert_eq!(default_workers(64, Some(32 * GIB)), 16);
+        // Small or unknown memory still converts, one partition at a time.
+        assert_eq!(default_workers(8, Some(GIB)), 1);
+        assert_eq!(default_workers(8, None), 1);
+        assert_eq!(default_workers(0, Some(15 * GIB)), 1);
     }
 
     #[test]

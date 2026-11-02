@@ -10743,7 +10743,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow.",
-        "details": "Each thread converts one partition and may hold about 1 GiB; 0 takes as many as the host's memory budget allows, at most one a core. An MSv2 is written by one thread.",
+        "details": "Each thread converts one partition and is budgeted 1 GiB; 0 takes as many as half the host's physical memory holds, at most one a core. An MSv2 is written by one thread.",
         "examples": [
           "0",
           "4"

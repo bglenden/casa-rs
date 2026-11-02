@@ -1084,8 +1084,11 @@ fn validate_io_budget(io: MsSelectionIoBudget) -> Result<(), MsSelectionError> {
     Ok(())
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(target_os = "macos")]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     let mut value = 0u64;
     let mut size = std::mem::size_of::<u64>() as libc::size_t;
     let result = unsafe {
@@ -1100,8 +1103,11 @@ fn system_physical_memory_bytes() -> Option<usize> {
     (result == 0 && value > 0).then_some(value as usize)
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if pages <= 0 || page_size <= 0 {
@@ -1110,8 +1116,11 @@ fn system_physical_memory_bytes() -> Option<usize> {
     (pages as usize).checked_mul(page_size as usize)
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(not(unix))]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     None
 }
 

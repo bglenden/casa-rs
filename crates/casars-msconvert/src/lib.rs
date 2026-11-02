@@ -51,7 +51,8 @@ use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 pub use convert::msconvert;
 pub use request::{
-    MsconvertRequest, StoreFormat, default_outputvis, processing_set_path, request_from,
+    MsconvertRequest, StoreFormat, default_outputvis, default_workers, processing_set_path,
+    request_from,
 };
 pub use task_contract::*;
 
