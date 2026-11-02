@@ -38,8 +38,8 @@ build. A wheel installed outside a suite, such as one from PyPI, needs
 `casars.data`, `casars.tools` and `casars.simutil` need no executables.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
-profile contract shared with the task executables' command lines. All 26
-catalog tasks have generated CASA-named wrappers and concrete typing stubs
+profile contract shared with the task executables' command lines. Every
+catalog task has a generated CASA-named wrapper and concrete typing stub
 under the single `casars.tasks` namespace; the generated implementation stays
 private. The wrappers take CASA's parameters; a draft runs with
 `TaskParameters.run(...)` or `casars.tasks.run(task, draft)`, and a saved

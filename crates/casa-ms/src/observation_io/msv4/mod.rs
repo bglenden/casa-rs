@@ -54,7 +54,7 @@ pub(super) fn is_unknown_source(name: &str) -> bool {
 /// The concurrency target alone does not do this: zarrs 0.23.14 encodes and
 /// decodes `min(chunk_concurrent_minimum, chunks)` chunks of one access at
 /// once on rayon's global pool whatever the target, and the minimum
-/// defaults to 4 (trial README, "Converter"). Building the options still
+/// defaults to 4. Building the options still
 /// starts rayon's global pool, which then stays idle.
 pub(super) fn codec_options() -> zarrs::array::CodecOptions {
     zarrs::array::CodecOptions::default()

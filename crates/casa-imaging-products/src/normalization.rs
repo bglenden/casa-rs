@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Normalization (plan section 5.7): CASA's rules that turn the
+//! Normalization: CASA's rules that turn the
 //! unnormalized normal state into image units. The minor cycle and the
 //! published products both use them.
 //!

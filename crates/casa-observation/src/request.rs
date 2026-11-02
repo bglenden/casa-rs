@@ -464,8 +464,7 @@ pub struct AccessRequest {
     /// The fields to deliver: the selected times phased to one of them,
     /// whole times, so no batch holds the others' times. The MSv2 adapter
     /// reads none of their rows; the MSv4 adapter decodes each chunk row a
-    /// batch touches whole, gap times included
-    /// (`docs/measurement-set/contracts.md`, section 4). Scientific groups
+    /// batch touches whole, gap times included. Scientific groups
     /// are keyed over these fields' times, as production `gaincal` bins
     /// only the rows it selects: a group that combines fields holds the
     /// selected fields' times alone, its bins counted from the first of

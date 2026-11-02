@@ -2,8 +2,8 @@
 //! Products of two runs compared by normalized RMS: images pixel for pixel
 //! and a MeasurementSet column cell for cell, for the laws that hold two
 //! runs of one request equal (waves against a resident cube, one store
-//! against its conversion) to [`TOLERANCE`], owner decision 4 of
-//! `imaging-port.md` §3. Runs that image the same samples differ only by
+//! against its conversion) to [`TOLERANCE`], the imaging port's owner
+//! decision (#932). Runs that image the same samples differ only by
 //! summation order.
 
 use std::path::Path;

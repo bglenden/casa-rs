@@ -16,7 +16,7 @@
 //! - **Fixed pointing.** A mosaic with fixed pointings shares a few groups
 //!   per pointing and plane: B10, the 1024² ALMA mosaic, sums 4.19 M
 //!   placements into 14 (#787). Its weight image then costs a lookup per
-//!   sample. On f32 grids (Metal, plan decision D2) it also keeps the grid's
+//!   sample. On f32 grids (Metal) it also keeps the grid's
 //!   own precision: millions of adds into the origin's cells had lost about
 //!   1e-3, and a few adds per group do not.
 //! - **A pointing that drifts row by row.** AW projection's pointing does,

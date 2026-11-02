@@ -607,8 +607,8 @@ fn an_msv2_survives_the_round_trip_through_msv4() {
 }
 
 /// A grid cell no acquisition filled is padding in the MSv4. In the MSv2
-/// made from it, it is by default a flagged row of NaN data and weights
-/// (revision 2 design, D23), with valid keys, which reads back as padding
+/// made from it, it is by default a flagged row of NaN data and weights,
+/// with valid keys, which reads back as padding
 /// and converts back to padding; declaring that the conversion reproduces
 /// the original sparse row set makes it no row.
 #[test]

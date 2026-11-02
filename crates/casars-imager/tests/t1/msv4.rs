@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! MSv4 imaging (#932 step 6c, owner decision 5): the store product law. A
+//! MSv4 imaging (#932 step 6c): the store product law. A
 //! request imaged on a T1 track and on its MSv4 conversion reads the same
 //! visibilities, flags and weights, and its geometry is equal to 1e-12
 //! (the store geometry law), so every product agrees to rounding and the
 //! two runs take the same cycles. The conversion is casa-rs's own
-//! (`to_msv4`), which XRADIO reads back (trial README, "Converter").
+//! (`to_msv4`), which XRADIO reads back (`tools/ms-trial/check_convert.py`).
 
 use std::path::PathBuf;
 
@@ -331,7 +331,7 @@ fn saving_the_model_into_an_msv4_without_a_model_group_is_refused() {
 /// the body at the FIELD row's `TIME`, which an MSv4 does not carry (the
 /// conversion reports it lost): an MSv4 field is taken at its first
 /// selected time instead, and the image moves with the body between the
-/// two (imaging port 2.4, step 6c).
+/// two (#932, step 6c).
 #[test]
 fn a_tracked_moving_field_images_the_msv4_conversion_as_the_measurement_set() {
     let observation = super::ephemeris::moving_track();

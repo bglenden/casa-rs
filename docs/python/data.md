@@ -6,7 +6,8 @@ The module also publishes its canonical object-surface contract directly from
 Rust:
 
 - `protocol_info()` returns the stable object protocol descriptor
-- `schema_bundle()` returns the canonical schema bundle for `Image` and `Table`
+- `schema_bundle()` returns the canonical schema bundle for `Image`, `Table`
+  and the `casars.tools` classes
 
 ## Images
 

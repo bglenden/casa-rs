@@ -419,7 +419,7 @@ fn spectral_columns_without_content_are_read_past() {
 /// that partition's stored weights are its `WEIGHT_SPECTRUM` cells, and the
 /// other's its `WEIGHT`, whether or not the partition holds MAIN's first
 /// row. CASA iterates the two sessions as one window, and so answers once
-/// for both (contracts, section 4).
+/// for both.
 #[test]
 fn each_partition_reads_weight_spectrum_by_its_first_row() {
     for filled in [0, 1] {

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """XRADIO side of the MSv2/MSv4 trial's interoperability check
-(docs/measurement-set/trial/README.md). Python here is only the oracle.
+(check_interop.sh). Python here is only the oracle.
 
     check_interop.py rust-read --store XRADIO.ps.zarr --dump DUMP_DIR
         Rust read XRADIO's store (`ms_trial_interop dump`); compare every array

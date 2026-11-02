@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MSv2/MSv4 trial, example A (`docs/measurement-set/trial/README.md`): a
-//! few dirty-image channel planes formed by the production measurement
-//! operator and major-cycle pass from both stores through the shared
+//! MSv2/MSv4 trial, example A: a few dirty-image channel planes formed by
+//! the production measurement operator and major-cycle pass from both
+//! stores through the shared
 //! [`casa_observation::VisibilityBatch`], compared with the production
 //! imager on the MSv2.
 //!
 //! `cargo test -p casa-imaging-application --test ms_trial_imaging -- --nocapture`
-//! prints the measurements the evidence records.
+//! prints its measurements.
 
 #[path = "common/imaging.rs"]
 mod imaging;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Laws of the trial observation adapters on the MSv2/MSv4 trial fixtures
-//! (`docs/measurement-set/trial/README.md`): the MSv4 store XRADIO wrote
-//! from the MSv2, read through both adapters into the same batches.
+//! (`tests/fixtures/ms_trial`): the MSv4 store XRADIO wrote from the MSv2,
+//! read through both adapters into the same batches.
 
 #[cfg(unix)]
 #[path = "observation_io/channel_order.rs"]
@@ -898,7 +898,7 @@ fn a_correlation_subset_carries_the_flags_it_is_asked_for() {
     }
 }
 
-/// D1: the correlation axis lives once. Every batch of an all-products
+/// The correlation axis lives once. Every batch of an all-products
 /// traversal borrows the catalogue's list, every batch of a subset
 /// traversal shares the one axis resolved at binding, and a piece packed
 /// from a batch shares its batch's: no fill or pack copies the list.
