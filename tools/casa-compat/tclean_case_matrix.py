@@ -40,6 +40,7 @@ import platform
 import shutil
 import sys
 import time
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -270,7 +271,11 @@ def main():
         try:
             row = run_case(args, name, case, matrix.get("common", {}), staged, casatasks, tools)
         except Exception as error:  # a driver failure on one case must not stop the matrix
-            row = {"passed": False, "driver_error": f"{type(error).__name__}: {error}"}
+            row = {
+                "passed": False,
+                "driver_error": f"{type(error).__name__}: {error}",
+                "traceback": traceback.format_exc(),
+            }
         receipt["cases"][name] = row
         write()
         print("case", name, row["passed"], flush=True)
