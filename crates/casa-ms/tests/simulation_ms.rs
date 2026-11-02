@@ -391,6 +391,58 @@ fn requested_four_correlations_drive_ms_metadata_and_main_shapes() {
 }
 
 #[test]
+fn an_unpolarized_model_predicts_zero_cross_hands() {
+    // CASA predicts a model with no polarization as RR = LL = I (XX = YY =
+    // I) and RL = LR = 0 (XY = YX = 0). A cell reads as [correlation,
+    // channel], so with four channels value `index` is of correlation
+    // `index / 4`.
+    for basis in [
+        SyntheticPolarizationBasis::Circular,
+        SyntheticPolarizationBasis::Linear,
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut request = request(temp.path());
+        request.polarization_setup = SyntheticPolarizationSetup::new(basis, 4).unwrap();
+        generate_synthetic_observation_ms(&request).unwrap();
+        let rows = MeasurementSet::open(&request.output_ms)
+            .unwrap()
+            .row_count();
+        assert!(rows > 0);
+        for row in 0..rows {
+            let data = row_data(&request.output_ms, row);
+            let [first, cross_1, cross_2, second] =
+                [0, 1, 2, 3].map(|corr| &data[corr * 4..corr * 4 + 4]);
+            let context = format!("{basis:?}, row {row}: {data:?}");
+            assert!(
+                first.iter().all(|&(re, im)| re.hypot(im) > 0.0),
+                "{context}"
+            );
+            assert_eq!(first, second, "{context}");
+            assert!(
+                cross_1
+                    .iter()
+                    .chain(cross_2)
+                    .all(|&value| value == (0.0, 0.0)),
+                "{context}"
+            );
+        }
+    }
+
+    // A polarized model's cross hands are its polarization.
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 4).unwrap();
+    request.polarization_setup.source_stokes_fractional_quv = [0.1, 0.2, 0.0];
+    generate_synthetic_observation_ms(&request).unwrap();
+    let data = first_row_data(&request.output_ms);
+    assert!(
+        data[4..12].iter().all(|&(re, im)| re.hypot(im) > 0.0),
+        "{data:?}"
+    );
+}
+
+#[test]
 fn zenith_transit_schedule_writes_unflagged_vla_track() {
     let temp = tempfile::tempdir().unwrap();
     let model = temp.path().join("ppdisk672_GHz_50pc.fits");

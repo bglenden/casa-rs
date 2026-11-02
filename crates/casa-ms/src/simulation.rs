@@ -329,7 +329,9 @@ pub struct SyntheticPolarizationSetup {
     /// 1, 2, and 4.
     pub correlation_count: usize,
     /// Fractional source Stokes `[Q/I, U/I, V/I]` applied to the scalar sky
-    /// model during synthetic visibility prediction.
+    /// model during synthetic visibility prediction. All zero, the model is
+    /// unpolarized, predicted as CASA predicts it: the parallel hands hold
+    /// Stokes I and the cross hands of four correlations are zero.
     #[serde(default)]
     pub source_stokes_fractional_quv: [f64; 3],
 }
@@ -3417,18 +3419,12 @@ fn predicted_data_values(
                         prediction_uvw_m,
                         channel,
                     );
-                    for corr in 0..num_corr {
-                        let index = ms_data_index(corr, channel, num_corr);
-                        values[index] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut values, channel, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
                 for (channel, visibility) in channel_values.iter().enumerate() {
-                    for corr in 0..num_corr {
-                        let index = ms_data_index(corr, channel, num_corr);
-                        values[index] = *visibility;
-                    }
+                    set_unpolarized_visibility(&mut values, channel, num_corr, *visibility);
                 }
             }
             SyntheticFieldPredictor::Analytic(predictor) => {
@@ -3629,26 +3625,20 @@ fn predict_channel_chunk(
                         prediction_uvw_m,
                         channel,
                     );
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::Analytic(predictor) => {
                 for (offset, channel) in (start_channel..end_channel).enumerate() {
                     let visibility =
                         predict_analytic_visibility(predictor, spectral_setup, *uvw_m, channel);
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
                 for (offset, channel) in (start_channel..end_channel).enumerate() {
                     let visibility = channel_values[channel];
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
         }
@@ -3809,11 +3799,31 @@ fn predict_analytic_row_values(
     }
 
     for channel in 0..channel_count {
-        let row_start = channel * num_corr;
-        let visibility = values[row_start];
-        values[row_start + 1..row_start + num_corr].fill(visibility);
+        let visibility = values[ms_data_index(0, channel, num_corr)];
+        set_unpolarized_visibility(&mut values, channel, num_corr, visibility);
     }
     values
+}
+
+/// Sets one channel's correlations to an unpolarized model's visibility,
+/// its Stokes I: the parallel hands (`RR` and `LL`, or `XX` and `YY`),
+/// whose two receptors are the same, hold it, and the cross hands keep the
+/// zero they start with, as CASA predicts a model with no polarization
+/// (`RL = Q + iU`, `XY = U + iV`). The first correlation is always a
+/// parallel hand.
+fn set_unpolarized_visibility(
+    values: &mut [Complex32],
+    channel: usize,
+    num_corr: usize,
+    visibility: Complex32,
+) {
+    let start = ms_data_index(0, channel, num_corr);
+    let receptors = corruption::correlation_receptors(num_corr).unwrap_or(&[]);
+    for (value, [first, second]) in values[start..start + num_corr].iter_mut().zip(receptors) {
+        if first == second {
+            *value = visibility;
+        }
+    }
 }
 
 fn analytic_primary_beam_taper_for_direction(
@@ -4942,11 +4952,18 @@ mod tests {
 
         for channel in 0..setup.channel_count {
             let scalar = predict_analytic_visibility(&predictor, &setup, uvw, channel);
+            // The parallel hands hold Stokes I; the cross hands of a model
+            // with no polarization are zero.
             for corr in 0..4 {
                 let value = row[ms_data_index(corr, channel, 4)];
+                let expected = if matches!(corr, 0 | 3) {
+                    scalar
+                } else {
+                    Complex32::new(0.0, 0.0)
+                };
                 assert!(
-                    (value - scalar).norm() < 2.0e-6,
-                    "channel {channel} corr {corr}: row={value:?} scalar={scalar:?}"
+                    (value - expected).norm() < 2.0e-6,
+                    "channel {channel} corr {corr}: row={value:?} expected={expected:?}"
                 );
             }
         }
@@ -5017,6 +5034,97 @@ mod tests {
 
         assert_eq!(serial_nonzero, parallel_nonzero);
         assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn unpolarized_predictions_leave_the_cross_hands_zero() {
+        // Every predictor, one row at a time and in parallel chunks, writes
+        // Stokes I into the parallel hands only, as CASA predicts a model
+        // with no polarization.
+        let spectral_setup = analytic_test_spectral_setup(6);
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-5, 1.0e-5],
+        };
+        let model = Array2::<f32>::from_shape_fn((16, 16), |(x, y)| {
+            let dx = x as f32 - 7.5;
+            let dy = y as f32 - 7.5;
+            (-0.03 * (dx * dx + dy * dy)).exp()
+        });
+        let sampled = SyntheticFieldPredictor::Sampled(
+            (0..spectral_setup.channel_count)
+                .map(|_| SyntheticChannelPredictor {
+                    predictor: StandardMfsModelPredictor::new(geometry, &model).unwrap(),
+                    phase_offset: ModelPhaseOffset {
+                        l_rad: 1.0e-6,
+                        m_rad: -2.0e-6,
+                        n_minus_one: 3.0e-12,
+                    },
+                    phase_center_rad: [1.0, -0.5],
+                    model_reference_direction_rad: None,
+                })
+                .collect(),
+        );
+        let total_power = SyntheticFieldPredictor::SampledTotalPower(vec![
+            Complex32::new(2.0, 0.0);
+            spectral_setup
+                .channel_count
+        ]);
+        let analytic = SyntheticFieldPredictor::Analytic(analytic_test_predictor(
+            &spectral_setup,
+            vec![SyntheticAnalyticComponent::Point {
+                name: None,
+                l_rad: 2.0e-5,
+                m_rad: -1.5e-5,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 1.0,
+                    spectral_index: 0.0,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 0.0,
+                    line_center_fraction: 0.5,
+                    line_sigma_fraction: 0.1,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            }],
+        ));
+        let row_uvws = [[10.0, 20.0, 0.0], [100.0, -30.0, 5.0]];
+        let zero = Complex32::new(0.0, 0.0);
+        for (name, predictor) in [
+            ("sampled", &sampled),
+            ("total power", &total_power),
+            ("analytic", &analytic),
+        ] {
+            for workers in [1, 4] {
+                let four = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    4,
+                    workers,
+                );
+                for channel in four.iter().flat_map(|row| row.as_chunks::<4>().0) {
+                    let context = format!("{name}, {workers} workers: {channel:?}");
+                    assert!(channel[0].norm() > 0.1, "{context}");
+                    assert_eq!(channel[3], channel[0], "{context}");
+                    assert_eq!([channel[1], channel[2]], [zero, zero], "{context}");
+                }
+                // Two correlations are both parallel hands.
+                let two = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    2,
+                    workers,
+                );
+                for channel in two.iter().flat_map(|row| row.as_chunks::<2>().0) {
+                    let context = format!("{name}, {workers} workers: {channel:?}");
+                    assert!(channel[0].norm() > 0.1, "{context}");
+                    assert_eq!(channel[1], channel[0], "{context}");
+                }
+            }
+        }
     }
 
     #[test]
