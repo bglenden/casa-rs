@@ -25,7 +25,10 @@ the test; the case is skipped unless `--include-skipped`), `casa_environment`
 Both CASA's `casatasks.tclean` and casa-rs's public Python `casars.tasks.tclean`
 (in the `--casars-python` interpreter, `CASARS_IMAGER_BIN` naming the binary)
 run every step with the same keyword arguments in their own working directory.
-A step CASA refuses must be refused by casa-rs too; every other step must
+A step CASA refuses must be one its test expects to fail (`expect_error`,
+`tolerates_error`; any other refusal fails the case) and must be refused by
+casa-rs too, and an image name only refused steps wrote is not compared;
+every other step must
 succeed with exact iterdone, nmajordone and stopcode, and, for the return
 values CASA reports, maxpsfsidelobe and cyclethreshold within 1e-6 relative
 plus 1e-8 absolute. Each image name's products must match CASA's inventory
@@ -146,9 +149,16 @@ def call_values(common, step, paths):
     return dict(common, **step["params"], vis=vis, imagename=step["imagename"])
 
 
-def compare_step(casa, native, skip_scalars):
+def compare_step(casa, native, case):
     if "refused" in casa:
-        return {"passed": "refused" in native, "casa_refused": True}
+        # A refusal CASA's test does not expect is the environment's (missing
+        # data, a path CASA cannot read), not agreement.
+        expected = bool(case.get("expect_error") or case.get("tolerates_error"))
+        return {
+            "passed": expected and "refused" in native,
+            "casa_refused": True,
+            "casa_refusal_expected": expected,
+        }
     if "result" not in native:
         return {"passed": False}
     expected, actual = casa["result"], native["result"]
@@ -163,7 +173,9 @@ def compare_step(casa, native, skip_scalars):
         for key in SCALARS
         if expected.get(key) is not None
     }
-    scalars = skip_scalars or all(entry["passed"] for entry in row["scalars"].values())
+    scalars = case.get("skip_scalars", False) or all(
+        entry["passed"] for entry in row["scalars"].values()
+    )
     row["passed"] = bool(all(row["counts"].values()) and scalars)
     return row
 
@@ -200,9 +212,15 @@ def run_case(args, name, case, common, staged, casatasks, tools):
         native = run_native(args.casars_python, args.imager_binary, native_values, native_folder,
                             log_name=f"stderr-{index + 1}.log", timeout=args.timeout)
         entry = {"call": step.get("call"), "parameters": values, "casa": casa, "native": native}
-        entry |= compare_step(casa, native, case.get("skip_scalars", False))
+        entry |= compare_step(casa, native, case)
         row["steps"].append(entry)
-    imagenames = sorted({step["imagename"] for step in steps(case)})
+    # What a refused call leaves behind is not a product: CASA's own tests
+    # check only the exception (`test_error_gridding` leaves a `.psf`).
+    imagenames = sorted({
+        entry["parameters"]["imagename"]
+        for entry in row["steps"]
+        if "refused" not in entry["casa"]
+    })
     row["products"] = {
         imagename: compare_products(imagename, casa_folder, native_folder, tools)
         for imagename in imagenames
@@ -236,9 +254,14 @@ def main():
     assert casatools.version_string() == "6.7.6-14", casatools.version_string()
     matrix = json.loads(args.cases.read_text())
     cases = {name: case for name, case in matrix["cases"].items() if selected(args, name, case)}
-    # Absolute but unresolved: CASA cannot open a path with spaces, which a
-    # symbolic link (~/ext on the Mac mini) can keep out of the paths given.
-    args.output = Path(os.path.abspath(args.output))
+    # Absolute, not resolved: CASA cuts a path at a space ("Table /Volumes/Extra
+    # does not exist") in lists of MeasurementSets and in mosaic and Taylor
+    # runs, and a refusal on both sides would pass. A resolved symbolic link
+    # may introduce one, and a path that holds one is refused here.
+    args.output = args.output.absolute()
+    for path in (args.output, args.data_root.absolute()):
+        if any(character.isspace() for character in str(path)):
+            raise SystemExit(f"{path}: CASA cannot run under a path with whitespace")
     args.output.mkdir(parents=True)
     needed = set()
     for case in cases.values():
@@ -247,7 +270,9 @@ def main():
             needed.update(step["vis"] if isinstance(step["vis"], list) else [step["vis"]])
     staged = {}
     for name in sorted(needed):
-        source = (args.data_root / matrix["inputs"][name]).resolve(strict=True)
+        source = (args.data_root / matrix["inputs"][name]).absolute()
+        if not source.exists() or (source.is_dir() and not any(source.iterdir())):
+            raise SystemExit(f"{source}: input is missing or empty")
         staged[name] = args.output / "inputs" / name
         copy_input(source, staged[name])
     casatasks.casalog.setlogfile(str(args.output / "casa.log"))

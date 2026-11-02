@@ -7,6 +7,9 @@
 #[path = "observation_io/arrays.rs"]
 mod arrays;
 #[cfg(unix)]
+#[path = "observation_io/channel_order.rs"]
+mod channel_order;
+#[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]
@@ -29,6 +32,9 @@ mod metadata;
 #[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
+#[cfg(unix)]
+#[path = "observation_io/receptors.rs"]
+mod receptors;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[cfg(unix)]

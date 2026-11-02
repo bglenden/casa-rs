@@ -46,8 +46,10 @@ use crate::subtable_rows::{
 use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
+mod corruption;
 mod main_columns;
 
+use corruption::SyntheticCorruptionState;
 use main_columns::MainArrayWriter;
 
 const DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 20.0_f64.to_radians();
@@ -327,7 +329,9 @@ pub struct SyntheticPolarizationSetup {
     /// 1, 2, and 4.
     pub correlation_count: usize,
     /// Fractional source Stokes `[Q/I, U/I, V/I]` applied to the scalar sky
-    /// model during synthetic visibility prediction.
+    /// model during synthetic visibility prediction. All zero, the model is
+    /// unpolarized, predicted as CASA predicts it: the parallel hands hold
+    /// Stokes I and the cross hands of four correlations are zero.
     #[serde(default)]
     pub source_stokes_fractional_quv: [f64; 3],
 }
@@ -405,13 +409,13 @@ impl SyntheticPolarizationSetup {
         }
     }
 
+    /// `CORR_PRODUCT`, shape `[2, correlations]`: the first receptor of each
+    /// correlation, then the second ([`corruption::correlation_receptors`]).
     fn correlation_products(&self) -> Vec<i32> {
-        match self.correlation_count {
-            1 => vec![0, 0],
-            2 => vec![0, 1, 0, 1],
-            4 => vec![0, 0, 1, 1, 0, 1, 0, 1],
-            _ => Vec::new(),
-        }
+        let receptors = corruption::correlation_receptors(self.correlation_count).unwrap_or(&[]);
+        (0..2)
+            .flat_map(|side| receptors.iter().map(move |pair| pair[side] as i32))
+            .collect()
     }
 
     fn receptor_types(&self) -> [&'static str; 2] {
@@ -831,7 +835,11 @@ pub struct SyntheticCorruptionConfig {
     /// Per-antenna, per-channel complex bandpass corruption, using CASA `setbandpass` names.
     #[serde(default)]
     pub bandpass: Option<SyntheticBandpassCorruption>,
-    /// Approximate parallel-hand polarization leakage corruption, parameterized like CASA `setleakage`.
+    /// Polarization leakage, parameterized like CASA `setleakage`: CASA's
+    /// linearised leakage of the cross hands with four correlations, applied
+    /// before the gains; with two, an approximation on the parallel hands,
+    /// applied after the gains and the noise. One correlation has no other
+    /// hand to leak into, so a leakage that changes the data is refused.
     #[serde(default)]
     pub leakage: Option<SyntheticPolarizationLeakageCorruption>,
     /// Global primary-beam pointing offset applied during model prediction, using CASA `setpointingerror` names where CASA has them.
@@ -906,7 +914,9 @@ pub enum SyntheticBandpassMode {
     Table,
 }
 
-/// Polarization leakage corruption controls for parallel-hand synthetic data.
+/// Polarization leakage corruption controls: with four correlations CASA's
+/// linearised leakage of the cross hands, with two an approximation on the
+/// parallel hands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticPolarizationLeakageCorruption {
     /// CASA `setleakage` mode.
@@ -1626,7 +1636,7 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
         }
     }
     if let Some(corruption) = &request.corruption {
-        validate_corruption(corruption)?;
+        validate_corruption(corruption, request.polarization_setup.correlation_count)?;
     }
     if let Some(model_peak_jy_per_pixel) = request.model_peak_jy_per_pixel
         && !(model_peak_jy_per_pixel.is_finite() && model_peak_jy_per_pixel > 0.0)
@@ -1638,7 +1648,10 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
     Ok(())
 }
 
-fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
+fn validate_corruption(
+    corruption: &SyntheticCorruptionConfig,
+    correlation_count: usize,
+) -> MsResult<()> {
     if let Some(noise) = &corruption.noise {
         if noise.mode != SyntheticNoiseMode::SimpleNoise {
             return Err(MsError::SyntheticObservation(
@@ -1708,6 +1721,15 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
                 "setleakage offset values must be finite".to_string(),
             ));
         }
+        // Leakage moves signal between hands, and one correlation has only
+        // the first receptor's parallel hand: it would be reported as
+        // applied while changing nothing. CASA's `corrupt` likewise refuses
+        // leakage on data without the cross hands.
+        if correlation_count == 1 && leakage_applies(leakage) {
+            return Err(MsError::SyntheticObservation(
+                "setleakage needs two or four correlations; this observation has one".to_string(),
+            ));
+        }
     }
     if let Some(pointing) = &corruption.pointing {
         if let Some(epjtablename) = &pointing.epjtablename {
@@ -1723,6 +1745,12 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
         }
     }
     Ok(())
+}
+
+/// Whether `leakage` changes the data: a nonzero amplitude or offset.
+fn leakage_applies(leakage: &SyntheticPolarizationLeakageCorruption) -> bool {
+    leakage.amplitude.iter().any(|value| *value > 0.0)
+        || leakage.offset.iter().any(|value| *value != 0.0)
 }
 
 fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> Vec<String> {
@@ -1748,8 +1776,7 @@ fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> V
         names.push("bandpass".to_string());
     }
     if let Some(leakage) = &corruption.leakage
-        && (leakage.amplitude.iter().any(|value| *value > 0.0)
-            || leakage.offset.iter().any(|value| *value != 0.0))
+        && leakage_applies(leakage)
     {
         names.push("leakage".to_string());
     }
@@ -3410,18 +3437,12 @@ fn predicted_data_values(
                         prediction_uvw_m,
                         channel,
                     );
-                    for corr in 0..num_corr {
-                        let index = ms_data_index(corr, channel, num_corr);
-                        values[index] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut values, channel, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
                 for (channel, visibility) in channel_values.iter().enumerate() {
-                    for corr in 0..num_corr {
-                        let index = ms_data_index(corr, channel, num_corr);
-                        values[index] = *visibility;
-                    }
+                    set_unpolarized_visibility(&mut values, channel, num_corr, *visibility);
                 }
             }
             SyntheticFieldPredictor::Analytic(predictor) => {
@@ -3622,26 +3643,20 @@ fn predict_channel_chunk(
                         prediction_uvw_m,
                         channel,
                     );
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::Analytic(predictor) => {
                 for (offset, channel) in (start_channel..end_channel).enumerate() {
                     let visibility =
                         predict_analytic_visibility(predictor, spectral_setup, *uvw_m, channel);
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
             SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
                 for (offset, channel) in (start_channel..end_channel).enumerate() {
                     let visibility = channel_values[channel];
-                    for corr in 0..num_corr {
-                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
-                    }
+                    set_unpolarized_visibility(&mut row_values, offset, num_corr, visibility);
                 }
             }
         }
@@ -3801,12 +3816,49 @@ fn predict_analytic_row_values(
         }
     }
 
-    for channel in 0..channel_count {
-        let row_start = channel * num_corr;
-        let visibility = values[row_start];
-        values[row_start + 1..row_start + num_corr].fill(visibility);
+    // The first correlation is always a parallel hand; the other parallel
+    // hand, the last ([`corruption::correlation_receptors`]), takes it, and
+    // the cross hands stay zero ([`set_unpolarized_visibility`]), without
+    // the receptor lookup for each channel.
+    match num_corr {
+        4 => {
+            for [first, _, _, last] in values.as_chunks_mut::<4>().0 {
+                *last = *first;
+            }
+        }
+        2 => {
+            for [first, last] in values.as_chunks_mut::<2>().0 {
+                *last = *first;
+            }
+        }
+        1 => {}
+        other => {
+            unreachable!("a synthetic polarization setup holds 1, 2 or 4 correlations, not {other}")
+        }
     }
     values
+}
+
+/// Sets one channel's correlations to an unpolarized model's visibility,
+/// its Stokes I: the parallel hands (`RR` and `LL`, or `XX` and `YY`),
+/// whose two receptors are the same, hold it, and the cross hands keep the
+/// zero they start with, as CASA predicts a model with no polarization
+/// (`RL = Q + iU`, `XY = U + iV`). The first correlation is always a
+/// parallel hand.
+fn set_unpolarized_visibility(
+    values: &mut [Complex32],
+    channel: usize,
+    num_corr: usize,
+    visibility: Complex32,
+) {
+    let start = ms_data_index(0, channel, num_corr);
+    let receptors = corruption::correlation_receptors(num_corr)
+        .expect("a synthetic polarization setup holds 1, 2 or 4 correlations");
+    for (value, [first, second]) in values[start..start + num_corr].iter_mut().zip(receptors) {
+        if first == second {
+            *value = visibility;
+        }
+    }
 }
 
 fn analytic_primary_beam_taper_for_direction(
@@ -3940,322 +3992,6 @@ fn baseline_from_uvw(uvw_m: [f64; 3], direction_rad: [f64; 2]) -> [f64; 3] {
         uvw_m[0] * u_axis[1] + uvw_m[1] * v_axis[1] + uvw_m[2] * w_axis[1],
         uvw_m[0] * u_axis[2] + uvw_m[1] * v_axis[2] + uvw_m[2] * w_axis[2],
     ]
-}
-
-struct SyntheticCorruptionState {
-    seed: u64,
-    simplenoise_jy: f32,
-    gains_by_sample: Vec<Vec<[Complex32; 2]>>,
-    /// Per-antenna gains over the observation's concatenated channels.
-    bandpass_gains: Vec<Vec<Complex32>>,
-    total_channel_count: usize,
-    leakage_terms: Vec<[Complex32; 2]>,
-}
-
-impl SyntheticCorruptionState {
-    fn new(
-        config: &SyntheticCorruptionConfig,
-        antenna_count: usize,
-        total_channel_count: usize,
-        sample_count: usize,
-    ) -> Self {
-        let mut rng = DeterministicRng::new(config.seed);
-        let gains_by_sample = build_gain_terms(
-            config.gain.as_ref(),
-            config.seed,
-            antenna_count,
-            sample_count,
-        );
-        let bandpass_gains = (0..antenna_count)
-            .map(|_| {
-                (0..total_channel_count)
-                    .map(|_| {
-                        if let Some(bandpass) = &config.bandpass {
-                            let amplitude = 1.0 + rng.gaussian_f32() * bandpass.amplitude[0];
-                            let phase = rng.gaussian_f32() * bandpass.amplitude[1];
-                            Complex32::new(amplitude * phase.cos(), amplitude * phase.sin())
-                        } else {
-                            Complex32::new(1.0, 0.0)
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let leakage_terms = (0..antenna_count)
-            .map(|_| {
-                if let Some(leakage) = &config.leakage {
-                    casa_like_leakage_terms(&mut rng, leakage)
-                } else {
-                    [Complex32::new(0.0, 0.0); 2]
-                }
-            })
-            .collect();
-        Self {
-            seed: config.seed,
-            simplenoise_jy: config
-                .noise
-                .as_ref()
-                .map(|noise| noise.simplenoise_jy)
-                .unwrap_or(0.0),
-            gains_by_sample,
-            bandpass_gains,
-            total_channel_count,
-            leakage_terms,
-        }
-    }
-
-    /// Corrupt one row of `window`. Bandpass gains and noise draws are keyed
-    /// by the observation-wide channel, so every window sees independent noise.
-    fn apply(
-        &self,
-        values: &mut [Complex32],
-        antenna1: usize,
-        antenna2: usize,
-        window: ObservedWindow<'_>,
-        sample_index: usize,
-    ) {
-        let channel_count = window.setup.channel_count;
-        let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
-        let Some(correlation_count) = values.len().checked_div(channel_count) else {
-            return;
-        };
-        if correlation_count == 0 {
-            return;
-        }
-        for (index, value) in values.iter_mut().enumerate() {
-            let channel = window.first_channel + index / correlation_count;
-            let correlation = index % correlation_count;
-            let logical_index = correlation * self.total_channel_count + channel;
-            let baseline_gain = gains[antenna1][correlation]
-                * gains[antenna2][correlation].conj()
-                * self.bandpass_gains[antenna1][channel]
-                * self.bandpass_gains[antenna2][channel].conj();
-            *value *= baseline_gain;
-            if self.simplenoise_jy > 0.0 {
-                let mut rng = DeterministicRng::new(row_noise_seed(
-                    self.seed,
-                    sample_index,
-                    antenna1,
-                    antenna2,
-                    logical_index,
-                ));
-                value.re += rng.gaussian_f32() * self.simplenoise_jy;
-                value.im += rng.gaussian_f32() * self.simplenoise_jy;
-            }
-        }
-        if channel_count > 0 && values.len() == 2 * channel_count {
-            let rr_leakage =
-                self.leakage_terms[antenna1][0] * self.leakage_terms[antenna2][0].conj();
-            let ll_leakage =
-                self.leakage_terms[antenna1][1] * self.leakage_terms[antenna2][1].conj();
-            if rr_leakage != Complex32::new(0.0, 0.0) || ll_leakage != Complex32::new(0.0, 0.0) {
-                for channel in 0..channel_count {
-                    let rr_index = ms_data_index(0, channel, 2);
-                    let ll_index = ms_data_index(1, channel, 2);
-                    let rr = values[rr_index];
-                    let ll = values[ll_index];
-                    values[rr_index] = rr + rr_leakage * ll;
-                    values[ll_index] = ll + ll_leakage * rr;
-                }
-            }
-        }
-    }
-}
-
-fn row_noise_seed(
-    seed: u64,
-    sample_index: usize,
-    antenna1: usize,
-    antenna2: usize,
-    value_index: usize,
-) -> u64 {
-    let mut mixed = seed ^ 0x9E37_79B9_7F4A_7C15;
-    mixed = mix_u64(mixed ^ sample_index as u64);
-    mixed = mix_u64(mixed ^ ((antenna1 as u64) << 32) ^ antenna2 as u64);
-    mix_u64(mixed ^ value_index as u64)
-}
-
-fn mix_u64(mut value: u64) -> u64 {
-    value ^= value >> 30;
-    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    value ^= value >> 27;
-    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
-    value ^ (value >> 31)
-}
-
-fn build_gain_terms(
-    gain: Option<&SyntheticGainCorruption>,
-    seed: u64,
-    antenna_count: usize,
-    sample_count: usize,
-) -> Vec<Vec<[Complex32; 2]>> {
-    let slot_count = sample_count.max(2);
-    let Some(gain) = gain else {
-        return vec![vec![[Complex32::new(1.0, 0.0); 2]; antenna_count]; slot_count];
-    };
-    match gain.mode {
-        SyntheticGainMode::Fbm => build_fbm_gain_terms(gain, seed, antenna_count, slot_count),
-        SyntheticGainMode::Random => build_random_gain_terms(gain, seed, antenna_count, slot_count),
-    }
-}
-
-fn build_fbm_gain_terms(
-    gain: &SyntheticGainCorruption,
-    seed: u64,
-    antenna_count: usize,
-    slot_count: usize,
-) -> Vec<Vec<[Complex32; 2]>> {
-    let scale = gain_amplitude_scale(gain.amplitude).min(0.9);
-    let mut by_sample = vec![vec![[Complex32::new(1.0, 0.0); 2]; antenna_count]; slot_count];
-    if scale == 0.0 {
-        return by_sample;
-    }
-    let series_by_antenna = (0..antenna_count)
-        .map(|antenna| {
-            (0..2)
-                .map(|correlation| {
-                    let casa_seed = seed
-                        .wrapping_add(antenna as u64)
-                        .wrapping_add(correlation as u64);
-                    (
-                        fbm_like_series(casa_seed, slot_count, 1.1),
-                        fbm_like_series(casa_seed.wrapping_mul(100), slot_count, 1.1),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    for (sample, row) in by_sample.iter_mut().enumerate() {
-        for (antenna_terms, correlation_series) in row.iter_mut().zip(series_by_antenna.iter()) {
-            for (term, (amplitude_series, phase_series)) in
-                antenna_terms.iter_mut().zip(correlation_series.iter())
-            {
-                let amplitude = 1.0 + amplitude_series[sample] * scale;
-                let phase = phase_series[sample] * scale * std::f32::consts::PI;
-                *term = Complex32::new(amplitude * phase.cos(), amplitude * phase.sin());
-            }
-        }
-    }
-    by_sample
-}
-
-fn build_random_gain_terms(
-    gain: &SyntheticGainCorruption,
-    seed: u64,
-    antenna_count: usize,
-    slot_count: usize,
-) -> Vec<Vec<[Complex32; 2]>> {
-    let mut rng = DeterministicRng::new(seed);
-    (0..slot_count)
-        .map(|_| {
-            (0..antenna_count)
-                .map(|_| {
-                    [
-                        Complex32::new(
-                            rng.gaussian_f32() * gain.amplitude[0],
-                            rng.gaussian_f32() * gain.amplitude[1],
-                        ),
-                        Complex32::new(
-                            rng.gaussian_f32() * gain.amplitude[0],
-                            rng.gaussian_f32() * gain.amplitude[1],
-                        ),
-                    ]
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn fbm_like_series(seed: u64, sample_count: usize, beta: f32) -> Vec<f32> {
-    let count = sample_count.max(2);
-    let mut rng = DeterministicRng::new(seed);
-    let mut series = vec![0.0_f32; count];
-    let harmonics = (count / 2).max(1);
-    for harmonic in 1..=harmonics {
-        let phase = std::f32::consts::TAU * rng.next_unit_f64() as f32;
-        let amplitude = (harmonic as f32).powf(-0.5 * beta) * rng.gaussian_f32();
-        for (sample, value) in series.iter_mut().enumerate() {
-            let angle =
-                std::f32::consts::TAU * harmonic as f32 * sample as f32 / count as f32 + phase;
-            *value += amplitude * angle.cos();
-        }
-    }
-    let mean = series.iter().sum::<f32>() / count as f32;
-    let rms = (series
-        .iter()
-        .map(|value| {
-            let centered = *value - mean;
-            centered * centered
-        })
-        .sum::<f32>()
-        / count as f32)
-        .sqrt();
-    if rms > 0.0 {
-        for value in &mut series {
-            *value /= rms;
-        }
-    }
-    series
-}
-
-fn gain_amplitude_scale(amplitude: [f32; 2]) -> f32 {
-    (amplitude[0] * amplitude[0] + amplitude[1] * amplitude[1]).sqrt()
-}
-
-fn casa_like_leakage_terms(
-    rng: &mut DeterministicRng,
-    leakage: &SyntheticPolarizationLeakageCorruption,
-) -> [Complex32; 2] {
-    let random = Complex32::new(
-        rng.gaussian_f32() * leakage.amplitude[0],
-        rng.gaussian_f32() * leakage.amplitude[1],
-    );
-    let offset = Complex32::new(leakage.offset[0], leakage.offset[1]);
-    [
-        random + offset,
-        random + Complex32::new(-offset.re, offset.im),
-    ]
-}
-
-struct DeterministicRng {
-    state: u64,
-    spare_gaussian: Option<f32>,
-}
-
-impl DeterministicRng {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: seed.max(1),
-            spare_gaussian: None,
-        }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.state
-    }
-
-    fn next_unit_f64(&mut self) -> f64 {
-        let value = self.next_u64() >> 11;
-        (value as f64) * (1.0 / ((1u64 << 53) as f64))
-    }
-
-    fn gaussian_f32(&mut self) -> f32 {
-        if let Some(value) = self.spare_gaussian.take() {
-            return value;
-        }
-        let u1 = self.next_unit_f64().clamp(f64::MIN_POSITIVE, 1.0);
-        let u2 = self.next_unit_f64();
-        let radius = (-2.0 * u1.ln()).sqrt();
-        let theta = 2.0 * std::f64::consts::PI * u2;
-        let z0 = radius * theta.cos();
-        let z1 = radius * theta.sin();
-        self.spare_gaussian = Some(z1 as f32);
-        z0 as f32
-    }
 }
 
 fn read_fits_model_image(
@@ -4958,16 +4694,6 @@ mod tests {
         assert_eq!(setup.reference_frequency_hz(), 8.512e9);
     }
 
-    #[test]
-    fn row_noise_seed_varies_by_row_coordinates() {
-        let base = row_noise_seed(42, 0, 0, 1, 0);
-        assert_ne!(base, row_noise_seed(43, 0, 0, 1, 0));
-        assert_ne!(base, row_noise_seed(42, 1, 0, 1, 0));
-        assert_ne!(base, row_noise_seed(42, 0, 1, 2, 0));
-        assert_ne!(base, row_noise_seed(42, 0, 0, 1, 1));
-        assert_eq!(base, row_noise_seed(42, 0, 0, 1, 0));
-    }
-
     fn analytic_test_spectral_setup(channel_count: usize) -> SyntheticSpectralSetup {
         SyntheticSpectralSetup {
             name: "test".to_string(),
@@ -5261,11 +4987,18 @@ mod tests {
 
         for channel in 0..setup.channel_count {
             let scalar = predict_analytic_visibility(&predictor, &setup, uvw, channel);
+            // The parallel hands hold Stokes I; the cross hands of a model
+            // with no polarization are zero.
             for corr in 0..4 {
                 let value = row[ms_data_index(corr, channel, 4)];
+                let expected = if matches!(corr, 0 | 3) {
+                    scalar
+                } else {
+                    Complex32::new(0.0, 0.0)
+                };
                 assert!(
-                    (value - scalar).norm() < 2.0e-6,
-                    "channel {channel} corr {corr}: row={value:?} scalar={scalar:?}"
+                    (value - expected).norm() < 2.0e-6,
+                    "channel {channel} corr {corr}: row={value:?} expected={expected:?}"
                 );
             }
         }
@@ -5336,6 +5069,108 @@ mod tests {
 
         assert_eq!(serial_nonzero, parallel_nonzero);
         assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn unpolarized_predictions_leave_the_cross_hands_zero() {
+        // Every predictor, one row at a time and in parallel chunks, writes
+        // Stokes I into the parallel hands only, as CASA predicts a model
+        // with no polarization.
+        let spectral_setup = analytic_test_spectral_setup(6);
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-5, 1.0e-5],
+        };
+        let model = Array2::<f32>::from_shape_fn((16, 16), |(x, y)| {
+            let dx = x as f32 - 7.5;
+            let dy = y as f32 - 7.5;
+            (-0.03 * (dx * dx + dy * dy)).exp()
+        });
+        let sampled = SyntheticFieldPredictor::Sampled(
+            (0..spectral_setup.channel_count)
+                .map(|_| SyntheticChannelPredictor {
+                    predictor: StandardMfsModelPredictor::new(geometry, &model).unwrap(),
+                    phase_offset: ModelPhaseOffset {
+                        l_rad: 1.0e-6,
+                        m_rad: -2.0e-6,
+                        n_minus_one: 3.0e-12,
+                    },
+                    phase_center_rad: [1.0, -0.5],
+                    model_reference_direction_rad: None,
+                })
+                .collect(),
+        );
+        let total_power = SyntheticFieldPredictor::SampledTotalPower(vec![
+            Complex32::new(2.0, 0.0);
+            spectral_setup
+                .channel_count
+        ]);
+        let analytic = SyntheticFieldPredictor::Analytic(analytic_test_predictor(
+            &spectral_setup,
+            vec![SyntheticAnalyticComponent::Point {
+                name: None,
+                l_rad: 2.0e-5,
+                m_rad: -1.5e-5,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 1.0,
+                    spectral_index: 0.0,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 0.0,
+                    line_center_fraction: 0.5,
+                    line_sigma_fraction: 0.1,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            }],
+        ));
+        let row_uvws = [[10.0, 20.0, 0.0], [100.0, -30.0, 5.0]];
+        let zero = Complex32::new(0.0, 0.0);
+        for (name, predictor) in [
+            ("sampled", &sampled),
+            ("total power", &total_power),
+            ("analytic", &analytic),
+        ] {
+            for workers in [1, 4] {
+                let four = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    4,
+                    workers,
+                );
+                for channel in four.iter().flat_map(|row| row.as_chunks::<4>().0) {
+                    let context = format!("{name}, {workers} workers: {channel:?}");
+                    assert!(channel[0].norm() > 0.1, "{context}");
+                    assert_eq!(channel[3], channel[0], "{context}");
+                    assert_eq!([channel[1], channel[2]], [zero, zero], "{context}");
+                }
+                // Two correlations are both parallel hands, and one is.
+                let two = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    2,
+                    workers,
+                );
+                for channel in two.iter().flat_map(|row| row.as_chunks::<2>().0) {
+                    let context = format!("{name}, {workers} workers: {channel:?}");
+                    assert!(channel[0].norm() > 0.1, "{context}");
+                    assert_eq!(channel[1], channel[0], "{context}");
+                }
+                let one = predicted_data_values_for_rows_with_workers(
+                    Some(predictor),
+                    &spectral_setup,
+                    &row_uvws,
+                    1,
+                    workers,
+                );
+                for (row, four_row) in one.iter().zip(&four) {
+                    let parallel = four_row.iter().step_by(4).copied().collect::<Vec<_>>();
+                    assert_eq!(row, &parallel, "{name}, {workers} workers");
+                }
+            }
+        }
     }
 
     #[test]

@@ -3,9 +3,9 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "085f30c8ac3eca70c4e7bb34f2529fd037962130",
-  "parameter_surfaces_sha256": "b5e206e4c9ad7a72884682168baa8e4a33d99497bf5d0b10a57ad789734205e4",
-  "parameter_catalog_sha256": "d12c4e8dcb3eb65002fbf03d9ca1fb2a07889c8d6a364a24a41bc11cf4065438",
+  "casa_rs_revision": "fe7e3cbbb2f96654527861cc9f7609c22a286926",
+  "parameter_surfaces_sha256": "8f210e6a4bac8b9901c0a42496bf7f49632524b6c9120ee11bca0eb5862a67b8",
+  "parameter_catalog_sha256": "002cef5fea6a1ba030bc7b93a2caf0965092a276ea697503e58fc05c673123f8",
   "tclean_rs_sha256": "ae31c46d9032fa39b7f812be3fef1c44a78eb1a7e61b1e86dd631c52b7c1b894",
   "tclean_contract_version": 36
  },

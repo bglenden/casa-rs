@@ -152,7 +152,12 @@ pub(crate) fn prepare(
             .map(|window| {
                 Ok((
                     window.spw_id,
-                    selection::selected_channels(request, window.spw_id, &window.frequencies_hz)?,
+                    selection::selected_channels(
+                        request,
+                        &survey.spw_channels,
+                        window.spw_id,
+                        &window.frequencies_hz,
+                    )?,
                 ))
             })
             .collect::<Result<WindowChannels, PrepareError>>()?;
@@ -303,7 +308,10 @@ fn survey_observation(
     context: &RunContext,
 ) -> Result<(Admitted<Survey>, Columns), PrepareError> {
     let catalogue = store.catalogue();
-    let windows = selection::window_choice(request, store)?;
+    let selection::SpwChoice {
+        windows,
+        channels: spw_channels,
+    } = selection::window_choice(request, store)?;
     let (row_selection, states) = selection::row_selection(request, catalogue)?;
     let times = time_selection::resolve_times(request, store, &windows, (&row_selection, &states))?;
     let row_selection = row_selection.with_times(times);
@@ -335,10 +343,9 @@ fn survey_observation(
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
         ),
     };
-    Ok((
-        survey::survey(plan, spectral_windows, (&context.host, &context.policy))?,
-        columns,
-    ))
+    let mut surveyed = survey::survey(plan, spectral_windows, (&context.host, &context.policy))?;
+    surveyed.value.spw_channels = spw_channels;
+    Ok((surveyed, columns))
 }
 
 /// The columns compile chose for the selected partitions: the visibility

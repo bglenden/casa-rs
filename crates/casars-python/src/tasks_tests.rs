@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn the_application_catalog_lists_every_launch_entry() {
     let applications = applications().expect("application catalog");
-    assert_eq!(applications.len(), 26);
+    assert_eq!(applications.len(), 27);
     assert!(
         applications
             .iter()

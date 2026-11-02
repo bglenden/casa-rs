@@ -273,10 +273,12 @@ pub enum PrepareError {
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,
-    /// An analytic primary beam for a moving phase centre: CASA shifts each
-    /// field's beam with the source (`SynthesisImagerVi2::getMovingDirection`),
-    /// which casa-rs does not.
-    #[error("write_pb and pbcor need a fixed phase centre with the standard and wproject gridders")]
+    /// An analytic primary beam for a field that follows an ephemeris under
+    /// a fixed phase centre, where CASA's `makePrimaryBeam` tracks no beam.
+    #[error(
+        "write_pb and pbcor need a moving phase centre for a field that follows an ephemeris, \
+         with the standard and wproject gridders"
+    )]
     MovingAnalyticPrimaryBeam,
     /// An analytic primary beam for a field whose `PHASE_DIR` polynomial
     /// has a nonzero rate term: CASA evaluates it at the field's first

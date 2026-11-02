@@ -559,11 +559,11 @@ impl MeasurementOperator {
                     }
                     for pol in 0..pols {
                         images[slot].push(self.requested_image(pol, &gpol_images, mode));
-                        sumwt.push(acc.sumwt_at(
-                            plane_local,
-                            self.polarization.sumwt_source(pol),
-                            term,
-                        ));
+                        sumwt.push(
+                            self.polarization
+                                .sumwt_source(pol)
+                                .sumwt(|gpol| acc.sumwt_at(plane_local, gpol, term)),
+                        );
                     }
                 }
             }

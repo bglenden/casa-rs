@@ -261,3 +261,38 @@ fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
         "an ordinary channel images: peak {peak_jy} Jy"
     );
 }
+
+/// CASA writes a `cubedata` cube's axis in no frame (`MFrequency::Undefined`,
+/// `SynthesisParamsImage::buildCoordinateSystemCore`): the data's own
+/// frequencies, with no Doppler tracking. casacore reads that axis back as
+/// observed frequencies; casa-rs writes it the same way (#980).
+#[test]
+fn a_data_frame_cube_declares_no_frame() {
+    use casa_types::{ScalarValue, Value};
+    const DATA_CHANNELS: usize = 4;
+    let observation = Observation::synthesise_band(DATA_CHANNELS, &[("point", POINT)]);
+    let (_, products) = observation.image(
+        "cubedata",
+        json!({ "specmode": "cubedata", "channel_count": DATA_CHANNELS, "niter": 0 }),
+    );
+    let image = products.get(".image");
+    let record = image.image.coordinates().to_record();
+    let Some(Value::Record(spectral)) = record.get("spectral2") else {
+        panic!("no spectral2 coordinate in {record:?}");
+    };
+    assert!(
+        matches!(
+            spectral.get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ),
+        "spectral system {:?}",
+        spectral.get("system")
+    );
+    for (channel, native_hz) in observation.channel_frequencies_hz().iter().enumerate() {
+        let image_hz = image.channel_frequency_hz(channel);
+        assert!(
+            (image_hz - native_hz).abs() <= 1.0e-9 * native_hz,
+            "channel {channel}: image {image_hz} Hz, data {native_hz} Hz"
+        );
+    }
+}

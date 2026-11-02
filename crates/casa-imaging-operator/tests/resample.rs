@@ -292,8 +292,9 @@ fn the_cube_density_bins_and_looks_up_the_rotated_uvw() {
         .place(&operator, &uniform, &row([-400.0, 260.0, -5.0]), &mut out)
         .expect("place");
     assert_eq!(out.len(), 2, "one sample a plane");
+    // The cube density holds the weight once per parallel hand.
     for index in 0..out.len() {
-        assert_eq!(out.block().weights_of(index), &[1.0, 1.0], "plane {index}");
+        assert_eq!(out.block().weights_of(index), &[0.5, 0.5], "plane {index}");
     }
 }
 
@@ -649,8 +650,10 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
     let placed = (0..out.len())
         .map(|sample| (out.placements()[sample].plane, block.weights_of(sample)[0]))
         .collect::<Vec<_>>();
+    // Each sample's cube density holds its weight once per parallel hand
+    // (`GridFT::put`), so a uniform weight is half its single-hand value.
     let expected = [(0, 0), (1, 2), (2, 2), (3, 4)]
-        .map(|(plane, density_plane)| (plane, 1.0 / (2.0 * (density_plane as f32 + 1.0))));
+        .map(|(plane, density_plane)| (plane, 1.0 / (4.0 * (density_plane as f32 + 1.0))));
     assert_eq!(placed.len(), expected.len());
     for ((plane, weight), (expected_plane, expected_weight)) in placed.iter().zip(expected) {
         assert_eq!(*plane, expected_plane);
@@ -965,7 +968,9 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
 /// CASA grids the cube density with natural weights linearly interpolated
 /// onto its fine grid (`BriggsCubeWeightor` uses a `GridFT` without a
 /// Briggs weightor), not the nearest native weight: a sample a quarter of
-/// the way from a weight-2 to a weight-6 channel carries 3.
+/// the way from a weight-2 to a weight-6 channel carries 3, once for each
+/// of its two parallel hands, which the gridder's Stokes I map both sends
+/// to the template's one plane.
 #[test]
 fn cube_density_samples_interpolate_native_weights_linearly() {
     // Output channels at 1.025 and 1.075 GHz, 50 MHz wide, over natives at
@@ -1002,7 +1007,60 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
     let weights = (0..block.placements.len())
         .map(|index| (block.placements[index].plane, block.weights_of(index)[0]))
         .collect::<Vec<_>>();
-    assert_eq!(weights, [(0, 3.0), (1, 5.0)]);
+    assert_eq!(weights, [(0, 6.0), (1, 10.0)]);
+}
+
+/// The cube density counts each unflagged parallel hand (`GridFT::put`
+/// grids per correlation); the standard density, `VisImagingWeight`'s,
+/// counts a sample once and drops it when any correlation is flagged.
+#[test]
+fn the_cube_density_counts_each_unflagged_parallel_hand() {
+    let cube = SpectralResampler::channel_local(axis(1.0, 0.05, 1), SpectralKernel::Linear);
+    let direct = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [1.0e9];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [2.0, 6.0];
+    let density = |flags: &[bool], rule| {
+        let row = NativeRow {
+            uvw_m: [10.0, 10.0, 0.0],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+            frequencies_hz: &frequencies,
+            values: &values,
+            weights: &weights,
+            flags,
+            row_flag: false,
+            context: context(),
+        };
+        let shape = DensityGridShape {
+            width: 64,
+            height: 64,
+            planes: 1,
+            padding: 0,
+            box_half_width: 0,
+            increment_rad: [-2.0e-5, 2.0e-5],
+            rule,
+        };
+        let resampler = if rule == DensityCellRule::Cube {
+            &cube
+        } else {
+            &direct
+        };
+        let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+        let mut out = SampleBuffer::new(1);
+        resampler
+            .place_density(&operator, &row, &shape, &mut out)
+            .expect("density");
+        let block = out.block();
+        (0..block.placements.len())
+            .map(|index| block.weights_of(index)[0])
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(density(&[false, false], DensityCellRule::Cube), [8.0]);
+    assert_eq!(density(&[true, false], DensityCellRule::Cube), [4.0]);
+    assert!(density(&[true, true], DensityCellRule::Cube).is_empty());
+    assert_eq!(density(&[false, false], DensityCellRule::Standard), [4.0]);
+    assert!(density(&[true, false], DensityCellRule::Standard).is_empty());
 }
 
 /// An autocorrelation weighs in the density grid, as CASA's

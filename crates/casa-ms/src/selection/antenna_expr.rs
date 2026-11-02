@@ -93,7 +93,7 @@
 mod grammar;
 mod index;
 mod lexer;
-mod regex;
+pub(in crate::selection) mod regex;
 mod units;
 
 #[cfg(test)]

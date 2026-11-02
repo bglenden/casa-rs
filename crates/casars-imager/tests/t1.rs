@@ -51,12 +51,16 @@ mod selection;
 mod selection_antenna_time;
 #[path = "t1/selection_numeric.rs"]
 mod selection_numeric;
+#[path = "t1/selection_spw.rs"]
+mod selection_spw;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]
 mod standard_mfs_masks;
 #[path = "t1/start_model.rs"]
 mod start_model;
+#[path = "t1/stokes.rs"]
+mod stokes;
 #[path = "t1/uv_taper.rs"]
 mod uv_taper;
 #[path = "t1/w_projection.rs"]

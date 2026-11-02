@@ -192,6 +192,10 @@ name = "antenna_selection_oracle"
 path = "tests/antenna_selection_oracle.rs"
 
 [[test]]
+name = "spw_selection_oracle"
+path = "tests/spw_selection_oracle.rs"
+
+[[test]]
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]

@@ -133,7 +133,9 @@ impl<'a> OtherSelections<'a> {
             let selected = match windows {
                 WindowChoice::All => true,
                 WindowChoice::Windows(set) => u32::try_from(window).is_ok_and(|w| set.contains(&w)),
-                WindowChoice::DataDescription(ddid) => u32::try_from(row).is_ok_and(|r| r == *ddid),
+                WindowChoice::DataDescriptions(ddids) => {
+                    u32::try_from(row).is_ok_and(|r| ddids.contains(&r))
+                }
             };
             let wavelength = usize::try_from(window)
                 .ok()

@@ -84,7 +84,8 @@ fn calcpsf_and_calcres_false_continue_an_mfs_run_as_casa_does() {
     }));
     assert_eq!(
         inventory(&prefix),
-        names(&["model", "psf", "residual", "sumwt"])
+        names(&["psf", "residual", "sumwt"]),
+        "no deconvolver, no model (task_tclean.py)"
     );
     let (_, dirty) = observation.image("dirty", with(&base, json!({"niter": 0})));
     assert!(nrms(&residual, &dirty, ".residual") < 1e-6);
@@ -329,10 +330,13 @@ fn a_read_model_is_predicted_and_the_read_residual_stands() {
     );
     assert!(report.visibility_products.is_some());
     assert!(nrms(&predicted, &cleaned, ".residual") < 1e-6);
-    assert_eq!(
-        predicted.get(".model").values(),
-        cleaned.get(".model").values()
-    );
+    // No deconvolver runs, so the earlier model stands as it was written.
+    assert!(!predicted.suffixes().contains(".model"));
+    let standing = casa_images::PagedImage::<f32>::open(observation.scratch("modelvis.model"))
+        .unwrap()
+        .get()
+        .unwrap();
+    assert_eq!(standing, cleaned.get(".model").values());
     let model_jy = f64::from(cleaned.get(".model").values().sum());
     let (cross, power) =
         observation

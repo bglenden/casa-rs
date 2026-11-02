@@ -148,8 +148,8 @@ supported options.
 ## Rust Libraries and Source Layout
 
 `casa-*` crates contain reusable domain libraries and shared contracts;
-`casars-*` crates contain the imager application, the `imexplore` and
-`simobserve` task executables, and the Python package; the other task
+`casars-*` crates contain the imager application, the `imexplore`,
+`msconvert` and `simobserve` task executables, and the Python package; the other task
 executables are binaries of their domain crates. This is a native
 implementation, not a wrapper around casacore C++.
 
@@ -161,7 +161,7 @@ implementation, not a wrapper around casacore C++.
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
-| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-simulation` |
+| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
 | Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
 

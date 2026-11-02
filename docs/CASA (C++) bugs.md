@@ -28,7 +28,8 @@ CASA behaviours casa-rs does not follow:
 [`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
-[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails).
+[`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
+[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -2897,3 +2898,78 @@ width until a range completes. In CASA 6.7.6.14, `09:00:00~09:01:00` after
 `resources/casa-compat/evidence/msselection-time-casa-20261102.json`, whose
 other cases each run after a completed range clears the state). casa-rs keeps
 no state between parses.
+
+## `MSIter` keeps the previous window's receptor angles for a window without its own `FEED` row
+
+- Date noted: 2026-11-02
+- Status: casacore behaviour that casa-rs does not follow (MSv2 adapter,
+  `Feeds::receptors`)
+- Affected code: casacore `ms/MeasurementSets/MSIter.cc` (`setFeedInfo`,
+  lines 779-814 on `master`)
+
+The MeasurementSet definition makes a `FEED` row with `SPECTRAL_WINDOW_ID`
+-1 valid for every spectral window. `setFeedInfo` instead decides once per
+table: if every row is -1 it uses them for every window, and otherwise
+(`spwDepFeed_p`) it copies into its cache only the rows whose window is the
+iterator's current one. A window with no row of its own for an antenna and
+feed (a -1 row beside rows for other windows, or no row at all, as for
+ALMA's WVR window) leaves that cache entry untouched: `receptorAngles_p`
+is resized to the same shape, which casacore's `Array::resize` does not
+reinitialise, so `receptorAngles()` gives the previous window's angles (or,
+for the first window iterated, zeros: the new array's elements are
+value-initialised). XRADIO 1.3.1's converter makes the
+same per-dataset choice and writes such a dataset with no receptor angles.
+casa-rs reads an antenna and feed's rows in the window, else its rows for
+every window, and states no receptors where it has neither. Where `FEED`'s
+rows are all -1 or all name windows, which is how CASA's simulator, ALMA
+and casa-rs's MSv2 writer write it, the receptors are the same.
+
+## `spw` "no match" warnings refuse the expression
+
+- Date noted: 2026-11-02
+- Status: CASA behaviour casa-rs follows for parity (#980, `casa-ms`
+  `selection::spw_expr`)
+- Affected code: casacore `ms/MSSel/MSSSpwErrorHandler.h`,
+  `MSSelection.cc` (`initErrorHandler`, `setErrorHandler`)
+
+`MSSSpwErrorHandler` only logs its reports (`handleError` posts a `WARN`), so
+a `spw` term matching nothing (`0,7` on a 4-window MeasurementSet, an unknown
+name) looks meant to be a warning. But it does not override `clone()`, and
+`MSSelection` installs `mssEH->clone()`, a base `MSSelectionErrorHandler`,
+which throws: CASA 6.7.6.14 refuses `0,7` with "Spw Expression: No match
+found for 7," (`resources/casa-compat/evidence/msselection-spw-casa-20261102.json`).
+casa-rs refuses it too.
+
+## A `spw` frequency range with a negative step can loop forever
+
+- Date noted: 2026-11-02
+- Status: CASA bug casa-rs does not follow (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc` (`matchFrequencyRange`)
+
+A stepped window range `f0~f1^s` with `s < 0` steps by each window's least
+`CHAN_WIDTH`, in single precision. A window whose widths are negative then
+steps away from `f1` and never leaves the loop; a step too small to move a
+single-precision frequency stalls it. CASA 6.7.6.14's `ms.msselect` does not
+return for `4GHz~5GHz^-1MHz` on a MeasurementSet with a descending window
+(`not_returning` in the evidence file). casa-rs refuses such expressions.
+
+## `spw` channel quirks casa-rs follows
+
+- Date noted: 2026-11-02
+- Status: CASA quirks casa-rs follows for parity (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc`, `MSSpwParse.cc`,
+  `MSSpwGram.yy`
+
+A single window frequency (`1.4GHz`) matches a window within its largest
+*signed* `CHAN_WIDTH` of the window's midpoint, so never a window whose widths
+are negative. A channel range in hertz reads the channel order from the sign
+of the first `CHAN_WIDTH`, not from the frequencies. When a window's first
+frequency channel range finds no channel, `selectChannelsFromIDList` skips
+one range instead of the window's ranges, so the next window takes the
+skipped window's later ranges (`0~2:4.5GHz~4.55GHz;0~1` gives window 2 the
+ranges `0~1` and `-1~63`). In a window list, a frequency replaces the list
+but not its write position (`100GHz~101GHz;0` lists the matched windows, then
+window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
+row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
+refuses the parenthesized form and a window kept without channels, whose
+imaging in CASA is not established.

@@ -223,6 +223,81 @@ fn two_windows(root: &Path) -> PathBuf {
     path
 }
 
+/// MSv4 requires each window's reference frequency (XRADIO's schema): the
+/// converter writes the one the MSv2 states (`REF_FREQUENCY`, in its frame),
+/// as XRADIO's converter does, not a channel's. Window 0's is set to a
+/// frequency no channel has and reads back from the MSv4, and from the MSv2
+/// converted back from it, bit for bit. Window 1's is set to NaN, which the
+/// MSv4 cannot hold: it is written as unstated, the middle channel, and
+/// that is what the MSv2 converted back holds.
+#[test]
+fn the_reference_frequency_is_the_windows() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = two_windows(root.path());
+    let stated = 600.25e9;
+    let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
+    let windows = ms
+        .subtable_mut(casa_ms::SubtableId::SpectralWindow)
+        .expect("SPECTRAL_WINDOW");
+    for (row, hz) in [(0, stated), (1, f64::NAN)] {
+        windows
+            .cell_accessor_mut(row, "REF_FREQUENCY")
+            .and_then(|mut cell| {
+                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(
+                    hz,
+                )))
+            })
+            .expect("REF_FREQUENCY");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    let out = root.path().join("two_windows.ps.zarr");
+    let accept = [LossKind::Sigma, LossKind::Tables, LossKind::Defaulted];
+    to_msv4(&v2, &out, &options(&accept)).expect("to MSv4");
+    let back = root.path().join("back.ms");
+    to_msv2(&out, &back, &options(&accept)).expect("to MSv2");
+    let source = open(&v2, &OpenOptions::default()).expect("v2");
+    let converted = open(&out, &OpenOptions::default()).expect("v4");
+    let returned = open(&back, &OpenOptions::default()).expect("back");
+    let (ours, theirs) = (source.catalogue(), converted.catalogue());
+    assert_eq!(theirs.partitions.len(), 2);
+    for (index, (a, b)) in ours.partitions.iter().zip(&theirs.partitions).enumerate() {
+        let row = a.window.0 as usize;
+        let expected = if row == 0 {
+            stated
+        } else {
+            a.frequencies_hz[a.frequencies_hz.len() / 2]
+        };
+        for (store, catalogue, partition) in [
+            ("MSv4", theirs, b),
+            (
+                "MSv2 back",
+                returned.catalogue(),
+                &returned.catalogue().partitions[index],
+            ),
+        ] {
+            let reference = catalogue
+                .window(partition.window)
+                .reference_frequency
+                .as_ref()
+                .expect("a reference frequency");
+            assert_eq!(
+                reference.hz().to_bits(),
+                expected.to_bits(),
+                "{store}, window {row}"
+            );
+            assert_eq!(
+                reference.refer(),
+                a.frequency_frame,
+                "{store}, window {row}"
+            );
+        }
+        if row == 0 {
+            assert!(!b.frequencies_hz.contains(&stated), "not a channel's");
+        }
+    }
+}
+
 /// Two partitions of different shapes and two data groups convert into
 /// two datasets, each holding `VISIBILITY` and `VISIBILITY_MODEL` beside
 /// one `FLAG`, `WEIGHT` and `UVW`: every group of every partition reads
@@ -323,7 +398,7 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
     let stated = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
     let refused = to_msv2(&xradio, &out, &options(&stated));
     assert!(
-        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("Defaulted")),
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.ends_with("accept defaulted to convert anyway")),
         "what the MSv4 leaves unstated is refused until accepted: {refused:?}"
     );
     assert!(!out.exists(), "nothing is written before the refusal");
@@ -1239,4 +1314,106 @@ fn an_unused_moving_field_is_written_only_where_every_field_is() {
     let ephemeris = comet.ephemeris.as_ref().expect("its ephemeris");
     assert_eq!(ephemeris.times_mjd().len(), super::COMET.len());
     assert!(out.join("FIELD/EPHEM0_comet.tab").is_dir());
+}
+
+/// A MeasurementSet is what a reader would take for one: the MSv2 and the
+/// processing set, but not a subtable of the one nor a dataset of the
+/// other.
+#[test]
+fn only_a_whole_measurement_set_is_one() {
+    use casa_ms::observation_io::is_measurement_set;
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let v4 = fixture(root.path(), "ms_trial.ps.zarr");
+    assert!(is_measurement_set(&v2));
+    assert!(is_measurement_set(&v4));
+    assert!(!is_measurement_set(&v2.join("ANTENNA")));
+    assert!(!is_measurement_set(&v4.join("ms_trial_0")));
+    assert!(!is_measurement_set(root.path()));
+    assert!(!is_measurement_set(&root.path().join("missing")));
+}
+
+/// The chunk shape of `dataset`'s `VISIBILITY` in the processing set at
+/// `path`.
+fn visibility_chunks(path: &Path, dataset: &str) -> Vec<u64> {
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(path.join(dataset).join("VISIBILITY/zarr.json")).expect("zarr.json"),
+    )
+    .expect("json");
+    metadata["chunk_grid"]["configuration"]["chunk_shape"]
+        .as_array()
+        .expect("chunk shape")
+        .iter()
+        .map(|extent| extent.as_u64().expect("extent"))
+        .collect()
+}
+
+/// XRADIO's `partition_scheme=["SCAN_NUMBER"]` and `with_pointing=False`:
+/// a dataset a scan, named in the order of their first rows, none with
+/// pointing, the source's reported lost; each dataset chunked by itself.
+#[test]
+fn an_msv2_converts_a_dataset_a_scan_without_pointing() {
+    use casa_ms::observation_io::PartitionScheme;
+    use casa_ms::observation_io::convert::{Msv4Conversion, to_msv4_with, xradio_chunks};
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    super::three_scans(&v2);
+    let out = root.path().join("scans.ps.zarr");
+    let report = to_msv4_with(
+        &v2,
+        &out,
+        &options(&LossKind::ALL),
+        &Msv4Conversion {
+            partition_scheme: PartitionScheme {
+                fields: false,
+                scans: true,
+            },
+            pointing: false,
+            chunk_shape: &xradio_chunks,
+        },
+    )
+    .expect("convert");
+    assert_eq!(report.partitions, 3);
+    assert!(
+        report
+            .losses
+            .contains(&Loss::Table("POINTING (not converted)".to_string())),
+        "{:?}",
+        report.losses
+    );
+    for dataset in ["ms_trial_0", "ms_trial_1", "ms_trial_2"] {
+        assert!(
+            !out.join(dataset).join("pointing_xds").exists(),
+            "{dataset}"
+        );
+        // Four times of one scan, far below XRADIO's 128 MiB: one chunk.
+        assert_eq!(visibility_chunks(&out, dataset), [4, 10, 8, 4], "{dataset}");
+    }
+    let converted = open(&out, &OpenOptions::default()).expect("open");
+    assert_eq!(converted.catalogue().partition_ids().len(), 3);
+}
+
+/// Only a whole MeasurementSet, not a link to one, is held for
+/// replacement; an MSv4 is exchanged for its replacement whole.
+#[test]
+fn a_replacement_exchanges_only_a_whole_measurement_set() {
+    use casa_ms::observation_io::creation::Replacement;
+    let root = tempfile::tempdir().expect("root");
+    let v2 = fixture(root.path(), "ms_trial.ms");
+    let v4 = fixture(root.path(), "ms_trial.ps.zarr");
+    assert!(Replacement::hold(&v2.join("ANTENNA")).is_err());
+    assert!(Replacement::hold(&v4.join("ms_trial_0")).is_err());
+    assert!(Replacement::hold(root.path()).is_err());
+    let link = root.path().join("link.ps.zarr");
+    std::os::unix::fs::symlink(&v4, &link).expect("link");
+    assert!(Replacement::hold(&link).is_err());
+
+    let held = Replacement::hold(&v4).expect("an MSv4 is held");
+    assert_eq!(held.path(), v4);
+    let replacement = root.path().join(".ms_trial.ps.zarr.new");
+    to_msv4(&v2, &replacement, &options(&LossKind::ALL)).expect("convert");
+    assert_eq!(held.publish(&replacement).expect("exchanged"), None);
+    assert!(!replacement.exists(), "the old store is deleted");
+    // The store is now the conversion of the MSv2, chunked by five times.
+    assert_eq!(visibility_chunks(&v4, "ms_trial_0"), [5, 10, 8, 4]);
 }

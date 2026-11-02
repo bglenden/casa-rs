@@ -12,7 +12,7 @@ use casa_types::measures::epoch::EpochRef;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 
-use super::{FieldMotion, MsCalEngine};
+use super::{FeedMount, FieldMotion, MsCalEngine};
 use crate::error::MsResult;
 
 impl MsCalEngine {
@@ -50,6 +50,11 @@ impl MsCalEngine {
             .antennas
             .iter()
             .map(casa_observation::AntennaEntry::alt_az)
+            .collect::<Vec<_>>();
+        let antenna_feed_mounts = catalogue
+            .antennas
+            .iter()
+            .map(|antenna| FeedMount::parse(&antenna.mount))
             .collect::<Vec<_>>();
         let observatory_position = MPosition::casa_array_reference(
             catalogue
@@ -91,6 +96,7 @@ impl MsCalEngine {
         Ok(Self {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            antenna_feed_mounts: antenna_feed_mounts.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: field_motions.into_boxed_slice(),

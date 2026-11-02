@@ -1,11 +1,13 @@
 # Intermediate observation contracts
 
-Status: revision 9; the read contract the M0/M1 trial realizes, frozen
+Status: revision 10; the read contract the M0/M1 trial realizes, frozen
 narrowly for M2 by the owner on 2026-10-25. Revision 8 (2026-10-28, #937
 design revision 3) adds the catalogue's descriptive metadata, pointing's
 `store_has_pointing` and intent selection, and corrects how CASA matches
 intents. Revision 9 (2026-10-29, #937 PR B) adds creating one MSv2 from
-several observations (section 7).
+several observations (section 7). Revision 10 (2026-11-02, #1014, the
+owner's decision) lets a partition bind to its channels in the reverse
+order and the binding state each partition's order.
 Truth class: design proposal
 Date: 2026-10-28
 
@@ -193,7 +195,7 @@ fields):
 | Field | phase centre: frame, and angles within the tolerance |
 | Scan | casacore number, or name when a scan has none |
 | Session | telescope, project and observers, and each archive identifier both sessions state |
-| Partition | the spectral and product content (frequencies and widths bit for bit, frame, products in order, intents), compatible window metadata (a member one store leaves unstated does not distinguish), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one |
+| Partition | the spectral and product content (frame, products in order, intents, and the channels: frequencies and widths bit for bit, or the frequencies bit for bit in the reverse order with widths of the same magnitudes), compatible window metadata (a member one store leaves unstated does not distinguish), the bound session, the bound set of fields, the bound set of scans when both stores name scans, and the feed pair when both stores have one |
 
 A key one store lacks (MSv4 has no feed axis; an MSv2 may hold no archive
 identifiers) does not distinguish, but the binding is **one to one**: two
@@ -201,6 +203,15 @@ entities that one catalogue keeps apart never bind to the same entity of the
 other. An entity that matches nothing, more than one, or the same counterpart
 as another is a typed refusal; an ambiguity is never resolved by position.
 Ephemeris is not yet a partition key.
+
+Each store keeps a window's channels in its own order. An MSv2, and
+casa-rs's MSv4 conversion of it, keep the stored order (CASA's channel
+numbering); XRADIO writes every window in ascending frequency, so a window
+whose channels descend holds the same channels reversed in XRADIO's store.
+Both orders are allowed (#1014): `Binding::channel_orders` states, for each
+partition, whether the bound partition's channels run the same way or
+reversed (`ChannelOrder`), and a consumer carrying per-channel values from
+one store to the other maps channel `c` through `ChannelOrder::channel`.
 
 ### Binding a calibration table
 
