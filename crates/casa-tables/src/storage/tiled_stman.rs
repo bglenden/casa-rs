@@ -380,7 +380,7 @@ mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
 mod selected_tiles;
-use selected_tiles::SelectedTiles;
+use selected_tiles::{SelectedTiles, copy_pixels};
 mod shape_cube;
 #[cfg(test)]
 mod split_axis0_tests;
@@ -3426,12 +3426,10 @@ fn fill_typed_selected_1d_rows_by_copy<T: TilePixel>(
         for (row_tile, row_patches) in tiles.rows_by_tile(patches) {
             for span in tiles.axis0_spans() {
                 let tile = tiles.shared(tiles.tile_index(&[span.tile, row_tile]), session)?;
-                let copy_bytes = span.len * elem_size;
                 for &selected in &row_patches {
                     let src_byte = tiles.row_offset(selected) * elem_size;
                     let dst_byte = (selected.out_idx * plan.axis0_count + span.start) * elem_size;
-                    values_bytes[dst_byte..dst_byte + copy_bytes]
-                        .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                    copy_pixels::<T>(values_bytes, dst_byte, &tile, src_byte, span.len);
                 }
             }
         }
@@ -4011,7 +4009,6 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                     }
 
                     let copy_started = profile.then(Instant::now);
-                    let copy_bytes = span.len * elem_size;
                     let channel_bytes = tiles.tile_axis0_count * elem_size;
                     let byte = |sample: usize| (sample * plan.corr_count + span.start) * elem_size;
                     if !plan.row_major {
@@ -4021,8 +4018,7 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                                 let src_byte =
                                     tiles.row_offset(selected) * elem_size + source_offset;
                                 let dst_byte = byte(plan.output_sample(selected.out_idx, channel));
-                                values_bytes[dst_byte..dst_byte + copy_bytes]
-                                    .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                                copy_pixels::<T>(values_bytes, dst_byte, tile, src_byte, span.len);
                             }
                         }
                     } else if whole_cells {
@@ -4042,8 +4038,7 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
                                 let src_byte =
                                     row_byte + (channel - tile_channel_start) * channel_bytes;
                                 let dst_byte = byte(plan.output_sample(selected.out_idx, channel));
-                                values_bytes[dst_byte..dst_byte + copy_bytes]
-                                    .copy_from_slice(&tile[src_byte..src_byte + copy_bytes]);
+                                copy_pixels::<T>(values_bytes, dst_byte, tile, src_byte, span.len);
                             }
                         }
                     }

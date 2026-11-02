@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::{
-    CasacoreDataType, SelectedCubeRow, StorageError, TileReadSession, TiledStManHeader,
+    CasacoreDataType, SelectedCubeRow, StorageError, TilePixel, TileReadSession, TiledStManHeader,
     TsmCubeInfo, compute_tile_layout, dot_product, fortran_order_strides, load_shared_column_tile,
     load_streamed_column_tile,
 };
@@ -215,6 +215,26 @@ impl<'a> SelectedTiles<'a> {
             streamed,
         )?;
         Ok(None)
+    }
+}
+
+/// Copy a run of `len` pixels of `T` from tile bytes `tile` at byte `src`
+/// to value bytes `values` at byte `dst`. A one-pixel run, which a tile one
+/// element deep along axis 0 gives for every channel of every row, moves
+/// as one fixed-size copy rather than a call to `memcpy`.
+#[inline(always)]
+pub(super) fn copy_pixels<T: TilePixel>(
+    values: &mut [u8],
+    dst: usize,
+    tile: &[u8],
+    src: usize,
+    len: usize,
+) {
+    if len == 1 {
+        values[dst..dst + T::ELEM_SIZE].copy_from_slice(&tile[src..src + T::ELEM_SIZE]);
+    } else {
+        let bytes = len * T::ELEM_SIZE;
+        values[dst..dst + bytes].copy_from_slice(&tile[src..src + bytes]);
     }
 }
 
