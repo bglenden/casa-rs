@@ -3,6 +3,17 @@
 //! visibilities ([`SyntheticCorruptionState`]): per-antenna, per-receptor
 //! gains (`setgain`), bandpass gains, polarization leakage (`setleakage`)
 //! and additive noise (`setnoise`), each drawn from the request's seed.
+//!
+//! A correlation takes the gains of its two receptors
+//! ([`correlation_receptors`]): `RL` (or `XY`) is corrupted by the first
+//! antenna's `R` gain and the conjugate of the second's `L`. With all four
+//! correlations, leakage is CASA's linearised leakage (`JonesGenLin`), as
+//! `casa-simulation`'s `corrupt::jones` applies it for `sm.setleakage`:
+//! the cross hands gain each antenna's leakage times the other parallel
+//! hand, the parallel hands are kept, and it applies before the gains, as
+//! CASA's `corrupt` applies D before G. With two correlations, which have
+//! no cross hands, it stays this generator's approximation on the parallel
+//! hands.
 
 use num_complex::Complex32;
 
@@ -70,8 +81,10 @@ impl SyntheticCorruptionState {
         }
     }
 
-    /// Corrupt one row of `window`. Bandpass gains and noise draws are keyed
-    /// by the observation-wide channel, so every window sees independent noise.
+    /// Corrupt one row of `window`, its values channel by channel, each
+    /// channel's correlations in the order [`correlation_receptors`] gives.
+    /// Bandpass gains and noise draws are keyed by the observation-wide
+    /// channel, so every window sees independent noise.
     pub(super) fn apply(
         &self,
         values: &mut [Complex32],
@@ -85,15 +98,20 @@ impl SyntheticCorruptionState {
         let Some(correlation_count) = values.len().checked_div(channel_count) else {
             return;
         };
-        if correlation_count == 0 {
+        // The polarization setup admits one, two or four correlations.
+        let Some(receptors) = correlation_receptors(correlation_count) else {
             return;
+        };
+        if correlation_count == 4 {
+            self.apply_cross_hand_leakage(values, antenna1, antenna2);
         }
         for (index, value) in values.iter_mut().enumerate() {
             let channel = window.first_channel + index / correlation_count;
             let correlation = index % correlation_count;
+            let [receptor1, receptor2] = receptors[correlation];
             let logical_index = correlation * self.total_channel_count + channel;
-            let baseline_gain = gains[antenna1][correlation]
-                * gains[antenna2][correlation].conj()
+            let baseline_gain = gains[antenna1][receptor1]
+                * gains[antenna2][receptor2].conj()
                 * self.bandpass_gains[antenna1][channel]
                 * self.bandpass_gains[antenna2][channel].conj();
             *value *= baseline_gain;
@@ -125,6 +143,37 @@ impl SyntheticCorruptionState {
                 }
             }
         }
+    }
+
+    /// CASA's linearised leakage on a row of all four correlations
+    /// (`RR, RL, LR, LL`, channel by channel): `RL + d₁ᴿ·LL + conj(d₂ᴸ)·RR`
+    /// and `LR + d₁ᴸ·RR + conj(d₂ᴿ)·LL`, `d₁` and `d₂` the two antennas'
+    /// leakages, the parallel hands kept.
+    fn apply_cross_hand_leakage(&self, values: &mut [Complex32], antenna1: usize, antenna2: usize) {
+        let (p, q) = (self.leakage_terms[antenna1], self.leakage_terms[antenna2]);
+        let zero = Complex32::new(0.0, 0.0);
+        if p == [zero; 2] && q == [zero; 2] {
+            return;
+        }
+        for [rr, rl, lr, ll] in values.as_chunks_mut::<4>().0 {
+            *rl += p[0] * *ll + q[1].conj() * *rr;
+            *lr += p[1] * *rr + q[0].conj() * *ll;
+        }
+    }
+}
+
+/// The receptors `[r₁, r₂]` of each correlation of a row of
+/// `correlation_count` correlations, in the order the generator writes
+/// them (`CORR_TYPE`): the parallel hand of the first receptor (`RR` or
+/// `XX`); both parallel hands (`RR, LL`); or all four (`RR, RL, LR, LL`).
+/// `None` for any other count, which the polarization setup refuses. The
+/// `POLARIZATION` table's `CORR_PRODUCT` is written from it.
+pub(super) fn correlation_receptors(correlation_count: usize) -> Option<&'static [[usize; 2]]> {
+    match correlation_count {
+        1 => Some(&[[0, 0]]),
+        2 => Some(&[[0, 0], [1, 1]]),
+        4 => Some(&[[0, 0], [0, 1], [1, 0], [1, 1]]),
+        _ => None,
     }
 }
 
@@ -327,6 +376,121 @@ impl DeterministicRng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn c(re: f32, im: f32) -> Complex32 {
+        Complex32::new(re, im)
+    }
+
+    /// A state corrupting two antennas by these gains and leakages, with no
+    /// bandpass or noise.
+    fn state(
+        gains: [[Complex32; 2]; 2],
+        leakages: [[Complex32; 2]; 2],
+    ) -> SyntheticCorruptionState {
+        SyntheticCorruptionState {
+            seed: 0,
+            simplenoise_jy: 0.0,
+            gains_by_sample: vec![gains.to_vec()],
+            bandpass_gains: vec![vec![c(1.0, 0.0)]; 2],
+            total_channel_count: 1,
+            leakage_terms: leakages.to_vec(),
+        }
+    }
+
+    /// Corrupt one channel of `values` (its correlations) of antennas 0 and 1.
+    fn corrupt(state: &SyntheticCorruptionState, values: &mut [Complex32]) {
+        let setup = SyntheticSpectralSetup {
+            name: "one".to_string(),
+            start_frequency_hz: 1.0e9,
+            channel_width_hz: 1.0e6,
+            channel_count: 1,
+        };
+        let window = ObservedWindow {
+            data_description_id: 0,
+            setup: &setup,
+            first_channel: 0,
+        };
+        state.apply(values, 0, 1, window, 0);
+    }
+
+    fn close(actual: &[Complex32], expected: &[Complex32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (a, e)) in actual.iter().zip(expected).enumerate() {
+            assert!((a - e).norm() < 1e-6, "value {index}: {a} != {e}");
+        }
+    }
+
+    #[test]
+    fn each_correlation_takes_the_gains_of_its_receptors() {
+        let (r0, l0, r1, l1) = (c(1.1, 0.2), c(0.9, -0.1), c(1.2, -0.3), c(0.8, 0.4));
+        let zero = [c(0.0, 0.0); 2];
+        let state = state([[r0, l0], [r1, l1]], [zero, zero]);
+        // RR, RL, LR, LL: the first antenna's receptor times the conjugate
+        // of the second's.
+        let mut four = [c(1.0, 0.0); 4];
+        corrupt(&state, &mut four);
+        close(
+            &four,
+            &[
+                r0 * r1.conj(),
+                r0 * l1.conj(),
+                l0 * r1.conj(),
+                l0 * l1.conj(),
+            ],
+        );
+        // Two correlations are the parallel hands, as they were.
+        let mut two = [c(1.0, 0.0); 2];
+        corrupt(&state, &mut two);
+        close(&two, &[r0 * r1.conj(), l0 * l1.conj()]);
+        let mut one = [c(1.0, 0.0)];
+        corrupt(&state, &mut one);
+        close(&one, &[r0 * r1.conj()]);
+    }
+
+    #[test]
+    fn four_correlation_leakage_is_casas_linearised_leakage_before_the_gains() {
+        let unit = [c(1.0, 0.0); 2];
+        let (p, q) = (
+            [c(0.1, 0.02), c(-0.05, 0.03)],
+            [c(0.07, -0.01), c(0.02, 0.04)],
+        );
+        let (rr, rl, lr, ll) = (c(2.0, 0.5), c(0.3, -0.2), c(-0.1, 0.4), c(1.5, -0.25));
+        // The cross hands gain each antenna's leakage times the other hand;
+        // the parallel hands are kept.
+        let mut values = [rr, rl, lr, ll];
+        corrupt(&state([unit, unit], [p, q]), &mut values);
+        let leaked = [
+            rr,
+            rl + p[0] * ll + q[1].conj() * rr,
+            lr + p[1] * rr + q[0].conj() * ll,
+            ll,
+        ];
+        close(&values, &leaked);
+        // With gains too, the gains multiply the leaked values: D before G.
+        let gains = [[c(1.1, 0.2), c(0.9, -0.1)], [c(1.2, -0.3), c(0.8, 0.4)]];
+        let mut values = [rr, rl, lr, ll];
+        corrupt(&state(gains, [p, q]), &mut values);
+        let receptors = correlation_receptors(4).unwrap();
+        let expected: Vec<Complex32> = leaked
+            .iter()
+            .zip(receptors)
+            .map(|(value, &[r1, r2])| value * gains[0][r1] * gains[1][r2].conj())
+            .collect();
+        close(&values, &expected);
+    }
+
+    #[test]
+    fn corr_product_lists_each_correlations_receptors() {
+        let products = |count| {
+            SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Circular, count)
+                .unwrap()
+                .correlation_products()
+        };
+        assert_eq!(products(1), [0, 0]);
+        assert_eq!(products(2), [0, 1, 0, 1]);
+        assert_eq!(products(4), [0, 0, 1, 1, 0, 1, 0, 1]);
+        assert_eq!(correlation_receptors(3), None);
+    }
 
     #[test]
     fn row_noise_seed_varies_by_row_coordinates() {

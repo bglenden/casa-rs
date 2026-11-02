@@ -407,13 +407,13 @@ impl SyntheticPolarizationSetup {
         }
     }
 
+    /// `CORR_PRODUCT`, shape `[2, correlations]`: the first receptor of each
+    /// correlation, then the second ([`corruption::correlation_receptors`]).
     fn correlation_products(&self) -> Vec<i32> {
-        match self.correlation_count {
-            1 => vec![0, 0],
-            2 => vec![0, 1, 0, 1],
-            4 => vec![0, 0, 1, 1, 0, 1, 0, 1],
-            _ => Vec::new(),
-        }
+        let receptors = corruption::correlation_receptors(self.correlation_count).unwrap_or(&[]);
+        (0..2)
+            .flat_map(|side| receptors.iter().map(move |pair| pair[side] as i32))
+            .collect()
     }
 
     fn receptor_types(&self) -> [&'static str; 2] {
@@ -833,7 +833,9 @@ pub struct SyntheticCorruptionConfig {
     /// Per-antenna, per-channel complex bandpass corruption, using CASA `setbandpass` names.
     #[serde(default)]
     pub bandpass: Option<SyntheticBandpassCorruption>,
-    /// Approximate parallel-hand polarization leakage corruption, parameterized like CASA `setleakage`.
+    /// Polarization leakage, parameterized like CASA `setleakage`: CASA's
+    /// linearised leakage of the cross hands with four correlations, an
+    /// approximation on the parallel hands with two.
     #[serde(default)]
     pub leakage: Option<SyntheticPolarizationLeakageCorruption>,
     /// Global primary-beam pointing offset applied during model prediction, using CASA `setpointingerror` names where CASA has them.
@@ -908,7 +910,9 @@ pub enum SyntheticBandpassMode {
     Table,
 }
 
-/// Polarization leakage corruption controls for parallel-hand synthetic data.
+/// Polarization leakage corruption controls: with four correlations CASA's
+/// linearised leakage of the cross hands, with two an approximation on the
+/// parallel hands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticPolarizationLeakageCorruption {
     /// CASA `setleakage` mode.
