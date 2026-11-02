@@ -112,6 +112,48 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
+/// CASA centres a moving field's primary beam on its phase centre shifted by
+/// the body's motion to the image epoch (`SynthesisImagerVi2::makePrimaryBeam`):
+/// tracking the body, the beam stays on the field's offset from the image
+/// centre, here a fiftieth of a pixel, as in CASA's `test_onefield_mfs_eph`
+/// (#980). One-arcsecond cells resolve the Q-band beam, which T1's default
+/// cells see as flat to `f32` precision.
+#[test]
+fn a_tracked_bodys_primary_beam_is_centred_on_its_field() {
+    const SIZE: usize = 128;
+    let observation = moving_track();
+    let (_, products) = observation.image(
+        "trackfield-pb",
+        json!({
+            "phasecenter": "TRACKFIELD",
+            "imsize": SIZE,
+            "cell": "1arcsec",
+            "niter": 0,
+            "write_pb": true,
+        }),
+    );
+    let pb = &products.get(".pb").pixels;
+    let (peak, pixel, _) = super::fixture::peak(pb);
+    let centre = SIZE / 2;
+    assert!((f64::from(peak) - 1.0).abs() < 1.0e-4, "PB peak {peak}");
+    assert_eq!(pixel, [centre, centre], "PB peak pixel");
+    // Symmetric about the centre to the field's 0.02-arcsecond offset (at
+    // most about 1.2e-3 here); a beam off by a pixel differs by 3e-2 or more.
+    for step in [10, 20, 30] {
+        for (a, b) in [
+            ([centre - step, centre], [centre + step, centre]),
+            ([centre, centre - step], [centre, centre + step]),
+        ] {
+            let (left, right) = (pb[a], pb[b]);
+            assert!(left < 0.999, "PB {left} at {a:?} is resolved");
+            assert!(
+                (left - right).abs() < 5.0e-3,
+                "PB {left} at {a:?}, {right} at {b:?}"
+            );
+        }
+    }
+}
+
 /// A fixed phase centre over the moving field: rows reproject, and
 /// frequencies convert, from the field's direction at each time; and
 /// Stokes IV under `TRACKFIELD`, whose parallactic angles follow the moving

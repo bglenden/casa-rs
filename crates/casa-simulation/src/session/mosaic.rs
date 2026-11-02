@@ -23,7 +23,7 @@ use casa_imaging_operator::{AiryDish, MosaicWindow};
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::predict::{MosaicBeams, PredictError, SkyModel};
+use crate::predict::{MosaicBeams, PredictError, PrimaryBeam, SkyModel};
 
 /// The telescopes whose mosaic casa-rs builds.
 const MOSAIC_TELESCOPES: [&str; 2] = ["ALMA", "ACA"];
@@ -52,7 +52,7 @@ impl Simulator {
         let kept =
             self.scans.len() * size_of::<MosaicPointing>() + self.antennas.len() * size_of::<u8>();
         let antennas = self.antennas.len()
-            * (size_of::<AiryDish>() + size_of::<String>() + DIAMETER_KEY_BYTES);
+            * (size_of::<PrimaryBeam>() + size_of::<String>() + DIAMETER_KEY_BYTES);
         let windows = self.spectral_windows.len() * size_of::<MosaicWindow>()
             + self
                 .spectral_windows
@@ -103,7 +103,9 @@ impl Simulator {
                         classes.len()
                     );
                     keys.push(key);
-                    dishes.push(AiryDish::casa_alma_simulator(antenna.diameter_m));
+                    dishes.push(PrimaryBeam::from(AiryDish::casa_alma_simulator(
+                        antenna.diameter_m,
+                    )));
                     keys.len() - 1
                 });
             classes.push(u8::try_from(class).map_err(|_| {

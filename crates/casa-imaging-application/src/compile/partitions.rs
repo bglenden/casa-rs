@@ -2,9 +2,10 @@
 //! The selection resolved to the observation's partitions (#932).
 //!
 //! Compile names the partitions that hold the request's samples
-//! ([`candidates`]): a partition's window must be selected, its fields must
-//! include a selected one, and, under an intent selection, its observing
-//! mode must be a selected one ([`super::intents`]). The survey then keeps
+//! ([`candidates`]): a partition's window and observing session must be
+//! selected, its fields must include a selected one, under a scan selection
+//! one of its scans must be a selected one, and, under an intent selection,
+//! its observing mode must be a selected one ([`super::intents`]). The survey then keeps
 //! those that hold a selected sample, and the compiled problem names them
 //! ([`casa_imaging_model::PartitionSelection`]). The run reads the same
 //! partitions ([`resolve_partitions`]).
@@ -61,9 +62,11 @@ pub(super) struct Candidates {
 }
 
 /// The partitions of `store` in the windows `windows` selects that `rows`
-/// may select, in partition order: a partition's fields must include a
-/// selected one and, under an intent selection, its observing mode must be
-/// a selected one. A state number in the selection (`states`) must select
+/// may select, in partition order: a partition's observing session must be
+/// selected, its fields must include a selected one, under a scan selection
+/// one of its scans must be a selected one (the survey and the run test
+/// each time's scan), and, under an intent selection, its observing mode
+/// must be a selected one. A state number in the selection (`states`) must select
 /// every state of its partition. A partition's UV distances and times are
 /// the survey's to test.
 ///
@@ -76,16 +79,36 @@ pub(super) fn selected(
     windows: &WindowChoice,
     (rows, states): (&RowSelection, &BTreeSet<StateId>),
 ) -> Result<Vec<PartitionId>, PartitionSelectionError> {
-    let fields = field_selection(rows.fields());
+    let catalogue = store.catalogue();
+    let fields = field_selection(catalogue, rows.fields());
     let modes = match rows.intents() {
         IntentSelection::All => None,
         IntentSelection::Only(modes) => Some(modes.iter().cloned().collect::<BTreeSet<_>>()),
     };
-    let catalogue = store.catalogue();
     let mut selected = Vec::new();
     for id in catalogue.partition_ids() {
         let entry = catalogue.partition(id);
         if !windows.holds(store, id) {
+            continue;
+        }
+        if !rows.observations().holds(i64::from(entry.observation.0)) {
+            continue;
+        }
+        if !rows.baselines().is_all()
+            && !entry.baselines.iter().any(|baseline| {
+                rows.baselines()
+                    .holds(baseline.antenna1.0, baseline.antenna2.0)
+            })
+        {
+            continue;
+        }
+        if !rows.scans().is_all()
+            && !entry.scans.iter().any(|scan| {
+                catalogue.scans[scan.0 as usize]
+                    .number
+                    .is_some_and(|number| rows.scans().holds(i64::from(number)))
+            })
+        {
             continue;
         }
         if let Some(modes) = &modes {
@@ -151,28 +174,35 @@ pub(super) fn candidates(
     })
 }
 
-/// `problem`'s selection resolved to `observation`'s partitions, in
-/// partition order: the partitions compile chose, the channels of their
+/// The selection of `problem`'s source `source` (its MeasurementSet's place
+/// in the snapshot) resolved to that source's `observation`'s partitions,
+/// in partition order: the partitions compile chose, the channels of their
 /// windows, their correlations, the data group holding the visibility
 /// column, and the per-sample predicates.
 ///
 /// # Errors
 ///
-/// [`PartitionSelectionError::Unsupported`] for several MeasurementSets,
-/// `FLOAT_DATA` and partitions whose column belongs to different data
-/// groups; [`PartitionSelectionError::Inconsistent`] for a window the
-/// selection names no channel of, a correlation a partition does not hold,
-/// and a window without a positive reference frequency under a UV-distance
-/// interval in wavelengths.
+/// [`PartitionSelectionError::Unsupported`] for `FLOAT_DATA` and
+/// partitions whose column belongs to different data groups;
+/// [`PartitionSelectionError::Inconsistent`] for a source the snapshot does
+/// not hold, a window the selection names no channel of, a correlation a
+/// partition does not hold, and a window without a positive reference
+/// frequency under a UV-distance interval in wavelengths.
 pub(crate) fn resolve_partitions(
     problem: &CompiledProblem,
+    source: usize,
     observation: &dyn Observation,
 ) -> Result<PartitionSelection, PartitionSelectionError> {
-    let [source] = problem.observation_transaction().read_set().sources() else {
-        return Err(PartitionSelectionError::Unsupported(
-            "more than one MeasurementSet",
-        ));
-    };
+    let source = problem
+        .observation_transaction()
+        .read_set()
+        .sources()
+        .get(source)
+        .ok_or_else(|| {
+            PartitionSelectionError::Inconsistent(format!(
+                "the observation has no MeasurementSet {source}"
+            ))
+        })?;
     let selection = source.selection();
     let visibility = source.selected_columns().visibility();
     if visibility == VisibilityColumn::FloatData {
@@ -230,16 +260,27 @@ pub(crate) fn resolve_partitions(
     Ok(PartitionSelection {
         data_group: group.to_string(),
         partitions,
-        fields: field_selection(rows.fields()),
+        fields: field_selection(catalogue, rows.fields()),
+        scans: rows.scans().clone(),
+        baselines: rows.baselines().clone(),
+        times: rows.times().clone(),
         uv: rows.uv_distances().clone(),
     })
 }
 
-/// The fields `fields` selects, as the boundary names them.
-pub(super) fn field_selection(fields: &IdSelection) -> FieldSelection {
+/// The fields of `catalogue` that `fields` selects, as the boundary names
+/// them.
+pub(super) fn field_selection(catalogue: &Catalogue, fields: &IdSelection) -> FieldSelection {
     match fields {
         IdSelection::All => FieldSelection::All,
         IdSelection::Only(ids) => FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
+        selection @ IdSelection::Ranges(_) => FieldSelection::Only(
+            (0..catalogue.fields.len())
+                .filter_map(|index| u32::try_from(index).ok())
+                .filter(|&id| selection.holds(i64::from(id)))
+                .map(FieldId)
+                .collect(),
+        ),
     }
 }
 

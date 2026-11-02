@@ -14,24 +14,26 @@ mod native_aw;
 mod observation;
 mod pointing_law;
 mod product_list;
+mod restoring_beam;
 mod sample_antennas;
 mod transaction;
 mod uvw_projection;
 mod visibility_transform;
+mod weighting;
 
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
     CycleThresholdRule, FiniteValuePolicy, HogbomIterationAccounting, InstrumentModel,
-    InstrumentResponse, MeasurementEquationContract, NumericPrecision, NumericalStage,
-    NumericsContract, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RequiredCapability,
-    RestoringBeamPolicy, ScientificContract, SpectralContract, SpectralCoupling,
-    SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy, UvTaper,
-    WProjectionContract, WProjectionContractError, WStatistics, WeightDensityScope,
+    InstrumentResponse, MeasurementEquationContract, NoiseEstimate, NumericPrecision,
+    NumericalStage, NumericsContract, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, ProductValidityPolicyError, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
+    SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
+    UvTaper, WProjectionContract, WProjectionContractError, WStatistics, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
 
@@ -46,6 +48,7 @@ pub use geometry::{
     UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
 };
 pub use image_size::optimum_image_size;
+pub use restoring_beam::{FixedRestoringBeam, InvalidRestoringBeam};
 
 pub use measurement_equation::{
     DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,
@@ -64,12 +67,13 @@ pub use model_state::{
 /// [`PartitionSelection`] names.
 pub use casa_observation::PartitionId;
 pub use observation::{
-    CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
-    MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, PartitionSelection,
-    RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
-    SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    BaselineSelection, CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection,
+    IntentSelection, MsColumnKind, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, PartitionSelection, RowSelection, SelectedColumns, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeCondition, TimeSelection,
+    UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 pub use native_aw::{
@@ -105,3 +109,4 @@ pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
     ContinuumTransformContractError, SequentialContinuumTransform,
 };
+pub use weighting::DensityCells;

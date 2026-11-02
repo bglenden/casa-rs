@@ -152,10 +152,13 @@ impl EvlaAwCellRequest {
     }
 }
 
-/// One selected SPW's explicit native beam-frequency sampling.
+/// One selected SPW's explicit native beam-frequency sampling, or, without
+/// wideband cells, the one group of every selected SPW at the reference
+/// frequency.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeAwFrequencyGroup {
-    /// Selected MeasurementSet spectral-window identifier.
+    /// Selected MeasurementSet spectral-window identifier (the lowest, for
+    /// the one group without wideband cells).
     pub spectral_window: u32,
     /// Selected physical channel frequencies, in native ascending/descending order.
     pub channel_frequencies_hz: Vec<f64>,
@@ -218,7 +221,8 @@ pub struct NativeAwRequestInput {
 
 impl NativeAwRequestInput {
     /// Validate the catalog axes and terms (`NativeAwRequest::new`'s
-    /// rules): sorted finite w values from zero, a positive w increment,
+    /// rules): sorted finite w values from zero, a positive w increment
+    /// (zero for the one co-planar plane, as CASA's `wScale` stays),
     /// sorted parallactic angles, parallel-hand Mueller elements, ascending
     /// distinct frequency groups in the EVLA bands, a single reference group
     /// without wideband selection, and a bounded non-empty cell count.
@@ -246,7 +250,8 @@ impl NativeAwRequestInput {
             || !strictly_sorted(w_values)
             || w_values[0] < 0.0
             || !self.w_increment.is_finite()
-            || self.w_increment <= 0.0
+            || self.w_increment < 0.0
+            || (self.w_increment == 0.0 && w_values.len() > 1)
             || !strictly_sorted(pa_values)
             || !self.reference_frequency_hz.is_finite()
             || self.reference_frequency_hz <= 0.0

@@ -7,6 +7,7 @@ pub(super) mod catalogue;
 mod cursor;
 pub(super) mod held;
 mod index;
+mod main_rows;
 mod metadata;
 mod pointing;
 pub(super) mod update;
@@ -36,6 +37,7 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 use super::{OpenOptions, heap};
 use crate::{MeasurementSet, MsError};
 use index::{Grid, Index, ROWS_PER_CHUNK};
+pub use main_rows::MainRowKeys;
 
 /// The most rows [`Msv2Observation::grid`] reads at once.
 pub(crate) const GRID_READ_ROWS: usize = ROWS_PER_CHUNK;
@@ -444,6 +446,39 @@ impl Msv2Observation {
         self.partitions[id.0 as usize].data_description_id
     }
 
+    /// The `ARRAY_ID` the rows of partition `id` share, or `None` when they
+    /// hold several: the partition key, XRADIO's, has no array. CASA's
+    /// imaging iterator orders its buffers by `ARRAY_ID` first.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn array_id(&self, id: PartitionId) -> Option<i32> {
+        self.partitions[id.0 as usize].grid.array
+    }
+
+    /// The `ARRAY_ID` of each MAIN row of `rows`, into `arrays` (cleared
+    /// first, then one value a row): what a consumer reads for a partition
+    /// whose rows hold several arrays ([`Self::array_id`]).
+    ///
+    /// # Errors
+    ///
+    /// When MAIN's `ARRAY_ID` cannot be read.
+    pub fn array_ids(&self, rows: &[usize], arrays: &mut Vec<i32>) -> Result<(), ObservationError> {
+        arrays.clear();
+        self.ms
+            .main_table()
+            .required_scalar_columns_for_rows_into(
+                rows,
+                &mut [RequiredScalarColumnDestination::new(
+                    "ARRAY_ID",
+                    RequiredScalarColumnValuesMut::Int32(arrays),
+                )],
+            )
+            .map_err(table_error)
+    }
+
     /// The `STATE::OBS_MODE` the rows of partition `id` share: partitions
     /// are keyed by the whole string, so two modes listing the same intents
     /// in another order are two partitions. Empty for the rows without a
@@ -640,6 +675,17 @@ impl Msv2Observation {
         let antenna = i32::try_from(antenna.0).ok()?;
         let window = i32::try_from(window.0).ok()?;
         self.feeds.receptors(antenna, feed, window)
+    }
+
+    /// The earliest MAIN `TIME` of any row, in seconds as stored; `None`
+    /// when MAIN has no row. CASA's tclean images a list of MeasurementSets
+    /// in the order of their earliest `TIME` (`mslisthelper.sort_mslist`).
+    #[must_use]
+    pub fn earliest_time_s(&self) -> Option<f64> {
+        self.partitions
+            .iter()
+            .filter_map(|partition| partition.grid.times_s.first().copied())
+            .reduce(f64::min)
     }
 
     /// The first MAIN row of partition `id`, `None` when it holds none:

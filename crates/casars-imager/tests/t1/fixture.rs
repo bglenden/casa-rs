@@ -326,6 +326,11 @@ impl Observation {
         STOKES_I_CORRELATIONS * self.unflagged_rows
     }
 
+    /// Integrations of the track, each of the same baselines.
+    pub fn integrations(&self) -> usize {
+        (DURATION_SECONDS / INTEGRATION_SECONDS).round() as usize
+    }
+
     /// Natural-weighting Stokes I image noise for unit-weight visibilities:
     /// `sigma / sqrt(N)` over the Stokes I samples.
     pub fn image_noise_jy(&self) -> f64 {
@@ -362,11 +367,44 @@ impl Observation {
         name: &str,
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_vis(json!(store), name, controls)
+    }
+
+    /// [`Observation::image`] of `stores`, tclean's `vis` list: several
+    /// MeasurementSets imaged as one, the products named in this
+    /// observation's directory.
+    pub fn image_stores(
+        &self,
+        stores: &[&Path],
+        name: &str,
+        controls: Value,
+    ) -> (ImagerRunReport, Products) {
+        self.try_image_stores(stores, name, controls)
+            .expect("production imaging route")
+    }
+
+    /// [`Observation::image_stores`], or the route's refusal.
+    pub fn try_image_stores(
+        &self,
+        stores: &[&Path],
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_vis(json!(stores), name, controls)
+    }
+
+    /// [`Observation::try_image`] of `vis`, tclean's `vis`: a path or a list.
+    fn try_image_vis(
+        &self,
+        vis: Value,
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
         // would move a law onto the GPU wherever the host has one.
         let mut parameters = json!({
-            "vis": store,
+            "vis": vis,
             "imagename": image_name,
             "backend": "cpu",
         });
@@ -522,9 +560,13 @@ impl Observation {
 
 /// The imager's defaults these laws were written against, where CASA's
 /// tclean defaults differ (#931): 1000-iteration minor cycles, W planes
-/// derived from the data, and the imager's fixed `conjbeams` and
-/// `mosweight`.
+/// derived from the data, and the A-projection's `conjbeams` and the
+/// mosaic's `mosweight` it once fixed.
 fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
+    // These component laws predate default PB production and include moving
+    // fields and frequencies outside the analytic PB's implemented scope.
+    // The production default and explicit opt-out have their own pb_default T1.
+    fields.entry("write_pb").or_insert_with(|| json!(false));
     fields.entry("cycleniter").or_insert_with(|| json!(1000));
     match fields.get("gridder").and_then(Value::as_str) {
         Some("wproject") => {
@@ -562,7 +604,8 @@ pub struct Product {
 }
 
 impl Product {
-    fn open(path: &Path) -> Self {
+    /// The product at `path`.
+    pub fn open(path: &Path) -> Self {
         let image = PagedImage::<f32>::open(path)
             .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
         let mut pixels = image

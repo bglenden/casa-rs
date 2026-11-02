@@ -13,9 +13,9 @@ use casa_imaging_operator::{
     GridGeometry, GridPadding, GridPrecision, ImageExtent, KernelNormalisation,
     MOSAIC_OVERSAMPLING, MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane,
     ModelPrescale, MosaicPb, MosaicRules, MosaicWindow, OperatorError, Placement, PlaneRange,
-    PolarizationRouting, RowContext, SampleBuffer, Work, pair_plane,
+    PolarizationRouting, RowContext, SampleBuffer, TapLayout, Work, pair_plane,
 };
-use casa_numerics::AnnularApertureVoltageTable;
+use casa_numerics::PrimaryBeam;
 use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
@@ -61,10 +61,10 @@ fn window(spectral_window: u32, selected: Vec<f64>, window_top: f64) -> MosaicWi
 }
 
 /// ALMA 12 m and ACA 7 m classes, in that order.
-fn dishes(geometry: &GridGeometry) -> [AiryDish; 2] {
+fn dishes(geometry: &GridGeometry) -> [PrimaryBeam; 2] {
     [
-        AiryDish::casa_alma(12.0, geometry),
-        AiryDish::casa_alma(7.0, geometry),
+        AiryDish::casa_alma(12.0, geometry).into(),
+        AiryDish::casa_alma(7.0, geometry).into(),
     ]
 }
 
@@ -72,7 +72,7 @@ fn routing() -> PolarizationRouting {
     PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing")
 }
 
-fn mosaic(geometry: &GridGeometry, dishes: &[AiryDish], windows: &[MosaicWindow]) -> MosaicPb {
+fn mosaic(geometry: &GridGeometry, dishes: &[PrimaryBeam], windows: &[MosaicWindow]) -> MosaicPb {
     MosaicPb::new(
         MosaicRules::Tclean,
         geometry,
@@ -111,27 +111,26 @@ fn gradient(geometry: &GridGeometry, pixels: [f64; 2]) -> [f32; 2] {
 }
 
 /// Analytic `VP_k · VP_j` (the imaging kernel's response) at `offset`
-/// pixels from the pointing, through the same Airy tables the set uses.
-fn beam_voltage(pair: [&AiryDish; 2], offset: [f64; 2]) -> f64 {
-    let radius_deg = ((offset[0] * CELL_RAD).powi(2) + (offset[1] * CELL_RAD).powi(2))
+/// cells of `cell_rad` from the pointing at `frequency_hz`, through the
+/// same patterns the set uses.
+fn beam_voltage_at(
+    pair: [&PrimaryBeam; 2],
+    offset: [f64; 2],
+    cell_rad: f64,
+    frequency_hz: f64,
+) -> f64 {
+    let radius_deg = ((offset[0] * cell_rad).powi(2) + (offset[1] * cell_rad).powi(2))
         .sqrt()
         .to_degrees();
-    let radius = radius_deg * 60.0 * FREQUENCY_HZ / 1.0e9;
+    let radius = radius_deg * 60.0 * frequency_hz / 1.0e9;
     pair.iter()
-        .map(|dish| {
-            let table = AnnularApertureVoltageTable::new(
-                dish.aperture_m,
-                dish.blockage_m,
-                dish.max_radius_arcsec / 60.0 * 100.0,
-            );
-            f64::from(table.evaluate(radius))
-        })
+        .map(|dish| f64::from(dish.pattern().at_frequency(frequency_hz).voltage(radius)))
         .product()
 }
 
-/// Analytic `PB_k · PB_j` (`VP² · VP²`, the weight kernel's response).
-fn beam_power(pair: [&AiryDish; 2], offset: [f64; 2]) -> f64 {
-    beam_voltage(pair, offset).powi(2)
+/// [`beam_voltage_at`] on the shared cells at the shared frequency.
+fn beam_voltage(pair: [&PrimaryBeam; 2], offset: [f64; 2]) -> f64 {
+    beam_voltage_at(pair, offset, CELL_RAD, FREQUENCY_HZ)
 }
 
 fn fits(operator: &MeasurementOperator, placement: &Placement) -> bool {
@@ -237,7 +236,7 @@ fn too_small_a_screen_is_a_typed_error_not_a_panic() {
             GridPadding::None,
         )
         .expect("geometry");
-        let dishes = [AiryDish::casa_alma(12.0, &geometry)];
+        let dishes = [PrimaryBeam::from(AiryDish::casa_alma(12.0, &geometry))];
         let result = MosaicPb::new(
             MosaicRules::Tclean,
             &geometry,
@@ -294,9 +293,13 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
         CfKey { group: 2, cube: 3 }
     );
     // Every cell has ten fine offsets, at least five taps each side, and
-    // weight taps of the same support; the halo is the largest support.
+    // weight taps of the same support; every pair of a cell's window grids
+    // with the same support, the widest pair's (`MosaicFT` takes
+    // `max(convSupportPlanes_p)` for every row); the halo is the largest
+    // support.
     let mut hold = CellHold::new();
     let mut largest = 0;
+    let mut cube_half = [None; 4];
     for group in 0..3 {
         for cube in 0..4 {
             let key = CfKey { group, cube };
@@ -309,6 +312,11 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
             let mut weight_hold = CellHold::new();
             let weight = set.weight_taps(key, &mut weight_hold).expect("weight taps");
             assert_eq!(weight.half_support(), half);
+            assert_eq!(
+                *cube_half[usize::from(cube)].get_or_insert(half[0]),
+                half[0],
+                "{key:?}: every pair of a window grids with one support"
+            );
             largest = largest.max(half[0]);
         }
     }
@@ -323,7 +331,7 @@ fn pair_supports(
     rules: MosaicRules,
     geometry: &GridGeometry,
     frequency_hz: f64,
-    dishes: &[AiryDish],
+    dishes: &[PrimaryBeam],
 ) -> Vec<u16> {
     let windows = [MosaicWindow {
         spectral_window: 0,
@@ -340,11 +348,13 @@ fn pair_supports(
 
 /// CASA 6.7.6 logs "convolution function support" `[6, 6, 6]` for
 /// `sm.predict` and `[7, 6, 6]` for `tclean(gridder='mosaic')` on the #875
-/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m). On 4.1″
-/// cells at 100 GHz the 7 m class alone finds six taps, yet the simulator
-/// grids every pair of the heterogeneous set with the widest pair's seven:
-/// both sets share one screen, since every simulator dish has a 150″
-/// radius. The simulator's screen has no least size.
+/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m): the
+/// supports the pairs find. Both machines' `MosaicFT` grid every pair with
+/// the widest (`max(convSupportPlanes_p)`), so tclean's cells hold seven
+/// taps each. On 4.1″ cells at 100 GHz the 7 m class alone finds six taps,
+/// yet the simulator grids every pair of the heterogeneous set with the
+/// widest pair's seven: both sets share one screen, since every simulator
+/// dish has a 150″ radius. The simulator's screen has no least size.
 #[test]
 fn the_simulator_rules_find_casa_v1_supports() {
     let square = |side: usize, cell_arcsec: f64| {
@@ -359,9 +369,9 @@ fn the_simulator_rules_find_casa_v1_supports() {
         )
         .expect("geometry")
     };
-    let simulator = [
-        AiryDish::casa_alma_simulator(12.0),
-        AiryDish::casa_alma_simulator(7.0),
+    let simulator: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma_simulator(12.0).into(),
+        AiryDish::casa_alma_simulator(7.0).into(),
     ];
     let probe = square(320, 0.3);
     assert_eq!(
@@ -370,7 +380,7 @@ fn the_simulator_rules_find_casa_v1_supports() {
     );
     assert_eq!(
         pair_supports(MosaicRules::Tclean, &probe, 230.0e9, &dishes(&probe)),
-        [7, 6, 6]
+        [7, 7, 7]
     );
     let coarse = square(IMAGE, 4.125);
     assert_eq!(
@@ -407,9 +417,9 @@ fn the_simulator_rules_find_casa_v1_supports() {
 #[test]
 fn the_simulator_rules_take_v1s_frequency_cells() {
     let geometry = geometry();
-    let dishes = [
-        AiryDish::casa_alma_simulator(12.0),
-        AiryDish::casa_alma_simulator(7.0),
+    let dishes: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma_simulator(12.0).into(),
+        AiryDish::casa_alma_simulator(7.0).into(),
     ];
     let four = (0..4)
         .map(|k| 230.0e9 + 15.625e6 * f64::from(k))
@@ -442,23 +452,96 @@ fn the_simulator_rules_take_v1s_frequency_cells() {
 
 #[test]
 fn the_weight_image_is_the_beam_power_at_the_pointing() {
-    let mut rng = Rng::new(83);
     let geometry = geometry();
     let dishes = dishes(&geometry);
-    let operator = operator_with(Box::new(single_window_mosaic(&geometry)));
-    // A pointing eight cells right and five cells down of the centre, on
-    // the 12 m × 7 m pair.
+    let set = single_window_mosaic(&geometry);
+    // The 12 m × 7 m pair.
+    assert_weight_image_is_beam_power(
+        geometry,
+        set,
+        ([0, 1], [&dishes[0], &dishes[1]]),
+        FREQUENCY_HZ,
+        &mut Rng::new(83),
+    );
+}
+
+/// CASA's common EVLA beam (`PBMath1DEVLA`), which every antenna of an
+/// EVLA MeasurementSet shares, at 1.5 GHz on 72″ cells, where its
+/// half-power width spans about 24 cells.
+#[test]
+fn the_evla_weight_image_is_the_evla_beam_power_at_the_pointing() {
+    const EVLA_CELL_RAD: f64 = 3.5e-4;
+    const EVLA_HZ: f64 = 1.5e9;
+    let geometry = GridGeometry::new(
+        ImageExtent {
+            shape: [IMAGE, IMAGE],
+            increment_rad: [-EVLA_CELL_RAD, EVLA_CELL_RAD],
+            reference_pixel: [IMAGE / 2, IMAGE / 2],
+        },
+        GridPadding::None,
+    )
+    .expect("unpadded geometry");
+    let evla = [PrimaryBeam::Evla];
+    let set = MosaicPb::new(
+        MosaicRules::Tclean,
+        &geometry,
+        &routing(),
+        EVLA_HZ,
+        &evla,
+        &[MosaicWindow {
+            spectral_window: 0,
+            window_frequencies_hz: vec![EVLA_HZ - 1.0e8, EVLA_HZ],
+            channel_width_hz: 1.0e6,
+            selected_frequencies_hz: vec![EVLA_HZ],
+        }],
+    )
+    .expect("EVLA mosaic set");
+    assert_eq!(set.dishes(), 1);
+    // `PBMath1D::support`: 58′ at 1 GHz is 64 cells across at 1.5 GHz, so
+    // the screen is the image's 64 pixels.
+    assert_eq!(set.screen_size(), 64);
+    assert_weight_image_is_beam_power(
+        geometry,
+        set,
+        ([0, 0], [&evla[0], &evla[0]]),
+        EVLA_HZ,
+        &mut Rng::new(97),
+    );
+}
+
+/// The weight image of rows on the pair `types` of `set` at
+/// `frequency_hz`, all with the ramp of a pointing eight cells right and
+/// five down of the centre of `geometry`, peaks at the pointing, has the
+/// pair's `PB_k · PB_j` profile about it (truncated at the 2.5 % support,
+/// so within a few percent of the peak), and holds almost nothing at the
+/// mirrored pointing.
+fn assert_weight_image_is_beam_power(
+    geometry: GridGeometry,
+    set: MosaicPb,
+    (types, pair): ([u8; 2], [&PrimaryBeam; 2]),
+    frequency_hz: f64,
+    rng: &mut Rng,
+) {
+    let cell_rad = geometry.image().increment_rad[1];
+    let operator = MeasurementOperator::new(
+        geometry,
+        Basis::Constant,
+        routing(),
+        Box::new(set),
+        GridPrecision::F64,
+    );
+    let geometry = operator.geometry();
     let pointing = [8.0, -5.0];
-    let placed = keyed_placements(&operator, 12, &mut rng)
-        .into_iter()
-        .map(|placement| Placement {
-            cf: operator
-                .cf()
-                .key(&context([0, 1], 0), FREQUENCY_HZ, placement.w),
-            gradient: gradient(&geometry, pointing),
-            ..placement
-        })
-        .collect::<Vec<_>>();
+    let mut placed = placements(geometry, 12, 1, rng);
+    for placement in &mut placed {
+        placement.cf = operator
+            .cf()
+            .key(&context(types, 0), frequency_hz, placement.w);
+        placement.gradient = gradient(geometry, pointing);
+        placement.u *= 0.6;
+        placement.v *= 0.6;
+    }
+    placed.retain(|placement| fits(&operator, placement));
     assert!(placed.len() >= 8);
     let mut block = SampleBuffer::new(2);
     for placement in &placed {
@@ -479,10 +562,8 @@ fn the_weight_image_is_the_beam_power_at_the_pointing() {
         (expected_peak[0] as usize, expected_peak[1] as usize),
         "weight image peak"
     );
-    // The profile about the pointing is the pair's PB² (truncated at the
-    // 2.5 % support, so within a few percent of the peak).
-    let pair = [&dishes[0], &dishes[1]];
-    let reference = beam_power(pair, [0.0, 0.0]);
+    let power = |offset| beam_voltage_at(pair, offset, cell_rad, frequency_hz).powi(2);
+    let reference = power([0.0, 0.0]);
     for offset in [
         [3.0, 0.0],
         [0.0, 4.0],
@@ -493,13 +574,12 @@ fn the_weight_image_is_the_beam_power_at_the_pointing() {
         let x = (expected_peak[0] + offset[0]) as usize;
         let y = (expected_peak[1] + offset[1]) as usize;
         let actual = f64::from(image[(y, x)] / peak.2);
-        let expected = beam_power(pair, offset) / reference;
+        let expected = power(offset) / reference;
         assert!(
             (actual - expected).abs() < 5.0e-2,
             "offset {offset:?}: {actual} vs {expected}"
         );
     }
-    // The mirrored pointing holds almost nothing.
     let mirrored = image[(
         (centre - pointing[1]) as usize,
         (centre - pointing[0]) as usize,
@@ -565,6 +645,190 @@ fn predictions_attenuate_the_model_by_the_beam_at_the_pointing() {
             );
         }
     }
+}
+
+/// `MosaicFT`'s sectioned gridder (`sectgmosd2`, `onmosgrid`) grids the
+/// taps of a sample whose support overruns its sectors where they fall on
+/// them, and counts its weight in `sumwt` only when its anchor cell is in
+/// them; the sectors (`findGridSector`) cover every column but the grid's
+/// last. Its weight gridder (`gmoswgtd`) places the weight taps at the uv
+/// origin, keeping only those the sample's support keeps on the whole grid,
+/// and counts every sample that reaches it. Its degridder (`sectdmos2`,
+/// `omos`) predicts nothing for a support that overruns the grid. A sample
+/// whose support misses the grid is not gridded at all.
+#[test]
+fn a_support_over_the_grid_edge_is_clipped_and_predicts_nothing() {
+    let geometry = geometry();
+    let operator = operator_with(Box::new(single_window_mosaic(&geometry)));
+    let key = operator.cf().key(&context([0, 0], 0), FREQUENCY_HZ, 0.0);
+    let half = i64::from(operator.cf().gridding_half_support(key)[0]);
+    let [nx, _] = geometry.grid_shape();
+    let cell = 1.0 / geometry.scale()[0];
+    let power = |image: &Array2<f32>| {
+        image
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>()
+    };
+    // The data, the weight image and the prediction of a sample anchored
+    // on column `x`.
+    let edge = |x: i64| {
+        let u = (x - (nx / 2) as i64) as f64 * cell;
+        let placement = Placement {
+            u,
+            v: 0.0,
+            w: 0.0,
+            prediction_w_positive: false,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: key,
+            gradient: [0.0, 0.0],
+        };
+        let location = geometry.locate(u, 0.0, MOSAIC_OVERSAMPLING);
+        assert_eq!(location.x, x);
+        let mut block = SampleBuffer::new(2);
+        block.push(placement, &[Complex32::new(1.0, 0.0); 2], &[1.0; 2]);
+        let (data, data_sumwt) = grid(&operator, &block, Mode::Data);
+        let (weight, weight_sumwt) = grid(&operator, &block, Mode::Weight);
+        let predicted = predict(&operator, &point_model([IMAGE / 2, IMAGE / 2]), &block);
+        (
+            [power(&data), data_sumwt],
+            [power(&weight), weight_sumwt],
+            predicted,
+        )
+    };
+    let (_, inside, _) = edge(nx as i64 / 2);
+    // The sectors' last column, the grid's last, and past the support's
+    // reach of the sectors and of the grid.
+    let last = nx as i64 - 2;
+    let (on, on_weight, on_predicted) = edge(last);
+    assert!(
+        on[0] > 0.0,
+        "a clipped support grids its taps in the sectors"
+    );
+    assert_eq!(on[1], 2.0, "an anchor in the sectors weighs in sumwt");
+    let (off, off_weight, off_predicted) = edge(last + 1);
+    assert!(
+        off[0] > 0.0,
+        "an anchor past the sectors still grids its taps"
+    );
+    assert!(off[0] < on[0], "fewer of its taps reach the sectors");
+    assert_eq!(off[1], 0.0, "an anchor past the sectors weighs nothing");
+    for predicted in on_predicted.iter().chain(&off_predicted) {
+        assert_eq!(
+            *predicted,
+            Complex32::default(),
+            "a clipped support predicts nothing"
+        );
+    }
+    // The weight image keeps the taps the support keeps on the grid, and
+    // weighs every sample that reaches it.
+    assert_eq!([on_weight[1], off_weight[1]], [2.0, 2.0]);
+    assert!(off_weight[0] < on_weight[0] && on_weight[0] < inside[0]);
+    // A support whose first column is the grid's last misses the sectors,
+    // and still weighs in the weight image's sum.
+    let (missed, missed_weight, _) = edge(last + half + 1);
+    assert_eq!(
+        missed,
+        [0.0, 0.0],
+        "a support past the sectors is not gridded"
+    );
+    assert_eq!(
+        missed_weight[1], 2.0,
+        "a support that reaches the grid weighs"
+    );
+    let (_, beyond_weight, _) = edge(last + half + 2);
+    assert_eq!(
+        beyond_weight,
+        [0.0, 0.0],
+        "a support off the grid weighs nothing"
+    );
+}
+
+/// tclean's conjugate beams (`conjbeams` on an image of one plane): a beam
+/// at the image frequency is its own conjugate, so its cells are the plain
+/// set's. Away from it, gridding takes the imaging cell resampled to the
+/// conjugate frequency while prediction keeps the beam's, and a window's
+/// supports widen to `⌊s·√(ν_c/ν)/2⌋·2` when that is wider
+/// (`HetArrayConvFunc::conjSupport`, `fillConjConvFunc`).
+#[test]
+fn conjugate_beams_grid_with_the_conjugate_cell_and_predict_with_the_beam() {
+    // A screen wide enough for the widened support.
+    let geometry = GridGeometry::new(
+        ImageExtent {
+            shape: [128, 128],
+            increment_rad: [-CELL_RAD, CELL_RAD],
+            reference_pixel: [64, 64],
+        },
+        GridPadding::None,
+    )
+    .expect("unpadded geometry");
+    let dishes = dishes(&geometry);
+    let set = |rules, beam_hz: f64| {
+        MosaicPb::new(
+            rules,
+            &geometry,
+            &routing(),
+            FREQUENCY_HZ,
+            &dishes[..1],
+            &[window(0, vec![beam_hz], beam_hz)],
+        )
+        .expect("mosaic set")
+    };
+    let dense = |taps: TapLayout<'_>| match taps {
+        TapLayout::Dense { data, .. } => data.to_vec(),
+        TapLayout::SeparableReal { .. } => panic!("mosaic cells are dense"),
+    };
+    let close = |a: &[Complex32], b: &[Complex32]| {
+        let peak = b.iter().map(|tap| tap.norm()).fold(0.0_f32, f32::max);
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(a, b)| (a - b).norm() <= 1.0e-6 * peak)
+    };
+    let mut hold = CellHold::new();
+    let key = CfKey { group: 0, cube: 0 };
+    let plain = set(MosaicRules::Tclean, FREQUENCY_HZ);
+    let own = set(MosaicRules::TcleanConjugateBeams, FREQUENCY_HZ);
+    assert!(close(
+        &dense(own.taps(key, &mut hold)),
+        &dense(plain.taps(key, &mut hold))
+    ));
+    assert!(close(
+        &dense(own.weight_taps(key, &mut hold).expect("weight")),
+        &dense(plain.weight_taps(key, &mut hold).expect("weight"))
+    ));
+    // At 0.8 ν₀ the conjugate is √1.36 ν₀: the ratio is 1.46.
+    let low_hz = 0.8 * FREQUENCY_HZ;
+    let ratio = (2.0 * FREQUENCY_HZ.powi(2) - low_hz.powi(2)).sqrt() / low_hz;
+    let plain = set(MosaicRules::Tclean, low_hz);
+    let conjugate = set(MosaicRules::TcleanConjugateBeams, low_hz);
+    let support = usize::from(plain.half_support(key));
+    let widened = support.max((support as f64 * ratio.sqrt() / 2.0) as usize * 2);
+    assert_eq!(usize::from(conjugate.half_support(key)), widened);
+    let gridding = dense(conjugate.taps(key, &mut hold));
+    let predicting = dense(conjugate.prediction_taps(key, &mut hold));
+    assert!(
+        !close(&gridding, &predicting),
+        "gridding takes the conjugate"
+    );
+    // The conjugate is the beam's cell resampled: its area renormalisation
+    // keeps the unit-sum taps near one.
+    let centre_tile = |taps: &[Complex32]| {
+        let side = 2 * widened + 1;
+        let tiles = usize::from(MOSAIC_OVERSAMPLING) + 1;
+        let centre = (tiles / 2) * tiles + tiles / 2;
+        taps[centre * side * side..(centre + 1) * side * side]
+            .iter()
+            .map(|tap| f64::from(tap.re))
+            .sum::<f64>()
+    };
+    let (gridding_sum, predicting_sum) = (centre_tile(&gridding), centre_tile(&predicting));
+    assert!(
+        (gridding_sum - predicting_sum).abs() < 0.05 * predicting_sum,
+        "tap sums {gridding_sum} and {predicting_sum}"
+    );
 }
 
 /// `Mode::Psf` grids the weight as a unit visibility through the same

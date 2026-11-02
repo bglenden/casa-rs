@@ -15,10 +15,12 @@ use crate::model_state::{
 };
 use crate::observation::ObservationSnapshot;
 use crate::product_list::{ProductList, compile_product_list};
+pub use crate::restoring_beam::RestoringBeamPolicy;
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
 };
+pub use crate::weighting::{UvTaper, WeightDensityScope, WeightingContract, WeightingScheme};
 
 /// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,8 +322,15 @@ pub enum InstrumentModel {
     /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
     /// and ACA 7 m interferometric baselines, version 1.
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-    /// CASA-compatible EVLA wideband aperture, pointing, and conjugate-beam
-    /// response consumed through validated paired AW convolution functions.
+    /// CASA-compatible paired voltage response of CASA's common EVLA beam
+    /// (`PBMath1DEVLA`), which every EVLA interferometric baseline shares,
+    /// version 1: the mosaic gridder's `HetArrayConvFunc` of
+    /// `PBMathInterface::COMMONPB`.
+    CasaEvlaCommonInterferometricResponseV1,
+    /// CASA-compatible EVLA aperture, pointing, and beam response with the
+    /// terms its [`AwProjectionContract`] states (wideband and conjugate
+    /// beams among them), consumed through validated paired AW convolution
+    /// functions.
     CasaEvlaWidebandAwV1,
 }
 
@@ -596,6 +605,7 @@ pub struct MeasurementEquationContract {
     inner_products: DeclaredInnerProducts,
     w_projection: Option<WProjectionContract>,
     aw_projection: Option<AwProjectionContract>,
+    mosaic_conjugate_beams: bool,
 }
 
 impl MeasurementEquationContract {
@@ -610,7 +620,26 @@ impl MeasurementEquationContract {
             inner_products,
             w_projection: None,
             aw_projection: None,
+            mosaic_conjugate_beams: false,
         }
+    }
+
+    /// Grid a mosaic's samples with each beam's response at its conjugate
+    /// frequency `√(2ν₀² − ν²)` about the image frequency `ν₀`, and predict
+    /// with the response at `ν`: tclean's `conjbeams` on a mosaic of one
+    /// image plane (`HetArrayConvFunc::fillConjConvFunc`). An A/W
+    /// projection states its own ([`AwProjectionContract`]).
+    #[must_use]
+    pub const fn with_mosaic_conjugate_beams(mut self) -> Self {
+        self.mosaic_conjugate_beams = true;
+        self
+    }
+
+    /// Whether a mosaic grids with its conjugate beams
+    /// ([`Self::with_mosaic_conjugate_beams`]).
+    #[must_use]
+    pub const fn mosaic_conjugate_beams(self) -> bool {
+        self.mosaic_conjugate_beams
     }
 
     /// Include one explicit paired W-projection transform.
@@ -752,9 +781,9 @@ pub enum ReconstructionAlgorithm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HogbomIterationAccounting {
     /// Apply and report no more components than the requested budget.
-    #[default]
     Strict,
     /// Admit CASA's inclusive terminal component while preserving the reported budget.
+    #[default]
     CasaInclusive,
 }
 
@@ -772,6 +801,20 @@ pub struct CycleThresholdRule {
     pub maximum_psf_fraction: f64,
 }
 
+/// How tclean estimates a residual plane's robust noise, which its
+/// `nsigma` threshold and automatic mask read (`fastnoise`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NoiseEstimate {
+    /// `fastnoise=True`: casacore's classical median and median absolute
+    /// deviation of every valid pixel (`SDMaskHandler::calcImageStatistics`).
+    #[default]
+    Fast,
+    /// `fastnoise=False`: Chauvenet-criterion statistics without a clean
+    /// mask, else the classical statistics outside it
+    /// (`SDMaskHandler::calcRobustImageStatistics`).
+    Robust,
+}
+
 /// Scientific stopping and update controls for reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconstructionControls {
@@ -781,6 +824,7 @@ pub struct ReconstructionControls {
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
+    noise_estimate: NoiseEstimate,
     cycle_threshold: Option<CycleThresholdRule>,
     hogbom_iteration_accounting: HogbomIterationAccounting,
 }
@@ -796,12 +840,13 @@ impl ReconstructionControls {
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
+            noise_estimate: NoiseEstimate::Fast,
             cycle_threshold: None,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
     }
 
-    /// Bind the reported per-cycle iteration budget and optional total major-cycle bound.
+    /// Bind the iteration budget and post-initial major-cycle bound (zero is initial-only).
     #[must_use]
     pub const fn with_cycle_limits(
         mut self,
@@ -817,6 +862,13 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_noise_sigma(mut self, noise_sigma: f64) -> Self {
         self.noise_sigma = Some(noise_sigma);
+        self
+    }
+
+    /// Bind how the robust noise of the `nsigma` threshold is estimated.
+    #[must_use]
+    pub const fn with_noise_estimate(mut self, noise_estimate: NoiseEstimate) -> Self {
+        self.noise_estimate = noise_estimate;
         self
     }
 
@@ -870,7 +922,7 @@ impl ReconstructionControls {
         self.cycle_iteration_limit
     }
 
-    /// Return the explicit total major-cycle bound.
+    /// Return the post-initial major-cycle bound; zero stops after the initial pass.
     #[must_use]
     pub const fn maximum_major_cycles(self) -> Option<usize> {
         self.maximum_major_cycles
@@ -880,6 +932,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn noise_sigma(self) -> Option<f64> {
         self.noise_sigma
+    }
+
+    /// Return how the robust noise of the `nsigma` threshold is estimated.
+    #[must_use]
+    pub const fn noise_estimate(self) -> NoiseEstimate {
+        self.noise_estimate
     }
 
     /// Return CASA's per-cycle threshold rule, when it is bound.
@@ -959,136 +1017,6 @@ impl ReconstructionContract {
             scales_px.dedup();
         }
         Ok(self)
-    }
-}
-
-/// Visibility-weighting formula.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WeightingScheme {
-    /// Natural weighting.
-    Natural,
-    /// Uniform density weighting.
-    Uniform,
-    /// Briggs robust weighting.
-    Briggs {
-        /// Robustness in the conventional interval `[-2, 2]`.
-        robust: f64,
-    },
-    /// Briggs bandwidth-taper weighting.
-    BriggsBandwidthTaper {
-        /// Robustness in the conventional interval `[-2, 2]`.
-        robust: f64,
-    },
-}
-
-/// Domain over which visibility-density weights are derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WeightDensityScope {
-    /// The weighting formula does not use a density generation.
-    NotApplicable,
-    /// All selected data contributing to the logical product.
-    GlobalSelection,
-    /// An explicit global density generation per output channel.
-    PerOutputChannel,
-}
-
-/// Gaussian taper in the UV plane, expressed as baseline HWHM wavelengths.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UvTaper {
-    major_lambda: f64,
-    minor_lambda: f64,
-    position_angle_rad: f64,
-}
-
-impl UvTaper {
-    /// Construct a Gaussian UV taper from major/minor baseline HWHM and angle.
-    #[must_use]
-    pub const fn new(major_lambda: f64, minor_lambda: f64, position_angle_rad: f64) -> Self {
-        Self {
-            major_lambda,
-            minor_lambda,
-            position_angle_rad,
-        }
-    }
-
-    /// Return the major-axis baseline HWHM in wavelengths.
-    #[must_use]
-    pub const fn major_lambda(self) -> f64 {
-        self.major_lambda
-    }
-
-    /// Return the minor-axis baseline HWHM in wavelengths.
-    #[must_use]
-    pub const fn minor_lambda(self) -> f64 {
-        self.minor_lambda
-    }
-
-    /// Return the position angle in radians.
-    #[must_use]
-    pub const fn position_angle_rad(self) -> f64 {
-        self.position_angle_rad
-    }
-}
-
-/// Complete logical visibility-weighting requirements.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeightingContract {
-    scheme: WeightingScheme,
-    density_scope: WeightDensityScope,
-    uv_taper: Option<UvTaper>,
-    casa_cube_density_padding: Option<usize>,
-}
-
-impl WeightingContract {
-    /// Construct weighting requirements.
-    #[must_use]
-    pub const fn new(scheme: WeightingScheme, density_scope: WeightDensityScope) -> Self {
-        Self {
-            scheme,
-            density_scope,
-            uv_taper: None,
-            casa_cube_density_padding: None,
-        }
-    }
-
-    /// Add a Gaussian UV taper to the weighting metric.
-    #[must_use]
-    pub const fn with_uv_taper(mut self, uv_taper: UvTaper) -> Self {
-        self.uv_taper = Some(uv_taper);
-        self
-    }
-
-    /// Bind CASA's cube density and native-weight transfer law, with a
-    /// metadata-derived number of density channels on each side of the image.
-    /// Zero padding still selects the cube law. The published axis is unchanged.
-    #[must_use]
-    pub const fn with_casa_cube_density_padding(mut self, channels_per_side: usize) -> Self {
-        self.casa_cube_density_padding = Some(channels_per_side);
-        self
-    }
-
-    /// Return the bound CASA cube law's symmetric density-axis padding.
-    #[must_use]
-    pub const fn casa_cube_density_padding(self) -> Option<usize> {
-        self.casa_cube_density_padding
-    }
-
-    /// Return the weighting formula.
-    #[must_use]
-    pub const fn scheme(self) -> WeightingScheme {
-        self.scheme
-    }
-
-    /// Return the density-generation scope.
-    #[must_use]
-    pub const fn density_scope(self) -> WeightDensityScope {
-        self.density_scope
-    }
-
-    /// Return the optional Gaussian UV taper.
-    #[must_use]
-    pub const fn uv_taper(self) -> Option<UvTaper> {
-        self.uv_taper
     }
 }
 
@@ -1180,17 +1108,6 @@ pub enum ProductNormalization {
     FlatNoise,
     /// Flat-sky normalization using sensitivity state.
     FlatSky,
-}
-
-/// Restoring-beam requirement for published products.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestoringBeamPolicy {
-    /// Do not create a restored product.
-    None,
-    /// Fit and use an independent beam for each plane.
-    PerPlane,
-    /// Use one common enclosing beam across all spectral planes.
-    Common,
 }
 
 /// Comparison used to decide whether a product pixel has valid support.
@@ -1770,6 +1687,10 @@ pub enum RequiredCapability {
     BriggsWeighting,
     /// Briggs bandwidth-taper weighting.
     BriggsBandwidthTaperWeighting,
+    /// CASA radial weighting.
+    RadialWeighting,
+    /// CASA absolute Briggs weighting.
+    BriggsAbsoluteWeighting,
     /// Unit-response product normalization.
     UnitResponseNormalization,
     /// Flat-noise product normalization.
@@ -1809,6 +1730,8 @@ impl RequiredCapability {
             Self::UniformWeighting,
             Self::BriggsWeighting,
             Self::BriggsBandwidthTaperWeighting,
+            Self::RadialWeighting,
+            Self::BriggsAbsoluteWeighting,
             Self::UnitResponseNormalization,
             Self::FlatNoiseNormalization,
             Self::FlatSkyNormalization,
@@ -1854,6 +1777,8 @@ impl RequiredCapability {
             Self::UniformWeighting => "uniform_weighting".to_string(),
             Self::BriggsWeighting => "briggs_weighting".to_string(),
             Self::BriggsBandwidthTaperWeighting => "briggs_bandwidth_taper_weighting".to_string(),
+            Self::RadialWeighting => "radial_weighting".to_string(),
+            Self::BriggsAbsoluteWeighting => "briggs_absolute_weighting".to_string(),
             Self::UnitResponseNormalization => "unit_response_normalization".to_string(),
             Self::FlatNoiseNormalization => "flat_noise_normalization".to_string(),
             Self::FlatSkyNormalization => "flat_sky_normalization".to_string(),
@@ -2066,7 +1991,10 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
         });
     }
     let reconstruction = specification.reconstruction.canonicalize()?;
-    validate_weighting(specification.weighting)?;
+    specification
+        .weighting
+        .validate()
+        .map_err(|reason| CompileProblemError::InvalidWeighting { reason })?;
     validate_products(&science, &reconstruction, &products)?;
     let normal_equation = compile_normal_equation(
         &geometry,
@@ -2127,6 +2055,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
                 Some(
                     InstrumentModel::CasaAca7mInterferometricDirectPbV1
                         | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                        | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
                         | InstrumentModel::CasaEvlaWidebandAwV1
                 )
             )
@@ -2147,6 +2076,19 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "the paired AW contract requires the exact EVLA wideband instrument model",
+        });
+    }
+    if science.measurement_equation.mosaic_conjugate_beams
+        && !matches!(
+            science.instrument_model,
+            Some(
+                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                    | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+            )
+        )
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "mosaic conjugate beams require a mosaic instrument model",
         });
     }
     Ok(())
@@ -2207,9 +2149,9 @@ fn validate_reconstruction(
             reason: "CASA-inclusive iteration accounting is specific to Högbom reconstruction",
         });
     }
+    // CASA bounds neither the loop gain nor its sign: a negative gain makes
+    // the residual grow until the divergence stop (`test_iterbot_divergence`).
     if !(contract.controls.gain.is_finite()
-        && contract.controls.gain > 0.0
-        && contract.controls.gain <= 1.0
         && contract.controls.threshold_jy_per_beam.is_finite()
         && contract.controls.threshold_jy_per_beam >= 0.0)
     {
@@ -2218,14 +2160,13 @@ fn validate_reconstruction(
         });
     }
     if contract.controls.cycle_iteration_limit == Some(0)
-        || contract.controls.maximum_major_cycles == Some(0)
         || contract
             .controls
             .noise_sigma
             .is_some_and(|sigma| !sigma.is_finite() || sigma < 0.0)
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "cycle limits must be positive and nsigma must be finite and non-negative",
+            reason: "minor-cycle limit must be positive and nsigma must be finite and non-negative",
         });
     }
     if contract.controls.cycle_threshold.is_some_and(|rule| {
@@ -2234,11 +2175,14 @@ fn validate_reconstruction(
             && rule.minimum_psf_fraction.is_finite()
             && rule.minimum_psf_fraction >= 0.0
             && rule.maximum_psf_fraction.is_finite()
-            && rule.maximum_psf_fraction > 0.0
-            && rule.minimum_psf_fraction <= rule.maximum_psf_fraction)
+            && rule.maximum_psf_fraction > 0.0)
     }) {
+        // The fractions need not be ordered: CASA raises the fraction to
+        // the minimum and then caps it at the maximum
+        // (`grpcInteractiveCleanManager::updateCycleThreshold`), so the
+        // maximum wins when they cross.
         return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "cycle threshold requires a positive factor and ordered finite PSF fractions",
+            reason: "cycle threshold requires a positive factor and finite PSF fractions",
         });
     }
     if let ReconstructionAlgorithm::Multiscale {
@@ -2264,59 +2208,6 @@ fn validate_reconstruction(
                 reason: "scale-aware small-scale bias must be finite and in [0, 1]",
             });
         }
-    }
-    Ok(())
-}
-
-fn validate_weighting(contract: WeightingContract) -> Result<(), CompileProblemError> {
-    if contract.casa_cube_density_padding.is_some()
-        && contract.density_scope != WeightDensityScope::PerOutputChannel
-    {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "CASA cube density requires per-output-channel weighting",
-        });
-    }
-    match contract.scheme {
-        WeightingScheme::Natural if contract.density_scope != WeightDensityScope::NotApplicable => {
-            return Err(CompileProblemError::InvalidWeighting {
-                reason: "natural weighting has no density generation",
-            });
-        }
-        WeightingScheme::Uniform
-        | WeightingScheme::Briggs { .. }
-        | WeightingScheme::BriggsBandwidthTaper { .. }
-            if contract.density_scope == WeightDensityScope::NotApplicable =>
-        {
-            return Err(CompileProblemError::InvalidWeighting {
-                reason: "density weighting requires an explicit global density scope",
-            });
-        }
-        WeightingScheme::Natural
-        | WeightingScheme::Uniform
-        | WeightingScheme::Briggs { .. }
-        | WeightingScheme::BriggsBandwidthTaper { .. } => {}
-    }
-    let robust = match contract.scheme {
-        WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
-            Some(robust)
-        }
-        WeightingScheme::Natural | WeightingScheme::Uniform => None,
-    };
-    if robust.is_some_and(|value| !(value.is_finite() && (-2.0..=2.0).contains(&value))) {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "Briggs robustness must be finite and in [-2, 2]",
-        });
-    }
-    if contract.uv_taper.is_some_and(|taper| {
-        !(taper.major_lambda.is_finite()
-            && taper.major_lambda > 0.0
-            && taper.minor_lambda.is_finite()
-            && taper.minor_lambda > 0.0
-            && taper.position_angle_rad.is_finite())
-    }) {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "UV taper axes must be finite and positive and its angle must be finite",
-        });
     }
     Ok(())
 }
@@ -2500,6 +2391,8 @@ fn derive_capabilities(
         WeightingScheme::BriggsBandwidthTaper { .. } => {
             RequiredCapability::BriggsBandwidthTaperWeighting
         }
+        WeightingScheme::Radial => RequiredCapability::RadialWeighting,
+        WeightingScheme::BriggsAbsolute { .. } => RequiredCapability::BriggsAbsoluteWeighting,
     });
     capabilities.insert(match products.normalization {
         ProductNormalization::UnitResponse => RequiredCapability::UnitResponseNormalization,

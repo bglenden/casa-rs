@@ -34,10 +34,12 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod compensation;
 mod continuum;
 mod convolution;
 mod cpu;
 mod dense;
+mod edge;
 mod error;
 mod fft;
 mod geometry;
@@ -61,15 +63,18 @@ pub use aw::{
     NativeCacheLock, NativeCacheState, NativeManifest,
 };
 pub use backend::{GridBackend, ModelPlaneGrids, PreparedModelGrids, Work};
+/// A mosaic dish class's voltage pattern ([`MosaicPb::screens`]).
+pub use casa_numerics::PrimaryBeam;
 pub use continuum::{
     ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
     fit_and_subtract_continuum,
 };
 pub use convolution::{
-    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+    CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 pub use cpu::CpuBackend;
+pub use edge::{CellBox, Reach};
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
@@ -79,7 +84,7 @@ pub use native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTa
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
-pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
+pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting, SumwtSource};
 pub use resample::{
     NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
     SpectralResampler, WeightSlots,

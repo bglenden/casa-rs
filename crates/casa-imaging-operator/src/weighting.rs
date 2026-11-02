@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Global visibility weighting: natural, uniform and Briggs density
-//! weights with an optional Gaussian taper, pinned to CASA
+//! Global visibility weighting: natural and radial weights, and uniform,
+//! superuniform and Briggs (normalized, absolute and bandwidth-tapered)
+//! density weights, with an optional Gaussian taper, pinned to CASA
 //! (`VisImagingWeight`, `BriggsCubeWeightor`).
 
 use crate::error::OperatorError;
@@ -15,8 +16,8 @@ pub enum DensityCellRule {
     /// `VisImagingWeight`: single-precision coordinates truncated toward
     /// zero, `v` not mirrored.
     Standard,
-    /// `BriggsCubeWeightor`: rounded coordinates with `v` mirrored, built in
-    /// double and looked up in single precision.
+    /// `BriggsCubeWeightor`: rounded coordinates of the negated `u` and `v`,
+    /// built in double and looked up in single precision.
     Cube,
 }
 
@@ -34,6 +35,10 @@ pub struct DensityUv {
     pub u: f32,
     /// v in wavelengths.
     pub v: f32,
+    /// CASA's `Float f = ν/c`, in wavelengths per metre.
+    pub wavelengths_per_m: f32,
+    /// The baseline's u and v in metres.
+    pub uv_m: [f64; 2],
 }
 
 impl DensityUv {
@@ -41,11 +46,24 @@ impl DensityUv {
     /// `frequency_hz`.
     #[must_use]
     pub fn casa(uvw_m: [f64; 3], frequency_hz: f64) -> Self {
-        let wavelengths_per_m = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+        let per_m = (frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32;
+        let wavelengths_per_m = f64::from(per_m);
         Self {
             u: (uvw_m[0] * wavelengths_per_m) as f32,
             v: (uvw_m[1] * wavelengths_per_m) as f32,
+            wavelengths_per_m: per_m,
+            uv_m: [uvw_m[0], uvw_m[1]],
         }
+    }
+
+    /// The uv distance in wavelengths that CASA's radial weighting scales a
+    /// weight by (`VisImagingWeight::weightRadial`):
+    /// `f·sqrt(square(u) + square(v))`, the metre coordinates in double and
+    /// `f` the single-precision `ν/c`.
+    #[must_use]
+    pub fn radial_distance(self) -> f64 {
+        let [u, v] = self.uv_m;
+        f64::from(self.wavelengths_per_m) * (u * u + v * v).sqrt()
     }
 }
 
@@ -60,17 +78,30 @@ pub struct DensityGridShape {
     /// Cells along v (the image height).
     pub height: usize,
     /// Density planes: 1 for a global generation; for a per-channel
-    /// generation the output channel count plus `padding` on each side.
+    /// generation the output channel count plus `padding` on each side; for
+    /// a per-field generation the FIELD_IDs from `first_field` on.
     pub planes: usize,
     /// Per-channel generation: density planes on each side of the output
     /// axis (CASA `BriggsCubeWeightor::estimateSwingChanPad`), so native
     /// channels just beyond the image still find their own plane. 0 for a
     /// global generation.
     pub padding: u32,
-    /// Signed image increments `[Δx, Δy]` in radians.
+    /// Half-width `b` of the box of `(2b + 1)²` cells about its own that
+    /// each sample adds to: CASA `superuniform`'s `uBox = vBox`
+    /// (`VisImagingWeight`) and a cube density's `superUniformBox`
+    /// (`BriggsCubeWeightor`), both from `npixels`. 0 adds to one cell.
+    pub box_half_width: usize,
+    /// Signed cell increments `[Δx, Δy]` in radians: the image's, or for
+    /// a square `npixels` grid CASA's `(n·Δ)/n` (`SynthesisImagerVi2::weight`).
     pub increment_rad: [f64; 2],
     /// Cell arithmetic.
     pub rule: DensityCellRule,
+    /// A per-field generation (tclean's `mosweight`, `VisImagingWeight`'s
+    /// `multiField`), on [`DensityCellRule::Standard`] cells: plane `p` is
+    /// the density of FIELD_ID `first_field + p`, gridded from that field's
+    /// samples alone, and a sample reads its own field's plane. `None` for a
+    /// global or per-channel generation.
+    pub first_field: Option<u32>,
 }
 
 impl DensityGridShape {
@@ -86,6 +117,30 @@ impl DensityGridShape {
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         ((self.cells() + self.planes) * size_of::<f64>()) as u64
+    }
+
+    /// The cell increment CASA gives `VisImagingWeight` for a uniform or
+    /// Briggs density of `cells` cells along an image axis of increment
+    /// `increment_rad`: `SynthesisImagerVi2::weight` forms the field of view
+    /// `cells·Δ` and divides it by `cells` again, in double, whether `cells`
+    /// is `npixels` or the image's own size.
+    #[must_use]
+    pub fn visimagingweight_increment(cells: usize, increment_rad: f64) -> f64 {
+        (cells as f64 * increment_rad) / cells as f64
+    }
+
+    /// The density plane a sample on output plane `plane` from FIELD_ID
+    /// `field` grids into and reads: its field's for a per-field generation
+    /// (`None` outside its span), else `plane`, which `plane_of`
+    /// resolves.
+    #[must_use]
+    pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
+        match self.first_field {
+            Some(first) => field
+                .checked_sub(first)
+                .filter(|plane| (*plane as usize) < self.planes),
+            None => Some(plane),
+        }
     }
 
     /// Density plane of a placement: plane 0 for a global generation.
@@ -115,49 +170,85 @@ impl DensityGridShape {
         ]
     }
 
-    /// The cell a density placement adds to. Standard placements carry
+    /// The first cell of the box a density placement adds to, the
+    /// `(2b + 1)²` cells about its own cell, when the whole box is accepted
+    /// (`VisImagingWeight`: `(ucell − uBox) > 0 && (ucell + uBox) < nx`, and
+    /// likewise in v; `GridFT`'s `onmygrid` likewise keeps a sample only
+    /// when its whole support lies on the grid). Standard placements carry
     /// [`DensityUv`] coordinates; cube placements carry the double
     /// coordinates CASA grids its weight density with (`GridFT::put`'s
-    /// `locuvw`: `nint(scale·u + offset + 1)` in Fortran indexing).
-    fn build_cell(&self, plane: usize, u: f64, v: f64) -> Option<usize> {
-        match self.rule {
-            DensityCellRule::Standard => self.standard_cell(plane, u as f32, v as f32),
+    /// `locuvw`: `nint(scale·u + offset + 1)` in Fortran indexing, of the
+    /// `u` and `v` that `FTMachine::negateUV` negated).
+    fn build_box(&self, plane: usize, u: f64, v: f64) -> Option<usize> {
+        let [x, y] = match self.rule {
+            DensityCellRule::Standard => self.standard_xy(u as f32, v as f32),
             DensityCellRule::Cube => {
                 let [origin_x, origin_y] = self.origin().map(|origin| origin as f64);
-                let x = (u * self.width as f64 * self.increment_rad[0] + origin_x + 1.0).round()
+                let x = (-u * self.width as f64 * self.increment_rad[0] + origin_x + 1.0).round()
                     as isize
                     - 1;
                 let y = (-v * self.height as f64 * self.increment_rad[1] + origin_y + 1.0).round()
                     as isize
                     - 1;
-                self.cell_index(plane, x, y)
+                [x, y]
+            }
+        };
+        let half = isize::try_from(self.box_half_width).unwrap_or(isize::MAX);
+        self.cell_index(plane, x.saturating_add(half), y.saturating_add(half))?;
+        self.cell_index(plane, x.saturating_sub(half), y.saturating_sub(half))
+    }
+
+    /// The share of a sample's weight each cell of its box takes.
+    /// `VisImagingWeight` adds the whole weight to every cell of the box;
+    /// `BriggsCubeWeightor` grids through `GridFT` with a convolution
+    /// function of ones over the box, which `sectggridd` divides by its sum
+    /// `(2b + 1)²`.
+    fn box_share(&self) -> f64 {
+        match self.rule {
+            DensityCellRule::Standard => 1.0,
+            DensityCellRule::Cube => {
+                let side = (2 * self.box_half_width + 1) as f64;
+                1.0 / (side * side)
             }
         }
     }
 
     /// The cell a lookup reads: `BriggsCubeWeightor::getWeightUniform`
-    /// rounds `uscale·u + uorigin` in `Float`, with `v` mirrored.
+    /// rounds `uscale·u + uorigin` in `Float` with `u = −uvw_u·f` and
+    /// `v = −uvw_v·f`, as its grid was built. Evaluated in a mirrored
+    /// orientation, an interior cell differs only at an exact `Float` tie
+    /// (`k + ½`), where rounding half away from zero is not mirror-symmetric;
+    /// and on an odd width the accepted cells `0 < x < width` are not
+    /// mirror-symmetric about the origin `width / 2`, so the outermost
+    /// column would be read where CASA reads none, or the reverse.
     fn lookup_cell(&self, plane: usize, uv: DensityUv) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, uv.u, uv.v),
             DensityCellRule::Cube => {
                 let [scale_x, scale_y] = self.scale();
                 let [origin_x, origin_y] = self.origin().map(|origin| origin as f32);
-                let x = (scale_x * uv.u + origin_x).round();
+                let x = (scale_x * -uv.u + origin_x).round();
                 let y = (scale_y * -uv.v + origin_y).round();
                 self.cell_index(plane, x as isize, y as isize)
             }
         }
     }
 
+    /// `VisImagingWeight`'s cell.
+    fn standard_cell(&self, plane: usize, u: f32, v: f32) -> Option<usize> {
+        let [x, y] = self.standard_xy(u, v);
+        self.cell_index(plane, x, y)
+    }
+
     /// `VisImagingWeight`: `Int(uscale·u + uorigin)` in `Float`, truncated
     /// toward zero.
-    fn standard_cell(&self, plane: usize, u: f32, v: f32) -> Option<usize> {
+    fn standard_xy(&self, u: f32, v: f32) -> [isize; 2] {
         let [scale_x, scale_y] = self.scale();
         let [origin_x, origin_y] = self.origin().map(|origin| origin as f32);
-        let x = (scale_x * u + origin_x) as isize;
-        let y = (scale_y * v + origin_y) as isize;
-        self.cell_index(plane, x, y)
+        [
+            (scale_x * u + origin_x) as isize,
+            (scale_y * v + origin_y) as isize,
+        ]
     }
 
     /// CASA accepts `0 < cell < extent` only.
@@ -192,12 +283,15 @@ impl DensityGrid {
     /// Add one block of density samples.
     ///
     /// Blocks carry one polarization whose weight is CASA's unpolarized input
-    /// weight; each sample adds its weight at its cell and at the conjugate
-    /// cell, each when that cell lies inside the grid (CASA tests the two
-    /// independently), and once to the plane's weight sum when its own cell
-    /// does.
+    /// weight; each sample adds its weight's box share
+    /// ([`DensityGridShape::box_half_width`]) to every cell of the box about
+    /// its cell and of the box about the conjugate cell, each when that whole
+    /// box lies inside the grid (CASA tests the two independently), and its
+    /// weight once to the plane's weight sum when its own box does.
     pub fn accumulate(&mut self, block: &SampleBlock<'_>) {
         assert_eq!(block.npol, 1, "density blocks carry one unpolarized weight");
+        let share = self.shape.box_share();
+        let side = 2 * self.shape.box_half_width + 1;
         for (placement, weight) in block.placements.iter().zip(block.weights) {
             if *weight <= 0.0 {
                 continue;
@@ -206,14 +300,19 @@ impl DensityGrid {
                 continue;
             };
             let weight = f64::from(*weight);
-            let primary = self.shape.build_cell(plane, placement.u, placement.v);
-            let conjugate = self.shape.build_cell(plane, -placement.u, -placement.v);
-            if let Some(cell) = primary {
-                self.cells[cell] += weight;
-                self.sum_weights[plane] += weight;
+            let primary = self.shape.build_box(plane, placement.u, placement.v);
+            let conjugate = self.shape.build_box(plane, -placement.u, -placement.v);
+            for first in primary.into_iter().chain(conjugate) {
+                // CASA's loops: v outer, u inner.
+                for row in 0..side {
+                    let start = first + row * self.shape.width;
+                    for cell in &mut self.cells[start..start + side] {
+                        *cell += weight * share;
+                    }
+                }
             }
-            if let Some(cell) = conjugate {
-                self.cells[cell] += weight;
+            if primary.is_some() {
+                self.sum_weights[plane] += weight;
             }
         }
     }
@@ -237,7 +336,8 @@ impl DensityGrid {
         &self.cells[plane * cells..(plane + 1) * cells]
     }
 
-    /// Input weight summed once per sample, per plane.
+    /// Input weight summed once per sample whose own box lies inside the
+    /// grid, per plane.
     #[must_use]
     pub fn sum_weights(&self) -> &[f64] {
         &self.sum_weights
@@ -253,7 +353,8 @@ impl DensityGrid {
     }
 
     /// Briggs factors `f² = (5·10^{−robust})² / (Σd² / Σd)` per plane, with
-    /// `Σd` the density sum (standard) or twice the input weight sum (cube).
+    /// `Σd` the density sum (standard) or twice the input weight sum (cube),
+    /// and `d² = 1` (`rmode = "norm"`).
     #[must_use]
     pub fn robust_factors(&self, robust: f64) -> RobustFactors {
         let cells = self.shape.width * self.shape.height;
@@ -272,15 +373,36 @@ impl DensityGrid {
                 }
             })
             .collect();
-        RobustFactors { robust, f2 }
+        RobustFactors {
+            robust,
+            f2,
+            d2: 1.0,
+        }
+    }
+
+    /// Absolute Briggs factors (CASA `briggsabs`, `rmode = "abs"`):
+    /// `f² = robust²` and `d² = 2·noise²` on every plane, each held in
+    /// `Float` (`VisImagingWeight`'s `f2_p` and `d2_p`; `BriggsCubeWeightor`
+    /// likewise).
+    #[must_use]
+    pub fn absolute_factors(&self, robust: f64, noise_jy: f64) -> RobustFactors {
+        let f2 = f64::from((robust * robust) as f32);
+        RobustFactors {
+            robust,
+            f2: vec![f2; self.shape.planes],
+            d2: f64::from((2.0 * (noise_jy * noise_jy)) as f32),
+        }
     }
 }
 
-/// Briggs `f²` per density plane for one robustness.
+/// CASA's Briggs factors for one robustness: `f²` per density plane and the
+/// offset `d²`, so that a sample whose cell has density `D` weighs
+/// `w / (D·f² + d²)`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RobustFactors {
     robust: f64,
     f2: Vec<f64>,
+    d2: f64,
 }
 
 impl RobustFactors {
@@ -294,6 +416,12 @@ impl RobustFactors {
     #[must_use]
     pub fn factor(&self, plane: usize) -> f64 {
         self.f2[plane]
+    }
+
+    /// `d²`: 1 for normalized Briggs, `2·noise²` for absolute Briggs.
+    #[must_use]
+    pub const fn offset(&self) -> f64 {
+        self.d2
     }
 }
 
@@ -367,8 +495,14 @@ pub enum WeightingGeneration {
         /// Gaussian uv taper.
         taper: Option<Taper>,
     },
-    /// Uniform (`robust` absent), Briggs or Briggs bandwidth-taper density
-    /// weighting.
+    /// Input weight times the sample's uv distance in wavelengths
+    /// ([`DensityUv::radial_distance`], CASA `radial`), optionally tapered.
+    Radial {
+        /// Gaussian uv taper.
+        taper: Option<Taper>,
+    },
+    /// Uniform (`robust` absent), Briggs, absolute Briggs or Briggs
+    /// bandwidth-taper density weighting.
     Density {
         /// Gridded weight density.
         grid: DensityGrid,
@@ -411,6 +545,34 @@ impl WeightingGeneration {
         })
     }
 
+    /// CASA `briggsabs` over `grid`: `w / (D·robust² + 2·noise²)`
+    /// ([`DensityGrid::absolute_factors`]). Refused when both terms vanish,
+    /// as `SynthesisImagerVi2::weight` refuses `robust = 0` with `noise = 0`.
+    pub fn absolute_density(
+        grid: DensityGrid,
+        robust: f64,
+        noise_jy: f64,
+        taper: Option<Taper>,
+    ) -> Result<Self, OperatorError> {
+        if !(robust.is_finite() && noise_jy.is_finite()) {
+            return Err(OperatorError::Weighting {
+                reason: "absolute Briggs robustness and noise must be finite",
+            });
+        }
+        let factors = grid.absolute_factors(robust, noise_jy);
+        if factors.d2 == 0.0 && factors.f2.iter().all(|f2| *f2 == 0.0) {
+            return Err(OperatorError::Weighting {
+                reason: "absolute Briggs with robust and noise both zero divides by zero",
+            });
+        }
+        Ok(Self::Density {
+            grid,
+            robust: Some(factors),
+            bandwidth: None,
+            taper,
+        })
+    }
+
     /// The padding of a per-channel density generation (CASA
     /// `BriggsCubeWeightor`), whose output samples take the nearest native
     /// channel's weight; `None` when native weights are interpolated
@@ -420,14 +582,27 @@ impl WeightingGeneration {
             Self::Density { grid, .. } if grid.shape.rule == DensityCellRule::Cube => {
                 Some(grid.shape.padding)
             }
-            Self::Natural { .. } | Self::Density { .. } => None,
+            Self::Natural { .. } | Self::Radial { .. } | Self::Density { .. } => None,
+        }
+    }
+
+    /// The density plane a sample on output plane `plane` from FIELD_ID
+    /// `field` reads ([`DensityGridShape::density_plane`]); `plane` for a
+    /// weighting without a density.
+    #[must_use]
+    pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
+        match self {
+            Self::Density { grid, .. } => grid.shape.density_plane(plane, field),
+            Self::Natural { .. } | Self::Radial { .. } => Some(plane),
         }
     }
 
     /// Imaging weight of one placement from its unpolarized input weight;
     /// `density_uv` picks the density cell on the density plane
-    /// `placement.plane` (ignored by a global generation). Pure; CASA's
-    /// cell rules live in [`DensityGrid::lookup`].
+    /// `placement.plane` (ignored by a global generation; a field's plane
+    /// for a per-field one, [`Self::density_plane`]) and gives radial
+    /// weighting its uv distance. Pure; CASA's cell rules live in
+    /// [`DensityGrid::lookup`].
     #[must_use]
     pub fn imaging_weight(
         &self,
@@ -441,6 +616,7 @@ impl WeightingGeneration {
         let input = f64::from(input_weight);
         let (weighted, taper) = match self {
             Self::Natural { taper } => (input, *taper),
+            Self::Radial { taper } => (density_uv.radial_distance() * input, *taper),
             Self::Density {
                 grid,
                 robust,
@@ -466,7 +642,7 @@ impl WeightingGeneration {
                         let distance = bandwidth.map_or(1.0, |bandwidth| {
                             bandwidth.uv_distance_factor(&grid.shape, placement.u, placement.v)
                         });
-                        input / (density * factors.factor(plane) / distance + 1.0)
+                        input / (density * factors.factor(plane) / distance + factors.offset())
                     }
                 };
                 (weighted, *taper)

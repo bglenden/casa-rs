@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casa_imaging_deconvolution::{
     AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
     ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
-    ModelLifecycle, ModelLifecycleError, NormalBasis, NormalStateError, SpectralChannelValidity,
+    ModelLifecycle, ModelLifecycleError, NoiseEstimate, NoiseMaskExclusion, NormalBasis,
+    NormalStateError, RobustNoise, SpectralChannelValidity, plane_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
@@ -92,6 +93,8 @@ pub struct MinorCycleSetup {
     pub response: Option<MinorCycleImageResponse>,
     /// The `nsigma` multiplier; zero when off.
     pub nsigma: f64,
+    /// How the `nsigma` threshold's noise is estimated (`fastnoise`).
+    pub noise: NoiseEstimate,
     /// Whether the mask is CASA's automatic multi-threshold mask, whose
     /// n-sigma threshold adds the residual median.
     pub automask: bool,
@@ -285,6 +288,9 @@ pub fn prepare_minor_cycle(
         None
     };
     let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
+    let exclusions = (0..masks.len())
+        .map(|domain| mask_plans.noise_exclusion(domain, &masks))
+        .collect::<Vec<_>>();
     let inputs = Inputs {
         normal,
         base,
@@ -312,13 +318,18 @@ pub fn prepare_minor_cycle(
             Some(summary) => *summary,
             None => PsfSummary::new(&plane.psf[0], plane.shape)?,
         };
-        let statistics = PlaneStatistics::measure(
+        let robust = setup.noise == NoiseEstimate::Robust;
+        let mut statistics = PlaneStatistics::measure(
             &plane.residual[0],
             &plane.support,
             &plane.valid,
-            setup.nsigma,
+            if robust { 0.0 } else { setup.nsigma },
             setup.automask,
         );
+        if robust && setup.nsigma > 0.0 {
+            statistics.noise =
+                robust_plane_noise(&plane.residual[0], &plane.valid, exclusions[key.domain]);
+        }
         *out = Some(Measured {
             statistics,
             summary,
@@ -555,6 +566,35 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     keys
 }
 
+/// tclean's robust noise of one plane under `fastnoise=False`
+/// (`SIImageStore::calcRobustRMS`, `SDMaskHandler::autoMask`): Chauvenet
+/// statistics of the valid pixels without a mask, the classical statistics
+/// outside the mask otherwise, and zero for a plane whose automatic mask
+/// stopped evolving.
+fn robust_plane_noise(
+    residual: &[f64],
+    valid: &Support,
+    exclusion: NoiseMaskExclusion<'_>,
+) -> Option<RobustNoise> {
+    let valid = valid.as_slice();
+    match exclusion {
+        NoiseMaskExclusion::Stopped => Some(RobustNoise {
+            median: 0.0,
+            rms: 0.0,
+        }),
+        NoiseMaskExclusion::Unmasked => {
+            plane_noise(residual, valid, NoiseEstimate::Robust, None, false)
+        }
+        NoiseMaskExclusion::Mask(mask) => plane_noise(
+            residual,
+            valid,
+            NoiseEstimate::Robust,
+            Some(mask),
+            mask.iter().all(|set| *set),
+        ),
+    }
+}
+
 /// Measure the PSF of `key` into the cache.
 fn summarise(
     normal: &FinalNormalState,
@@ -688,10 +728,9 @@ impl Physical<'_> {
     }
 }
 
-/// Read `key` as a view: residual and PSF normalised by the term-0 PSF peak
-/// (or the residual in CASA's flat-noise or flat-sky units under a
-/// direction-dependent response), and the support. `None` for a plane with
-/// no valid data.
+/// Read `key` as a view: the single-term or Taylor-family residual and
+/// unit-peak PSF, with the requested direction-dependent response, and support.
+/// `None` for a plane with no valid data.
 fn load<'a>(
     inputs: &Inputs<'a>,
     key: PlaneKey,
@@ -753,8 +792,8 @@ fn load<'a>(
     }))
 }
 
-/// One plane's residual and PSF. Without a response both are divided by the
-/// PSF peak; with one the residual takes CASA's normalisation
+/// One plane's residual and PSF. Without a response the residual divides by
+/// sumwt and the PSF by its peak; with one the residual takes CASA's normalisation
 /// (`SIImageStore::divideResidualByWeight`) and the components convert back
 /// with `divideModelByWeight`. The residual divides by the published sum of
 /// weights and the weight image by the normal one; for one term both are
@@ -778,8 +817,11 @@ fn read_single<'a>(
     let peak = psf_peak_value(&psf, shape)?;
     let raw = plane.residual();
     let Some(response) = setup.response else {
+        // CASA divides the residual by sumwt and normalizes the PSF by its
+        // own peak (SIImageStore::divideResidualByWeight and normPSF).
+        let sum_weight = plane.sum_weight();
         return Ok(PlaneTerms {
-            residual: vec![raw.iter().map(|value| value.re / peak).collect()],
+            residual: vec![raw.iter().map(|value| value.re / sum_weight).collect()],
             psf: vec![normalise(psf, peak)],
             response: None,
         });

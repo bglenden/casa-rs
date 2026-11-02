@@ -100,7 +100,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
 }
 
 /// West, centre and east pointings [`SPACING_PX`] cells apart along `l`.
-fn setup() -> Setup {
+pub(super) fn setup() -> Setup {
     let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad()[0];
     Setup {
         telescope: "ALMA".to_string(),
@@ -197,6 +197,42 @@ fn a_mosaic_images_on_its_pointing_table() {
     let (observation, mut controls) = mosaic_run(false);
     controls["usepointing"] = json!(true);
     observation.image("mosaic-pointing-image", controls);
+}
+
+/// A MeasurementSet without pointing samples images under `usepointing`
+/// at each field's direction, as CASA's mosaic does
+/// (`SimplePBConvFunc::pointingDirAnt1` takes the phase centre unless the
+/// POINTING table is readable and has rows): the run is the one without
+/// `usepointing`.
+#[test]
+fn a_mosaic_without_pointing_samples_points_at_its_fields() {
+    use casa_ms::{MeasurementSet, SubtableId};
+    let (observation, mut controls) = mosaic_run(false);
+    {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<usize> = (0..pointing.row_count()).collect();
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    controls["niter"] = json!(0);
+    let (_, fields) = observation.image("mosaic-fields", controls.clone());
+    controls["usepointing"] = json!(true);
+    let (_, pointed) = observation.image("mosaic-no-pointing", controls);
+    for suffix in [".pb", ".residual"] {
+        let [fields, pointed] = [&fields, &pointed].map(|products| &products.get(suffix).pixels);
+        let scale = fields
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        let largest = fields
+            .iter()
+            .zip(pointed)
+            .fold(0.0_f32, |largest, (a, b)| largest.max((a - b).abs()));
+        assert!(
+            scale > 0.0 && largest <= 1.0e-5 * scale,
+            "{suffix}: {largest} against a peak of {scale}"
+        );
+    }
 }
 
 #[test]

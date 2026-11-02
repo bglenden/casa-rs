@@ -6,9 +6,14 @@ pub(crate) mod kernel;
 
 use num_complex::{Complex, Complex32, Complex64};
 
-use crate::accumulator::{AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, Mode};
+use crate::accumulator::{
+    AccumulatorLayout, CpuGridParts, GridAccumulator, GridPrecision, GridScalar, Mode,
+};
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
-use crate::convolution::{CellHold, ConvolutionFunctionSet, KernelNormalisation, TapLayout};
+use crate::convolution::{
+    CellHold, ConvolutionFunctionSet, GridEdge, KernelNormalisation, TapLayout,
+};
+use crate::edge::{CellBox, Reach};
 use crate::error::OperatorError;
 use crate::geometry::CellLocation;
 use crate::native::{NativeModel, NativeTarget, interpolate_terms, residual_values};
@@ -78,6 +83,23 @@ impl CpuBackend {
             + npol * size_of::<(u8, Complex64)>()) as u64
     }
 
+    /// Bytes a gridding call holds while it spreads a placement whose
+    /// support `cf` clips to the grid ([`GridEdge::Clipped`]): one block of
+    /// the set's largest support in `precision`, freed when the call
+    /// returns; none for a set that drops such placements.
+    #[must_use]
+    pub fn clip_bytes(cf: &dyn ConvolutionFunctionSet, precision: GridPrecision) -> u64 {
+        if cf.grid_edge() == GridEdge::Whole {
+            return 0;
+        }
+        let [hx, hy] = cf.max_half_support().map(|half| 2 * usize::from(half) + 1);
+        let cell = match precision {
+            GridPrecision::F32 => size_of::<Complex<f32>>(),
+            GridPrecision::F64 => size_of::<Complex<f64>>(),
+        };
+        (hx * hy * cell) as u64
+    }
+
     /// Bytes the backend keeps after blocks of at most `samples` placements
     /// of `npol` correlations: its batch, which holds a block's native
     /// predictions ([`Work::PredictNative`]) or its residual values at
@@ -88,19 +110,27 @@ impl CpuBackend {
         (samples * npol * size_of::<Complex32>()) as u64
     }
 
-    fn grid<T: GridScalar>(
+    fn grid<T: GridScalar, const COMPENSATED: bool>(
         &mut self,
         block: &SampleBlock<'_>,
         cf: &dyn ConvolutionFunctionSet,
         mode: Mode,
         acc: &mut GridAccumulator,
     ) -> Result<(), OperatorError> {
-        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
+        let CpuGridParts {
+            layout,
+            cells,
+            correction,
+            mut sumwt,
+        } = acc.parts_mut::<T>();
         let terms = layout
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
         let rule = cf.normalisation();
         let Self { powers, hold, .. } = self;
+        // A clipped spread's block, at most `(2h + 1)²` cells of the set's
+        // largest half support `h`, allocated only when one is needed.
+        let mut scratch = Vec::new();
         for (index, placement) in block.placements.iter().enumerate() {
             let taps = match mode {
                 Mode::Weight => cf
@@ -117,14 +147,23 @@ impl CpuBackend {
             // CASA tests `onGrid` with the support of the cell each mode
             // reads (`AWVisResampler::DataToGrid`), so a PSF gridded with a
             // wider weight cell drops rows the data gridding keeps.
-            if !layout.geometry().fits(location, taps.half_support()) {
+            let reach = Reach::of(
+                cf,
+                layout.geometry(),
+                (mode, placement),
+                location,
+                (taps.half_support(), taps.oversampling()),
+            );
+            if reach == Reach::Off {
                 continue;
             }
+            let (sumwt, clip) = targets(reach, sumwt.as_deref_mut(), &mut scratch);
             spectral_powers(powers, placement.spectral, terms.len());
-            spread_sample(
+            spread_sample::<T, COMPENSATED>(
                 layout,
                 cells,
-                sumwt.as_deref_mut(),
+                correction,
+                sumwt,
                 cf,
                 rule,
                 placement,
@@ -135,6 +174,7 @@ impl CpuBackend {
                 powers,
                 block.values_of(index),
                 block.weights_of(index),
+                clip,
             );
         }
         Ok(())
@@ -158,7 +198,7 @@ impl CpuBackend {
         }
     }
 
-    fn residual<T: GridScalar>(
+    fn residual<T: GridScalar, const COMPENSATED: bool>(
         &mut self,
         block: &SampleBlock<'_>,
         cf: &dyn ConvolutionFunctionSet,
@@ -171,11 +211,18 @@ impl CpuBackend {
             assert_eq!(out.len(), block.len() * npol, "residual output length");
         }
         let rule = cf.normalisation();
-        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
+        let CpuGridParts {
+            layout,
+            cells,
+            correction,
+            mut sumwt,
+        } = acc.parts_mut::<T>();
         let terms = layout
             .term_range(Mode::Data)
             .expect("residual gridding needs the data terms");
         self.residual.resize(npol, Complex32::default());
+        // A clipped spread's block, as `grid`'s.
+        let mut scratch = Vec::new();
         for (index, placement) in block.placements.iter().enumerate() {
             self.predict_sample::<T>(cf, model, placement, npol);
             let values = block.values_of(index);
@@ -206,11 +253,26 @@ impl CpuBackend {
             let location = layout
                 .geometry()
                 .locate(placement.u, placement.v, taps.oversampling());
+            // A placement reaches the grid (the resampler kept it); a mosaic
+            // predicts nothing for one it clips, and grids the residual's
+            // taps that fall on the grid.
+            let reach = Reach::of(
+                cf,
+                layout.geometry(),
+                (Mode::Data, placement),
+                location,
+                (taps.half_support(), taps.oversampling()),
+            );
+            if reach == Reach::Off {
+                continue;
+            }
+            let (sumwt, clip) = targets(reach, sumwt.as_deref_mut(), &mut scratch);
             spectral_powers(powers, placement.spectral, terms.len());
-            spread_sample(
+            spread_sample::<T, COMPENSATED>(
                 layout,
                 cells,
-                sumwt.as_deref_mut(),
+                correction,
+                sumwt,
                 cf,
                 rule,
                 placement,
@@ -221,6 +283,7 @@ impl CpuBackend {
                 powers,
                 residual,
                 weights,
+                clip,
             );
         }
     }
@@ -334,8 +397,8 @@ impl GridBackend for CpuBackend {
         );
         let result = match work {
             Work::Grid { mode, acc } => match acc.precision() {
-                GridPrecision::F32 => self.grid::<f32>(block, cf, mode, acc),
-                GridPrecision::F64 => self.grid::<f64>(block, cf, mode, acc),
+                GridPrecision::F32 => self.grid::<f32, true>(block, cf, mode, acc),
+                GridPrecision::F64 => self.grid::<f64, false>(block, cf, mode, acc),
             },
             Work::Predict { model, out } => {
                 match model.precision() {
@@ -356,10 +419,10 @@ impl GridBackend for CpuBackend {
                 );
                 match acc.precision() {
                     GridPrecision::F32 => {
-                        self.residual::<f32>(block, cf, model, acc, residual_out);
+                        self.residual::<f32, true>(block, cf, model, acc, residual_out);
                     }
                     GridPrecision::F64 => {
-                        self.residual::<f64>(block, cf, model, acc, residual_out);
+                        self.residual::<f64, false>(block, cf, model, acc, residual_out);
                     }
                 }
                 Ok(())
@@ -431,8 +494,8 @@ impl CpuBackend {
             ..*block
         };
         let result = match acc.precision() {
-            GridPrecision::F32 => self.grid::<f32>(&residual, cf, Mode::Data, acc),
-            GridPrecision::F64 => self.grid::<f64>(&residual, cf, Mode::Data, acc),
+            GridPrecision::F32 => self.grid::<f32, true>(&residual, cf, Mode::Data, acc),
+            GridPrecision::F64 => self.grid::<f64, false>(&residual, cf, Mode::Data, acc),
         };
         self.batch = values;
         result
@@ -447,9 +510,10 @@ impl CpuBackend {
 /// Mueller plane share its taps (both correlations of Stokes I), so their
 /// values are summed and spread once; `sumwt` still adds each one's weight.
 #[allow(clippy::too_many_arguments)]
-fn spread_sample<T: GridScalar>(
+fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
     layout: &AccumulatorLayout,
     cells: &mut [Complex<T>],
+    correction: &mut [Complex32],
     mut sumwt: Option<&mut [f64]>,
     cf: &dyn ConvolutionFunctionSet,
     rule: KernelNormalisation,
@@ -461,6 +525,7 @@ fn spread_sample<T: GridScalar>(
     powers: &[f64],
     values: &[Complex32],
     weights: &[f32],
+    mut clip: Option<Clip<'_, T>>,
 ) {
     let w_positive = placement.w > 0.0;
     let table = cf.mueller().table(w_positive, false);
@@ -514,18 +579,54 @@ fn spread_sample<T: GridScalar>(
                 let value =
                     Complex::new(T::from_f64(base.re * power), T::from_f64(base.im * power));
                 let offset = layout.block_offset(plane, gpol, term);
-                kernel::spread::<T>(
-                    &mut cells[offset..offset + block_cells],
-                    layout.tile(),
-                    location,
-                    taps,
-                    mueller,
-                    w_positive,
-                    placement.gradient,
-                    value,
-                );
+                let grid = &mut cells[offset..offset + block_cells];
+                let correction = if COMPENSATED {
+                    &mut correction[offset..offset + block_cells]
+                } else {
+                    &mut []
+                };
+                match clip.as_mut() {
+                    None => kernel::spread::<T, COMPENSATED>(
+                        grid,
+                        correction,
+                        layout.tile(),
+                        location,
+                        taps,
+                        mueller,
+                        w_positive,
+                        placement.gradient,
+                        value,
+                    ),
+                    Some((scratch, cells)) => kernel::spread_clipped::<T, COMPENSATED>(
+                        grid,
+                        correction,
+                        (layout.tile(), *cells),
+                        location,
+                        taps,
+                        (mueller, w_positive, placement.gradient),
+                        value,
+                        scratch,
+                    ),
+                }
             }
         }
+    }
+}
+
+/// The scratch and cells a clipped spread uses.
+type Clip<'a, T> = (&'a mut Vec<Complex<T>>, CellBox);
+
+/// The `sumwt` a placement of `reach` adds to, and the scratch and cells
+/// its clipped spread uses.
+fn targets<'a, T>(
+    reach: Reach,
+    sumwt: Option<&'a mut [f64]>,
+    scratch: &'a mut Vec<Complex<T>>,
+) -> (Option<&'a mut [f64]>, Option<Clip<'a, T>>) {
+    match reach {
+        Reach::Whole => (sumwt, None),
+        Reach::Clipped { cells, weighs } => (sumwt.filter(|_| weighs), Some((scratch, cells))),
+        Reach::Off => (None, None),
     }
 }
 

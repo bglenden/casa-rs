@@ -5,20 +5,21 @@
 
 use std::ops::Range;
 
-use casa_imaging_deconvolution::{NormalBasis, SpectralChannelValidity};
+use casa_imaging_deconvolution::NormalBasis;
 use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
 use crate::error::ProductsError;
+use crate::normalization::psf_peak;
 use crate::plan::{
     AnalyticPrimaryBeamModel, PlannedContinuumGeneration, PlannedMember,
     PublishedContinuumGeneration,
 };
 use crate::plane::{
     PlaneMemberRequest, apparent_model, model_real_plane, produce_plane_member,
-    product_plane_validity, psf_real_plane, reconstruction_support_plane,
+    product_plane_validity, psf_normalizes, psf_real_plane, reconstruction_support_plane,
     scatter_image_polarization_plane, scatter_polarization_plane_state, zero_invalid_plane_values,
 };
 use crate::source::ContinuumProductInputs;
@@ -122,11 +123,14 @@ fn fit_beams(
                 (ordinal / polarizations) % channels,
                 ordinal % polarizations,
             )?;
-            if plane.validity() != SpectralChannelValidity::Valid {
+            // A plane with a PSF (`normPSF`'s rule) has a beam, its `sumwt`
+            // aside: CASA fits every Stokes plane's.
+            let psf = psf_real_plane(&plane)?;
+            if !psf_normalizes(psf_peak(psf.iter().copied())?) {
                 return Ok(None);
             }
             fit_restoring_beam(
-                &psf_real_plane(&plane)?,
+                &psf,
                 plane.shape(),
                 inputs.cell_size_rad_for_domain(domain.role()),
                 planned.psf_cutoff(),
@@ -143,8 +147,9 @@ fn fit_beams(
 }
 
 /// The beams each plane is restored with, by the problem's restoring-beam
-/// policy: none, each plane's fitted beam, or one beam enclosing a domain's
-/// fitted beams.
+/// policy: none, each plane's fitted beam, one beam enclosing a domain's
+/// fitted beams, or the beam the request gives. A plane with no fitted beam
+/// holds no data and restores with none.
 fn restoring_beams(
     inputs: &ContinuumProductInputs<'_>,
     fitted_beams: &[Option<RestoringBeam>],
@@ -152,6 +157,13 @@ fn restoring_beams(
     Ok(match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
         RestoringBeamPolicy::PerPlane => fitted_beams.into(),
+        RestoringBeamPolicy::Fixed(beam) => {
+            let beam = fixed_restoring_beam(beam)?;
+            fitted_beams
+                .iter()
+                .map(|fitted| fitted.map(|_| beam))
+                .collect()
+        }
         RestoringBeamPolicy::Common => {
             let normal_state = inputs.normal_state();
             let planes = normal_state.channel_count() * normal_state.polarization_count();
@@ -421,9 +433,9 @@ fn produce_taylor_members(
     };
     let restoring_beams = match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
-        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => {
-            vec![products.restoring_beam()].into_boxed_slice()
-        }
+        RestoringBeamPolicy::PerPlane
+        | RestoringBeamPolicy::Common
+        | RestoringBeamPolicy::Fixed(_) => vec![products.restoring_beam()].into_boxed_slice(),
     };
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;

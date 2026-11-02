@@ -171,6 +171,21 @@ MT-MFS, cubes, facets and outlier domains are parameterisations of this one
 path; there is no per-mode driver. Later major cycles re-read the
 observation and grid residual samples; no replay cache is kept.
 
+A request may name a list of MeasurementSets, as tclean's `vis` does. The
+snapshot holds one source per MeasurementSet, ordered by earliest `TIME` as
+CASA orders them; the image's coordinates come from CASA's `msobj` (the
+first, or for a cube the one holding its start). A row's spectral window,
+field and dishes are keyed as if the MeasurementSets were concatenated
+(CASA's `msId_spw` and `msId_field`), so weighting density, the mosaic's
+beams and `mosweight` span them all and keep each one's apart.
+
+A run with `restart=True` continues on the products at its prefix
+(`casa-imaging-application`'s `restart` module): it starts from their model
+and reuses their mask when none is given. Under `calcpsf=False` or
+`calcres=False` the PSF, sums of weights or residual are read back as the
+unnormalized images a pass would have formed, and only the missing ones are
+formed by a pass; a residual read is not a major cycle.
+
 The host is detected once per process (`HostResources`). The run's
 `ResourcePolicy` sets its memory and its core allocation: a compute team for
 minor cycles and products, a streaming team for passes. Each phase admits

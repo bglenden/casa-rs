@@ -619,6 +619,17 @@ mod tests {
         assert!(cycle.threshold_reached);
     }
 
+    /// CASA raises the fraction to `minpsffraction`, then caps it at
+    /// `maxpsffraction`: when they cross, the maximum wins
+    /// (`test_iterbot_mfs_9`).
+    #[test]
+    fn crossed_psf_fractions_cap_the_cycle_threshold_at_the_maximum() {
+        let controls =
+            ReconstructionControls::new(100, 0.1, 0.01).with_cycle_threshold(1.0, 0.8, 0.5);
+        let controller = Controller::new(&controls);
+        assert!((controller.cycle_controls(&statistics(2.0)).threshold - 1.0).abs() < 1e-15);
+    }
+
     /// The controller after tclean's first check, which follows the initial
     /// major cycle at zero iterations, then one minor and one major cycle.
     fn after_one_cycle(controls: &ReconstructionControls, first: f64) -> Controller {
@@ -802,5 +813,26 @@ mod tests {
         statistics.automask = true;
         assert!((statistics.nsigma_threshold(3.0).unwrap() - 0.35).abs() < 1e-15);
         assert_eq!(statistics.nsigma_threshold(0.0), None);
+    }
+    #[test]
+    fn zero_major_limit_preserves_threshold_and_empty_mask_precedence() {
+        let limits = controls(10).with_cycle_limits(3, Some(0));
+        for (mut stats, expected) in [
+            (statistics(1.0), CleanStop::MajorCycles),
+            (statistics(0.001), CleanStop::Threshold),
+            (statistics(1.0), CleanStop::ZeroMask),
+        ] {
+            if expected == CleanStop::ZeroMask {
+                stats.mask_sum = 0;
+            }
+            let mut controller = Controller::new(&limits);
+            assert_eq!(controller.clean_complete(&stats), Some(expected));
+            assert_eq!(controller.iterations(), 0);
+            assert_eq!(
+                controller.major_cycles(),
+                0,
+                "counts passes after the initial one"
+            );
+        }
     }
 }

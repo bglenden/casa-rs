@@ -125,6 +125,10 @@ fn read_product(prefix: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
     (shape, values)
 }
 
+/// Output channels a quarter channel above the data's sample an affine
+/// spectrum by linear interpolation. The output width equals the data's:
+/// CASA refuses a channel narrower than every data channel
+/// (`MSTransformRegridder::regridChanBounds`).
 #[test]
 fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -152,19 +156,21 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             ms.save().expect("save unit spectrum");
         }
         let image_name = case.join("image");
+        // In the rows' own frequencies (`cubedata`): a TOPO `cube` is
+        // gridded through LSRK, so each row samples the spectrum where its
+        // Doppler drift from the first time puts it.
         let imaging = request(
             &measurement_set,
             &image_name,
             json!({
                 "niter": 0,
                 "imsize": 64,
-                "spw": "0:0~1",
+                "spw": "0:0~2",
                 "channel_count": 2,
-                "specmode": "cube",
-                "outframe": "TOPO",
+                "specmode": "cubedata",
                 "interpolation": "linear",
                 "start": "44000250000Hz",
-                "width": "500000Hz",
+                "width": "1000000Hz",
             }),
         );
         let result =
@@ -191,9 +197,9 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
         assert_eq!(shape, actual_shape);
         assert_eq!(shape[3], 2, "two output planes for {suffix}");
         if matches!(suffix.as_str(), ".residual" | ".image") {
-            // The source spectrum rises from one to two; output channels
-            // sample one quarter and three quarters of that interval.
-            for (channel, factor) in [1.25_f64, 1.75].into_iter().enumerate() {
+            // The source spectrum rises by one a channel from one; output
+            // channels sample it a quarter channel above channels 0 and 1.
+            for (channel, factor) in [1.25_f64, 2.25].into_iter().enumerate() {
                 let expected = unit
                     .index_axis(ndarray::Axis(3), channel)
                     .mapv(|value| f64::from(value) * factor);

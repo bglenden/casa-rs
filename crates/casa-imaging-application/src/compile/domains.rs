@@ -11,7 +11,8 @@ use casa_coordinates::{
 };
 use casa_images::AnyPagedImage;
 use casa_imaging_deconvolution::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, NoiseEstimate,
+    ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
@@ -36,7 +37,7 @@ pub(super) enum DomainMask {
     /// Every valid model pixel.
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
-    Boxes(Vec<[usize; 4]>),
+    Boxes(Vec<[i64; 4]>),
     /// The non-zero pixels of a CASA image, reprojected onto the domain.
     Image(PathBuf),
     /// Row-major support over the domain's own grid.
@@ -92,7 +93,7 @@ impl PreparedImageDomain {
 pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
-    spectral: ImageSpectralCoordinate,
+    spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
@@ -180,10 +181,8 @@ fn warn_inefficient_size(image_size: [usize; 2]) {
     }
 }
 
-/// The main domain's mask: CASA auto-multithresh, the user mask image or
-/// boxes, or every pixel. The auto-multithresh controls the catalog does
-/// not carry take CASA's defaults (`smoothfactor = 1`, `cutthreshold =
-/// 0.01`, `minpercentchange = -1`).
+/// The main domain's mask: CASA auto-multithresh with tclean's controls,
+/// the user mask image or boxes, or every pixel.
 fn request_mask(request: &ImagingRequest) -> DomainMask {
     match (request.usemask, &request.mask_image) {
         (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
@@ -192,14 +191,28 @@ fn request_mask(request: &ImagingRequest) -> DomainMask {
             low_noise_factor: request.lownoisethreshold,
             negative_factor: request.negativethreshold,
             minimum_beam_fraction: request.minbeamfrac,
-            smooth_factor: 1.0,
-            cut_threshold: 0.01,
+            smooth_factor: request.smoothfactor,
+            cut_threshold: request.cutthreshold,
             grow_iterations: request.growiterations,
-            minimum_percent_change: -1.0,
+            grow_prune: request.dogrowprune,
+            minimum_percent_change: request.minpercentchange,
+            noise: noise_estimate(request),
+            verbose: request.verbose,
         }),
         (UseMask::User, Some(path)) => DomainMask::Image(path.clone()),
-        (UseMask::User, None) if request.mask_box.is_empty() => DomainMask::FullPlane,
+        (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
+            DomainMask::FullPlane
+        }
         (UseMask::User, None) => DomainMask::Boxes(request.mask_box.clone()),
+    }
+}
+
+/// tclean's noise estimate (`fastnoise`).
+pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
+    if request.fastnoise {
+        NoiseEstimate::Fast
+    } else {
+        NoiseEstimate::Robust
     }
 }
 
@@ -476,5 +489,37 @@ mod tests {
                 "f64, direction first {direction_first}"
             );
         }
+    }
+    #[test]
+    fn an_empty_region_file_is_zero_support_but_an_absent_mask_is_full_plane() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("empty.crtf");
+        std::fs::write(&path, "#CRTF\n# no regions\n").unwrap();
+        let explicit = crate::request::tests::request(serde_json::json!({"mask": path}));
+        assert!(matches!(request_mask(&explicit), DomainMask::Boxes(boxes) if boxes.is_empty()));
+        let default = crate::request::tests::request(serde_json::json!({}));
+        assert_eq!(request_mask(&default), DomainMask::FullPlane);
+        let empty_argument = crate::request::tests::request(serde_json::json!({"mask": []}));
+        assert_eq!(request_mask(&empty_argument), DomainMask::FullPlane);
+        let automatic = crate::request::tests::request(
+            serde_json::json!({"usemask": "auto-multithresh", "mask": path}),
+        );
+        assert!(matches!(
+            request_mask(&automatic),
+            DomainMask::AutoMultithresh(_)
+        ));
+        // A new explicit empty region must not silently reuse an old mask:
+        // it stays the request's own empty mask, and a cleaning run over an
+        // old mask is refused rather than merged.
+        let mut continuation = explicit;
+        continuation.imagename = directory.path().join("image");
+        std::fs::write(directory.path().join("image.model"), "old model").unwrap();
+        std::fs::write(directory.path().join("image.mask"), "old mask").unwrap();
+        continuation.check_tclean_output_prefixes().unwrap();
+        assert!(
+            matches!(request_mask(&continuation), DomainMask::Boxes(boxes) if boxes.is_empty())
+        );
+        continuation.niter = 5;
+        assert!(continuation.check_tclean_output_prefixes().is_err());
     }
 }

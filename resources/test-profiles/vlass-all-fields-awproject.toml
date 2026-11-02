@@ -2,14 +2,14 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 38
 
 [parameters]
 vis = ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"]
-field = "1107~1127,1512~1532,1542~1562"
-spw = "2~17"
-uvrange = "<12km"
-intent = "OBSERVE_TARGET#UNSPECIFIED"
+field = ["1107~1127,1512~1532,1542~1562"]
+spw = ["2~17"]
+uvrange = ["<12km"]
+intent = ["OBSERVE_TARGET#UNSPECIFIED"]
 datacolumn = "data"
 imagename = "products/vlass-all-fields"
 imsize = [12150, 12150]
@@ -31,5 +31,4 @@ cycleniter = 2000
 cyclefactor = 3
 channel_start = 0
 channel_count = 64
-write_pb = true
 cf_resident_mb = 512

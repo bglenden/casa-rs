@@ -20,20 +20,40 @@ pub enum IdSelection {
     All,
     /// Select exactly these identifiers.
     Only(Vec<u32>),
+    /// Inclusive identifier intervals, stored in space proportional to their count.
+    /// Compilation normalizes endpoints and merges overlapping or adjacent intervals.
+    Ranges(Vec<(u32, u32)>),
 }
 
 impl IdSelection {
-    /// Return selected identifiers, or `None` when every identifier is selected.
+    /// Return an explicit identifier list, or `None` for all IDs or interval storage.
     #[must_use]
-    pub fn ids(&self) -> Option<&[u32]> {
+    pub fn explicit_ids(&self) -> Option<&[u32]> {
         match self {
-            Self::All => None,
+            Self::All | Self::Ranges(_) => None,
             Self::Only(ids) => Some(ids),
         }
     }
 
+    /// Whether every identifier is selected without a predicate.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Bytes in owned vector allocations; the enclosing owner charges the enum itself.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        match self {
+            Self::All => Some(0),
+            Self::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
+            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(u32, u32)>()),
+        }
+    }
+
     /// Whether the selection holds identifier `value`; a negative one is
-    /// never selected by a list. A canonical list is sorted.
+    /// never selected by a list or interval. Lists must be sorted and intervals
+    /// canonical (sorted and disjoint), as guaranteed after compilation.
     #[must_use]
     pub fn holds(&self, value: i64) -> bool {
         match self {
@@ -41,6 +61,10 @@ impl IdSelection {
             Self::Only(ids) => {
                 u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
             }
+            Self::Ranges(ranges) => u32::try_from(value).is_ok_and(|value| {
+                let index = ranges.partition_point(|&(start, _)| start <= value);
+                index > 0 && value <= ranges[index - 1].1
+            }),
         }
     }
 
@@ -51,6 +75,28 @@ impl IdSelection {
             if ids.is_empty() {
                 return Err(CompileObservationError::EmptyIdSelection { selector });
             }
+        }
+        if let Self::Ranges(ranges) = self {
+            if ranges.is_empty() {
+                return Err(CompileObservationError::EmptyIdSelection { selector });
+            }
+            for (start, end) in ranges.iter_mut() {
+                if *start > *end {
+                    std::mem::swap(start, end);
+                }
+            }
+            ranges.sort_unstable();
+            let mut count = 0;
+            for index in 0..ranges.len() {
+                let (start, end) = ranges[index];
+                if count > 0 && start <= ranges[count - 1].1.saturating_add(1) {
+                    ranges[count - 1].1 = ranges[count - 1].1.max(end);
+                } else {
+                    ranges[count] = (start, end);
+                    count += 1;
+                }
+            }
+            ranges.truncate(count);
         }
         Ok(())
     }
@@ -72,15 +118,189 @@ pub enum IntentSelection {
     Only(Vec<String>),
 }
 
+/// Exact resolved baseline selection: CASA's `antenna` expression evaluated
+/// over the observation's antennas.
+///
+/// The table answers, for each ordered `(antenna1, antenna2)` pair of
+/// antenna identifiers, whether a sample on that baseline is selected. CASA's
+/// expressions are not symmetric in general (`/A&B/` matches only that
+/// order), and whether autocorrelations are selected depends on the form, so
+/// the table holds every ordered pair, autocorrelations included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineSelection {
+    /// Select every baseline.
+    All,
+    /// Select the ordered pairs marked in a row-major `antennas × antennas`
+    /// table indexed by `antenna1 * antennas + antenna2`.
+    Pairs {
+        /// Antennas along each side of the table.
+        antennas: usize,
+        /// Whether each ordered pair is selected.
+        selected: Vec<bool>,
+    },
+}
+
+impl BaselineSelection {
+    /// The selection `holds` states for every ordered pair of `antennas`
+    /// antennas.
+    #[must_use]
+    pub fn from_pairs(antennas: usize, holds: impl Fn(usize, usize) -> bool) -> Self {
+        let mut selected = Vec::with_capacity(antennas * antennas);
+        for antenna1 in 0..antennas {
+            selected.extend((0..antennas).map(|antenna2| holds(antenna1, antenna2)));
+        }
+        Self::Pairs { antennas, selected }
+    }
+
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample on the ordered baseline `(antenna1, antenna2)` is
+    /// selected. An antenna outside the table selects nothing.
+    #[must_use]
+    pub fn holds(&self, antenna1: u32, antenna2: u32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Pairs { antennas, selected } => {
+                let (antenna1, antenna2) = (antenna1 as usize, antenna2 as usize);
+                antenna1 < *antennas
+                    && antenna2 < *antennas
+                    && selected[antenna1 * antennas + antenna2]
+            }
+        }
+    }
+
+    /// Heap bytes the selection owns.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::Pairs { selected, .. } => selected.capacity() * size_of::<bool>(),
+        }
+    }
+}
+
+/// One condition CASA's `timerange` puts on a sample's `TIME`, in seconds
+/// in the `TIME` column's scale, evaluated with the same double-precision
+/// operations as CASA's TaQL (`MSTimeParse`, casacore `aaf72eb7`). The
+/// MeasurementSet owner's port of CASA's time grammar
+/// (`casa_ms::TimeCondition`) resolves them; this is its data, so imaging
+/// tests each time as CASA does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimeCondition {
+    /// `abs(TIME - time_s) <= tolerance_s`: a single time.
+    Near {
+        /// The time.
+        time_s: f64,
+        /// Half the default row's `EXPOSURE`.
+        tolerance_s: f64,
+    },
+    /// `TIME >= time_s`, from `>T`.
+    AtOrAfter {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME <= time_s`, from `<T`.
+    AtOrBefore {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME >= lower_s && TIME <= upper_s`, from `T0~T1` or `T0+dT`.
+    Within {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+    },
+    /// `(TIME > lower_s || abs(TIME - lower_s) < edge_s) && (TIME < upper_s
+    /// || abs(TIME - upper_s) < edge_s)`, from a bracketed range.
+    EdgeInclusive {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+        /// The edge width, a C `Float` in CASA.
+        edge_s: f32,
+    },
+}
+
+impl TimeCondition {
+    /// Whether a sample whose `TIME` is `time_s` meets the condition.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match *self {
+            Self::Near {
+                time_s: centre,
+                tolerance_s,
+            } => (time_s - centre).abs() <= tolerance_s,
+            Self::AtOrAfter { time_s: bound } => time_s >= bound,
+            Self::AtOrBefore { time_s: bound } => time_s <= bound,
+            Self::Within { lower_s, upper_s } => time_s >= lower_s && time_s <= upper_s,
+            Self::EdgeInclusive {
+                lower_s,
+                upper_s,
+                edge_s,
+            } => {
+                let edge = f64::from(edge_s);
+                (time_s > lower_s || (time_s - lower_s).abs() < edge)
+                    && (time_s < upper_s || (time_s - upper_s).abs() < edge)
+            }
+        }
+    }
+}
+
+/// Exact resolved time selection: CASA's `timerange`, the OR of its terms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimeSelection {
+    /// Select every time.
+    All,
+    /// Select a time that meets any of these conditions.
+    AnyOf(Vec<TimeCondition>),
+}
+
+impl TimeSelection {
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample whose `TIME` is `time_s` is selected.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match self {
+            Self::All => true,
+            Self::AnyOf(conditions) => conditions.iter().any(|condition| condition.holds(time_s)),
+        }
+    }
+
+    /// Heap bytes the selection owns.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::AnyOf(conditions) => conditions.capacity() * size_of::<TimeCondition>(),
+        }
+    }
+}
+
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
 ///
 /// These are the MeasurementSet selections the imager exposes: field, UV
-/// distance and scan intent.
+/// distance, scan intent, scan number, observation identifier, baseline and
+/// time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
+    scans: IdSelection,
+    observations: IdSelection,
     uv_distances: UvSelection,
     intents: IntentSelection,
+    baselines: BaselineSelection,
+    times: TimeSelection,
 }
 
 impl RowSelection {
@@ -93,9 +313,60 @@ impl RowSelection {
     ) -> Self {
         Self {
             fields,
+            scans: IdSelection::All,
+            observations: IdSelection::All,
             uv_distances,
             intents,
+            baselines: BaselineSelection::All,
+            times: TimeSelection::All,
         }
+    }
+
+    /// Constrain times, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_times(mut self, times: TimeSelection) -> Self {
+        self.times = times;
+        self
+    }
+
+    /// Return the resolved time selection.
+    #[must_use]
+    pub const fn times(&self) -> &TimeSelection {
+        &self.times
+    }
+
+    /// Constrain baselines, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_baselines(mut self, baselines: BaselineSelection) -> Self {
+        self.baselines = baselines;
+        self
+    }
+
+    /// Return the resolved baseline selection.
+    #[must_use]
+    pub const fn baselines(&self) -> &BaselineSelection {
+        &self.baselines
+    }
+
+    /// Constrain scan numbers and observation identifiers, conjunctively with
+    /// the other row predicates. Compilation canonicalizes both ID sets.
+    #[must_use]
+    pub fn with_scan_observation(mut self, scans: IdSelection, observations: IdSelection) -> Self {
+        self.scans = scans;
+        self.observations = observations;
+        self
+    }
+
+    /// Return resolved scan numbers.
+    #[must_use]
+    pub const fn scans(&self) -> &IdSelection {
+        &self.scans
+    }
+
+    /// Return resolved observation identifiers.
+    #[must_use]
+    pub const fn observations(&self) -> &IdSelection {
+        &self.observations
     }
 
     /// Return resolved field identifiers.
@@ -118,6 +389,8 @@ impl RowSelection {
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.fields.canonicalize("field")?;
+        self.scans.canonicalize("scan")?;
+        self.observations.canonicalize("observation")?;
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}
@@ -245,12 +518,17 @@ impl SpectralWindowCoordinateCatalog {
 }
 
 /// Exact channels selected from one spectral window.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowSelection {
     spectral_window_id: u32,
     channel_indices: Vec<u32>,
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
+    first_buffer_lsrk_factor: Option<f64>,
 }
+
+// Construction rejects every non-finite factor, so IEEE equality is
+// reflexive for all values this type can contain.
+impl Eq for SpectralWindowSelection {}
 
 impl SpectralWindowSelection {
     /// Construct a resolved spectral-window/channel selection.
@@ -260,7 +538,27 @@ impl SpectralWindowSelection {
             spectral_window_id,
             channel_indices,
             coordinate_catalog: None,
+            first_buffer_lsrk_factor: None,
         }
+    }
+
+    /// Bind the factor that takes the window's frequencies to LSRK at the
+    /// first visibility buffer CASA's tclean iterates of it, where
+    /// `FTMachine::matchChannel` converts them and a mosaic evaluates its
+    /// beams (`HetArrayConvFunc::findConvFunction`); `None` unless the
+    /// factor is finite and positive.
+    #[must_use]
+    pub fn with_first_buffer_lsrk_factor(mut self, factor: f64) -> Option<Self> {
+        (factor.is_finite() && factor > 0.0).then(|| {
+            self.first_buffer_lsrk_factor = Some(factor);
+            self
+        })
+    }
+
+    /// The factor [`Self::with_first_buffer_lsrk_factor`] bound, if any.
+    #[must_use]
+    pub const fn first_buffer_lsrk_factor(&self) -> Option<f64> {
+        self.first_buffer_lsrk_factor
     }
 
     /// Bind the storage owner's complete physical spectral coordinate catalog.

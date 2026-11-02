@@ -270,9 +270,22 @@ fn native_aw_request_input_validates_its_axes_and_terms() {
     let mut duplicate = input.clone();
     duplicate.frequencies[1].spectral_window = 2;
     assert!(duplicate.validate().is_err());
+    // One co-planar plane keeps CASA's zero `wScale`; more planes need one.
+    let mut co_planar = input.clone();
+    co_planar.terms.w_term = false;
+    co_planar.w_values = vec![0.0];
+    co_planar.w_increment = 0.0;
+    assert!(co_planar.validate().is_ok());
+    let mut unscaled = input.clone();
+    unscaled.w_increment = 0.0;
+    assert!(unscaled.validate().is_err());
     let mut narrow = input;
     narrow.terms.wideband = false;
     assert!(narrow.validate().is_err());
+    // Without wideband cells, one group at the reference frequency.
+    narrow.frequencies.truncate(1);
+    narrow.frequencies[0].cf_frequency_hz = narrow.reference_frequency_hz;
+    assert!(narrow.validate().is_ok());
 }
 
 fn observation() -> ObservationSnapshot {

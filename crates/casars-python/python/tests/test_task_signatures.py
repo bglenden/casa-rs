@@ -6,8 +6,8 @@ then casa-rs's own controls as keyword-only arguments, and returns CASA's
 value. The CASA signatures are the pinned inventory in
 `resources/casa-compat/casa-6.7.6.14/` (#931 PR 4a). A CASA-named task that
 is neither checked here nor listed as pending fails, so a new one cannot
-slip in with a casa-rs signature. So a CASA script runs with only its
-imports changed.
+slip in with a casa-rs signature. These tests establish the call surface;
+behavioral and scientific equivalence require their own evidence (#980).
 """
 
 from __future__ import annotations

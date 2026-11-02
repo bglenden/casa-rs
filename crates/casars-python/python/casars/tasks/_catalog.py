@@ -174,14 +174,14 @@ def importvla(
 def tclean(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     selectdata: bool = True,
-    field: str = '',
-    spw: str = '',
-    timerange: str = '',
-    uvrange: str = '',
-    antenna: str = '',
-    scan: str = '',
-    observation: str = '',
-    intent: str = '',
+    field: str | list[str] | tuple[str, ...] = '',
+    spw: str | list[str] | tuple[str, ...] = '',
+    timerange: str | list[str] | tuple[str, ...] = '',
+    uvrange: str | list[str] | tuple[str, ...] = '',
+    antenna: str | list[str] | tuple[str, ...] = '',
+    scan: str | list[str] | tuple[str, ...] = '',
+    observation: str | list[str] | tuple[str, ...] = '',
+    intent: str | list[str] | tuple[str, ...] = '',
     datacolumn: str = 'corrected',
     imagename: StrPath = '',
     imsize: int | list[int] | tuple[int, ...] = [100],
@@ -268,8 +268,8 @@ def tclean(
     ddid: str = 'none',
     channel_start: int | Literal['none'] = 'none',
     channel_count: int | Literal['none'] = 'none',
-    hogbom_iteration_mode: str = 'strict',
-    write_pb: bool = False,
+    hogbom_iteration_mode: str = 'casa-inclusive',
+    write_pb: bool = True,
     fitspw: str = 'none',
     fitorder: int = 0,
     save_continuum_residual: bool = False,
@@ -291,15 +291,9 @@ def tclean(
     """Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
     CASA's ``tclean``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #944:
-    ``restart``.
     Accepted only at CASA's default, where CASA reads them, until #980:
-    ``timerange``, ``antenna``, ``scan``, ``observation``, ``projection``,
-    ``reffreq``, ``psfphasecenter``, ``vptable``, ``computepastep``,
-    ``rotatepastep``, ``restoration``, ``noise``, ``npixels``,
-    ``interactive``, ``pbmask``, ``smoothfactor``, ``cutthreshold``,
-    ``dogrowprune``, ``minpercentchange``, ``verbose``, ``fastnoise``,
-    ``calcres``, ``calcpsf``.
+    ``projection``, ``psfphasecenter``, ``vptable``, ``computepastep``,
+    ``rotatepastep``, ``interactive``, ``pbmask``.
     """
     return _call_casa(tclean, locals())
 

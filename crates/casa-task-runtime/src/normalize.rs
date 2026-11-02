@@ -1134,8 +1134,9 @@ mod tests {
     fn legacy_empty_shared_selectors_normalize_to_canonical_none() {
         let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
         for concept in catalog.catalog.concepts.iter().filter(|concept| {
-            concept.id.as_str().starts_with("ms.selection.")
-                || concept.id.as_str().starts_with("image.selection.")
+            concept.semantic_revision.0 == 1
+                && (concept.id.as_str().starts_with("ms.selection.")
+                    || concept.id.as_str().starts_with("image.selection."))
         }) {
             assert_eq!(
                 normalize_value(&ParameterValue::String("  ".into()), concept).unwrap(),
@@ -1151,6 +1152,36 @@ mod tests {
                 )
                 .unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn numeric_selector_revision_two_preserves_validity_distinctions() {
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        for concept in catalog.catalog.concepts.iter().filter(|concept| {
+            concept.semantic_revision.0 == 2
+                && matches!(
+                    concept.id.as_str(),
+                    "ms.selection.scan"
+                        | "ms.selection.observation"
+                        | "ms.selection.antenna"
+                        | "ms.selection.timerange"
+                )
+        }) {
+            for text in ["", "  ", "none", "None", " none ", " 1 ", "1~2", ">1"] {
+                let value = ParameterValue::String(text.into());
+                assert_eq!(normalize_value(&value, concept).unwrap(), value);
+            }
+            for text in ["  ", "none", "None", " none "] {
+                assert!(
+                    !semantic_eq(
+                        &ParameterValue::String(String::new()),
+                        &ParameterValue::String(text.into()),
+                        concept
+                    )
+                    .unwrap()
+                );
+            }
         }
     }
 

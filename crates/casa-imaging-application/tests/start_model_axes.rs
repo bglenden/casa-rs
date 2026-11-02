@@ -4,7 +4,7 @@
 //! pixels, so an axis `regrid` would let through by keeping the input's
 //! coordinate (one pixel in both images) is checked by the start model
 //! itself:
-//! - its Stokes are the image's, plane for plane, a single plane included;
+//! - its Stokes are copied by plane position, with a warning for differing labels;
 //! - an MFS image's start model has one spectral plane, at any frequency,
 //!   as CASA's regrid replicates a degenerate spectral axis;
 //! - a cube's start model has the cube's spectral axis.
@@ -17,6 +17,23 @@ use casa_images::{PagedImage, RegridTemplate};
 use casa_imaging_application::start_model_law::{main_samples, seeding_bytes};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex},
+};
+
+#[derive(Clone, Default)]
+struct WarningLog(Arc<Mutex<Vec<u8>>>);
+
+impl Write for WarningLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 const ARCSEC: f64 = std::f64::consts::PI / (180.0 * 3600.0);
 const SIDE: usize = 16;
@@ -76,12 +93,27 @@ fn template(stokes: &[StokesType], channels: usize, frequency_hz: f64) -> Regrid
 }
 
 #[test]
-fn a_single_stokes_plane_must_be_the_images_stokes() {
+fn a_single_stokes_plane_is_copied_as_casa_does_even_if_its_label_differs() {
     let dir = tempfile::tempdir().expect("dir");
     let q = start_model(dir.path(), &[StokesType::Q], 1, 1.0e9);
-    let refused = seeding_bytes(&q, template(&[StokesType::I], 1, 1.0e9))
-        .expect_err("a Stokes Q start model of a Stokes I image");
-    assert!(refused.contains("Stokes"), "{refused}");
+    let warnings = WarningLog::default();
+    let output = warnings.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || output.clone())
+        .finish();
+    let samples = tracing::subscriber::with_default(subscriber, || {
+        main_samples(&q, template(&[StokesType::I], 1, 1.0e9))
+    })
+    .expect("CASA copies Q into I by position");
+    let warning = String::from_utf8(warnings.0.lock().unwrap().clone()).unwrap();
+    assert!(warning.contains("copying planes by position"), "{warning}");
+    assert!(warning.contains("no polarization conversion"), "{warning}");
+    assert_eq!(
+        samples,
+        main_samples(&q, template(&[StokesType::Q], 1, 1.0e9)).unwrap()
+    );
     seeding_bytes(&q, template(&[StokesType::Q], 1, 1.0e9)).expect("Q onto Q");
 }
 
@@ -97,7 +129,9 @@ fn a_full_stokes_start_model_seeds_each_plane_of_its_own() {
         assert_eq!(first, 2.0 + 3.0 + offset, "plane {plane}");
     }
     let swapped = [StokesType::I, StokesType::U, StokesType::Q, StokesType::V];
-    seeding_bytes(&path, template(&swapped, 1, 1.0e9)).expect_err("IUQV is not IQUV");
+    let copied = main_samples(&path, template(&swapped, 1, 1.0e9))
+        .expect("CASA copies Stokes by plane position");
+    assert_eq!(copied, samples);
 }
 
 #[test]

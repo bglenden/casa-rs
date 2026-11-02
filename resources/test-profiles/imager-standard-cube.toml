@@ -2,12 +2,12 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 38
 
 [parameters]
 vis = ["representative-cube.ms"]
-field = "1"
-spw = "5:10~33"
+field = ["1"]
+spw = ["5:10~33"]
 imagename = "products/representative-cube"
 imsize = [768, 768]
 cell = ["0.4arcsec", "0.4arcsec"]

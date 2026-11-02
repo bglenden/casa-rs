@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::syntax::{dedup_i32, parse_numeric_id_selector, parse_numeric_range};
+use crate::selection::syntax::{
+    canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector, parse_numeric_range_endpoints,
+};
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 use crate::subtables::{get_f64, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
@@ -19,15 +21,7 @@ pub(crate) fn selection_from_options(
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
-        let (field_ids, field_names) = parse_field_selector(ms, field)?;
-        if !field_ids.is_empty() {
-            selection = selection.field(&field_ids);
-        }
-        if !field_names.is_empty() {
-            let names = field_names.iter().map(String::as_str).collect::<Vec<_>>();
-            let resolved_ids = resolve_field_names(ms, &names)?;
-            selection = selection.field(&resolved_ids);
-        }
+        selection = selection.field(resolve_field_predicate(ms, field)?);
     }
 
     if let Some(spw) = options.spw.as_deref() {
@@ -67,16 +61,126 @@ pub(crate) fn selection_from_options(
     Ok(selection)
 }
 
-fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {
-    let mut ids = Vec::new();
+/// One FIELD row as the field selector reads it: its stored `NAME` and its
+/// `FLAG_ROW`. Row `i` of a slice of these is `FIELD_ID` `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldSelectorRow<'a> {
+    /// The stored name; the selector compares it trimmed.
+    pub name: &'a str,
+    /// Whether the row is flagged: a flagged row matches no name or pattern,
+    /// following `MSFieldIndex`, though a numeric ID still selects it.
+    pub flagged: bool,
+}
+
+/// Resolve a field selector over `fields`, a FIELD table's rows in row
+/// order, as [`MeasurementSet::resolve_field_selector`] does over its own
+/// FIELD table. An observation catalogue states the same rows, so a
+/// consumer that holds one resolves fields without the MeasurementSet.
+///
+/// # Errors
+///
+/// As [`MeasurementSet::resolve_field_selector`], without its FIELD read.
+pub fn resolve_field_selector_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = resolve_field_predicate_rows(fields, value)?;
+    if ids.is_empty() {
+        return Err(MsError::InvalidInput(format!(
+            "field selector {value:?} did not match any existing fields"
+        )));
+    }
+    Ok(ids)
+}
+
+impl MeasurementSet {
+    /// Resolve a field selector using FIELD metadata, without scanning MAIN.
+    ///
+    /// Comma-separated IDs, inclusive numeric ranges, exact names and simple
+    /// `*` name patterns form a union, as CASA's `MSFieldGram` index list does.
+    /// The returned IDs are sorted and unique. Empty text returns an empty
+    /// list, the selection builder's convention for selecting every field.
+    ///
+    /// # Errors
+    ///
+    /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
+    /// no FIELD row, or a nonempty selection resolving to no existing fields.
+    /// This resolver does not implement CASA's regex, quoted-name or comparison
+    /// expression forms, negative numeric IDs, or FIELD CODE/numeric-name fallback.
+    /// Numeric IDs are bounded by the FIELD row count before enumeration.
+    /// Name matching trims stored names and
+    /// excludes flagged FIELD rows, following `MSFieldIndex`.
+    pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
+        if value.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = field_selector_rows(self)?;
+        resolve_field_selector_rows(&borrow_field_rows(&rows), value)
+    }
+}
+
+/// The FIELD table's names and flags, in row order.
+fn field_selector_rows(ms: &MeasurementSet) -> MsResult<Vec<(String, bool)>> {
+    let field = ms.field()?;
+    (0..field.row_count())
+        .map(|row| Ok((field.name(row)?, field.flag_row(row)?)))
+        .collect()
+}
+
+fn borrow_field_rows(rows: &[(String, bool)]) -> Vec<FieldSelectorRow<'_>> {
+    rows.iter()
+        .map(|(name, flagged)| FieldSelectorRow {
+            name,
+            flagged: *flagged,
+        })
+        .collect()
+}
+
+/// Preserve the difference between no predicate and an explicit empty match.
+/// Generic MS consumers allow empty results; imaging's public wrapper refuses them.
+fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<Vec<i32>>> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let rows = field_selector_rows(ms)?;
+    resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
+}
+
+/// The FIELD rows of `fields` that the nonempty selector `value` names,
+/// sorted and unique; possibly none.
+fn resolve_field_predicate_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    let (mut ids, names) = parse_field_selector(fields, value)?;
+    if !names.is_empty() {
+        let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+        ids.extend(resolve_field_names(fields, &names)?);
+    }
+    Ok(dedup_i32(ids))
+}
+
+fn parse_field_selector(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<(Vec<i32>, Vec<String>)> {
+    let mut ranges = Vec::new();
     let mut names = Vec::new();
     for raw_part in value.split(',') {
         let part = raw_part.trim();
         if part.is_empty() {
             continue;
         }
+        if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}']) {
+            return Err(MsError::InvalidInput(format!(
+                "field expression {part:?} is not implemented yet (#54); use IDs, names or simple * patterns"
+            )));
+        }
         if part.contains('*') {
-            let matched = collect_matching_field_names(ms, part)?;
+            let matched = collect_matching_field_names(fields, part);
             if matched.is_empty() {
                 return Err(MsError::VersionError(format!(
                     "field selector {part:?} did not match any field names"
@@ -85,17 +189,32 @@ fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>,
             names.extend(matched);
             continue;
         }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
-        }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
+        let numeric = parse_numeric_range_endpoints(part)
+            .or_else(|| part.parse::<i32>().ok().map(|id| (id, id)));
+        if let Some((start, end)) = numeric {
+            if start < 0 || end < start {
+                return Err(MsError::InvalidInput(format!(
+                    "field numeric selector {part:?} requires nonnegative, ascending endpoints"
+                )));
+            }
+            ranges.push((start, end));
             continue;
         }
         names.push(part.to_string());
     }
-    Ok((dedup_i32(ids), dedup_strings(names)))
+    let mut ids = Vec::new();
+    if !ranges.is_empty() {
+        let count = fields.len();
+        if count > 0 {
+            let last = i32::try_from(count - 1).unwrap_or(i32::MAX);
+            // Merge before enumeration: neither width nor overlapping terms
+            // can materialize more numeric IDs than the FIELD table contains.
+            for (start, end) in canonical_numeric_ranges(ranges) {
+                ids.extend(start..=end.min(last));
+            }
+        }
+    }
+    Ok((ids, dedup_strings(names)))
 }
 
 fn apply_antenna_selector(
@@ -612,33 +731,31 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
     Ok(if value.len() < 3 { 2000 + year } else { year })
 }
 
-fn resolve_field_names(ms: &MeasurementSet, names: &[&str]) -> MsResult<Vec<i32>> {
-    let field = ms.field()?;
+fn resolve_field_names(fields: &[FieldSelectorRow<'_>], names: &[&str]) -> MsResult<Vec<i32>> {
     let mut ids = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if names.iter().any(|candidate| candidate == &name) {
-            ids.push(row as i32);
+    for name in names {
+        let start = ids.len();
+        for (row, field) in fields.iter().enumerate() {
+            if !field.flagged && field.name.trim() == *name {
+                ids.push(row as i32);
+            }
         }
-    }
-    if ids.is_empty() {
-        return Err(MsError::VersionError(format!(
-            "field selector names {names:?} did not match any FIELD rows"
-        )));
+        if ids.len() == start {
+            return Err(MsError::VersionError(format!(
+                "field selector name {name:?} did not match any FIELD rows"
+            )));
+        }
     }
     Ok(dedup_i32(ids))
 }
 
-fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<Vec<String>> {
-    let field = ms.field()?;
-    let mut matches = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if matches_simple_glob(pattern, &name) {
-            matches.push(name);
-        }
-    }
-    Ok(dedup_strings(matches))
+fn collect_matching_field_names(fields: &[FieldSelectorRow<'_>], pattern: &str) -> Vec<String> {
+    let matches = fields
+        .iter()
+        .filter(|field| !field.flagged && matches_simple_glob(pattern, field.name.trim()))
+        .map(|field| field.name.trim().to_string())
+        .collect();
+    dedup_strings(matches)
 }
 
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {

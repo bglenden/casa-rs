@@ -29,7 +29,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 30
 
 [parameters]
 vis = "data/target.ms"
@@ -66,6 +66,14 @@ CASA's (`phasecenter_field` to `phasecenter`, `mask_box` and `mask_image` to
 changed (`imsize`, `cell`, `cycleniter`, `nterms`) takes tclean's with a
 warning. Older imager contracts are refused.
 
+Contract 30 changes casa-rs's keyword-only `write_pb` extra to default to
+`True`, so an ordinary `tclean` call writes the `.pb` product CASA writes.
+This changes none of CASA's 92 parameters or their defaults; `pbcor=False`
+still leaves the restored image uncorrected. A contract-29 profile with
+`write_pb` omitted adopts the new default with a warning. An explicit
+`write_pb=False` remains an opt-out. The owner approved this change on
+2026-10-31 (#980).
+
 Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file
 merely because the file lives elsewhere.
@@ -92,6 +100,13 @@ available through the same CLI flags, task JSON, sparse profiles, and generated
 Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
 frozen EVLA case, not general telescope support.
+
+The native cells follow tclean's terms as CASA's `AWProjectFT` reads them:
+`aterm`, `psterm`, `wbawp` (cells at each window's frequency, or at the image
+reference frequency alone; without the aperture CASA drops it), `conjbeams`
+(the weight cell's conjugate beam) and `wprojplanes` (one plane is co-planar).
+An imported CASA cache already holds the cells its run made; with it only
+`conjbeams` changes the run, choosing the cell each sample grids with.
 
 ## Sources and precedence
 

@@ -10,7 +10,7 @@ use casa_imaging_model::{
     ReconstructionBasis, RestoringBeamPolicy,
 };
 
-use crate::beam::RestoringBeam;
+use crate::beam::{RestoringBeam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::source::ContinuumProductInputs;
 use crate::taylor::primary_beam_frequency_supported;
@@ -23,7 +23,8 @@ pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_deconvolution::DEFAULT_PSF_FIT_
 pub enum AnalyticPrimaryBeamModel {
     /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
     CasaEvlaCommon,
-    /// CASA's frequency-selected legacy-VLA L- and Q-band primary beams.
+    /// CASA's frequency-selected legacy-VLA primary beams: the named bands'
+    /// annular aperture and the NVSS Airy aperture at other positive frequencies.
     CasaVlaBand,
     /// CASA's 10.7 m effective Airy aperture for homogeneous ALMA 12 m data.
     CasaAlma12mAiry,
@@ -307,6 +308,12 @@ impl PlannedContinuumGeneration {
             ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
             | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => {
                 vec![restoring.iter().flatten().next().copied()].into_boxed_slice()
+            }
+            // CASA records the given beam as the image's one beam
+            // (`SIImageStore::restore`), whatever its planes hold.
+            ProductBeamRule::Restoring(RestoringBeamPolicy::Fixed(beam))
+            | ProductBeamRule::Metadata(RestoringBeamPolicy::Fixed(beam)) => {
+                vec![fixed_restoring_beam(beam).ok()].into_boxed_slice()
             }
         }
     }

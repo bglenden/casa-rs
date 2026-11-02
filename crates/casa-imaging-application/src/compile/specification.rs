@@ -5,13 +5,13 @@
 //! products and their validity, and a sequential continuum subtraction.
 
 use std::collections::BTreeSet;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 use casa_imaging_model::{
     AwProjectionContract, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
-    CorrectedDataWrite, DeclaredInnerProducts, FiniteValuePolicy, HogbomIterationAccounting,
-    InstrumentModel, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
-    ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
+    CorrectedDataWrite, DeclaredInnerProducts, DensityCells, FiniteValuePolicy,
+    HogbomIterationAccounting, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
+    ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
     ObservationTransactionRequirements, PolarizationContract, PrimaryBeamValidityPolicy,
     ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
@@ -28,7 +28,7 @@ use super::PrepareError;
 use super::selection::SourceSpectralWindow;
 use super::spectral::PreparedSpectralAxis;
 use super::survey::WRange;
-use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SpecMode, Weighting};
+use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, Weighting};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
@@ -40,6 +40,14 @@ pub(super) struct SpecificationInputs {
     pub(super) primary_beam: bool,
     pub(super) w_projection: Option<WProjectionContract>,
     pub(super) aw_projection: Option<AwProjectionContract>,
+    /// Whether a mosaic grids with its conjugate beams: `conjbeams` on an
+    /// image of one plane (`HetArrayConvFunc` takes the conjugate only
+    /// when `nchan_p == 1`).
+    pub(super) mosaic_conjugate_beams: bool,
+    /// The FIELD_IDs a density weighs by field over under `mosweight`: the
+    /// first and the span to the last selected field with data
+    /// ([`density_fields`]).
+    pub(super) density_fields: Option<(u32, NonZeroU32)>,
     pub(super) cube_density_padding: Option<usize>,
     pub(super) continuum_transform: Option<SequentialContinuumTransform>,
 }
@@ -49,20 +57,26 @@ pub(super) struct SpecificationInputs {
 pub(super) fn reconstruction_algorithm(request: &ImagingRequest) -> ReconstructionAlgorithm {
     match request.deconvolver {
         Deconvolver::Mtmfs => ReconstructionAlgorithm::Mtmfs {
-            scales_px: if request.scales.is_empty() {
-                vec![0.0]
-            } else {
-                request.scales.clone()
-            },
+            scales_px: scales_px(request),
             small_scale_bias: request.smallscalebias,
         },
         _ if !request.solves() => ReconstructionAlgorithm::Dirty,
         Deconvolver::Hogbom => ReconstructionAlgorithm::Hogbom,
         Deconvolver::Clark => ReconstructionAlgorithm::Clark,
         Deconvolver::Multiscale => ReconstructionAlgorithm::Multiscale {
-            scales_px: request.scales.clone(),
+            scales_px: scales_px(request),
             small_scale_bias: request.smallscalebias,
         },
+    }
+}
+
+/// The request's scales, or CASA's one point scale when it gives none
+/// (`SDAlgorithmMSClean` and `SDAlgorithmMSMFS` constructors).
+fn scales_px(request: &ImagingRequest) -> Vec<f64> {
+    if request.scales.is_empty() {
+        vec![0.0]
+    } else {
+        request.scales.clone()
     }
 }
 
@@ -112,12 +126,11 @@ pub(super) fn specification(
         PolarizationContract::new(request.stokes.clone()),
     );
     let equation = measurement_equation(&inputs);
-    let common_beam = request.deconvolver == Deconvolver::Mtmfs
-        || request.restoringbeam == RestoringBeamPolicy::Common;
+    let restoring_beam = restoring_beam(request);
     let mut science = ScientificContract::new(
         SpectralContract::new(
             spectral.sampling,
-            if common_beam {
+            if restoring_beam == RestoringBeamPolicy::Common {
                 SpectralCoupling::CommonRestoringBeam
             } else {
                 SpectralCoupling::Independent
@@ -128,7 +141,7 @@ pub(super) fn specification(
     if let Some(model) = inputs.instrument {
         science = science.with_instrument_model(model);
     }
-    let mut weighting = weighting(request);
+    let mut weighting = weighting(request, inputs.density_fields);
     if let Some(padding) = inputs.cube_density_padding {
         weighting = weighting.with_casa_cube_density_padding(padding);
     }
@@ -140,11 +153,7 @@ pub(super) fn specification(
         ProductRequirements::new(
             requested_products(request, minor_cycle, direction_dependent),
             normalization(request),
-            if common_beam {
-                RestoringBeamPolicy::Common
-            } else {
-                RestoringBeamPolicy::PerPlane
-            },
+            restoring_beam,
             ProductValidityPolicies::new(
                 primary_beam_validity(request)?,
                 TaylorValidityPolicy::new(
@@ -180,6 +189,21 @@ pub(super) fn specification(
     })
 }
 
+/// The beam the products restore with: none without restoration, else the
+/// request's, `mtmfs`'s one plane restoring with its fitted beam as one
+/// common beam.
+fn restoring_beam(request: &ImagingRequest) -> RestoringBeamPolicy {
+    match request.restoringbeam {
+        _ if !request.restoration || !crate::restart::has_residual(request) => {
+            RestoringBeamPolicy::None
+        }
+        RestoringBeamPolicy::PerPlane if request.deconvolver == Deconvolver::Mtmfs => {
+            RestoringBeamPolicy::Common
+        }
+        policy => policy,
+    }
+}
+
 /// The measurement equation: the primary beam with an instrument model,
 /// else scalar, with the request's W or AW projection.
 fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationContract {
@@ -200,13 +224,16 @@ fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationCont
     if let Some(contract) = inputs.aw_projection {
         equation = equation.with_aw_projection(contract);
     }
+    if inputs.mosaic_conjugate_beams {
+        equation = equation.with_mosaic_conjugate_beams();
+    }
     equation
 }
 
 /// The writes to the observation: the model column and continuum-subtracted
 /// corrected data, when asked for.
 fn transaction(request: &ImagingRequest) -> ObservationTransactionRequirements {
-    ObservationTransactionRequirements::new(if request.savemodel {
+    ObservationTransactionRequirements::new(if request.savemodel == SaveModel::ModelColumn {
         ModelColumnWrite::SelectedSamples
     } else {
         ModelColumnWrite::Disabled
@@ -240,7 +267,8 @@ fn reconstruction_controls(
             request.cyclefactor,
             request.minpsffraction,
             request.maxpsffraction,
-        );
+        )
+        .with_noise_estimate(super::domains::noise_estimate(request));
     if request.nsigma > 0.0 {
         controls.with_noise_sigma(request.nsigma)
     } else {
@@ -248,41 +276,95 @@ fn reconstruction_controls(
     }
 }
 
+/// The FIELD_IDs `mosweight` grids a density for: the selected fields
+/// with data, as a span from the first to the last (`VisImagingWeight`
+/// keys a density by each field its traversal meets); `None` without one.
+pub(super) fn density_fields(fields: &BTreeSet<i32>) -> Option<(u32, NonZeroU32)> {
+    let first = u32::try_from(*fields.first()?).ok()?;
+    let last = u32::try_from(*fields.last()?).ok()?;
+    Some((
+        first,
+        NonZeroU32::new(last.checked_sub(first)?.checked_add(1)?)?,
+    ))
+}
+
 /// The weighting: a cube's density per output channel under
 /// `perchanweightdensity`, the whole selection's otherwise (CASA disables
-/// cube density for continuum requests), and `uvtaper`'s Gaussian.
-fn weighting(request: &ImagingRequest) -> WeightingContract {
-    let contract = density_weighting(request);
+/// cube density for continuum requests) or each of `fields`' under
+/// `mosweight`, and `uvtaper`'s Gaussian.
+fn weighting(request: &ImagingRequest, fields: Option<(u32, NonZeroU32)>) -> WeightingContract {
+    let contract = density_weighting(request, fields);
     match request.uvtaper {
         Some(taper) => contract.with_uv_taper(taper),
         None => contract,
     }
 }
 
-fn density_weighting(request: &ImagingRequest) -> WeightingContract {
-    let density = if request.specmode != SpecMode::Mfs && request.perchanweightdensity {
+/// CASA's weighting (`SynthesisImagerVi2::weight`): `superuniform` is
+/// uniform weighting over a box of `npixels`, always on one density; a
+/// cube's per-channel density spreads each sample over a box of `npixels`
+/// (`BriggsCubeWeightor`'s `superUniformBox`), and a continuum density with
+/// `npixels` is an `npixels`-square grid.
+///
+/// `briggsbwtaper` without a per-channel density is uniform weighting:
+/// `task_tclean.py` only warns that the two are incompatible, and
+/// `VisImagingWeight` knows no `bwtaper` mode, so its robustness factors
+/// stay `f2 = 1, d2 = 0` and `weightUniform` divides each weight by its
+/// cell's density alone (`VisImagingWeight.cc`).
+///
+/// Under `mosweight` (`fields`), `VisImagingWeight` grids one such
+/// continuum density per field (`multiField`); the reader refuses it with
+/// a per-channel density.
+fn density_weighting(
+    request: &ImagingRequest,
+    fields: Option<(u32, NonZeroU32)>,
+) -> WeightingContract {
+    let robust = request.robust;
+    let per_channel_requested = request.specmode != SpecMode::Mfs && request.perchanweightdensity;
+    let continuum = match fields {
+        Some((first_field, fields)) => WeightDensityScope::PerField {
+            first_field,
+            fields,
+        },
+        None => WeightDensityScope::GlobalSelection,
+    };
+    if request.weighting == Weighting::Briggsbwtaper && !per_channel_requested {
+        tracing::warn!(
+            "The briggsbwtaper weighting scheme is not compatable with perchanweightdensity=False."
+        );
+        return WeightingContract::new(WeightingScheme::Uniform, continuum)
+            .with_density_cells(DensityCells::Image);
+    }
+    let scheme = match request.weighting {
+        Weighting::Natural => WeightingScheme::Natural,
+        Weighting::Radial => WeightingScheme::Radial,
+        Weighting::Uniform | Weighting::Superuniform => WeightingScheme::Uniform,
+        Weighting::Briggs => WeightingScheme::Briggs { robust },
+        Weighting::Briggsabs => WeightingScheme::BriggsAbsolute {
+            robust,
+            noise_jy: request.noise.unwrap_or(f64::NAN),
+        },
+        Weighting::Briggsbwtaper => WeightingScheme::BriggsBandwidthTaper { robust },
+    };
+    if !request.weighting.uses_density() {
+        return WeightingContract::new(scheme, WeightDensityScope::NotApplicable);
+    }
+    let per_channel = request.specmode != SpecMode::Mfs
+        && request.perchanweightdensity
+        && request.weighting.per_channel_density();
+    let scope = if per_channel {
         WeightDensityScope::PerOutputChannel
     } else {
-        WeightDensityScope::GlobalSelection
+        continuum
     };
-    match request.weighting {
-        Weighting::Natural => {
-            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable)
+    let cells = match NonZeroUsize::new(request.npixels) {
+        None => DensityCells::Image,
+        Some(box_half_width) if per_channel || request.weighting == Weighting::Superuniform => {
+            DensityCells::Box(box_half_width)
         }
-        Weighting::Uniform => WeightingContract::new(WeightingScheme::Uniform, density),
-        Weighting::Briggs => WeightingContract::new(
-            WeightingScheme::Briggs {
-                robust: request.robust,
-            },
-            density,
-        ),
-        Weighting::Briggsbwtaper => WeightingContract::new(
-            WeightingScheme::BriggsBandwidthTaper {
-                robust: request.robust,
-            },
-            density,
-        ),
-    }
+        Some(side) => DensityCells::Square(side),
+    };
+    WeightingContract::new(scheme, scope).with_density_cells(cells)
 }
 
 /// The products of a run: the standard set, the mask when a minor cycle
@@ -294,23 +376,37 @@ fn requested_products(
     weight_image: bool,
 ) -> Vec<ProductKind> {
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
-    let mut products = vec![
-        ProductKind::Psf,
-        ProductKind::Residual,
-        ProductKind::Model,
-        ProductKind::RestoredImage,
-        ProductKind::SumWeights,
-    ];
+    // CASA's `restoration=False` neither restores nor PB-corrects, so it
+    // writes no `.image`, `.image.pbcor` or spectral index
+    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`). A
+    // `calcres=False` run with no residual to read makes the PSF alone: no
+    // residual, model or restored image (`SDAlgorithmBase::restore` needs
+    // a residual).
+    let residual = crate::restart::has_residual(request);
+    let restored = request.restoration && residual;
+    let mut products = vec![ProductKind::Psf];
+    if residual {
+        products.push(ProductKind::Residual);
+    }
+    // CASA makes the model when the minor cycle, the restoration or a
+    // start model needs it: tclean sets up no deconvolver for `niter=0`
+    // with `restoration=False`, and nothing else writes one.
+    if residual && (minor_cycle || restored || request.startmodel.is_some()) {
+        products.push(ProductKind::Model);
+    }
+    if restored {
+        products.push(ProductKind::RestoredImage);
+    }
+    products.push(ProductKind::SumWeights);
     if minor_cycle {
         products.push(ProductKind::Mask);
     }
     products.push(ProductKind::Beam);
     if mtmfs {
-        products.extend([
-            ProductKind::TaylorTerms,
-            ProductKind::SpectralIndex,
-            ProductKind::SpectralIndexError,
-        ]);
+        products.push(ProductKind::TaylorTerms);
+        if restored {
+            products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
+        }
     }
     if weight_image {
         products.push(ProductKind::Weight);
@@ -318,7 +414,7 @@ fn requested_products(
     if request.write_pb || request.pbcor {
         products.push(ProductKind::PrimaryBeam);
     }
-    if request.pbcor {
+    if request.pbcor && restored {
         products.push(ProductKind::PbCorrectedImage);
         if mtmfs && matches!(request.gridder, Gridder::Mosaic { .. }) {
             products.push(ProductKind::PbCorrectedSpectralIndex);
@@ -366,8 +462,9 @@ pub(super) fn w_projection(
 /// CASA's default AW pointing thresholds under `usepointing`.
 const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
 
-/// The installed A-projection: CASA's EVLA wideband aperture term with
-/// conjugate beams, no separate prolate spheroidal, and 360-degree
+/// The installed A-projection: CASA's EVLA aperture, prolate-spheroidal,
+/// wideband and conjugate-beam terms as tclean asks for them (wideband
+/// only with the aperture, [`AwProjection::wideband`]), and 360-degree
 /// parallactic-angle steps, over the selected `|w|` range.
 pub(super) fn aw_projection(
     aw: &AwProjection,
@@ -381,10 +478,10 @@ pub(super) fn aw_projection(
     Ok(AwProjectionContract::new(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
         planes,
-        true,
-        false,
-        true,
-        true,
+        aw.aterm,
+        aw.psterm,
+        aw.wideband(),
+        aw.conjbeams,
         aw.usepointing,
         effective_aw_pointing_offset_sigdev_arcsec(aw.usepointing, &aw.pointingoffsetsigdev),
         360.0,
@@ -461,13 +558,160 @@ pub(super) fn cube_density_padded(
     matches!(request.specmode, SpecMode::Cube | SpecMode::Cubedata)
         && spectral.sampling == SpectralSamplingLaw::LINEAR
         && spectral.output_channels > 1
-        && request.weighting != Weighting::Natural
+        && request.weighting.per_channel_density()
         && request.perchanweightdensity
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SynthesisImagerVi2::weight`'s readings of tclean's weighting:
+    /// superuniform is uniform over a box on one density, a cube's
+    /// per-channel density spreads samples over a box of `npixels`, and a
+    /// continuum density is an `npixels`-square grid.
+    #[test]
+    fn weightings_compile_to_casas_density_cells_and_scopes() {
+        use WeightDensityScope::{GlobalSelection, NotApplicable, PerOutputChannel};
+        let cells = |count| NonZeroUsize::new(count).expect("non-zero");
+        let compiled = |overrides: serde_json::Value, npixels: i64| {
+            let mut values = crate::request::tests::resolved(overrides).expect("catalog values");
+            values.insert("npixels".into(), npixels.into());
+            weighting(
+                &ImagingRequest::from_tclean(&values).expect("request"),
+                None,
+            )
+        };
+        let cube = |weighting: &str| json_cube(weighting, true);
+        for (overrides, npixels, scheme, scope, density) in [
+            (
+                serde_json::json!({ "weighting": "superuniform" }),
+                0,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Box(cells(3)),
+            ),
+            (
+                cube("superuniform"),
+                2,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Box(cells(2)),
+            ),
+            (
+                serde_json::json!({ "weighting": "uniform" }),
+                16,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Square(cells(16)),
+            ),
+            (
+                cube("briggs"),
+                2,
+                WeightingScheme::Briggs { robust: 0.5 },
+                PerOutputChannel,
+                DensityCells::Box(cells(2)),
+            ),
+            (
+                json_cube("briggs", false),
+                5,
+                WeightingScheme::Briggs { robust: 0.5 },
+                GlobalSelection,
+                DensityCells::Square(cells(5)),
+            ),
+            (
+                cube("briggsabs"),
+                0,
+                WeightingScheme::BriggsAbsolute {
+                    robust: 0.5,
+                    noise_jy: 1.0,
+                },
+                PerOutputChannel,
+                DensityCells::Image,
+            ),
+            (
+                cube("radial"),
+                6,
+                WeightingScheme::Radial,
+                NotApplicable,
+                DensityCells::Image,
+            ),
+        ] {
+            let contract = compiled(overrides.clone(), npixels);
+            assert_eq!(
+                (
+                    contract.scheme(),
+                    contract.density_scope(),
+                    contract.density_cells()
+                ),
+                (scheme, scope, density),
+                "{overrides} npixels={npixels}"
+            );
+        }
+    }
+
+    /// `briggsbwtaper` without a per-channel density weighs as CASA's
+    /// `VisImagingWeight` does with an unknown mode: uniformly, over the
+    /// image's cells; with one it is Briggs with the bandwidth taper.
+    #[test]
+    fn a_cube_briggsbwtaper_without_per_channel_density_is_uniform() {
+        let compiled = |perchanweightdensity| {
+            weighting(
+                &crate::request::tests::request(json_cube("briggsbwtaper", perchanweightdensity)),
+                None,
+            )
+        };
+        let shared = compiled(false);
+        assert_eq!(shared.scheme(), WeightingScheme::Uniform);
+        assert_eq!(shared.density_scope(), WeightDensityScope::GlobalSelection);
+        assert_eq!(shared.density_cells(), DensityCells::Image);
+        assert!(matches!(
+            compiled(true).scheme(),
+            WeightingScheme::BriggsBandwidthTaper { .. }
+        ));
+    }
+
+    /// `mosweight` weighs each selected field's continuum density on its
+    /// own, over the span of FIELD_IDs from the first to the last with data;
+    /// a cube without `perchanweightdensity` and `briggsbwtaper`'s uniform
+    /// fallback do too.
+    #[test]
+    fn mosweight_weighs_a_continuum_density_per_field() {
+        let fields = density_fields(&BTreeSet::from([3, 5, 4, 7]));
+        let span = NonZeroU32::new(5).expect("non-zero");
+        assert_eq!(fields, Some((3, span)));
+        assert_eq!(density_fields(&BTreeSet::new()), None);
+        let per_field = WeightDensityScope::PerField {
+            first_field: 3,
+            fields: span,
+        };
+        let mosaic = |overrides: serde_json::Value| {
+            let mut overrides = overrides;
+            overrides["gridder"] = "mosaic".into();
+            weighting(&crate::request::tests::request(overrides), fields)
+        };
+        let briggs = mosaic(serde_json::json!({ "weighting": "briggs" }));
+        assert_eq!(briggs.density_scope(), per_field);
+        for overrides in [
+            json_cube("briggs", false),
+            json_cube("briggsbwtaper", false),
+        ] {
+            assert_eq!(mosaic(overrides).density_scope(), per_field);
+        }
+        assert_eq!(
+            mosaic(serde_json::json!({ "weighting": "natural" })).density_scope(),
+            WeightDensityScope::NotApplicable
+        );
+    }
+
+    fn json_cube(weighting: &str, perchanweightdensity: bool) -> serde_json::Value {
+        serde_json::json!({
+            "weighting": weighting,
+            "specmode": "cube",
+            "nchan": 4,
+            "perchanweightdensity": perchanweightdensity,
+        })
+    }
 
     #[test]
     fn aw_pointing_thresholds_follow_casa_cardinality_default() {
@@ -514,16 +758,112 @@ mod tests {
     }
 
     fn products(overrides: serde_json::Value) -> BTreeSet<ProductKind> {
-        let request = crate::request::tests::request(overrides);
-        let minor_cycle = reconstruction_algorithm(&request) != ReconstructionAlgorithm::Dirty
+        products_of(&crate::request::tests::request(overrides))
+    }
+
+    fn products_of(request: &ImagingRequest) -> BTreeSet<ProductKind> {
+        let minor_cycle = reconstruction_algorithm(request) != ReconstructionAlgorithm::Dirty
             && request.iterations() > 0;
         let weight_image = !matches!(
             request.gridder,
             Gridder::Standard { .. } | Gridder::Wproject { .. }
         );
-        requested_products(&request, minor_cycle, weight_image)
+        requested_products(request, minor_cycle, weight_image)
             .into_iter()
             .collect()
+    }
+
+    /// CASA's `restoration=False` neither restores nor PB-corrects: no
+    /// `.image`, `.image.pbcor` or spectral index, and no restoring beam;
+    /// the PB `pbcor` asks for is still made (`task_tclean.py`).
+    #[test]
+    fn without_restoration_nothing_is_restored() {
+        for overrides in [
+            serde_json::json!({ "niter": 10, "pbcor": true }),
+            serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "gridder": "mosaic",
+                                "pbcor": true }),
+            serde_json::json!({ "restoringbeam": "common", "specmode": "cube", "nchan": 2 }),
+        ] {
+            let mut request = crate::request::tests::request(overrides.clone());
+            let restored = products_of(&request);
+            request.restoration = false;
+            let unrestored = products_of(&request);
+            for product in [
+                ProductKind::RestoredImage,
+                ProductKind::PbCorrectedImage,
+                ProductKind::SpectralIndex,
+                ProductKind::SpectralIndexError,
+                ProductKind::PbCorrectedSpectralIndex,
+            ] {
+                assert!(!unrestored.contains(&product), "{overrides}: {product:?}");
+            }
+            assert!(
+                restored.contains(&ProductKind::RestoredImage),
+                "{overrides}"
+            );
+            assert_eq!(
+                unrestored.contains(&ProductKind::PrimaryBeam),
+                restored.contains(&ProductKind::PrimaryBeam),
+                "{overrides}"
+            );
+            assert_eq!(restoring_beam(&request), RestoringBeamPolicy::None);
+        }
+    }
+
+    /// CASA cleans with one point scale when `scales` is empty, for
+    /// `multiscale` as for `mtmfs`.
+    #[test]
+    fn scale_aware_solvers_without_scales_use_a_point_scale() {
+        for deconvolver in ["multiscale", "mtmfs"] {
+            let request = crate::request::tests::request(serde_json::json!({
+                "deconvolver": deconvolver, "niter": 10, "smallscalebias": 0.6
+            }));
+            let scales = match reconstruction_algorithm(&request) {
+                ReconstructionAlgorithm::Multiscale { scales_px, .. }
+                | ReconstructionAlgorithm::Mtmfs { scales_px, .. } => scales_px,
+                other => panic!("{deconvolver}: {other:?}"),
+            };
+            assert_eq!(scales, vec![0.0], "{deconvolver}");
+        }
+    }
+
+    /// tclean sets up no deconvolver for `niter=0` with `restoration=False`
+    /// (`task_tclean.py`), so CASA writes no `.model` then, unless a start
+    /// model seeds one.
+    #[test]
+    fn a_model_is_written_when_cleaning_restoring_or_starting_from_one() {
+        let has_model = |overrides| products(overrides).contains(&ProductKind::Model);
+        assert!(!has_model(
+            serde_json::json!({ "niter": 0, "restoration": false })
+        ));
+        assert!(has_model(serde_json::json!({ "niter": 0 })));
+        assert!(has_model(
+            serde_json::json!({ "niter": 5, "restoration": false })
+        ));
+        assert!(has_model(serde_json::json!({
+            "niter": 0, "restoration": false, "startmodel": "start.model"
+        })));
+    }
+
+    /// `mtmfs` restores its one plane with its fitted beam as one common
+    /// beam, unless the request gives a beam; a given beam couples no planes.
+    #[test]
+    fn the_restoring_beam_follows_the_request() {
+        let policy = |overrides| restoring_beam(&crate::request::tests::request(overrides));
+        assert_eq!(policy(serde_json::json!({})), RestoringBeamPolicy::PerPlane);
+        assert_eq!(
+            policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2 })),
+            RestoringBeamPolicy::Common
+        );
+        for overrides in [
+            serde_json::json!({ "restoringbeam": ["2arcsec", "1arcsec", "10deg"] }),
+            serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "restoringbeam": "2arcsec" }),
+        ] {
+            assert!(
+                matches!(policy(overrides.clone()), RestoringBeamPolicy::Fixed(_)),
+                "{overrides}"
+            );
+        }
     }
 
     #[test]

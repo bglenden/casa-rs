@@ -363,14 +363,17 @@ fn ring_table(size: usize) -> Vec<u16> {
 }
 
 /// The prolate-spheroidal anti-aliasing factor at pixel offset `(ix, iy)`
-/// of the working grid, or one without it.
+/// of the working grid, or one without it: `PSTerm::applySky` writes the
+/// inner `[−n/2, n/2)²` pixels with `ConvolveGridder::correctX1D`, whose
+/// factor is `grdsf(|offset| / (n/2))` on each axis
+/// (`ConvolveGridder::correctionFactor1D`), and leaves the rest zero.
 fn prolate(request: EvlaAwCellRequest, inner_half: isize, ix: isize, iy: isize) -> f32 {
     if !request.prolate_spheroidal {
         return 1.0;
     }
     if (-inner_half..inner_half).contains(&ix) && (-inner_half..inner_half).contains(&iy) {
-        (grdsf(ix as f64 / inner_half as f64) as f32)
-            * (grdsf(iy as f64 / inner_half as f64) as f32)
+        let factor = |offset: isize| grdsf(offset.unsigned_abs() as f64 / inner_half as f64) as f32;
+        factor(ix) * factor(iy)
     } else {
         0.0
     }
@@ -545,6 +548,52 @@ mod tests {
         invalid.size *= 2;
         assert!(workspace.generate(invalid).is_err());
         assert!(workspace.pair().is_none());
+    }
+
+    /// CASA's spheroidal screen (`PSTerm::applySky`) is even in both
+    /// offsets, so without the aperture or a W screen the cell is the
+    /// spheroidal's compact, real transform: its support stays a few grid
+    /// cells, as CASA's `aterm=False, psterm=True` caches hold (4 cells at
+    /// 4× oversampling on a 2048 working grid), and its peak at the centre.
+    #[test]
+    fn the_spheroidal_screen_is_even_and_its_cell_compact() {
+        let request = EvlaAwCellRequest {
+            size: 256,
+            sky_increment_rad: [-0.002, 0.002],
+            frequency_hz: 1.4e9,
+            conjugate_frequency_hz: 1.4e9,
+            w_wavelengths: 0.0,
+            parallactic_angle_rad: 0.0,
+            mueller: 0,
+            oversampling: 4,
+            prolate_spheroidal: true,
+            aperture: false,
+        };
+        let inner_half = (request.size / request.oversampling / 2) as isize;
+        for (ix, iy) in [(1, 0), (5, 7), (31, 2), (31, 31)] {
+            let value = prolate(request, inner_half, ix, iy);
+            assert!(value > 0.0, "({ix}, {iy})");
+            for (sx, sy) in [(-1, 1), (1, -1), (-1, -1)] {
+                assert_eq!(prolate(request, inner_half, sx * ix, sy * iy), value);
+            }
+        }
+        let mut workspace =
+            EvlaAwWorkspace::new(EvlaApertureModel::new(surface()), request).expect("workspace");
+        let pair = workspace.generate(request).expect("pair");
+        assert!(
+            pair.imaging.support <= 6,
+            "support {} of a spheroidal cell",
+            pair.imaging.support
+        );
+        let size = pair.imaging.size;
+        let centre = pair.imaging.values[size / 2 * (size + 1)].norm();
+        let peak = pair
+            .imaging
+            .values
+            .iter()
+            .map(|value| value.norm())
+            .fold(0.0_f32, f32::max);
+        assert_eq!(centre, peak);
     }
 
     /// A dish surface whose sag is `scale` times [`surface`]'s.

@@ -27,7 +27,7 @@ pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 
 #[cfg(test)]
-use cell_image::{cf_area, dense_cell_padded};
+use cell_image::{cf_area, convolution_origin, dense_cell_padded};
 use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 
@@ -1293,6 +1293,29 @@ mod tests {
         // = (3, 1) of the small plane; tap (2, 2): y = 2 + 2 + 1 = 5 → outside.
         assert_eq!(cell.data()[row + tile + 2], Complex32::new(103.0, 1.0));
         assert_eq!(cell.data()[row + tile + 8], Complex32::default());
+    }
+
+    /// `AWVisResampler`'s `convOrigin`: an odd cell (an older CASA's
+    /// crop, centred at `shape/2`) is read one fine sample past its centre
+    /// on both axes, as CASA reads it.
+    #[test]
+    fn an_odd_cell_is_read_about_casas_origin() {
+        let side = 9;
+        let values = (0..side * side)
+            .map(|index| Complex32::new((index % side) as f32, (index / side) as f32))
+            .collect::<Vec<_>>();
+        let cell = dense_cell_padded(&[(values, [side, side], [1, 1])], [1, 1], 2);
+        let tile = 9;
+        // Row (ox, oy) = (1, 1): no fine offset; tap (1, 1) is the origin,
+        // pixel (9/2 + 1, 9/2 + 1) = (5, 5).
+        let row = (3 + 1) * tile;
+        assert_eq!(cell.data()[row + 4], Complex32::new(5.0, 5.0));
+        // One extent odd moves both axes.
+        let values = vec![Complex32::new(1.0, 0.0); 9 * 8];
+        let cell = dense_cell_padded(&[(values, [9, 8], [1, 1])], [1, 1], 2);
+        assert_eq!(cell.support(), [3, 3]);
+        assert_eq!(convolution_origin([9, 8]), [5, 5]);
+        assert_eq!(convolution_origin([8, 8]), [4, 4]);
     }
 
     #[test]

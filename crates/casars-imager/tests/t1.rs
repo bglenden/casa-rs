@@ -9,12 +9,16 @@
 mod aw_projection;
 #[path = "t1/casa_return.rs"]
 mod casa_return;
+#[path = "t1/continuation.rs"]
+mod continuation;
 #[path = "t1/cube.rs"]
 mod cube;
 #[path = "t1/diagnostics.rs"]
 mod diagnostics;
 #[path = "t1/ephemeris.rs"]
 mod ephemeris;
+#[path = "t1/first_visibility.rs"]
+mod first_visibility;
 #[path = "t1/fixture.rs"]
 mod fixture;
 #[path = "t1/interrupt.rs"]
@@ -25,21 +29,47 @@ mod metal;
 mod model_column;
 #[path = "t1/mosaic.rs"]
 mod mosaic;
+#[path = "t1/mosaic_evla.rs"]
+mod mosaic_evla;
 #[path = "t1/msv4.rs"]
 mod msv4;
 #[path = "t1/mtmfs.rs"]
 mod mtmfs;
 #[path = "t1/non_square.rs"]
 mod non_square;
+#[path = "t1/pb_default.rs"]
+mod pb_default;
+#[path = "t1/reference_frequency.rs"]
+mod reference_frequency;
+#[path = "t1/restart.rs"]
+mod restart;
+#[path = "t1/restoration.rs"]
+mod restoration;
 #[path = "t1/routes.rs"]
 mod routes;
+#[path = "t1/selection.rs"]
+mod selection;
+#[path = "t1/selection_antenna_time.rs"]
+mod selection_antenna_time;
+#[path = "t1/selection_numeric.rs"]
+mod selection_numeric;
+#[path = "t1/selection_spw.rs"]
+mod selection_spw;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]
 mod standard_mfs_masks;
 #[path = "t1/start_model.rs"]
 mod start_model;
+#[path = "t1/stokes.rs"]
+mod stokes;
 #[path = "t1/uv_taper.rs"]
 mod uv_taper;
+#[path = "t1/virtual_model.rs"]
+mod virtual_model;
+#[path = "t1/vis_list.rs"]
+mod vis_list;
 #[path = "t1/w_projection.rs"]
 mod w_projection;
+#[path = "t1/weighting.rs"]
+mod weighting;

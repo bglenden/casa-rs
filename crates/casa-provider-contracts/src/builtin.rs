@@ -194,7 +194,19 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                if binding.unimplemented.is_none() && default == absence {
+                // A later revision (tclean's selectors, one per
+                // MeasurementSet; its scan and observation keep their exact
+                // text, so `none` is a value the native parser refuses)
+                // passes its value as it is.
+                if binding.concept.semantic_revision.0 > 1 {
+                    assert_eq!(
+                        adapter,
+                        Some(&crate::ValueAdapter::Identity),
+                        "{}.{}",
+                        surface.id(),
+                        binding.name
+                    );
+                } else if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
                         adapter,
                         Some(&crate::ValueAdapter::OmitNone),
@@ -348,8 +360,33 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 29);
+        assert_eq!(surface.contract_version(), 38);
         assert_eq!(surface.bindings().len(), 114);
+        for name in ["scan", "observation", "antenna", "timerange"] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap();
+            assert!(binding.unimplemented.is_none(), "{name}");
+            // Revision 3 keeps revision 2's exact text, one per
+            // MeasurementSet of the vis list or one for all.
+            assert_eq!(binding.concept.semantic_revision.0, 3);
+            assert_eq!(
+                binding.default,
+                crate::DefaultSpec::Literal {
+                    value: ParameterValue::String(String::new()),
+                }
+            );
+            assert_eq!(
+                catalog
+                    .catalog
+                    .concept(&binding.concept)
+                    .unwrap()
+                    .normalization,
+                crate::NormalizationRule::Identity
+            );
+        }
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -453,14 +490,27 @@ mod tests {
                 .all(|binding| binding.aliases.is_empty()),
             "current imager profiles expose canonical names only"
         );
-        // A contract-28 imager profile migrates to tclean's names.
+        // Contract 28 migrates to tclean's names, then contract 29 adopts
+        // the reviewed PB and Hogbom defaults while preserving explicit overrides.
+        // Contract 32 enables False restart without changing those defaults.
         assert_eq!(
             surface
                 .migrations()
                 .iter()
                 .map(|migration| (migration.from_contract, migration.to_contract))
                 .collect::<Vec<_>>(),
-            [(28, 29)]
+            [
+                (28, 29),
+                (29, 30),
+                (30, 31),
+                (31, 32),
+                (32, 33),
+                (33, 34),
+                (34, 35),
+                (35, 36),
+                (36, 37),
+                (37, 38)
+            ]
         );
     }
 

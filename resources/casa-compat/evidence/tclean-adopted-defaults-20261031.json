@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "record": "tclean-adopted-defaults",
+  "date": "2026-10-31",
+  "source": {
+    "native_tested_revision": "583cff5cc5e82ed0dc2c98499e8fc68fa6d66da4",
+    "approved_production_changes_revision": "8ee39227360198de65bb561e7ef085480a77edc7",
+    "packaging_only_head": "a000aefe514f15c9c2f8592285980d68faf140d8",
+    "source_diff": {
+      "base": "75155cd47f77cbfc4c1e1d6822774b7d1516d1ee",
+      "head": "a000aefe514f15c9c2f8592285980d68faf140d8",
+      "comparison": "explicit commit-to-commit; working tree excluded",
+      "archive_member": "source/adopted-defaults-source-75155cd-a000aef.patch",
+      "sha256": "2d7667d652ae1d7a2995642bd7254167421f342bf7440785aa243efb0ed14520",
+      "bytes": 297806
+    },
+    "base_source_snapshot": {
+      "archive": "/Volumes/home/casa-rs/tclean/20261031/compensated-f32-experiment-20261031.tar",
+      "archive_sha256": "e77333bc6d95b436f81b98c587cacd705190deb56fcda43279d4d600bb19453a",
+      "member": "source-75155cd47f.tar",
+      "note": "Exact base source is referenced here and not duplicated in the adopted-defaults archive."
+    }
+  },
+  "adoption": {
+    "casa_defaults": {
+      "unchanged": 92
+    },
+    "native_hogbom_default": "casa-inclusive",
+    "provider_contract": 31,
+    "strict_provider_selection": "explicit selection retained; old omission warning retained",
+    "compensated_f32": {
+      "scope": "unconditional CPU and GPU",
+      "owner_approved": true
+    },
+    "f64": "f64 accumulation arithmetic unchanged by f32 adoption; Hogbom default change is separate",
+    "owner_approved_both_production_changes": true
+  },
+  "gates": {
+    "normal_quick_equivalent": {
+      "archive_member": "evidence/adopted-defaults-complete-gate.log",
+      "gate": "same just quick checks, except nextest --no-fail-fast",
+      "tests_passed": 4672,
+      "tests_skipped": 44,
+      "doctests": "pass",
+      "clippy": "pass",
+      "architecture": "pass",
+      "spdx": "pass",
+      "formatting": "pass",
+      "cli_tests_passed": 21
+    },
+    "performance_tools": {
+      "archive_member": "evidence/adopted-defaults-perf-tools.log",
+      "passed": 755,
+      "subtests": 307
+    },
+    "python_package": {
+      "archive_member": "evidence/adopted-defaults-python-package.log",
+      "editable": {
+        "passed": 632,
+        "skipped": 15
+      },
+      "wheel": {
+        "passed": 632,
+        "skipped": 15
+      },
+      "initial_sdist_cache_failure": "retained in evidence"
+    },
+    "sdist_repair": {
+      "summary_member": "evidence/sdist-repair/SUMMARY.md",
+      "repaired_sdist_tests_passed": 99,
+      "native_provider_contract": 31,
+      "repair": "fresh isolated sdist target avoided stale contract-30 artifact; scripts honor TMPDIR and the fresh target"
+    }
+  },
+  "paired_casa": {
+    "receipt_member": "evidence/adopted-defaults-casa/receipt.json",
+    "runs": 9,
+    "cases": {
+      "fixed512": [
+        "cpu64",
+        "cpu32",
+        "gpu32"
+      ],
+      "moving-uranus": [
+        "cpu64",
+        "cpu32",
+        "gpu32"
+      ],
+      "point-hogbom-10": [
+        "cpu64",
+        "cpu32",
+        "gpu32"
+      ]
+    },
+    "passed_in_all_nine": [
+      "numerical products",
+      "exact inventory",
+      "masks",
+      "finite values",
+      "beams",
+      "sumwt"
+    ],
+    "wcs_value_checks_passed": [
+      "fixed512",
+      "point-hogbom-10"
+    ],
+    "open_gap": {
+      "case": "moving-uranus",
+      "field": "spectral increment",
+      "native": 125020999.61227417,
+      "casa": 125020996.11132812,
+      "status": "open f64-shared metadata gap",
+      "accepted_as_pass": false,
+      "accepted_as_deviation": false
+    },
+    "native_pb_opt_out": "moving-uranus only; fixed512 and point-hogbom-10 use normal PB default",
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14",
+    "native_binary_sha256": "08226c3591704409967c355f3ca6bc72ee23c006ca51ba3d6086ad588e449943",
+    "normal_products_visual_review": "comparison viewed; no shape discrepancy; differences a few e-6",
+    "psf_nrms": {
+      "fixed512": {
+        "cpu64": 9.430508262073353e-08,
+        "cpu32": 8.945015188611011e-07,
+        "gpu32": 8.766549819251559e-07
+      },
+      "moving-uranus": {
+        "cpu64": 1.3513609684233e-07,
+        "cpu32": 9.049176978701983e-07,
+        "gpu32": 8.390371721673959e-07
+      },
+      "point-hogbom-10": {
+        "cpu64": 1.33386098532478e-07,
+        "cpu32": 5.889268052553382e-07,
+        "gpu32": 5.889268052553382e-07
+      }
+    },
+    "hogbom_model_flux_jy": {
+      "cpu64": [
+        0.6861892342567444,
+        0.686189591884613
+      ],
+      "cpu32": [
+        0.6861892342567444,
+        0.686189591884613
+      ],
+      "gpu32": [
+        0.6861892342567444,
+        0.686189591884613
+      ]
+    }
+  },
+  "environment_and_review": {
+    "fftw": {
+      "version": "3.3.11",
+      "linkage": "Homebrew static",
+      "library_directory": "/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "codelets": "0n1fv_NEON; verified with nm without -g"
+    },
+    "independent_review": {
+      "outcome": "no actionable adoption findings",
+      "notes": "three old strict physical-count controls made explicit; default-inclusive continuation separated (3 reported, 6 actual); documentation finding fixed"
+    }
+  },
+  "scope_limits": [
+    "single timings are diagnostic observations, not a performance benchmark",
+    "no full T2, whole-tclean, or numeric task-return acceptance is claimed",
+    "moving-uranus spectral-increment gap remains open"
+  ],
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/adopted-tclean-defaults-20261031.tar",
+    "sha256": "9e55d997b060f172f20b1c59c3ef1a1e6c59492b79707868adf5cd6ccf031450",
+    "bytes": 93310464,
+    "verification": "copied from SSD and reread SHA-256 and byte count verified"
+  }
+}

@@ -8,7 +8,8 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use casa_provider_contracts::{
-    ParameterType, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
+    DefaultSpec, ParameterRole, ParameterType, ParameterValue, SurfaceContractBundle,
+    SurfaceParameterBinding,
 };
 
 use crate::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
@@ -222,12 +223,38 @@ fn validated_cli_value(
         .catalog
         .concept(&binding.concept)
         .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
-    if text.trim().is_empty() {
+    // An explicitly present exact empty string is a value when a string binding
+    // declares it as its literal default. A missing argument is handled by the
+    // flag parser; whitespace is never silently turned into that default.
+    // A selector that takes one text per MeasurementSet (tclean's) reads one
+    // text from the command line, whose commas are its own grammar's
+    // (`--spw 0,2`); a list of them is written as one (`--spw '["0", "1"]'`).
+    let one_selector = concept.semantic_role == ParameterRole::Selection
+        && is_text_list_domain(&concept.value_domain)
+        && !text.starts_with('[');
+    let exact_empty_default = text.is_empty()
+        && (matches!(concept.value_domain, ParameterType::String) || one_selector)
+        && matches!(&binding.default,
+            DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
+    if text.trim().is_empty() && !exact_empty_default {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
-    let parsed = parse_parameter_text(text, &concept.value_domain)
-        .map_err(|error| format!("parameter {:?}: {error}", binding.name))?;
+    let parsed = if one_selector {
+        ParameterValue::String(text.to_string())
+    } else {
+        parse_parameter_text(text, &concept.value_domain)
+            .map_err(|error| format!("parameter {:?}: {error}", binding.name))?
+    };
     checked_value(bundle, binding, &parsed)
+}
+
+/// Whether `domain` is a list of text that one text also gives.
+fn is_text_list_domain(domain: &ParameterType) -> bool {
+    matches!(
+        domain,
+        ParameterType::Array { element, allow_scalar: true, .. }
+            if matches!(**element, ParameterType::String)
+    )
 }
 
 /// `value` normalized and validated through `binding`'s concept and
@@ -334,6 +361,79 @@ mod tests {
         let unknown =
             parse_parameter_cli_overrides(&bundle, &["--thresh".into(), "1Jy".into()]).unwrap_err();
         assert!(unknown.contains("unknown tclean parameter flag --thresh"));
+    }
+
+    #[test]
+    fn exact_empty_cli_defaults_are_values_but_missing_or_blank_arguments_are_not() {
+        let mut bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        // Evidence-only exact-text concept: production declarations stay intact.
+        for concept in &mut bundle.catalog.concepts {
+            if matches!(
+                concept.id.as_str(),
+                "ms.selection.scan" | "ms.selection.observation"
+            ) {
+                concept.normalization = casa_provider_contracts::NormalizationRule::Identity;
+            }
+        }
+        for name in ["scan", "observation"] {
+            let flag = format!("--{name}");
+            for arguments in [
+                vec![flag.clone().into(), "".into()],
+                vec![format!("{flag}=").into()],
+            ] {
+                let patch = parse_parameter_cli_overrides(&bundle, &arguments).unwrap();
+                // One selector for every MeasurementSet.
+                assert_eq!(
+                    patch.values[name],
+                    ParameterValue::Array(vec![ParameterValue::String(String::new())])
+                );
+            }
+            assert!(parse_parameter_cli_overrides(&bundle, &[flag.clone().into()]).is_err());
+            for text in [" ", "  ", "\t"] {
+                assert!(
+                    parse_parameter_cli_overrides(&bundle, &[flag.clone().into(), text.into()])
+                        .is_err()
+                );
+            }
+        }
+        for name in ["vis", "imsize", "threshold"] {
+            assert!(
+                parse_parameter_cli_overrides(&bundle, &[format!("--{name}").into(), "".into()])
+                    .is_err()
+            );
+        }
+    }
+
+    /// tclean's selectors take one text per MeasurementSet: a command-line
+    /// text is one selector, its commas its own grammar's, and a list is
+    /// written as one.
+    #[test]
+    fn a_selector_text_is_one_selector_and_a_list_is_written_as_one() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let texts = |values: &[&str]| {
+            ParameterValue::Array(
+                values
+                    .iter()
+                    .map(|value| ParameterValue::String((*value).to_string()))
+                    .collect(),
+            )
+        };
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &[
+                "--spw".into(),
+                "0,2".into(),
+                "--scan".into(),
+                "1,3~5".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(patch.values["spw"], texts(&["0,2"]));
+        assert_eq!(patch.values["scan"], texts(&["1,3~5"]));
+        let patch =
+            parse_parameter_cli_overrides(&bundle, &["--spw".into(), r#"["0", "1:2~5"]"#.into()])
+                .unwrap();
+        assert_eq!(patch.values["spw"], texts(&["0", "1:2~5"]));
     }
 
     #[test]

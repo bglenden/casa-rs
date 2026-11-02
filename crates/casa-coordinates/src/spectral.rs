@@ -57,10 +57,17 @@ struct SpectralConversion {
 pub struct SpectralCoordinate {
     /// The velocity reference frame (LSRK, BARY, TOPO, etc.).
     frequency_ref: FrequencyRef,
+    /// Whether the record declares no frame: C++ `MFrequency::Undefined`,
+    /// which CASA writes for a `specmode='cubedata'` image. Its frequencies
+    /// are the data's as observed, and arithmetic treats them as `frequency_ref`.
+    undefined_frame: bool,
     /// Optional CASA conversion-layer state for world-coordinate display.
     conversion: Option<SpectralConversion>,
     /// The rest frequency in Hz (used for velocity conversions).
     rest_frequency: f64,
+    /// Every rest frequency the coordinate lists, the active one among them
+    /// (C++ `restFrequencies()`).
+    rest_frequencies: Vec<f64>,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// The world axis name.
@@ -86,8 +93,10 @@ impl SpectralCoordinate {
     ) -> Self {
         Self {
             frequency_ref,
+            undefined_frame: false,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -120,8 +129,10 @@ impl SpectralCoordinate {
         }
         Ok(Self {
             frequency_ref,
+            undefined_frame: false,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -149,6 +160,21 @@ impl SpectralCoordinate {
         self
     }
 
+    /// Declares no frame for the axis, as CASA's `MFrequency::Undefined`
+    /// does for a `specmode='cubedata'` image: the record's `system` reads
+    /// `"Undefined"`, while frequencies keep meaning those of
+    /// [`Self::frequency_ref`]. Returns `self` for chaining.
+    pub fn with_undefined_frame(mut self) -> Self {
+        self.undefined_frame = true;
+        self
+    }
+
+    /// Whether the axis declares no frame (C++ `MFrequency::Undefined`); see
+    /// [`Self::with_undefined_frame`].
+    pub fn has_undefined_frame(&self) -> bool {
+        self.undefined_frame
+    }
+
     /// Sets the world axis name. Returns `self` for chaining.
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -158,6 +184,15 @@ impl SpectralCoordinate {
     /// Returns the velocity reference frame.
     pub fn frequency_ref(&self) -> FrequencyRef {
         self.frequency_ref
+    }
+
+    /// Whether the native pixel-to-frequency mapping uses FITS linear parameters.
+    ///
+    /// Returns `false` for an explicit spectral lookup table, even when its
+    /// reference value, pixel and increment equal those of a linear coordinate.
+    /// This describes the native mapping before optional reference-frame conversion.
+    pub fn has_linear_mapping(&self) -> bool {
+        matches!(self.mapping, SpectralMapping::Linear { .. })
     }
 
     /// Returns the CASA conversion-layer frequency frame, if configured.
@@ -184,11 +219,30 @@ impl SpectralCoordinate {
         self.rest_frequency
     }
 
+    /// Sets the rest frequencies the coordinate lists, the first active,
+    /// as C++ `setRestFrequencies(frequencies, 0)` does. An empty list
+    /// leaves the coordinate as it is. Returns `self` for chaining.
+    pub fn with_rest_frequencies(mut self, frequencies: Vec<f64>) -> Self {
+        if let Some(&active) = frequencies.first() {
+            self.rest_frequency = active;
+            self.rest_frequencies = frequencies;
+        }
+        self
+    }
+
+    /// Returns every rest frequency in Hz the coordinate lists, the active
+    /// [`Self::rest_frequency`] among them (C++ `restFrequencies()`).
+    pub fn rest_frequencies(&self) -> &[f64] {
+        &self.rest_frequencies
+    }
+
     /// Reconstructs a spectral coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let mut undefined_frame = false;
         let frequency_ref = if let Some(name) =
             get_optional_string(rec, "frequency_ref").or_else(|| get_optional_string(rec, "system"))
         {
+            undefined_frame = name.eq_ignore_ascii_case("Undefined");
             parse_frequency_ref_name(&name).ok_or_else(|| {
                 CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {name}"))
             })?
@@ -254,6 +308,12 @@ impl SpectralCoordinate {
         }
         if let Some(conversion) = parse_conversion(rec) {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
+        }
+        coord.undefined_frame = undefined_frame;
+        // C++ `restoreRestFrequencies`: the optional list, negative values
+        // clamped to zero; `restfreq` stays the active one.
+        if let Some(list) = get_optional_vec_f64(rec, "restfreqs").filter(|list| !list.is_empty()) {
+            coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
         }
         Ok(coord)
     }
@@ -372,12 +432,22 @@ impl Coordinate for SpectralCoordinate {
 }
 
 impl SpectralCoordinate {
+    /// The record's `system`: the frame, or `"Undefined"` for an axis that
+    /// declares none.
+    fn system_name(&self) -> &'static str {
+        if self.undefined_frame {
+            "Undefined"
+        } else {
+            self.frequency_ref.as_str()
+        }
+    }
+
     pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert("version", Value::Scalar(ScalarValue::Int32(2)));
         rec.upsert(
             "system",
-            Value::Scalar(ScalarValue::String(self.frequency_ref.as_str().into())),
+            Value::Scalar(ScalarValue::String(self.system_name().into())),
         );
         rec.upsert(
             "restfreq",
@@ -385,7 +455,7 @@ impl SpectralCoordinate {
         );
         rec.upsert(
             "restfreqs",
-            Value::Array(ArrayValue::from_f64_vec(vec![self.rest_frequency])),
+            Value::Array(ArrayValue::from_f64_vec(self.rest_frequencies.clone())),
         );
         rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
         rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
@@ -650,6 +720,29 @@ mod tests {
         assert_eq!(coord.axis_names(), vec!["Velocity"]);
     }
 
+    /// C++ `setRestFrequencies(list, 0)` makes the first active, and the
+    /// record keeps the list (`restfreqs`) beside it (`restfreq`).
+    #[test]
+    fn rest_frequency_lists_keep_the_first_active_through_the_record() {
+        let coord = SpectralCoordinate::new(FrequencyRef::BARY, 1e9, 1e6, 0.0, 1.0e9)
+            .with_rest_frequencies(vec![1.42e9, 1.6e9, 1.7e9]);
+        assert_eq!(coord.rest_frequency(), 1.42e9);
+        assert_eq!(coord.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let record = coord.to_record();
+        let restored = SpectralCoordinate::from_record(&record).expect("restored");
+        assert_eq!(restored.rest_frequency(), 1.42e9);
+        assert_eq!(restored.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let single = SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 1.42e9);
+        assert_eq!(single.rest_frequencies(), [1.42e9]);
+        assert_eq!(
+            single
+                .clone()
+                .with_rest_frequencies(Vec::new())
+                .rest_frequencies(),
+            [1.42e9]
+        );
+    }
+
     #[test]
     fn with_conversion_changes_world_frame() {
         let coord = SpectralCoordinate::new(FrequencyRef::LSRD, 1.15022e11, 6.25005e6, 0.0, 1.0)
@@ -842,5 +935,17 @@ mod tests {
         let coord = SpectralCoordinate::from_record(&record).unwrap();
         assert_eq!(coord.frequency_ref(), FrequencyRef::TOPO);
         assert_eq!(coord.axis_names(), vec!["Frequency"]);
+        // The axis keeps declaring no frame when written back.
+        assert!(coord.has_undefined_frame());
+        assert!(matches!(
+            coord.to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
+        let declared = SpectralCoordinate::new(FrequencyRef::TOPO, 1.0e9, 1.0e6, 0.0, 0.0);
+        assert!(!declared.has_undefined_frame());
+        assert!(matches!(
+            declared.with_undefined_frame().to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
     }
 }
