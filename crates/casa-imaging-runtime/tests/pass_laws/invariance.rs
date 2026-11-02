@@ -751,6 +751,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
         height: IMAGE,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
     };
@@ -893,6 +894,7 @@ fn streamed_density_grid_equals_the_one_shot_build() {
         height: IMAGE,
         planes: 7,
         padding: 2,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Cube,
     };
@@ -1015,6 +1017,7 @@ fn kept_density_weights_hold_across_blocks_and_model_writing() {
         height: IMAGE,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
     };

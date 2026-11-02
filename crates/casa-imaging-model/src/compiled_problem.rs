@@ -19,6 +19,7 @@ use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
 };
+pub use crate::weighting::{UvTaper, WeightDensityScope, WeightingContract, WeightingScheme};
 
 /// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -962,136 +963,6 @@ impl ReconstructionContract {
     }
 }
 
-/// Visibility-weighting formula.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WeightingScheme {
-    /// Natural weighting.
-    Natural,
-    /// Uniform density weighting.
-    Uniform,
-    /// Briggs robust weighting.
-    Briggs {
-        /// Robustness in the conventional interval `[-2, 2]`.
-        robust: f64,
-    },
-    /// Briggs bandwidth-taper weighting.
-    BriggsBandwidthTaper {
-        /// Robustness in the conventional interval `[-2, 2]`.
-        robust: f64,
-    },
-}
-
-/// Domain over which visibility-density weights are derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WeightDensityScope {
-    /// The weighting formula does not use a density generation.
-    NotApplicable,
-    /// All selected data contributing to the logical product.
-    GlobalSelection,
-    /// An explicit global density generation per output channel.
-    PerOutputChannel,
-}
-
-/// Gaussian taper in the UV plane, expressed as baseline HWHM wavelengths.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UvTaper {
-    major_lambda: f64,
-    minor_lambda: f64,
-    position_angle_rad: f64,
-}
-
-impl UvTaper {
-    /// Construct a Gaussian UV taper from major/minor baseline HWHM and angle.
-    #[must_use]
-    pub const fn new(major_lambda: f64, minor_lambda: f64, position_angle_rad: f64) -> Self {
-        Self {
-            major_lambda,
-            minor_lambda,
-            position_angle_rad,
-        }
-    }
-
-    /// Return the major-axis baseline HWHM in wavelengths.
-    #[must_use]
-    pub const fn major_lambda(self) -> f64 {
-        self.major_lambda
-    }
-
-    /// Return the minor-axis baseline HWHM in wavelengths.
-    #[must_use]
-    pub const fn minor_lambda(self) -> f64 {
-        self.minor_lambda
-    }
-
-    /// Return the position angle in radians.
-    #[must_use]
-    pub const fn position_angle_rad(self) -> f64 {
-        self.position_angle_rad
-    }
-}
-
-/// Complete logical visibility-weighting requirements.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeightingContract {
-    scheme: WeightingScheme,
-    density_scope: WeightDensityScope,
-    uv_taper: Option<UvTaper>,
-    casa_cube_density_padding: Option<usize>,
-}
-
-impl WeightingContract {
-    /// Construct weighting requirements.
-    #[must_use]
-    pub const fn new(scheme: WeightingScheme, density_scope: WeightDensityScope) -> Self {
-        Self {
-            scheme,
-            density_scope,
-            uv_taper: None,
-            casa_cube_density_padding: None,
-        }
-    }
-
-    /// Add a Gaussian UV taper to the weighting metric.
-    #[must_use]
-    pub const fn with_uv_taper(mut self, uv_taper: UvTaper) -> Self {
-        self.uv_taper = Some(uv_taper);
-        self
-    }
-
-    /// Bind CASA's cube density and native-weight transfer law, with a
-    /// metadata-derived number of density channels on each side of the image.
-    /// Zero padding still selects the cube law. The published axis is unchanged.
-    #[must_use]
-    pub const fn with_casa_cube_density_padding(mut self, channels_per_side: usize) -> Self {
-        self.casa_cube_density_padding = Some(channels_per_side);
-        self
-    }
-
-    /// Return the bound CASA cube law's symmetric density-axis padding.
-    #[must_use]
-    pub const fn casa_cube_density_padding(self) -> Option<usize> {
-        self.casa_cube_density_padding
-    }
-
-    /// Return the weighting formula.
-    #[must_use]
-    pub const fn scheme(self) -> WeightingScheme {
-        self.scheme
-    }
-
-    /// Return the density-generation scope.
-    #[must_use]
-    pub const fn density_scope(self) -> WeightDensityScope {
-        self.density_scope
-    }
-
-    /// Return the optional Gaussian UV taper.
-    #[must_use]
-    pub const fn uv_taper(self) -> Option<UvTaper> {
-        self.uv_taper
-    }
-}
-
 /// Logical image product requested from the problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProductKind {
@@ -1770,6 +1641,10 @@ pub enum RequiredCapability {
     BriggsWeighting,
     /// Briggs bandwidth-taper weighting.
     BriggsBandwidthTaperWeighting,
+    /// CASA radial weighting.
+    RadialWeighting,
+    /// CASA absolute Briggs weighting.
+    BriggsAbsoluteWeighting,
     /// Unit-response product normalization.
     UnitResponseNormalization,
     /// Flat-noise product normalization.
@@ -1809,6 +1684,8 @@ impl RequiredCapability {
             Self::UniformWeighting,
             Self::BriggsWeighting,
             Self::BriggsBandwidthTaperWeighting,
+            Self::RadialWeighting,
+            Self::BriggsAbsoluteWeighting,
             Self::UnitResponseNormalization,
             Self::FlatNoiseNormalization,
             Self::FlatSkyNormalization,
@@ -1854,6 +1731,8 @@ impl RequiredCapability {
             Self::UniformWeighting => "uniform_weighting".to_string(),
             Self::BriggsWeighting => "briggs_weighting".to_string(),
             Self::BriggsBandwidthTaperWeighting => "briggs_bandwidth_taper_weighting".to_string(),
+            Self::RadialWeighting => "radial_weighting".to_string(),
+            Self::BriggsAbsoluteWeighting => "briggs_absolute_weighting".to_string(),
             Self::UnitResponseNormalization => "unit_response_normalization".to_string(),
             Self::FlatNoiseNormalization => "flat_noise_normalization".to_string(),
             Self::FlatSkyNormalization => "flat_sky_normalization".to_string(),
@@ -2066,7 +1945,10 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
         });
     }
     let reconstruction = specification.reconstruction.canonicalize()?;
-    validate_weighting(specification.weighting)?;
+    specification
+        .weighting
+        .validate()
+        .map_err(|reason| CompileProblemError::InvalidWeighting { reason })?;
     validate_products(&science, &reconstruction, &products)?;
     let normal_equation = compile_normal_equation(
         &geometry,
@@ -2267,59 +2149,6 @@ fn validate_reconstruction(
     Ok(())
 }
 
-fn validate_weighting(contract: WeightingContract) -> Result<(), CompileProblemError> {
-    if contract.casa_cube_density_padding.is_some()
-        && contract.density_scope != WeightDensityScope::PerOutputChannel
-    {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "CASA cube density requires per-output-channel weighting",
-        });
-    }
-    match contract.scheme {
-        WeightingScheme::Natural if contract.density_scope != WeightDensityScope::NotApplicable => {
-            return Err(CompileProblemError::InvalidWeighting {
-                reason: "natural weighting has no density generation",
-            });
-        }
-        WeightingScheme::Uniform
-        | WeightingScheme::Briggs { .. }
-        | WeightingScheme::BriggsBandwidthTaper { .. }
-            if contract.density_scope == WeightDensityScope::NotApplicable =>
-        {
-            return Err(CompileProblemError::InvalidWeighting {
-                reason: "density weighting requires an explicit global density scope",
-            });
-        }
-        WeightingScheme::Natural
-        | WeightingScheme::Uniform
-        | WeightingScheme::Briggs { .. }
-        | WeightingScheme::BriggsBandwidthTaper { .. } => {}
-    }
-    let robust = match contract.scheme {
-        WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
-            Some(robust)
-        }
-        WeightingScheme::Natural | WeightingScheme::Uniform => None,
-    };
-    if robust.is_some_and(|value| !(value.is_finite() && (-2.0..=2.0).contains(&value))) {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "Briggs robustness must be finite and in [-2, 2]",
-        });
-    }
-    if contract.uv_taper.is_some_and(|taper| {
-        !(taper.major_lambda.is_finite()
-            && taper.major_lambda > 0.0
-            && taper.minor_lambda.is_finite()
-            && taper.minor_lambda > 0.0
-            && taper.position_angle_rad.is_finite())
-    }) {
-        return Err(CompileProblemError::InvalidWeighting {
-            reason: "UV taper axes must be finite and positive and its angle must be finite",
-        });
-    }
-    Ok(())
-}
-
 fn validate_products(
     science: &ScientificContract,
     reconstruction: &ReconstructionContract,
@@ -2499,6 +2328,8 @@ fn derive_capabilities(
         WeightingScheme::BriggsBandwidthTaper { .. } => {
             RequiredCapability::BriggsBandwidthTaperWeighting
         }
+        WeightingScheme::Radial => RequiredCapability::RadialWeighting,
+        WeightingScheme::BriggsAbsolute { .. } => RequiredCapability::BriggsAbsoluteWeighting,
     });
     capabilities.insert(match products.normalization {
         ProductNormalization::UnitResponse => RequiredCapability::UnitResponseNormalization,

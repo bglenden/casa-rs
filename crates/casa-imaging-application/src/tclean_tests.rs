@@ -35,6 +35,9 @@ fn modes() -> Vec<Value> {
         }),
         json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [0, 3] }),
         json!({ "usemask": "auto-multithresh" }),
+        json!({ "weighting": "superuniform" }),
+        json!({ "weighting": "radial", "specmode": "cube", "nchan": 4 }),
+        json!({ "weighting": "briggsabs", "specmode": "cube", "nchan": 4 }),
     ]
 }
 
@@ -252,7 +255,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "specmode": "mvc" }), "specmode", "#823"),
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
-        (json!({ "weighting": "superuniform" }), "weighting", "#980"),
         (json!({ "usemask": "pb" }), "usemask", "#823"),
         (json!({ "savemodel": "virtual" }), "savemodel", "#823"),
         (
@@ -450,4 +452,98 @@ fn scan_and_observation_selectors_keep_their_exact_text_with_either_selectdata()
     }
     let request = request(json!({"scan": "", "observation": ""}));
     assert_eq!((request.scan, request.observation), (None, None));
+}
+
+/// The request tclean's `overrides` make with `resolved` set over the
+/// catalog's resolution: the catalog holds `npixels` and `noise` at their
+/// defaults until its contract activates them (#980), and the reader reads
+/// whatever values it is given.
+fn after_resolution(
+    overrides: Value,
+    resolved_values: Value,
+) -> Result<ImagingRequest, TcleanRefusal> {
+    let mut values = resolved(overrides).expect("catalog values");
+    values.extend(resolved_values.as_object().expect("an object").clone());
+    ImagingRequest::from_tclean(&values)
+}
+
+/// `npixels` as `SynthesisImagerVi2::weight` reads it: superuniform's box,
+/// 3 when zero or less; the size of a uniform or Briggs density; nothing
+/// for natural and radial weighting. `task_tclean.py` images nothing for
+/// briggsbwtaper with npixels ≠ 0, and a negative density grid fails.
+#[test]
+fn npixels_is_read_as_casas_weightings_read_it() {
+    let npixels = |weighting: &str, npixels: i64| {
+        after_resolution(
+            json!({ "weighting": weighting, "specmode": "cube", "nchan": 4 }),
+            json!({ "npixels": npixels }),
+        )
+        .map(|request| request.npixels)
+    };
+    for (weighting, given, read) in [
+        ("superuniform", 0, 3),
+        ("superuniform", -2, 3),
+        ("superuniform", 5, 5),
+        ("uniform", 0, 0),
+        ("uniform", 16, 16),
+        ("briggs", 2, 2),
+        ("briggsabs", 7, 7),
+        ("briggsbwtaper", 0, 0),
+        ("natural", 9, 0),
+        ("radial", -4, 0),
+    ] {
+        assert_eq!(npixels(weighting, given), Ok(read), "{weighting} {given}");
+    }
+    for (weighting, given) in [("briggsbwtaper", 4), ("uniform", -1), ("briggs", -3)] {
+        let refused = npixels(weighting, given).expect_err("refused");
+        assert_eq!(refused.parameter, "npixels", "{weighting} {given}");
+    }
+}
+
+/// `noise` is read for briggsabs alone (`rmode = "abs"`), as a flux
+/// density in Jy (`noise.get("Jy")`); robust 0 with noise 0 divides by
+/// zero, which `SynthesisImagerVi2::weight` refuses for a cube.
+#[test]
+fn briggsabs_reads_noise_as_a_flux_density() {
+    let read = |weighting: &str, robust: f64, noise: Value| {
+        after_resolution(
+            json!({ "weighting": weighting, "robust": robust }),
+            json!({ "noise": noise }),
+        )
+    };
+    let noise = |robust, text: &str| read("briggsabs", robust, json!(text)).map(|r| r.noise);
+    assert_eq!(
+        request(json!({ "weighting": "briggsabs" })).noise,
+        Some(1.0)
+    );
+    assert_eq!(noise(0.5, "5mJy"), Ok(Some(0.005)));
+    assert_eq!(noise(0.0, "0.1Jy"), Ok(Some(0.1)));
+    assert_eq!(noise(0.5, "0Jy"), Ok(Some(0.0)));
+    for (robust, text) in [(0.5, "0.5"), (0.5, "1K"), (0.5, "garbage"), (0.0, "0Jy")] {
+        let refused = noise(robust, text).expect_err("refused");
+        assert_eq!(refused.parameter, "noise", "{robust} {text}");
+    }
+    // Every other weighting reads no noise.
+    for weighting in ["natural", "uniform", "briggs", "superuniform", "radial"] {
+        let request = read(weighting, 0.0, json!("garbage")).expect(weighting);
+        assert_eq!(request.noise, None, "{weighting}");
+    }
+    let request = request(json!({ "weighting": "briggsabs", "robust": -1.5 }));
+    assert_eq!(
+        (request.weighting, request.robust),
+        (crate::Weighting::Briggsabs, -1.5)
+    );
+}
+
+/// casa-rs's mosaic weighs density over all fields, so `mosweight=True` is
+/// refused with every density weighting, superuniform among them; radial
+/// weighting grids no density.
+#[test]
+fn per_field_density_is_refused_for_superuniform_and_not_for_radial() {
+    let mosaic = |weighting: &str| json!({ "gridder": "mosaic", "weighting": weighting });
+    assert_eq!(refusal(mosaic("superuniform")).parameter, "mosweight");
+    assert_eq!(
+        request(mosaic("radial")).weighting,
+        crate::Weighting::Radial
+    );
 }

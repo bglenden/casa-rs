@@ -274,6 +274,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
             | RequiredCapability::BriggsBandwidthTaperWeighting
+            | RequiredCapability::BriggsAbsoluteWeighting
+            | RequiredCapability::RadialWeighting
             | RequiredCapability::UvTaper
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization

@@ -18,6 +18,7 @@ mod sample_antennas;
 mod transaction;
 mod uvw_projection;
 mod visibility_transform;
+mod weighting;
 
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
@@ -106,3 +107,4 @@ pub use visibility_transform::{
     ContinuumChannelRole, ContinuumChannelUse, ContinuumCovariancePolicy, ContinuumFitRule,
     ContinuumTransformContractError, SequentialContinuumTransform,
 };
+pub use weighting::DensityCells;

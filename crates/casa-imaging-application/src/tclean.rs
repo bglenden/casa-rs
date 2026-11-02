@@ -21,8 +21,9 @@
 //! `mask_box`), and its `cycleniter` the minor-cycle length
 //! (`minor_cycle_length`); `nchan` is a cube's `channel_count`.
 
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
+use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
 use crate::ImagingRequest;
@@ -106,6 +107,7 @@ fn read(
     tclean.geometry()?;
     tclean.spectral(&modes)?;
     tclean.gridding(&modes)?;
+    tclean.weighting(&modes)?;
     tclean.deconvolution(&modes)?;
     tclean.iteration()?;
     tclean.masking(&modes)?;
@@ -122,6 +124,7 @@ struct Modes {
     /// `ftmosaic` (`task_tclean.py`).
     per_field_density: bool,
     deconvolver: String,
+    weighting: String,
     density_weighting: bool,
     user_mask: bool,
 }
@@ -296,7 +299,13 @@ impl<'a> Tclean<'a> {
         let weighting = self.text("weighting")?;
         if !matches!(
             weighting,
-            "natural" | "uniform" | "briggs" | "briggsbwtaper"
+            "natural"
+                | "uniform"
+                | "superuniform"
+                | "radial"
+                | "briggs"
+                | "briggsabs"
+                | "briggsbwtaper"
         ) {
             return Err(TcleanRefusal::not_yet(
                 "weighting",
@@ -323,7 +332,9 @@ impl<'a> Tclean<'a> {
             gridder,
             per_field_density: gridder_name == "mosaic",
             deconvolver: deconvolver.to_string(),
-            density_weighting: weighting != "natural",
+            weighting: weighting.to_string(),
+            // `VisImagingWeight("natural")` and `("radial")` grid no density.
+            density_weighting: !matches!(weighting, "natural" | "radial"),
             user_mask: usemask == "user",
         })
     }
@@ -636,17 +647,73 @@ impl<'a> Tclean<'a> {
         Ok(())
     }
 
+    /// `npixels` and `noise` as `SynthesisImagerVi2::weight` reads them for
+    /// the weighting (`task_tclean.py`'s `ImagerParameters` maps
+    /// `briggsabs` to Briggs with `rmode = "abs"`, the only mode that reads
+    /// `noise`).
+    fn weighting(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
+        let npixels = self.integer("npixels")?;
+        let noise = self.value("noise")?;
+        let cells = match modes.weighting.as_str() {
+            // `VisImagingWeight("natural")` and `("radial")` grid no density.
+            "natural" | "radial" => 0,
+            // `actualNpix = npixels`, or 3 when `npixels <= 0`.
+            "superuniform" if npixels <= 0 => 3,
+            // `task_tclean.py` returns before imaging.
+            "briggsbwtaper" if npixels != 0 => {
+                return Err(TcleanRefusal::new(
+                    "npixels",
+                    "weighting='briggsbwtaper' takes npixels=0: CASA's tclean images nothing \
+                     otherwise, and casa-rs refuses it",
+                ));
+            }
+            _ if npixels < 0 => {
+                return Err(TcleanRefusal::new(
+                    "npixels",
+                    format!(
+                        "npixels={npixels}: a uniform or Briggs density grid needs 0 (the \
+                         image's cells) or a positive size; CASA's of negative size fails"
+                    ),
+                ));
+            }
+            _ => npixels,
+        };
+        self.set("npixels", cells);
+        if modes.weighting != "briggsabs" {
+            self.set("noise", "none");
+            return Ok(());
+        }
+        // `noise.get("Jy")`: a flux density, which a bare number is not.
+        let jy = noise
+            .as_str()
+            .and_then(|text| text.trim().parse::<Quantity>().ok())
+            .filter(|quantity| !quantity.unit().name().is_empty())
+            .and_then(|quantity| quantity.get_value_in(&Unit::from_str("Jy").ok()?).ok())
+            .filter(|jy| jy.is_finite())
+            .ok_or_else(|| {
+                TcleanRefusal::new(
+                    "noise",
+                    format!("noise {noise}: weighting='briggsabs' needs a flux density, as 1.0Jy"),
+                )
+            })?;
+        // CASA's denominator robust²·D + 2·noise² would vanish:
+        // `SynthesisImagerVi2::weight` refuses this pair for a cube, and a
+        // continuum image weighs every visibility infinite.
+        if jy == 0.0 && self.values.get("robust").and_then(Value::as_f64) == Some(0.0) {
+            return Err(TcleanRefusal::new(
+                "noise",
+                "weighting='briggsabs' with robust=0 and noise=0 divides by zero: CASA refuses \
+                 it for a cube, and casa-rs in every mode",
+            ));
+        }
+        self.set("noise", jy);
+        Ok(())
+    }
+
     fn deconvolution(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["smallscalebias", "pbcor", "robust", "uvtaper"])?;
-        // `asp` reads these, and casa-rs refuses `asp`; `noise` and
-        // `npixels` are held at their defaults.
-        self.ignore(&[
-            "fusedthreshold",
-            "largestscale",
-            "restoration",
-            "noise",
-            "npixels",
-        ])?;
+        // `asp` reads these, and casa-rs refuses `asp`.
+        self.ignore(&["fusedthreshold", "largestscale", "restoration"])?;
         let scales = self.number_list("scales")?;
         let multiscale = matches!(modes.deconvolver.as_str(), "multiscale" | "mtmfs");
         self.set(

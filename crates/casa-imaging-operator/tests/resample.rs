@@ -128,6 +128,7 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
         height: 64,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
     };
@@ -186,6 +187,7 @@ fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
         height: 64,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
     };
@@ -497,6 +499,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
         height: 64,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
     };
@@ -579,6 +582,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         height: 64,
         planes: 6,
         padding: 1,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
     };
@@ -661,6 +665,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
     let unpadded = DensityGridShape {
         planes: 4,
         padding: 0,
+        box_half_width: 0,
         ..shape
     };
     let (frequencies, values, weights) = row(&[1.0, 1.05, 1.1, 1.15], &[2.0, 3.0, 4.0, 5.0]);
@@ -789,6 +794,7 @@ fn density_shape(resampler: &SpectralResampler, padding: u32) -> DensityGridShap
         height: 64,
         planes: resampler.basis().planes() as usize + 2 * padding as usize,
         padding,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
     }
@@ -939,6 +945,7 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
         height: 64,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
     };
@@ -983,6 +990,7 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
         height: 64,
         planes: 2,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
     };
@@ -1025,6 +1033,7 @@ fn autocorrelations_reach_the_density_but_not_the_grid() {
         height: 64,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
     };
@@ -1093,6 +1102,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
         height: 4096,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [increment, increment],
         rule: DensityCellRule::Standard,
     };

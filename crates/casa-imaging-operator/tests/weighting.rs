@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA cell rules of the density grid on a hand-built grid, and the
-//! uniform, Briggs and taper weights derived from it.
+//! uniform, superuniform, Briggs (normalized and absolute), radial and taper
+//! weights derived from it.
 
 use casa_imaging_operator::{
     BandwidthTaper, CfKey, DensityCellRule, DensityGridShape, DensityUv, OperatorError, Placement,
@@ -16,6 +17,7 @@ fn shape(rule: DensityCellRule) -> DensityGridShape {
         height: 8,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
     }
@@ -35,11 +37,14 @@ fn placement(u: f64, v: f64) -> Placement {
     }
 }
 
-/// Density coordinates equal to the placement's (exact in single precision).
+/// Density coordinates equal to the placement's (exact in single precision),
+/// as metres at one wavelength per metre.
 fn uv(u: f64, v: f64) -> DensityUv {
     DensityUv {
         u: u as f32,
         v: v as f32,
+        wavelengths_per_m: 1.0,
+        uv_m: [u, v],
     }
 }
 
@@ -136,6 +141,7 @@ fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
         height: 7,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule,
     };
@@ -202,6 +208,7 @@ fn a_float_tie_rounds_in_casas_orientation() {
         height: 100,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-cell_rad, cell_rad],
         rule: DensityCellRule::Cube,
     };
@@ -237,6 +244,7 @@ fn an_odd_width_keeps_casas_outermost_column() {
         height: 7,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: [-1.0e-3, 1.0e-3],
         rule: DensityCellRule::Cube,
     };
@@ -329,4 +337,180 @@ fn briggs_bandwidth_taper_divides_the_density_term_by_the_uv_distance_factor() {
         BandwidthTaper::from_frequency_range(1.0e9, 1.0e9),
         Err(OperatorError::Weighting { .. })
     ));
+}
+
+/// CASA `superuniform` (`VisImagingWeight`'s constructor with
+/// `uBox = vBox = b`): each sample adds its whole weight to the
+/// `(2b + 1)²` cells about its cell, and about its conjugate cell, only when
+/// that whole box is inside the grid, `(ucell − uBox) > 0 && (ucell + uBox)
+/// < nx` and likewise in v; `weightUniform` then looks up the sample's own
+/// cell without a box.
+#[test]
+fn a_superuniform_box_adds_the_whole_weight_to_every_cell_of_a_box_inside_the_grid() {
+    let mut shape = shape(DensityCellRule::Standard);
+    shape.box_half_width = 1;
+    // A = (−250, 125) → (6, 5), conjugate (2, 3); B = (−125, 0) → (5, 4),
+    // conjugate (3, 4); all four boxes lie in 1..=7. C = (−375, 0) →
+    // (7, 4): its box reaches column 8, and its conjugate's, about (1, 4),
+    // column 0, so C adds nothing (one cell each would have been accepted).
+    let buffer = density_buffer(&[(-250.0, 125.0, 1.0), (-125.0, 0.0, 2.0), (-375.0, 0.0, 4.0)]);
+    let grid = build_density_grid(std::iter::once(buffer.block()), shape);
+    let cells = grid.plane(0);
+    let at = |x: usize, y: usize| cells[y * 8 + x];
+    // Boxes: A x 5..=7, y 4..=6; A* x 1..=3, y 2..=4; B x 4..=6, y 3..=5;
+    // B* x 2..=4, y 3..=5.
+    assert_eq!(at(6, 5), 1.0 + 2.0, "A's cell, inside B's box");
+    assert_eq!(at(5, 4), 1.0 + 2.0);
+    assert_eq!(at(7, 6), 1.0, "A's box alone");
+    assert_eq!(at(3, 4), 1.0 + 2.0, "A* and B*");
+    assert_eq!(at(1, 2), 1.0, "A*'s box alone");
+    assert_eq!(at(4, 3), 2.0 + 2.0, "B's and B*'s boxes meet");
+    assert_eq!(at(7, 4), 1.0, "C's own cell holds A's box only");
+    assert_eq!(cells.iter().sum::<f64>(), 9.0 * 2.0 * (1.0 + 2.0));
+    assert_eq!(grid.sum_weights(), &[3.0]);
+    let superuniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    assert!((weight(&superuniform, -250.0, 125.0, 1.5) - 0.5).abs() < 1e-7);
+    // C weighs by the density at its own cell, though its box added none.
+    assert_eq!(weight(&superuniform, -375.0, 0.0, 4.0), 4.0);
+}
+
+/// A cube's per-channel density with `npixels = b` (`BriggsCubeWeightor`'s
+/// `superUniformBox`): `GridFT` grids each sample through a convolution
+/// function of ones over the box, which `sectggridd` normalizes to unit sum,
+/// so each of the `(2b + 1)²` cells takes `w/(2b + 1)²`, and the weight sum
+/// (`sumWgts`) takes `w` once.
+#[test]
+fn a_cube_density_box_shares_the_weight_among_its_cells() {
+    let mut shape = shape(DensityCellRule::Cube);
+    shape.box_half_width = 1;
+    // (−250, 125) → (2, 3), conjugate (6, 5) (the cube rule negates u and
+    // v); both boxes lie in 1..=7. (375, 0) → (7, 4) leaves the grid, and
+    // CASA folds no conjugate from a sample it did not grid.
+    let buffer = density_buffer(&[(-250.0, 125.0, 9.0), (375.0, 0.0, 9.0)]);
+    let grid = build_density_grid(std::iter::once(buffer.block()), shape);
+    let cells = grid.plane(0);
+    let at = |x: usize, y: usize| cells[y * 8 + x];
+    for (x, y) in [(1, 2), (2, 3), (3, 4), (5, 4), (6, 5), (7, 6)] {
+        assert_eq!(at(x, y), 1.0, "({x}, {y})");
+    }
+    assert_eq!(at(4, 4), 0.0);
+    assert_eq!(cells.iter().sum::<f64>(), 18.0);
+    assert_eq!(grid.sum_weights(), &[9.0]);
+    // f² = 25 / (ΣD² / 2Σw) = 25 / (18 / 18).
+    let briggs = WeightingGeneration::density(grid, Some(0.0), None, None).expect("briggs");
+    assert!((f64::from(weight(&briggs, -250.0, 125.0, 1.0)) - 1.0 / 26.0).abs() < 1e-7);
+}
+
+/// CASA's continuum uniform and Briggs density with `npixels = n`
+/// (`SynthesisImagerVi2::weight`): an `n × n` grid whose cell increment is
+/// the field of view `n·Δ` divided by `n` again, so its uv cells are
+/// `N / n` times the image's; on 4 and 5 cells two samples in different
+/// image cells share one.
+#[test]
+fn a_square_npixels_grid_spans_the_image_uv_extent_with_coarser_cells() {
+    // In double, (3·0.1)/3 is 0.10000000000000002, not 0.1.
+    assert_eq!(
+        DensityGridShape::visimagingweight_increment(3, 0.1),
+        0.100_000_000_000_000_02
+    );
+    let samples = [(-150.0, 150.0, 1.0), (-100.0, 50.0, 1.0)];
+    let image = build_density_grid(
+        std::iter::once(density_buffer(&samples).block()),
+        shape(DensityCellRule::Standard),
+    );
+    // The 8 × 8 image grid: (−150, 150) → (5.2, 5.2) → (5, 5) and
+    // (−100, 50) → (4.8, 4.4) → (4, 4).
+    assert_eq!(image.lookup(0, uv(-150.0, 150.0)), Some(1.0));
+    assert_eq!(image.lookup(0, uv(-100.0, 50.0)), Some(1.0));
+    // n = 4: origin 2, scale ∓4e-3: (2.6, 2.6) and (2.4, 2.2) → (2, 2);
+    // conjugates (1.4, 1.4) and (1.6, 1.8) → (1, 1). n = 5, odd: origin
+    // 5/2 = 2, scale ∓5e-3: (2.75, 2.75) and (2.5, 2.25) → (2, 2);
+    // conjugates (1.25, 1.25) and (1.5, 1.75) → (1, 1).
+    for cells in [4, 5] {
+        let square = DensityGridShape {
+            width: cells,
+            height: cells,
+            increment_rad: [-1.0e-3, 1.0e-3]
+                .map(|increment| DensityGridShape::visimagingweight_increment(cells, increment)),
+            ..shape(DensityCellRule::Standard)
+        };
+        assert_eq!(square.bytes(), ((cells * cells + 1) * 8) as u64);
+        let grid = build_density_grid(std::iter::once(density_buffer(&samples).block()), square);
+        let plane = grid.plane(0);
+        assert_eq!(plane[2 * cells + 2], 2.0, "{cells} cells");
+        assert_eq!(plane[cells + 1], 2.0, "{cells} cells");
+        assert_eq!(plane.iter().sum::<f64>(), 4.0, "{cells} cells");
+        let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+        assert_eq!(weight(&uniform, -150.0, 150.0, 1.0), 0.5, "{cells} cells");
+    }
+}
+
+/// CASA `briggsabs` (`rmode = "abs"`): `f² = robust²` and `d² = 2·noise²`,
+/// each a `Float` (`VisImagingWeight`'s `f2_p`, `d2_p`), on every plane;
+/// `weightUniform` divides by `D·f² + d²` where the cell is non-empty.
+#[test]
+fn absolute_briggs_weights_divide_by_robust_squared_density_plus_twice_the_noise_squared() {
+    let buffer = density_buffer(&[
+        (-250.0, 125.0, 1.0),
+        (-250.0, 125.0, 2.0),
+        (-437.5, 0.0, 1.0),
+    ]);
+    // Cells (6, 5) = 3, (2, 3) = 3, (7, 4) = 1.
+    let grid = build_density_grid(
+        std::iter::once(buffer.block()),
+        shape(DensityCellRule::Standard),
+    );
+    let factors = grid.absolute_factors(0.3, 0.1);
+    assert_eq!(factors.factor(0), f64::from(0.09_f32));
+    assert_eq!(factors.factor(0), 0.090_000_003_576_278_69);
+    assert_eq!(factors.offset(), 0.019_999_999_552_965_164);
+    let absolute =
+        WeightingGeneration::absolute_density(grid.clone(), 0.5, 0.1, None).expect("briggsabs");
+    // 1 / (3·0.25 + Float(0.02)).
+    assert_eq!(weight(&absolute, -250.0, 125.0, 1.0), 1.298_701_3);
+    assert_eq!(weight(&absolute, 100.0, 100.0, 1.0), 0.0, "an empty cell");
+    // robust = 0 is natural weighting scaled by 1/(2·noise²), whatever the
+    // density; noise = 0 is uniform weighting scaled by 1/robust².
+    let flat = WeightingGeneration::absolute_density(grid.clone(), 0.0, 0.5, None).expect("abs");
+    assert_eq!(weight(&flat, -250.0, 125.0, 1.0), 2.0);
+    assert_eq!(weight(&flat, -437.5, 0.0, 1.0), 2.0);
+    let uniform = WeightingGeneration::absolute_density(grid.clone(), 2.0, 0.0, None).expect("abs");
+    assert_eq!(weight(&uniform, -250.0, 125.0, 3.0), 0.25);
+    assert_eq!(weight(&uniform, -437.5, 0.0, 1.0), 0.25);
+    // SynthesisImagerVi2::weight refuses robust = 0 with noise = 0.
+    for (robust, noise) in [(0.0, 0.0), (f64::NAN, 1.0), (0.5, f64::INFINITY)] {
+        assert!(matches!(
+            WeightingGeneration::absolute_density(grid.clone(), robust, noise, None),
+            Err(OperatorError::Weighting { .. })
+        ));
+    }
+}
+
+/// CASA `radial` (`VisImagingWeight::weightRadial`): the input weight times
+/// `f·sqrt(square(u) + square(v))`, `f = Float(ν/c)` and the metre
+/// coordinates in double; weightless samples weigh nothing, and the uv
+/// taper multiplies the result.
+#[test]
+fn radial_weights_scale_the_input_weight_by_casas_uv_distance() {
+    // At ν = c, f = 1 exactly: a 300 m by 400 m baseline is 500 wavelengths.
+    let unit = DensityUv::casa([300.0, 400.0, 50.0], 299_792_458.0);
+    assert_eq!(unit.radial_distance(), 500.0);
+    let radial = WeightingGeneration::Radial { taper: None };
+    assert_eq!(
+        radial.imaging_weight(&placement(0.0, 0.0), unit, 2.0),
+        1000.0
+    );
+    assert_eq!(radial.imaging_weight(&placement(0.0, 0.0), unit, 0.0), 0.0);
+    // At 1.4 GHz, f is ν/c = 4.669897332774129 rounded to the Float
+    // 4.669897556304932.
+    let band = DensityUv::casa([300.0, 400.0, 0.0], 1.4e9);
+    assert_eq!(f64::from(band.wavelengths_per_m), 4.669_897_556_304_932);
+    assert_ne!(f64::from(band.wavelengths_per_m), 1.4e9 / 299_792_458.0);
+    assert_eq!(band.radial_distance(), 4.669_897_556_304_932 * 500.0);
+    let tapered = WeightingGeneration::Radial {
+        taper: Some(Taper::new(100.0, 50.0, 0.0)),
+    };
+    // The taper at the placement (50, 100) is exp(−2 ln 2) = 1/4.
+    let weight = tapered.imaging_weight(&placement(50.0, 100.0), unit, 1.0);
+    assert!((weight - 125.0).abs() < 1e-4, "{weight}");
 }

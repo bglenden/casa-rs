@@ -618,7 +618,7 @@
     },
     "weighting": {
       "status": "Partial",
-      "scope": "natural/uniform/briggs/briggsbwtaper accepted; unsupported weighting modes refused (issue 980); briggsbwtaper with MFS refused as CASA does. Cube Briggs per-channel density follows BriggsCubeWeightor's cell orientation (negated u and v).",
+      "scope": "Every CASA weighting accepted: natural, uniform, superuniform (uniform over a density summed in a box of npixels, or 3), radial (weight times uv distance), briggs, briggsabs (robust^2 and 2 noise^2, CASA rmode abs) and briggsbwtaper; briggsbwtaper with MFS refused as CASA does. Superuniform and radial are never per-channel densities, as in SynthesisImagerVi2::weight. Cube Briggs per-channel density follows BriggsCubeWeightor's cell orientation (negated u and v). Per-field density (mosweight) and outlier fields under density weighting remain refused.",
       "evidence": [
         "signature",
         "reader",
@@ -640,7 +640,7 @@
       ]
     },
     "noise": {
-      "scope": "Read and ignored; non-default catalog-refused when weighting=briggsabs (issue 980); briggsabs itself is not implemented.",
+      "scope": "Read for weighting=briggsabs only, as a flux density in Jy; robust 0 with noise 0 refused in every mode (CASA refuses it for cubes and weighs continuum visibilities infinite). Ignored by the other weightings. The catalog still refuses a non-default value when weighting=briggsabs until its contract activates it (issue 980).",
       "evidence": [
         "signature",
         "reader"
@@ -650,7 +650,7 @@
       ]
     },
     "npixels": {
-      "scope": "Read and ignored; non-default catalog-refused for non-natural weighting (issue 980).",
+      "scope": "Read as SynthesisImagerVi2::weight reads it: superuniform's box half-width (3 when zero or less), a continuum uniform/Briggs density grid of npixels x npixels cells over the image's uv extent, and a cube per-channel density's box (BriggsCubeWeightor superUniformBox); ignored by natural and radial. Negative values for uniform/Briggs and any non-zero value with briggsbwtaper are refused, as CASA fails or images nothing. The catalog still refuses a non-default value for non-natural weighting until its contract activates it (issue 980).",
       "evidence": [
         "signature",
         "reader"

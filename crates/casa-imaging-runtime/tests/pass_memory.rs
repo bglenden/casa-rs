@@ -761,3 +761,58 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
         );
     }
 }
+
+/// The density pass holds at most its charge, the grid it returns and its
+/// chunks' buffers ([`density_pass_bytes`]), and the source's blocks, on
+/// every grid CASA's `npixels` makes (#980): the image's own cells, an
+/// `npixels`-square continuum grid smaller and larger than the image, and
+/// superuniform's box, which adds cells to no buffer.
+#[test]
+fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
+    use casa_imaging_operator::{DensityCellRule, DensityGridShape};
+    use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
+    if !alone("the_density_pass_holds_at_most_its_charge_on_every_npixels_grid") {
+        return;
+    }
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let operator = operator_of(64, GridPrecision::F64, Basis::Constant);
+    let shape = |side: usize, box_half_width: usize| DensityGridShape {
+        width: side,
+        height: side,
+        planes: 1,
+        padding: 0,
+        box_half_width,
+        increment_rad: [-1.0e-5, 1.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    for ((side, box_half_width), workers) in [(64, 0), (8, 0), (300, 0), (64, 3)]
+        .into_iter()
+        .flat_map(|case| [1, 3].map(|workers| (case, workers)))
+    {
+        let shape = shape(side, box_half_width);
+        let mut rows = Rows::random(300, 23, operator.geometry());
+        let team = WorkerTeam::new(workers).expect("team");
+        let admitted = density_pass_bytes(&resampler, &shape, rows.maximum_block(), workers)
+            + source_block_bytes(rows.maximum_block());
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = run_density_pass(
+            &operator,
+            &resampler,
+            shape,
+            &mut rows,
+            &team,
+            &Cancel::new(),
+        );
+        MEASURING.store(false, Ordering::Relaxed);
+        let grid = result.expect("density pass");
+        assert!(grid.cells().iter().any(|cell| *cell > 0.0), "{side}");
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        assert!(
+            held <= admitted,
+            "{side}² cells, box {box_half_width}, {workers} workers: the density pass held \
+             {held} bytes against {admitted} admitted"
+        );
+    }
+}

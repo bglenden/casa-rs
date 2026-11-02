@@ -3,7 +3,7 @@
 //! compiled problem: plan section 5.3 projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    AntennaResponseClass, CompiledImageDomain, CompiledProblem, InstrumentModel,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, InstrumentModel,
     ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
@@ -599,12 +599,111 @@ pub(crate) fn density_shape(
             (1, 0, DensityCellRule::Standard)
         }
     };
+    let increment = domain.direction().increment_rad();
+    let cells = problem.weighting().density_cells();
+    let ([width, height], increment_rad, box_half_width) =
+        density_cells(cells, rule, [width, height], increment);
+    // The grid is charged by its bytes ([`DensityGridShape::bytes`]).
+    width
+        .checked_mul(height)
+        .and_then(|plane| plane.checked_mul(planes))
+        .and_then(|cells| cells.checked_add(planes))
+        .and_then(|values| values.checked_mul(size_of::<f64>()))
+        .ok_or(ImagingError::Unsupported {
+            reason: "the weight-density grid overflows",
+        })?;
     Ok(DensityGridShape {
         width,
         height,
         planes,
         padding,
-        increment_rad: domain.direction().increment_rad(),
+        box_half_width,
+        increment_rad,
         rule,
     })
+}
+
+/// The cells, cell increments and box half-width of a density grid over an
+/// image of `pixels` and `increment` (`SynthesisImagerVi2::weight`). CASA's
+/// continuum uniform and Briggs density (`VisImagingWeight`) has `n` cells
+/// a side for `npixels = n`, else the image's, each `(n·Δ)/n` wide;
+/// superuniform's box and the cube weightor's keep the image's cells and
+/// increments.
+fn density_cells(
+    cells: DensityCells,
+    rule: DensityCellRule,
+    pixels: [usize; 2],
+    increment: [f64; 2],
+) -> ([usize; 2], [f64; 2], usize) {
+    let visimagingweight = |[nx, ny]: [usize; 2]| {
+        [
+            DensityGridShape::visimagingweight_increment(nx, increment[0]),
+            DensityGridShape::visimagingweight_increment(ny, increment[1]),
+        ]
+    };
+    match (cells, rule) {
+        (DensityCells::Box(half_width), _) => (pixels, increment, half_width.get()),
+        (DensityCells::Square(side), _) => {
+            let side = [side.get(); 2];
+            (side, visimagingweight(side), 0)
+        }
+        (DensityCells::Image, DensityCellRule::Standard) => (pixels, visimagingweight(pixels), 0),
+        (DensityCells::Image, DensityCellRule::Cube) => (pixels, increment, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use super::*;
+
+    /// `SynthesisImagerVi2::weight`: `npixels = n` makes the continuum
+    /// density `n × n` whatever the image's shape, each cell `(n·Δ)/n`; the
+    /// image's own size takes the same arithmetic; superuniform's box and the
+    /// cube weightor keep the image's cells and increments.
+    #[test]
+    fn density_cells_size_casas_grids() {
+        let cells = |count| NonZeroUsize::new(count).expect("non-zero");
+        // A 0.1-radian cell: in double, (3·0.1)/3 is 0.10000000000000002.
+        let increment = [-0.1, 0.1];
+        let casa = 0.100_000_000_000_000_02;
+        let image = [100, 60];
+        for (side, expected) in [(3, casa), (4, 0.1)] {
+            assert_eq!(
+                density_cells(
+                    DensityCells::Square(cells(side)),
+                    DensityCellRule::Standard,
+                    image,
+                    increment
+                ),
+                ([side, side], [-expected, expected], 0),
+                "{side}"
+            );
+        }
+        assert_eq!(
+            density_cells(
+                DensityCells::Image,
+                DensityCellRule::Standard,
+                [3, 3],
+                increment
+            ),
+            ([3, 3], [-casa, casa], 0)
+        );
+        for rule in [DensityCellRule::Standard, DensityCellRule::Cube] {
+            assert_eq!(
+                density_cells(DensityCells::Box(cells(3)), rule, image, increment),
+                (image, increment, 3)
+            );
+        }
+        assert_eq!(
+            density_cells(
+                DensityCells::Image,
+                DensityCellRule::Cube,
+                [3, 3],
+                increment
+            ),
+            ([3, 3], increment, 0)
+        );
+    }
 }

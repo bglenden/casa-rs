@@ -19,6 +19,7 @@ CASA behaviours casa-rs does not follow:
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
+[continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
@@ -469,6 +470,30 @@ rule at the MeasurementSet uvw, as `VisImagingWeight` does
 (`the_standard_density_bins_the_measurement_set_uvw`). Cubes imaged at their
 own field centre agree with CASA either way; off-centre and multi-field cubes
 under a density weighting differ from CASA's weights by this mechanism.
+
+## Continuum `briggsabs` at robust 0 and noise 0 weighs every visibility infinite
+
+- Date noted: 2026-11-02
+- Status: CASA bug; casa-rs does not follow it (#980)
+- Affected code (CASA 6.7.6.14):
+  - `casatools/src/code/synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+    (`weight`)
+  - `casatools/src/code/msvis/MSVis/VisImagingWeight.cc` (the
+    `VisibilityIterator2` constructor and `weightUniform`)
+
+Absolute Briggs weighting (`weighting='briggsabs'`, `rmode = "abs"`) divides
+each weight by `D·f² + d²` with `f² = robust²` and `d² = 2·noise²`. With
+`robust = 0` and `noise = 0` both vanish. For a cube with
+`perchanweightdensity`, `SynthesisImagerVi2::weight` refuses the pair
+("Absolute Briggs formula does not allow for robust 0 and estimated noise per
+visibility 0") before it builds the `BriggsCubeWeightor`; every other density
+(a continuum image, or a cube without `perchanweightdensity`) goes to
+`VisImagingWeight`, which has no such check, so `weightUniform` divides every
+weight by zero and the imaging weights are infinite.
+
+casa-rs refuses the pair in every mode, at the tclean reader (`noise`), the
+compiled weighting contract and the operator
+(`WeightingGeneration::absolute_density`).
 
 ## MultiTermFTNew forms Taylor imaging weights in single precision
 

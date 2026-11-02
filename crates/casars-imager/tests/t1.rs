@@ -55,3 +55,5 @@ mod start_model;
 mod uv_taper;
 #[path = "t1/w_projection.rs"]
 mod w_projection;
+#[path = "t1/weighting.rs"]
+mod weighting;

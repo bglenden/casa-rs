@@ -204,6 +204,17 @@ pub struct ImagingRequest {
     pub weighting: Weighting,
     /// Briggs robustness.
     pub robust: f64,
+    /// CASA's `npixels` as `SynthesisImagerVi2::weight` reads it for the
+    /// weighting: the side of a continuum uniform or Briggs density grid,
+    /// or the half-width of the box each sample's density spreads over
+    /// (`superuniform`, where CASA's zero or less is 3, and a cube's
+    /// per-channel density); 0 is the image's own cells, and the value of
+    /// a weighting without a density.
+    pub npixels: usize,
+    /// CASA's `noise` in Jy, the visibility noise of `briggsabs`; `None`
+    /// for every other weighting, which does not read it.
+    #[serde(deserialize_with = "optional")]
+    pub noise: Option<f64>,
     /// CASA's `uvtaper`, a Gaussian taper of the imaging weights, read as
     /// `VisImagingWeight::setFilter` reads it: an angle is the image-plane
     /// FWHM and wavelengths are the uv-plane HWHM. `None` when it is empty
@@ -335,10 +346,35 @@ pub enum Weighting {
     Natural,
     /// Uniform density weighting.
     Uniform,
+    /// Uniform weighting over a density summed in a box about each sample
+    /// (`npixels`).
+    Superuniform,
+    /// Each weight times its sample's uv distance.
+    Radial,
     /// Briggs weighting at `robust`.
     Briggs,
+    /// Briggs weighting at `robust` and the visibility `noise`, unnormalized
+    /// (CASA `rmode = "abs"`).
+    Briggsabs,
     /// Briggs weighting with CASA's bandwidth taper at `robust`.
     Briggsbwtaper,
+}
+
+impl Weighting {
+    /// Whether the weights divide by a gridded visibility density.
+    #[must_use]
+    pub const fn uses_density(self) -> bool {
+        !matches!(self, Self::Natural | Self::Radial)
+    }
+
+    /// Whether a cube with `perchanweightdensity` grids that density per
+    /// channel (CASA's `BriggsCubeWeightor`): `superuniform` always grids
+    /// one density over the selection (`VisImagingWeight`), as
+    /// `SynthesisImagerVi2::weight` does.
+    #[must_use]
+    pub const fn per_channel_density(self) -> bool {
+        self.uses_density() && !matches!(self, Self::Superuniform)
+    }
 }
 
 /// Convolution-function set (`gridder`) and the parameters only it reads.

@@ -9,9 +9,9 @@ use std::num::NonZeroUsize;
 
 use casa_imaging_model::{
     AwProjectionContract, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
-    CorrectedDataWrite, DeclaredInnerProducts, FiniteValuePolicy, HogbomIterationAccounting,
-    InstrumentModel, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
-    ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
+    CorrectedDataWrite, DeclaredInnerProducts, DensityCells, FiniteValuePolicy,
+    HogbomIterationAccounting, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
+    ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
     ObservationTransactionRequirements, PolarizationContract, PrimaryBeamValidityPolicy,
     ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
@@ -259,30 +259,43 @@ fn weighting(request: &ImagingRequest) -> WeightingContract {
     }
 }
 
+/// CASA's weighting (`SynthesisImagerVi2::weight`): `superuniform` is
+/// uniform weighting over a box of `npixels`, always on one density; a
+/// cube's per-channel density spreads each sample over a box of `npixels`
+/// (`BriggsCubeWeightor`'s `superUniformBox`), and a continuum density with
+/// `npixels` is an `npixels`-square grid.
 fn density_weighting(request: &ImagingRequest) -> WeightingContract {
-    let density = if request.specmode != SpecMode::Mfs && request.perchanweightdensity {
+    let robust = request.robust;
+    let scheme = match request.weighting {
+        Weighting::Natural => WeightingScheme::Natural,
+        Weighting::Radial => WeightingScheme::Radial,
+        Weighting::Uniform | Weighting::Superuniform => WeightingScheme::Uniform,
+        Weighting::Briggs => WeightingScheme::Briggs { robust },
+        Weighting::Briggsabs => WeightingScheme::BriggsAbsolute {
+            robust,
+            noise_jy: request.noise.unwrap_or(f64::NAN),
+        },
+        Weighting::Briggsbwtaper => WeightingScheme::BriggsBandwidthTaper { robust },
+    };
+    if !request.weighting.uses_density() {
+        return WeightingContract::new(scheme, WeightDensityScope::NotApplicable);
+    }
+    let per_channel = request.specmode != SpecMode::Mfs
+        && request.perchanweightdensity
+        && request.weighting.per_channel_density();
+    let scope = if per_channel {
         WeightDensityScope::PerOutputChannel
     } else {
         WeightDensityScope::GlobalSelection
     };
-    match request.weighting {
-        Weighting::Natural => {
-            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable)
+    let cells = match NonZeroUsize::new(request.npixels) {
+        None => DensityCells::Image,
+        Some(box_half_width) if per_channel || request.weighting == Weighting::Superuniform => {
+            DensityCells::Box(box_half_width)
         }
-        Weighting::Uniform => WeightingContract::new(WeightingScheme::Uniform, density),
-        Weighting::Briggs => WeightingContract::new(
-            WeightingScheme::Briggs {
-                robust: request.robust,
-            },
-            density,
-        ),
-        Weighting::Briggsbwtaper => WeightingContract::new(
-            WeightingScheme::BriggsBandwidthTaper {
-                robust: request.robust,
-            },
-            density,
-        ),
-    }
+        Some(side) => DensityCells::Square(side),
+    };
+    WeightingContract::new(scheme, scope).with_density_cells(cells)
 }
 
 /// The products of a run: the standard set, the mask when a minor cycle
@@ -461,13 +474,103 @@ pub(super) fn cube_density_padded(
     matches!(request.specmode, SpecMode::Cube | SpecMode::Cubedata)
         && spectral.sampling == SpectralSamplingLaw::LINEAR
         && spectral.output_channels > 1
-        && request.weighting != Weighting::Natural
+        && request.weighting.per_channel_density()
         && request.perchanweightdensity
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SynthesisImagerVi2::weight`'s readings of tclean's weighting:
+    /// superuniform is uniform over a box on one density, a cube's
+    /// per-channel density spreads samples over a box of `npixels`, and a
+    /// continuum density is an `npixels`-square grid.
+    #[test]
+    fn weightings_compile_to_casas_density_cells_and_scopes() {
+        use WeightDensityScope::{GlobalSelection, NotApplicable, PerOutputChannel};
+        let cells = |count| NonZeroUsize::new(count).expect("non-zero");
+        let compiled = |overrides: serde_json::Value, npixels: i64| {
+            let mut values = crate::request::tests::resolved(overrides).expect("catalog values");
+            values.insert("npixels".into(), npixels.into());
+            weighting(&ImagingRequest::from_tclean(&values).expect("request"))
+        };
+        let cube = |weighting: &str| json_cube(weighting, true);
+        for (overrides, npixels, scheme, scope, density) in [
+            (
+                serde_json::json!({ "weighting": "superuniform" }),
+                0,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Box(cells(3)),
+            ),
+            (
+                cube("superuniform"),
+                2,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Box(cells(2)),
+            ),
+            (
+                serde_json::json!({ "weighting": "uniform" }),
+                16,
+                WeightingScheme::Uniform,
+                GlobalSelection,
+                DensityCells::Square(cells(16)),
+            ),
+            (
+                cube("briggs"),
+                2,
+                WeightingScheme::Briggs { robust: 0.5 },
+                PerOutputChannel,
+                DensityCells::Box(cells(2)),
+            ),
+            (
+                json_cube("briggs", false),
+                5,
+                WeightingScheme::Briggs { robust: 0.5 },
+                GlobalSelection,
+                DensityCells::Square(cells(5)),
+            ),
+            (
+                cube("briggsabs"),
+                0,
+                WeightingScheme::BriggsAbsolute {
+                    robust: 0.5,
+                    noise_jy: 1.0,
+                },
+                PerOutputChannel,
+                DensityCells::Image,
+            ),
+            (
+                cube("radial"),
+                6,
+                WeightingScheme::Radial,
+                NotApplicable,
+                DensityCells::Image,
+            ),
+        ] {
+            let contract = compiled(overrides.clone(), npixels);
+            assert_eq!(
+                (
+                    contract.scheme(),
+                    contract.density_scope(),
+                    contract.density_cells()
+                ),
+                (scheme, scope, density),
+                "{overrides} npixels={npixels}"
+            );
+        }
+    }
+
+    fn json_cube(weighting: &str, perchanweightdensity: bool) -> serde_json::Value {
+        serde_json::json!({
+            "weighting": weighting,
+            "specmode": "cube",
+            "nchan": 4,
+            "perchanweightdensity": perchanweightdensity,
+        })
+    }
 
     #[test]
     fn aw_pointing_thresholds_follow_casa_cardinality_default() {
