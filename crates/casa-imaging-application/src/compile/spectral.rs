@@ -323,6 +323,22 @@ fn continuum_source_line(
     Ok(resolved)
 }
 
+/// Whether CASA reads a `cube`'s data by the image's band rather than by
+/// the channels `spw` names (`SynthesisImagerVi2::tuneSelectData`): for a
+/// window of 30 or more channels, or when the model is saved to
+/// `MODEL_DATA`, `SynthesisImager::tuneSelectData` replaces the channel
+/// selection with the LSRK frequencies from pixel −1.5 to `nchan + 0.5` of
+/// the image axis, so every channel whose samples reach a plane is read;
+/// a `cubedata` or `cubesource` cube keeps the selection. The channels the
+/// axis reaches are those [`cube_setup`]'s support finds. casa-rs's
+/// visibility-domain continuum fit (`fitspw`, which CASA's tclean lacks)
+/// keeps the named channels as its output channels.
+fn tunes_selection(request: &ImagingRequest, window: &SourceSpectralWindow) -> bool {
+    request.specmode == SpecMode::Cube
+        && request.fitspw.is_none()
+        && (window.frequencies_hz.len() >= 30 || request.savemodel)
+}
+
 /// A cube in its output frame (`cube`) or the data's (`cubedata`).
 fn cube_law(
     request: &ImagingRequest,
@@ -339,7 +355,9 @@ fn cube_law(
         .spw_channels
         .get(&window.spw_id)
         .map(|channels| channels.iter().copied().collect::<BTreeSet<_>>());
-    if let Some(explicit) = &explicit {
+    if let Some(explicit) = &explicit
+        && !tunes_selection(request, window)
+    {
         selected.retain(|channel| explicit.contains(channel));
     }
     if selected.is_empty() {
@@ -654,6 +672,32 @@ fn cube_rest_frequency_hz(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::tests::request;
+    use serde_json::json;
+
+    /// `SynthesisImagerVi2::tuneSelectData`: a `cube` over 30 or more
+    /// channels, or saving its model to `MODEL_DATA`, reads the image's
+    /// band; a `cubedata` cube or a narrower window keeps the selection.
+    #[test]
+    fn a_cube_reads_the_image_band_as_casa_tunes_its_selection() {
+        let window = |channels: usize| SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::TOPO,
+            frequencies_hz: (0..channels)
+                .map(|channel| 1.0e9 + channel as f64)
+                .collect(),
+            channel_widths_hz: vec![1.0; channels],
+        };
+        let cube = request(json!({ "specmode": "cube", "nchan": 4 }));
+        assert!(tunes_selection(&cube, &window(30)));
+        assert!(!tunes_selection(&cube, &window(29)));
+        let saved = request(json!({ "specmode": "cube", "nchan": 4, "savemodel": "modelcolumn" }));
+        assert!(tunes_selection(&saved, &window(20)));
+        let cubedata = request(json!({ "specmode": "cubedata", "nchan": 4 }));
+        assert!(!tunes_selection(&cubedata, &window(30)));
+        let fitted = request(json!({ "specmode": "cube", "nchan": 4, "fitspw": "0:0~2" }));
+        assert!(!tunes_selection(&fitted, &window(30)));
+    }
 
     #[test]
     fn cube_rest_frequency_follows_casa_precedence() {
