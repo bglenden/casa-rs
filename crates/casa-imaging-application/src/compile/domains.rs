@@ -4,14 +4,13 @@
 //! direction coordinate, product coordinate system and clean mask.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
 };
-use casa_images::AnyPagedImage;
 use casa_imaging_deconvolution::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, NoiseEstimate,
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes, NoiseEstimate,
     ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
@@ -38,10 +37,17 @@ pub(super) enum DomainMask {
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
     Boxes(Vec<[i64; 4]>),
-    /// The non-zero pixels of a CASA image, reprojected onto the domain.
+    /// The non-zero pixels of a CASA image, reprojected onto the domain and
+    /// matched to its planes ([`super::mask_image`]).
     Image(PathBuf),
-    /// Row-major support over the domain's own grid.
-    PixelSupport(Box<[bool]>),
+    /// Support over the domain's own grid: each plane x-major, plane after
+    /// plane (channel-major), shared along an axis of one plane.
+    PixelSupport {
+        /// The planes held.
+        planes: MaskPlanes,
+        /// Their support.
+        support: Box<[bool]>,
+    },
     /// CASA auto-multithresh support from the current normal state.
     AutoMultithresh(AutoMultithreshControls),
 }
@@ -216,24 +222,27 @@ pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
     }
 }
 
-/// Each domain's mask plan, bound to its direction coordinate.
+/// Each domain's mask plan, bound to its direction coordinate, for images
+/// of `channels` channels.
 pub(super) fn mask_plans(
     domains: &[PreparedImageDomain],
+    channels: usize,
 ) -> Result<ImageDomainReconstructionMaskPlans, PrepareError> {
     Ok(ImageDomainReconstructionMaskPlans::new(
         domains
             .iter()
-            .map(|domain| mask_plan(domain.mask.clone(), domain.direction, domain.image_size))
+            .map(|domain| mask_plan(domain, channels))
             .collect::<Result<Vec<_>, _>>()?,
     )?)
 }
 
 fn mask_plan(
-    mask: DomainMask,
-    coordinate: DirectionCoordinateSpec,
-    image_size: [usize; 2],
+    domain: &PreparedImageDomain,
+    channels: usize,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
-    Ok(match mask {
+    let coordinate = domain.direction;
+    let image_size = domain.image_size;
+    Ok(match domain.mask.clone() {
         DomainMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         DomainMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
             coordinate,
@@ -242,15 +251,41 @@ fn mask_plan(
                 .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
                 .collect::<Result<Vec<_>, _>>()?,
         },
-        DomainMask::Image(path) => reproject_image_mask(&path, coordinate, image_size)?,
-        DomainMask::PixelSupport(support) => {
+        DomainMask::Image(path) => {
+            let coordinate_of = |kind| {
+                domain
+                    .coordinates
+                    .find_coordinate(kind)
+                    .map(|index| domain.coordinates.coordinate(index))
+            };
+            let polarizations = match coordinate_of(CoordinateType::Stokes) {
+                Some(CoordinateModel::Stokes(stokes)) => stokes.stokes().len(),
+                _ => 1,
+            };
+            let spectral = match coordinate_of(CoordinateType::Spectral) {
+                Some(CoordinateModel::Spectral(spectral)) => Some(&**spectral),
+                _ => None,
+            };
+            super::mask_image::reproject_image_mask(
+                &path,
+                coordinate,
+                image_size,
+                super::mask_image::TargetPlanes {
+                    channels,
+                    polarizations,
+                    spectral,
+                },
+            )?
+        }
+        DomainMask::PixelSupport { planes, support } => {
             assert_eq!(
-                image_size[0].checked_mul(image_size[1]),
+                (image_size[0] * image_size[1]).checked_mul(planes.count()),
                 Some(support.len()),
-                "an outlier circle mask covers exactly its image domain"
+                "a pixel support covers exactly its image domain's planes"
             );
             ReconstructionMaskPlan::Reprojected {
                 coordinate,
+                planes,
                 support,
             }
         }
@@ -260,90 +295,14 @@ fn mask_plan(
             completed_major_cycles: 0,
             cycle_threshold_reached: false,
             previous: None,
-            evolution_stopped: false,
+            stopped_channels: Box::new([]),
         },
     })
 }
 
-/// Whether each pixel of `values`, in index order, is finite, non-zero and
-/// valid in the image's default `mask`.
-///
-/// The values and the mask are walked together; indexing the mask with the
-/// running count of a many-axis image panicked (#1022 review).
-fn mask_support<T>(values: &ndarray::ArrayD<T>, mask: Option<&ndarray::ArrayD<bool>>) -> Vec<bool>
-where
-    T: Into<f64> + Copy,
-{
-    let support = |value: &T| {
-        let value: f64 = (*value).into();
-        value.is_finite() && value != 0.0
-    };
-    match mask {
-        Some(mask) => values
-            .iter()
-            .zip(mask.iter())
-            .map(|(value, valid)| *valid && support(value))
-            .collect(),
-        None => values.iter().map(support).collect(),
-    }
-}
-
-/// The non-zero, unmasked, finite pixels of a one-plane CASA image,
-/// reprojected onto `target_spec`.
-fn reproject_image_mask(
-    path: &Path,
-    target_spec: DirectionCoordinateSpec,
-    target_size: [usize; 2],
-) -> Result<ReconstructionMaskPlan, PrepareError> {
-    let (source_shape, source_coordinates, source_support) = match AnyPagedImage::open(path)? {
-        AnyPagedImage::Float32(image) => {
-            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
-            (image.shape().to_vec(), image.coordinates().clone(), support)
-        }
-        AnyPagedImage::Float64(image) => {
-            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
-            (image.shape().to_vec(), image.coordinates().clone(), support)
-        }
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            return Err(PrepareError::ComplexMaskImage);
-        }
-    };
-    let index = source_coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .ok_or(PrepareError::MaskImageDirection)?;
-    // The direction's two axes follow those of the coordinates before it,
-    // wherever that is (#1002); every other axis has one pixel, so the
-    // support, in the image's index order, runs over the plane alone.
-    let longitude = (0..index)
-        .map(|k| source_coordinates.coordinate(k).n_pixel_axes())
-        .sum::<usize>();
-    let plane = [longitude, longitude + 1];
-    if source_shape.len() < longitude + 2
-        || source_shape
-            .iter()
-            .enumerate()
-            .any(|(axis, extent)| !plane.contains(&axis) && *extent != 1)
-        || source_support.len() != source_shape[plane[0]] * source_shape[plane[1]]
-    {
-        return Err(PrepareError::MaskImageShape {
-            shape: source_shape,
-        });
-    }
-    let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
-    let support = casa_imaging_deconvolution::reproject_mask_support(
-        source_spec,
-        [source_shape[plane[0]], source_shape[plane[1]]],
-        &source_support,
-        target_spec,
-        target_size,
-    )?;
-    Ok(ReconstructionMaskPlan::Reprojected {
-        coordinate: target_spec,
-        support,
-    })
-}
-
-fn direction_model_spec(
+/// The model's direction coordinate of a mask image's direction
+/// `coordinate`.
+pub(super) fn direction_model_spec(
     coordinate: &CoordinateModel,
 ) -> Result<DirectionCoordinateSpec, PrepareError> {
     let CoordinateModel::Direction(direction) = coordinate else {
@@ -406,6 +365,9 @@ mod tests {
     use casa_images::{ImagePixel, PagedImage};
     use casa_types::measures::frequency::FrequencyRef;
     use ndarray::{ArrayD, IxDyn};
+    use std::path::Path;
+
+    use crate::compile::mask_image::{TargetPlanes, reproject_image_mask};
 
     fn direction() -> DirectionCoordinate {
         DirectionCoordinate::new(
@@ -460,7 +422,17 @@ mod tests {
         image.save().unwrap();
         drop(image);
         let target = direction_model_spec(&CoordinateModel::Direction(direction())).unwrap();
-        let plan = reproject_image_mask(&path, target, [3, 2]).unwrap();
+        let plan = reproject_image_mask(
+            &path,
+            target,
+            [3, 2],
+            TargetPlanes {
+                channels: 1,
+                polarizations: 1,
+                spectral: None,
+            },
+        )
+        .unwrap();
         let ReconstructionMaskPlan::Reprojected { support, .. } = plan else {
             panic!("a mask image is reprojected");
         };

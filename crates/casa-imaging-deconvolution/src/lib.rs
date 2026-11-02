@@ -53,11 +53,12 @@ pub use major_cycle::{
     MajorCycleCompletion, MajorCycleError, PassAppender, normal_state_window_residency_bytes,
 };
 pub use mask::{
-    AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold, AutoMultithreshControls,
-    AutoMultithreshEvidence, ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MaskBox, MaskError, NoiseMaskExclusion, ReconstructionMask,
-    ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh, direction_world_to_pixel,
-    reproject_mask_support,
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskEvidence, AutoMaskPlane, AutoMaskPsf, AutoMaskRead,
+    AutoMaskSource, AutoMaskThreshold, AutoMultithreshControls, AutoMultithreshEvidence,
+    ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
+    ImageDomainReconstructionMasks, MaskBox, MaskError, MaskPlaneKey, MaskPlanes,
+    NoiseMaskExclusion, ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet,
+    direction_world_to_pixel, reproject_mask_support,
 };
 pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{

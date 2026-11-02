@@ -18,10 +18,11 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_deconvolution::{
-    AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
-    ModelLifecycle, ModelLifecycleError, NoiseEstimate, NoiseMaskExclusion, NormalBasis,
-    NormalStateError, RobustNoise, SpectralChannelValidity, plane_noise,
+    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
+    MaskError, MaskPlaneKey, ModelGeneration, ModelLifecycle, ModelLifecycleError, NoiseEstimate,
+    NoiseMaskExclusion, NormalBasis, NormalStateError, RobustNoise, SpectralChannelValidity,
+    plane_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
@@ -148,7 +149,7 @@ pub const fn result_bytes(terms: usize) -> u64 {
 /// One minor cycle's masks and plane measurements.
 pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,
-    auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
+    auto_masks: Box<[Option<AutoMaskEvidence>]>,
     planes: Vec<(PlaneKey, PlaneStatistics)>,
     /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
     retained: Option<RetainedPlane>,
@@ -176,7 +177,7 @@ impl PreparedMinorCycle {
 
     /// Automatic-mask diagnostics per image domain.
     #[must_use]
-    pub fn auto_masks(&self) -> &[Option<AutoMultithreshEvidence>] {
+    pub fn auto_masks(&self) -> &[Option<AutoMaskEvidence>] {
         &self.auto_masks
     }
 
@@ -250,7 +251,7 @@ pub struct MinorCycleOutcome {
     /// The masks components were placed within.
     pub masks: ImageDomainReconstructionMasks,
     /// Automatic-mask diagnostics per image domain.
-    pub auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
+    pub auto_masks: Box<[Option<AutoMaskEvidence>]>,
     /// What the cycle did.
     pub summary: MinorCycleSummary,
 }
@@ -278,19 +279,34 @@ pub fn prepare_minor_cycle(
     let base = completion.final_model();
     let taylor = is_taylor(normal);
     let keys = plane_keys(normal, taylor);
-    // The automatic mask (one-channel continuum only) smooths by the
-    // primary PSF's beam; a cube's first channel may hold no data.
-    let beam = if setup.automask {
-        let primary = keys[0];
-        summarise(normal, taylor, cache, primary)?;
-        Some(automask_beam(&cache.summaries[&primary]))
+    let (masks, auto_masks) = if mask_plans.automatic() {
+        // An automatic mask smooths by its channel block's common beam and
+        // thresholds by the image's sidelobe level, so every plane's PSF is
+        // measured first.
+        measure_psfs(normal, taylor, cache, &keys, team)?;
+        let reading = Reading {
+            normal,
+            base,
+            setup,
+            taylor,
+        };
+        let shared = &*cache;
+        let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
+        let psf = |key: MaskPlaneKey| {
+            shared
+                .summaries
+                .get(&absolute(normal, taylor, key))
+                .copied()
+        };
+        let source = AutoMaskSource {
+            read: &read,
+            psf: &psf,
+        };
+        team.install(|| mask_plans.materialize(base, normal, Some(&source)))?
     } else {
-        None
-    };
-    let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
-    let exclusions = (0..masks.len())
-        .map(|domain| mask_plans.noise_exclusion(domain, &masks))
-        .collect::<Vec<_>>();
+        mask_plans.materialize::<MinorCycleRunError>(base, normal, None)?
+    }
+    .into_parts();
     let inputs = Inputs {
         normal,
         base,
@@ -327,8 +343,9 @@ pub fn prepare_minor_cycle(
             setup.automask,
         );
         if robust && setup.nsigma > 0.0 {
-            statistics.noise =
-                robust_plane_noise(&plane.residual[0], &plane.valid, exclusions[key.domain]);
+            let local = (key.channel - normal.slab().core_range().start, key.polarization);
+            let exclusion = mask_plans.noise_exclusion(key.domain, local, &masks);
+            statistics.noise = robust_plane_noise(&plane.residual[0], &plane.valid, exclusion);
         }
         *out = Some(Measured {
             statistics,
@@ -585,44 +602,137 @@ fn robust_plane_noise(
         NoiseMaskExclusion::Unmasked => {
             plane_noise(residual, valid, NoiseEstimate::Robust, None, false)
         }
-        NoiseMaskExclusion::Mask(mask) => plane_noise(
+        NoiseMaskExclusion::Mask { support, full } => plane_noise(
             residual,
             valid,
             NoiseEstimate::Robust,
-            Some(mask),
-            mask.iter().all(|set| *set),
+            Some(support),
+            full,
         ),
     }
 }
 
-/// Measure the PSF of `key` into the cache.
-fn summarise(
+/// Measure into the cache the PSF of each plane of `keys` that holds data
+/// and is not yet measured, side by side on the team.
+fn measure_psfs(
     normal: &FinalNormalState,
     taylor: bool,
     cache: &mut PsfCache,
-    key: PlaneKey,
+    keys: &[PlaneKey],
+    team: &WorkerTeam,
 ) -> Result<(), MinorCycleRunError> {
-    if cache.summaries.contains_key(&key) {
-        return Ok(());
+    let mut slots = keys
+        .iter()
+        .filter(|key| !cache.summaries.contains_key(key) && holds_data(normal, taylor, **key))
+        .map(|key| (*key, None))
+        .collect::<Vec<_>>();
+    team.for_each_mut(&mut slots, |_, (key, summary)| {
+        let shape = plane_shape(normal, *key);
+        let psf = read_psf(normal, taylor, *key)?;
+        let peak = psf_peak_value(&psf, shape)?;
+        *summary = Some(PsfSummary::new(&normalise(psf, peak), shape)?);
+        Ok::<_, MinorCycleRunError>(())
+    })?;
+    for (key, summary) in slots {
+        if let Some(summary) = summary {
+            cache.summaries.insert(key, summary);
+        }
     }
-    let shape = plane_shape(normal, key);
-    let psf = read_psf(normal, taylor, key)?;
-    let peak = psf_peak_value(&psf, shape)?;
-    cache
-        .summaries
-        .insert(key, PsfSummary::new(&normalise(psf, peak), shape)?);
     Ok(())
 }
 
-/// The automatic mask's view of the primary PSF's fitted beam (pixels).
-fn automask_beam(summary: &PsfSummary) -> AutoMaskBeam {
-    let beam = summary.beam();
-    AutoMaskBeam::new(
-        beam.major_fwhm_rad(),
-        beam.minor_fwhm_rad(),
-        beam.position_angle_rad(),
-        summary.sidelobe(),
-    )
+/// Whether the plane `key` holds data: a valid channel, or a valid Taylor
+/// family.
+fn holds_data(normal: &FinalNormalState, taylor: bool, key: PlaneKey) -> bool {
+    let validity = if taylor {
+        normal.support_validity()
+    } else {
+        normal.domain_channel_validity(
+            key.domain,
+            key.channel - normal.slab().core_range().start,
+            key.polarization,
+        )
+    };
+    validity == Some(SpectralChannelValidity::Valid)
+}
+
+/// The plane of a mask's `key`, whose channel counts from the normal
+/// state's first; a Taylor family is one plane.
+fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> PlaneKey {
+    let first = normal.slab().core_range().start;
+    PlaneKey {
+        domain: key.domain,
+        channel: if taylor { first } else { first + key.channel },
+        polarization: key.polarization,
+    }
+}
+
+/// What an automatic mask reads its planes from.
+struct Reading<'a> {
+    normal: &'a FinalNormalState,
+    base: &'a ModelGeneration,
+    setup: &'a MinorCycleSetup,
+    taylor: bool,
+}
+
+/// The plane `key` as its automatic mask reads it: the residual the minor
+/// cycle cleans (term 0 of a Taylor family) and its valid pixels; `None`
+/// for a plane with no data.
+fn automask_plane(
+    reading: &Reading<'_>,
+    key: PlaneKey,
+) -> Result<Option<AutoMaskPlane>, MinorCycleRunError> {
+    let Reading {
+        normal,
+        base,
+        setup,
+        taylor,
+    } = *reading;
+    if !holds_data(normal, taylor, key) {
+        return Ok(None);
+    }
+    let shape = plane_shape(normal, key);
+    let valid = valid_support(normal, base, taylor, key, shape)?;
+    let residual = if taylor {
+        read_taylor(normal, setup)?.residual.swap_remove(0)
+    } else {
+        let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
+        let raw = plane.read_residual()?;
+        single_residual(
+            normal,
+            setup,
+            key,
+            raw.iter().map(|value| value.re),
+            plane.sum_weight(),
+        )?
+        .0
+    };
+    Ok(Some(AutoMaskPlane { residual, valid }))
+}
+
+/// Which pixels of the plane `key` the model holds valid, every Taylor
+/// term's for a family, x-major.
+fn valid_support(
+    normal: &FinalNormalState,
+    base: &ModelGeneration,
+    taylor: bool,
+    key: PlaneKey,
+    shape: PlaneShape,
+) -> Result<Vec<bool>, MinorCycleRunError> {
+    let coefficients = if taylor {
+        0..normal.coefficient_term_count()
+    } else {
+        key.channel..key.channel + 1
+    };
+    let mut valid = vec![true; shape.len()];
+    for coefficient in coefficients {
+        let samples = base.read_plane(key.domain, coefficient, key.polarization)?;
+        for (index, supported) in valid.iter_mut().enumerate() {
+            let [x, y] = shape.pixel(index);
+            *supported &= samples[y * shape.nx + x].support() == ModelSupport::Valid;
+        }
+    }
+    Ok(valid)
 }
 
 fn plane_shape(normal: &FinalNormalState, key: PlaneKey) -> PlaneShape {
@@ -743,36 +853,20 @@ fn load<'a>(
         taylor,
     } = *inputs;
     let shape = plane_shape(normal, key);
-    let validity = if taylor {
-        normal.support_validity()
-    } else {
-        normal.domain_channel_validity(
-            key.domain,
-            key.channel - normal.slab().core_range().start,
-            key.polarization,
-        )
-    };
-    if validity != Some(SpectralChannelValidity::Valid) {
+    if !holds_data(normal, taylor, key) {
         return Ok(None);
     }
-    let coefficients = if taylor {
-        0..normal.coefficient_term_count()
-    } else {
-        key.channel..key.channel + 1
-    };
-    let mut valid = vec![true; shape.len()];
-    for coefficient in coefficients {
-        let samples = base.read_plane(key.domain, coefficient, key.polarization)?;
-        for (index, supported) in valid.iter_mut().enumerate() {
-            let [x, y] = shape.pixel(index);
-            *supported &= samples[y * shape.nx + x].support() == ModelSupport::Valid;
-        }
-    }
+    let valid = valid_support(normal, base, taylor, key, shape)?;
     let mask = masks
         .get(key.domain)
-        .expect("a mask for every image domain");
+        .and_then(|mask| {
+            mask.plane(
+                key.channel - normal.slab().core_range().start,
+                key.polarization,
+            )
+        })
+        .expect("a mask for every plane of every image domain");
     let support = mask
-        .support()
         .iter()
         .zip(&valid)
         .map(|(masked, valid)| *masked && *valid)
@@ -815,16 +909,34 @@ fn read_single<'a>(
         .map(|value| value.re)
         .collect::<Vec<_>>();
     let peak = psf_peak_value(&psf, shape)?;
-    let raw = plane.residual();
+    let (residual, response) = single_residual(
+        normal,
+        setup,
+        key,
+        plane.residual().iter().map(|value| value.re),
+        plane.sum_weight(),
+    )?;
+    // CASA normalizes the PSF by its own peak (SIImageStore::normPSF).
+    Ok(PlaneTerms {
+        residual: vec![residual],
+        psf: vec![normalise(psf, peak)],
+        response,
+    })
+}
+
+/// A single-term plane's residual in the units the minor cycle cleans, from
+/// its raw real values `raw` and its sum of weights: divided by the sum
+/// (`SIImageStore::divideResidualByWeight`), or with a response in CASA's
+/// units, with the response bound to the plane's weights.
+fn single_residual<'a>(
+    normal: &'a FinalNormalState,
+    setup: &MinorCycleSetup,
+    key: PlaneKey,
+    raw: impl Iterator<Item = f64>,
+    sum_weight: f64,
+) -> Result<(Vec<f64>, Option<ResponseBinding<'a>>), MinorCycleRunError> {
     let Some(response) = setup.response else {
-        // CASA divides the residual by sumwt and normalizes the PSF by its
-        // own peak (SIImageStore::divideResidualByWeight and normPSF).
-        let sum_weight = plane.sum_weight();
-        return Ok(PlaneTerms {
-            residual: vec![raw.iter().map(|value| value.re / sum_weight).collect()],
-            psf: vec![normalise(psf, peak)],
-            response: None,
-        });
+        return Ok((raw.map(|value| value / sum_weight).collect(), None));
     };
     let weights = normal.read_plane(key.domain, key.channel, key.polarization)?;
     let sensitivity = weights.read_sensitivity()?;
@@ -832,11 +944,10 @@ fn read_single<'a>(
     let published_weight = weights.published_sum_weight();
     let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = raw
-        .iter()
         .enumerate()
         .map(|(index, value)| {
             bound.normalize_weighted_residual_sample(
-                value.re,
+                value,
                 index,
                 response.normalization(),
                 ResidualFamily::Single,
@@ -845,15 +956,14 @@ fn read_single<'a>(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(PlaneTerms {
-        residual: vec![residual],
-        psf: vec![normalise(psf, peak)],
-        response: Some(ResponseBinding {
+    Ok((
+        residual,
+        Some(ResponseBinding {
             sensitivity,
             response,
             sum_weight: normal_weight,
         }),
-    })
+    ))
 }
 
 /// The Taylor family's residual terms and `2·N_t − 1` PSF moments. Every

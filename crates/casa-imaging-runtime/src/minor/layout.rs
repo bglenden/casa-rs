@@ -15,13 +15,17 @@ use super::{MinorCycleSetup, PsfCache, Slot, Solved, TRACE, is_taylor, plane_key
 
 /// The layout of the image state a minor cycle cleans, as its charges read
 /// it: how many planes it loads and the largest, its image domains'
-/// shapes, its residual and PSF term counts, and whether its planes are
-/// read from a paged channel-local state.
+/// shapes, the channel and polarization planes of each, its residual and
+/// PSF term counts, and whether its planes are read from a paged
+/// channel-local state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MinorLayout {
     planes: usize,
     shape: PlaneShape,
     domains: Vec<[usize; 2]>,
+    /// Each domain's channel and polarization planes; a Taylor family is
+    /// one channel.
+    channels_and_polarizations: (usize, usize),
     terms: (u64, u64),
     paged: bool,
 }
@@ -42,6 +46,10 @@ impl MinorLayout {
             domains: (0..normal.domain_count())
                 .filter_map(|domain| normal.domain_shape(domain))
                 .collect(),
+            channels_and_polarizations: (
+                if taylor { 1 } else { normal.channel_count() },
+                normal.polarization_count(),
+            ),
             terms: if taylor {
                 (
                     normal.coefficient_term_count() as u64,
@@ -74,35 +82,43 @@ impl MinorLayout {
                 .unwrap_or(PlaneShape::new(0, 0))
         };
         let per_channel = target.polarizations() * domains.len();
-        let (planes, shape, terms, paged) = match problem.reconstruction().basis() {
+        let (planes, shape, terms, paged, channels) = match problem.reconstruction().basis() {
             ReconstructionBasis::Taylor { terms } => (
                 1,
                 largest(&domains[..domains.len().min(1)]),
                 (terms as u64, (2 * terms).saturating_sub(1) as u64),
                 false,
+                1,
             ),
-            ReconstructionBasis::ChannelLocal { channels } => {
-                (per_channel * channels, largest(&domains), (1, 1), true)
-            }
-            ReconstructionBasis::Constant => (per_channel, largest(&domains), (1, 1), false),
+            ReconstructionBasis::ChannelLocal { channels } => (
+                per_channel * channels,
+                largest(&domains),
+                (1, 1),
+                true,
+                channels,
+            ),
+            ReconstructionBasis::Constant => (per_channel, largest(&domains), (1, 1), false, 1),
         };
         Self {
             planes,
             shape,
             domains,
+            channels_and_polarizations: (channels, target.polarizations()),
             terms,
             paged,
         }
     }
 
-    /// Heap bytes the masks a minor cycle forms keep while the cycle runs
-    /// and after it: one support per image domain.
+    /// Heap bytes the masks a minor cycle forms from `mask_plans` keep
+    /// while the cycle runs and after it: each image domain's support, one
+    /// per plane its plan holds (a static mask's planes, or every channel
+    /// and polarization of an automatic one).
     #[must_use]
-    pub fn mask_bytes(&self) -> u64 {
-        self.domains
-            .iter()
-            .map(|[width, height]| (width * height * size_of::<bool>()) as u64)
-            .sum()
+    pub fn mask_bytes(&self, mask_plans: &ImageDomainReconstructionMaskPlans) -> u64 {
+        mask_plans.mask_bytes_for(
+            |domain| self.domains.get(domain).copied(),
+            self.channels_and_polarizations,
+        )
     }
 
     /// Heap bytes the record of one minor cycle keeps for the rest of the
@@ -206,15 +222,21 @@ pub fn prepare_bytes_for(
             0
         }
         .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 });
-    mask_plans.materialize_bytes_for(|domain| layout.domains.get(domain).copied())
-        + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
+    mask_plans.materialize_bytes_for(
+        |domain| layout.domains.get(domain).copied(),
+        layout.channels_and_polarizations,
+        workers,
+    ) + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
 }
 
-/// Heap bytes the masks a minor cycle forms keep while the cycle runs and
-/// after it: one support per image domain.
+/// Heap bytes the masks a minor cycle forms from `mask_plans` keep while
+/// the cycle runs and after it ([`MinorLayout::mask_bytes`]).
 #[must_use]
-pub fn mask_bytes(completion: &MajorCycleCompletion) -> u64 {
-    MinorLayout::of(completion.normal_state()).mask_bytes()
+pub fn mask_bytes(
+    completion: &MajorCycleCompletion,
+    mask_plans: &ImageDomainReconstructionMaskPlans,
+) -> u64 {
+    MinorLayout::of(completion.normal_state()).mask_bytes(mask_plans)
 }
 
 /// Heap bytes [`super::run_minor_cycle`] holds at most under `controls`,
@@ -348,6 +370,7 @@ mod tests {
             planes: 1,
             shape,
             domains: vec![[256, 256]],
+            channels_and_polarizations: (1, 1),
             terms: (2, 3),
             paged: false,
         };

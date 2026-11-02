@@ -236,7 +236,7 @@ pub(crate) fn run(
     let iterations = Controller::new(&controls).cycle_iterations();
     let minor = |workers: usize| {
         if cleaning {
-            2 * layout.mask_bytes()
+            2 * layout.mask_bytes(&mask_plans)
                 + prepare_bytes_for(&layout, &mask_plans, &setup, true, workers)
                     .max(run_bytes_for(&layout, &setup, iterations, 0, workers))
         } else {
@@ -294,7 +294,7 @@ pub(crate) fn run(
         // drops the plane, and the charge goes with the minor cycle.
         let (prepared, kept) = run_phase(name, &cancel, diagnostics, summary, || {
             if ordinal == 1 {
-                held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
+                held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific, &mask_plans))?;
             }
             let mut preparing = run.admit(
                 "minor-cycle preparation",
@@ -442,7 +442,7 @@ fn refresh_demand(
     if let Some((layout, setup, iterations)) = cleaning {
         let controls = inputs.problem.reconstruction().controls();
         return Some(RefreshDemand {
-            masks: 2 * layout.mask_bytes(),
+            masks: 2 * layout.mask_bytes(&inputs.masks),
             cached: layout.refresh_bytes(setup),
             results: layout.result_bytes(setup, iterations),
             records: layout.record_bytes()
@@ -1256,12 +1256,12 @@ fn next_masks(
     cycle: usize,
     threshold_reached: bool,
 ) -> Result<ImageDomainReconstructionMaskPlans, ImagingError> {
-    let stopped = outcome
-        .auto_masks
-        .iter()
-        .map(|evidence| evidence.is_some_and(|evidence| evidence.channel_stopped))
-        .collect::<Vec<_>>();
-    Ok(plans.next_cycle(&outcome.masks, cycle, threshold_reached, &stopped)?)
+    Ok(plans.next_cycle(
+        &outcome.masks,
+        &outcome.auto_masks,
+        cycle,
+        threshold_reached,
+    )?)
 }
 
 /// The modes of the initial pass: data and PSF, plus the sensitivity image
@@ -1328,15 +1328,26 @@ pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     }))
 }
 
-/// The record of one minor cycle; `global_threshold` is the run's
-/// threshold or n-sigma threshold, whichever is larger.
 /// Bytes [`minor_cycle_record`] copies from `outcome`: its primary mask's
-/// support and its traced components.
+/// first plane and its traced components.
 fn record_bytes(outcome: &MinorCycleOutcome) -> u64 {
-    (std::mem::size_of_val(outcome.masks.primary().support())
+    (std::mem::size_of_val(primary_plane(outcome))
         + std::mem::size_of_val(outcome.summary.trace.as_slice())) as u64
 }
 
+/// The support of the primary mask's first plane (the first channel and
+/// polarization of the main image).
+fn primary_plane(outcome: &MinorCycleOutcome) -> &[bool] {
+    outcome
+        .masks
+        .primary()
+        .plane(0, 0)
+        .expect("every mask has a first plane")
+}
+
+/// The record of one minor cycle; `global_threshold` is the run's
+/// threshold or n-sigma threshold, whichever is larger. It keeps the
+/// primary mask's first plane and its automatic evidence.
 fn minor_cycle_record(
     cycle: usize,
     outcome: &MinorCycleOutcome,
@@ -1346,7 +1357,6 @@ fn minor_cycle_record(
     (total_iterations, total_actual_iterations): (usize, usize),
 ) -> NativeMinorCycleOutcome {
     let summary = &outcome.summary;
-    let mask = outcome.masks.primary();
     NativeMinorCycleOutcome {
         cycle,
         iterations_entering,
@@ -1367,7 +1377,9 @@ fn minor_cycle_record(
         clark_refreshes: summary.refreshes,
         associated_replay_ordinal: cycle,
         recorded_components: summary.trace.clone(),
-        mask_support: mask.support().to_vec(),
-        auto_mask: outcome.auto_masks[0],
+        mask_support: primary_plane(outcome).to_vec(),
+        auto_mask: outcome.auto_masks[0]
+            .as_ref()
+            .map(|evidence| *evidence.primary()),
     }
 }

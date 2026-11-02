@@ -18,6 +18,7 @@ mod envelope;
 mod error;
 mod instrument;
 mod intents;
+mod mask_image;
 mod native_aw;
 mod opening;
 mod outliers;
@@ -298,7 +299,7 @@ pub(crate) fn prepare(
             ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
             NumericPrecision::F64,
         ),
-        masks: domains::mask_plans(&domains)?,
+        masks: domains::mask_plans(&domains, spectral.output_channels)?,
         mask_resident: continuation.mask_resident,
         start_model,
         existing: continuation.existing,

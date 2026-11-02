@@ -80,18 +80,6 @@ impl ImagingRequest {
                 )
             },
         )?;
-        // casa-rs's automatic mask is one plane per image; CASA masks each
-        // Stokes plane and channel of its own (`autoMaskByMultiThreshold`).
-        if request.usemask == crate::UseMask::AutoMultithresh
-            && request.niter > 0
-            && (request.stokes.len() > 1 || request.specmode != crate::SpecMode::Mfs)
-        {
-            return Err(TcleanRefusal::not_yet(
-                "usemask",
-                "'auto-multithresh' with a cube or more than one Stokes plane",
-                980,
-            ));
-        }
         Ok(request)
     }
 }

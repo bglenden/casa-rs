@@ -273,7 +273,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         ))
         .expect("domain mask plans");
     let (masks, _) = mask_plans
-        .materialize(
+        .materialize::<casa_imaging_deconvolution::MaskError>(
             first_round.join.final_model(),
             first_round.join.normal_state(),
             None,

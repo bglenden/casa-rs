@@ -77,9 +77,9 @@ pub(super) fn prepare(
                     memory: input.reading_bytes(),
                 },
             )?;
-            let retained = input.retained_bytes();
-            main.mask = DomainMask::PixelSupport(input.read()?);
-            charge.retain(retained);
+            let (planes, support) = input.read()?;
+            charge.retain(restart::MaskInput::retained_bytes(planes, nx * ny));
+            main.mask = DomainMask::PixelSupport { planes, support };
             continuation.mask_resident.join(charge);
         }
     }
