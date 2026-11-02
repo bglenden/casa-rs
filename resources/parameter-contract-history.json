@@ -697,6 +697,36 @@
       "fingerprint": "a53688cb39e149ff96fdf179a3ede65dd1e2b16f781031b0141002eaf425a1ab"
     },
     {
+      "id": "msconvert.acceptloss",
+      "semantic_revision": 1,
+      "fingerprint": "572a41cb01c4125a0240e54d6d506dd1517885105594fe4cfdefacc958e37969"
+    },
+    {
+      "id": "msconvert.chunks",
+      "semantic_revision": 1,
+      "fingerprint": "98888dac07213bdfd7a7123bfc55a1572414dec19f269498620d912aea38f737"
+    },
+    {
+      "id": "msconvert.codec",
+      "semantic_revision": 1,
+      "fingerprint": "7948a76ee1764e91a065d1ab369ce7b0f7b0ce71334595273e6d1e064f118f56"
+    },
+    {
+      "id": "msconvert.datagroups",
+      "semantic_revision": 1,
+      "fingerprint": "94df828611d199540034f9276c2ca15b80ba77d0104b0b42d65461f1de2946cc"
+    },
+    {
+      "id": "msconvert.outformat",
+      "semantic_revision": 1,
+      "fingerprint": "4f9394865b737f9de6127985a1a5e1dc9b5d97e40b7321c92e4c931bca1b232c"
+    },
+    {
+      "id": "msconvert.padding",
+      "semantic_revision": 1,
+      "fingerprint": "7f64d91b597a0d0a6eac5d02a53362bc8a83e68141196d09c060fa76e8d32f33"
+    },
+    {
       "id": "msexplore.output",
       "semantic_revision": 1,
       "fingerprint": "1cb3c9aa251fc9aa4671da80e54de72c60b3689f30f50922bef48729f708ed22"
@@ -3530,6 +3560,11 @@
       "id": "widebandpbcor.action",
       "semantic_revision": 1,
       "fingerprint": "04f8e4280abc52804be01171bbf911537b266dfafd16139916119ff5d638f51d"
+    },
+    {
+      "id": "workers.msconvert",
+      "semantic_revision": 1,
+      "fingerprint": "d821781aae0336622ece2d6560d0168b5a008d3a03e252f3aaebd7f92a07e028"
     }
   ],
   "surfaces": [
@@ -4332,6 +4367,11 @@
       "id": "imsubimage",
       "contract_version": 5,
       "fingerprint": "378cffd6e74082b3d16148ee17431c2140c78fa26a7699c8ad0336644b74673a"
+    },
+    {
+      "id": "msconvert",
+      "contract_version": 1,
+      "fingerprint": "eb3124d322aacb2dca4812d23569ca8e764726cbf7fe00f5cd2dc35537cbb35f"
     },
     {
       "id": "msexplore",

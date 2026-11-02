@@ -26,7 +26,7 @@ INVENTORY = REPO / "resources" / "casa-compat" / "casa-6.7.6.14" / "tasks"
 SURFACES = REPO / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 
 # casa-rs tasks with no CASA counterpart, outside the mimic rule.
-CASA_RS_ONLY = {"calibrate", "msexplore"}
+CASA_RS_ONLY = {"calibrate", "msconvert", "msexplore"}
 # CASA-named tasks not yet CASA-exact: each family's PR in #931 empties its
 # entries, and plotms waits for its own decision. This list only shrinks.
 PENDING = {

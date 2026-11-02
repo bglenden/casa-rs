@@ -8,9 +8,11 @@
 //!     [--padding flagged|omitted] [--accept KIND,...]
 //! ```
 //!
-//! `KIND` is `sigma`, `row-flags`, `flag-categories`, `data-groups`,
-//! `tables`, `columns` or `defaulted`. MSv4 chunks hold `T` times (default 10, the
-//! measurements' chunk) and every baseline, channel and correlation.
+//! `KIND` is a [`LossKind`]'s name: `sigma`, `rowflags`, `flagcategories`,
+//! `datagroups`, `tables`, `columns` or `defaulted`. MSv4 chunks hold `T`
+//! times (default 10, the measurements' chunk) and every baseline, channel
+//! and correlation. The `msconvert` task (`casars-msconvert`) is the
+//! supported surface; this example keeps the trial's measurement settings.
 //! Prints one JSON object: elapsed seconds and the conversion report.
 
 use std::path::PathBuf;
@@ -23,19 +25,6 @@ use casa_ms::observation_io::convert::{
 use serde_json::json;
 
 type Error = Box<dyn std::error::Error>;
-
-fn kind(name: &str) -> Result<LossKind, Error> {
-    Ok(match name {
-        "sigma" => LossKind::Sigma,
-        "row-flags" => LossKind::RowFlags,
-        "flag-categories" => LossKind::FlagCategories,
-        "data-groups" => LossKind::DataGroups,
-        "tables" => LossKind::Tables,
-        "columns" => LossKind::Columns,
-        "defaulted" => LossKind::Defaulted,
-        other => return Err(format!("unknown loss kind {other}").into()),
-    })
-}
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
@@ -75,7 +64,10 @@ fn main() -> Result<(), Error> {
                 }
             }
             "--accept" => {
-                options.accept = value.split(',').map(kind).collect::<Result<_, _>>()?;
+                options.accept = value
+                    .split(',')
+                    .map(str::parse::<LossKind>)
+                    .collect::<Result<_, _>>()?;
             }
             other => return Err(format!("unknown option {other}").into()),
         }

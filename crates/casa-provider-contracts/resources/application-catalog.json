@@ -316,6 +316,18 @@
         "fits"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "msconvert",
+      "launch": {
+        "executable": "msconvert",
+        "cargo_package": "casars-msconvert",
+        "override_env": "CASARS_MSCONVERT_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }

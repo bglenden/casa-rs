@@ -83,9 +83,18 @@ pub struct OpenOptions {
     pub partition_scheme: PartitionScheme,
 }
 
-/// Open the observation at `path`, choosing its adapter from the store:
-/// a Zarr processing set (a `zarr.json` at its root) is MSv4, a casacore
-/// table directory is MSv2.
+/// Whether the store at `path` is an MSv4 processing set: a Zarr group,
+/// with a `zarr.json` at its root. Anything else is taken for a
+/// MeasurementSet v2, a casacore table directory; this is the one rule
+/// [`open`] chooses an adapter by.
+#[must_use]
+pub fn is_msv4_store(path: &Path) -> bool {
+    path.join("zarr.json").is_file()
+}
+
+/// Open the observation at `path`, choosing its adapter from the store
+/// ([`is_msv4_store`]): a Zarr processing set is MSv4, a casacore table
+/// directory is MSv2.
 ///
 /// # Errors
 ///
@@ -97,7 +106,7 @@ pub fn open(
     options: &OpenOptions,
 ) -> Result<Box<dyn Observation>, ObservationError> {
     let path = path.as_ref();
-    if path.join("zarr.json").is_file() {
+    if is_msv4_store(path) {
         #[cfg(feature = "msv4")]
         return Ok(Box::new(Msv4Observation::open_with(path, options)?));
         #[cfg(not(feature = "msv4"))]

@@ -127,6 +127,12 @@ impl fmt::Display for Loss {
     }
 }
 
+/// How the reason of a refusal to lose information begins: the
+/// [`ObservationError::InvalidRequest`](casa_observation::ObservationError::InvalidRequest)
+/// a plan or conversion returns when a loss is not accepted, which then
+/// describes every such loss and names their kinds ([`LossKind::name`]).
+pub const LOSS_REFUSAL: &str = "the conversion would lose information";
+
 /// What a caller accepts losing ([`Loss::kind`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LossKind {
@@ -144,6 +150,60 @@ pub enum LossKind {
     Columns,
     /// Any [`Loss::Defaulted`].
     Defaulted,
+}
+
+impl LossKind {
+    /// Every kind, in order.
+    pub const ALL: [Self; 7] = [
+        Self::Sigma,
+        Self::RowFlags,
+        Self::FlagCategories,
+        Self::DataGroups,
+        Self::Tables,
+        Self::Columns,
+        Self::Defaulted,
+    ];
+
+    /// The kind's stable name, as a caller states it: `sigma`, `rowflags`,
+    /// `flagcategories`, `datagroups`, `tables`, `columns` or `defaulted`.
+    /// A refused conversion names the kinds to accept by these names
+    /// ([`Display`](fmt::Display)), and [`str::parse`] reads them back.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sigma => "sigma",
+            Self::RowFlags => "rowflags",
+            Self::FlagCategories => "flagcategories",
+            Self::DataGroups => "datagroups",
+            Self::Tables => "tables",
+            Self::Columns => "columns",
+            Self::Defaulted => "defaulted",
+        }
+    }
+}
+
+impl fmt::Display for LossKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for LossKind {
+    type Err = String;
+
+    /// The kind [`LossKind::name`] names, in any case.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.name().eq_ignore_ascii_case(text.trim()))
+            .ok_or_else(|| {
+                let names: Vec<_> = Self::ALL.iter().map(|kind| kind.name()).collect();
+                format!(
+                    "unknown loss kind {text:?}; expected one of {}",
+                    names.join(", ")
+                )
+            })
+    }
 }
 
 /// What a padded grid cell (one no acquisition filled) becomes in an MSv2

@@ -24,7 +24,7 @@ use casa_observation::ObservationError;
 use super::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, default_memory_bytes,
 };
-pub use super::creation::{Loss, LossKind, PaddingRows};
+pub use super::creation::{LOSS_REFUSAL, Loss, LossKind, PaddingRows};
 pub use to_msv4::to_msv4;
 
 use super::Msv4Codec;

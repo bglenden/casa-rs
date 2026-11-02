@@ -205,3 +205,39 @@ def test_a_missing_input_image_is_a_parameter_error(
     completion = failure.value.completion
     assert completion.parameter == "imagename"
     assert completion.returncode == 2
+
+
+def test_msconvert_converts_both_ways_and_names_its_losses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("msconvert")
+    fixtures = REPO_ROOT / "crates/casa-ms/tests/fixtures/ms_trial"
+    with tarfile.open(fixtures / "ms_trial.ms.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    monkeypatch.chdir(tmp_path)
+    # Every loss of a kind not accepted refuses the conversion at
+    # acceptloss, before anything is written; sigma is accepted by default.
+    with pytest.raises(tasks.TaskParameterError) as failure:
+        tasks.msconvert(vis="ms_trial.ms", outputvis="trial.ps.zarr")
+    refused = failure.value.completion
+    assert refused.parameter == "acceptloss", refused.describe()
+    assert "accept tables to convert anyway" in (refused.message or "")
+    assert not (tmp_path / "trial.ps.zarr").exists()
+
+    converted = tasks.msconvert(
+        vis="ms_trial.ms", outputvis="trial.ps.zarr", acceptloss=["sigma", "tables"]
+    )
+    assert converted.successful, converted.describe()
+    assert converted.value["informat"] == "msv2"
+    assert converted.value["outformat"] == "msv4"
+    assert converted.value["partitions"] == 1
+    assert "SIGMA is not carried" in converted.value["losses"]
+    assert (tmp_path / "trial.ps.zarr" / "zarr.json").is_file()
+
+    # The default outformat is the other format: back to an MSv2.
+    back = tasks.msconvert(
+        vis="trial.ps.zarr", outputvis="back.ms", acceptloss=["sigma", "defaulted"]
+    )
+    assert back.value["outformat"] == "msv2", back.describe()
+    assert (tmp_path / "back.ms" / "table.dat").is_file()

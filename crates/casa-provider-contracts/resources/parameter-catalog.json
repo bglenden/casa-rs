@@ -4853,7 +4853,7 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Output MeasurementSet path for corrected-data export or continuum subtraction",
+        "summary": "Output MeasurementSet path.",
         "details": null,
         "examples": []
       },
@@ -10517,6 +10517,219 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Compute the PSF image.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.outformat",
+      "semantic_revision": 1,
+      "casa_name": "outformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "msv2",
+          "msv4"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Format of the converted MeasurementSet: msv2 or msv4.",
+        "details": "Empty converts to the other format than the input: an MSv2 to an MSv4 processing set, an MSv4 to an MSv2. Naming the input's own format rewrites it, as an MSv4 re-chunked.",
+        "examples": [
+          "",
+          "msv4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.datagroups",
+      "semantic_revision": 1,
+      "casa_name": "datagroups",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Data groups to convert; empty converts every one.",
+        "details": "An MSv2's groups are base (DATA), corrected (CORRECTED_DATA) and model (MODEL_DATA). The first group named carries the flags, weights and UVW; a group not converted is the loss datagroups.",
+        "examples": [
+          "[]",
+          "[\"corrected\"]",
+          "[\"base\", \"model\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.acceptloss",
+      "semantic_revision": 1,
+      "casa_name": "acceptloss",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "choice",
+          "values": [
+            "sigma",
+            "rowflags",
+            "flagcategories",
+            "datagroups",
+            "tables",
+            "columns",
+            "defaulted"
+          ]
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Kinds of information the conversion may lose.",
+        "details": "Any other loss refuses the conversion before anything is written, naming every loss and its kind. sigma: MSv4 holds no SIGMA, and an MSv2 made from an MSv4 states SIGMA as 1/sqrt(WEIGHT). rowflags: FLAG_ROW folded into FLAG. flagcategories: FLAG_CATEGORY. datagroups: groups not converted. tables: subtables or sub-datasets the destination does not hold, and antennas no baseline names. columns: columns or variables it does not hold. defaulted: MSv2 columns the source does not state, written as MSv2's defaults, which an MSv2 destination finds by writing its subtables only once every other loss is accepted.",
+        "examples": [
+          "[\"sigma\"]",
+          "[\"sigma\", \"tables\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.padding",
+      "semantic_revision": 1,
+      "casa_name": "padding",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 output: what a grid cell no acquisition filled becomes.",
+        "details": "flagged writes a row flagged throughout with NaN data and weights; omitted writes no row, which reproduces an original sparse MSv2.",
+        "examples": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.chunks",
+      "semantic_revision": 1,
+      "casa_name": "chunks",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": 4,
+        "allow_scalar": false
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default.",
+        "details": "0 is a whole axis, and each extent is clipped to a dataset's. The default is XRADIO's converter's: every axis whole but time, with as many times as make a chunk of the largest variable about 128 MiB.",
+        "examples": [
+          "[]",
+          "[10, 0, 0, 0]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.codec",
+      "semantic_revision": 1,
+      "casa_name": "codec",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "blosc",
+          "none",
+          "zstd"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: compression of the visibilities, flags and weights.",
+        "details": "blosc is Blosc with LZ4, XRADIO's default; zstd is Zstandard; none stores them uncompressed.",
+        "examples": [
+          "blosc",
+          "zstd"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "workers.msconvert",
+      "semantic_revision": 1,
+      "casa_name": "nthreads",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "MSv4 output: partitions converted at once; 0 for every core.",
+        "details": "Each thread converts one partition. An MSv2 is written by one thread.",
+        "examples": [
+          "0",
+          "4"
+        ]
+      },
       "persistence_class": "profile"
     }
   ]

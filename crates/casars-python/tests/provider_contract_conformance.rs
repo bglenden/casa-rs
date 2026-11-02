@@ -23,6 +23,10 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
     assert_task_provider("flagdata", casa_ms::flagdata_task_schema_bundle());
     assert_task_provider("flagmanager", casa_ms::flagmanager_task_schema_bundle());
     assert_task_provider(
+        "msconvert",
+        casars_msconvert::msconvert_task_schema_bundle(),
+    );
+    assert_task_provider(
         "image-analysis",
         casa_images::analysis::image_analysis_task_schema_bundle(),
     );

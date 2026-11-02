@@ -323,7 +323,7 @@ fn an_msv4_converts_to_an_msv2_of_every_acquisition() {
     let stated = [LossKind::Sigma, LossKind::Tables, LossKind::Columns];
     let refused = to_msv2(&xradio, &out, &options(&stated));
     assert!(
-        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.contains("Defaulted")),
+        matches!(refused, Err(ObservationError::InvalidRequest { ref reason }) if reason.ends_with("accept defaulted to convert anyway")),
         "what the MSv4 leaves unstated is refused until accepted: {refused:?}"
     );
     assert!(!out.exists(), "nothing is written before the refusal");
