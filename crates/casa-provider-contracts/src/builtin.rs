@@ -357,9 +357,9 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 33);
+        assert_eq!(surface.contract_version(), 34);
         assert_eq!(surface.bindings().len(), 114);
-        for name in ["scan", "observation"] {
+        for name in ["scan", "observation", "antenna", "timerange"] {
             let binding = surface
                 .bindings()
                 .iter()
@@ -494,7 +494,7 @@ mod tests {
                 .iter()
                 .map(|migration| (migration.from_contract, migration.to_contract))
                 .collect::<Vec<_>>(),
-            [(28, 29), (29, 30), (30, 31), (31, 32), (32, 33)]
+            [(28, 29), (29, 30), (30, 31), (31, 32), (32, 33), (33, 34)]
         );
     }
 

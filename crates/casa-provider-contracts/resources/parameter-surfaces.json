@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 33,
+      "contract_version": 34,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -8163,7 +8163,8 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8173,8 +8174,7 @@
             "provider": {"field": "timerange"},
             "python": {"name": "timerange"},
             "presentation": {"label": "Time Range", "group": "Context", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "uvrange",
@@ -8193,7 +8193,8 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8203,8 +8204,7 @@
             "provider": {"field": "antenna"},
             "python": {"name": "antenna"},
             "presentation": {"label": "Antenna", "group": "Context", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "scan",
@@ -9852,6 +9852,15 @@
           "steps": [
             {"kind": "replace_value", "parameter": "scan", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
             {"kind": "replace_value", "parameter": "observation", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
+          ],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 33,
+          "to_contract": 34,
+          "steps": [
+            {"kind": "replace_value", "parameter": "antenna", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
+            {"kind": "replace_value", "parameter": "timerange", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
           ],
           "changed_defaults": []
         }

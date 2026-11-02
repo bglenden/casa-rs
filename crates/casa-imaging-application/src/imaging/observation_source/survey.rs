@@ -63,7 +63,7 @@ pub(super) fn survey(
                 let scale = batch.time.reference();
                 let baselines = batch.samples_per_time();
                 for time in 0..batch.times() {
-                    if !route.selection.scan_holds(&batch, time)? {
+                    if !route.selection.time_holds(&batch, time)? {
                         continue;
                     }
                     let mut include = |time_s: f64| {

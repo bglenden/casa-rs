@@ -234,7 +234,9 @@ pub fn row_pointing(
         (&partitions, &selection.fields),
         |batch, sample| {
             let time = sample / batch.samples_per_time();
-            if !selection.scan_holds(batch, time).ok()? {
+            if !selection.time_holds(batch, time).ok()?
+                || !selection.baseline_holds(batch.baselines[sample % batch.samples_per_time()])
+            {
                 return None;
             }
             main_row(observation, batch, sample)

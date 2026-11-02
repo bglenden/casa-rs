@@ -637,6 +637,11 @@
       "fingerprint": "b3a805f325a17b063097851f4e5669ca4c5be15ec808ce354eb4ce0b657994a2"
     },
     {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 2,
+      "fingerprint": "bb2e04a62e22d4ca45a93796382b6da572b3d47d879060876f6fa919ff51e5e9"
+    },
+    {
       "id": "ms.selection.array",
       "semantic_revision": 1,
       "fingerprint": "bfbe35529b54e8643816eb776fb1449ae2089b364322b8371ee3671b0492c3f4"
@@ -695,6 +700,11 @@
       "id": "ms.selection.timerange",
       "semantic_revision": 1,
       "fingerprint": "9bcf4f93605547f1dfb14f63fafe0e9439a715c6393fb5d507fe8ba59c1c9b6e"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 2,
+      "fingerprint": "c13a35c27323a8cc1837a9a9f4b9e716a935ccd46887f5ec37f8f760d89451c5"
     },
     {
       "id": "ms.selection.uvrange",
@@ -4607,6 +4617,11 @@
       "id": "tclean",
       "contract_version": 33,
       "fingerprint": "20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 34,
+      "fingerprint": "b03cdf3eb09ed5b1f720a530bb9c4cc7004d59e8393a8bb40ab967b348dde54c"
     },
     {
       "id": "uvcontsub",

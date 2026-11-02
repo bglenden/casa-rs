@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Revision-2 selector values survive each normalized transport boundary.
+//! Revision-2 selector values (scan, observation, antenna, timerange)
+//! survive each normalized transport boundary.
 
 use casa_imaging_application::ImagingRequest;
 use casa_provider_contracts::{ParameterValue, TaskRunRequest, builtin_surface_bundle};
@@ -9,6 +10,9 @@ use casa_task_runtime::{
 };
 use casars_imager::{ImagingParameters, resolve_request, task_request};
 use serde_json::{Map, Value, json};
+
+/// The selectors whose concepts keep exact text (revision 2).
+const SELECTORS: [&str; 4] = ["scan", "observation", "antenna", "timerange"];
 
 const TEXTS: &[&str] = &[
     "", "  ", "none", "None", " none ", " 1 ", "1,2", "1~2", "1~1", "2~1", ",1", "1,", "1,,2",
@@ -36,10 +40,12 @@ fn profile_session(
 }
 
 fn assert_request(request: &ImagingRequest, name: &str, expected: &str) {
-    let actual = if name == "scan" {
-        &request.scan
-    } else {
-        &request.observation
+    let actual = match name {
+        "scan" => &request.scan,
+        "observation" => &request.observation,
+        "antenna" => &request.antenna,
+        "timerange" => &request.timerange,
+        other => panic!("no exact-text selector {other}"),
     };
     assert_eq!(
         actual.as_deref(),
@@ -60,7 +66,8 @@ fn assert_plain(values: &Map<String, Value>, name: &str, expected: &str) {
 fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
     assert_eq!(
         session.values()[name],
-        ParameterValue::String(expected.into())
+        ParameterValue::String(expected.into()),
+        "{name}"
     );
     let workspace = std::env::current_dir().unwrap();
     let task = TaskInvocation::new(session, &workspace);
@@ -94,17 +101,17 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
-    for name in ["scan", "observation"] {
-        assert_transports(&profile_session(33, "tclean", name, None), name, "");
+    for name in SELECTORS {
+        assert_transports(&profile_session(34, "tclean", name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(33, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(34, "tclean", name, Some(text)), name, text);
         }
     }
 }
 
 #[test]
 fn direct_current_values_preserve_selector_text_without_profile_migration() {
-    for name in ["scan", "observation"] {
+    for name in SELECTORS {
         for &text in TEXTS {
             let mut values = json!({"vis":"unused.ms", "imagename":"unused", "cell":"1arcsec"});
             values[name] = json!(text);
@@ -117,13 +124,25 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
 }
 
 #[test]
-fn supported_old_profiles_migrate_only_exact_typed_none() {
-    for version in 28..=32 {
+fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
+    for version in 28..=33 {
         for surface in ["tclean", "imager"] {
-            for name in ["scan", "observation"] {
+            for name in SELECTORS {
                 assert_transports(&profile_session(version, surface, name, None), name, "");
                 for &text in TEXTS {
-                    let expected = if text == "none" { "" } else { text };
+                    // Each selector's "none" was the stored absence until the
+                    // contract that kept its text exact: 33 for scan and
+                    // observation, 34 for antenna and timerange.
+                    let exact_from = if matches!(name, "scan" | "observation") {
+                        33
+                    } else {
+                        34
+                    };
+                    let expected = if text == "none" && version < exact_from {
+                        ""
+                    } else {
+                        text
+                    };
                     assert_transports(
                         &profile_session(version, surface, name, Some(text)),
                         name,

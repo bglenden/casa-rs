@@ -292,12 +292,11 @@ def tclean(
 
     CASA's ``tclean``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #980:
-    ``timerange``, ``antenna``, ``projection``, ``reffreq``,
-    ``psfphasecenter``, ``vptable``, ``computepastep``, ``rotatepastep``,
-    ``restoration``, ``noise``, ``npixels``, ``interactive``, ``pbmask``,
-    ``smoothfactor``, ``cutthreshold``, ``dogrowprune``,
-    ``minpercentchange``, ``verbose``, ``fastnoise``, ``calcres``,
-    ``calcpsf``.
+    ``projection``, ``reffreq``, ``psfphasecenter``, ``vptable``,
+    ``computepastep``, ``rotatepastep``, ``restoration``, ``noise``,
+    ``npixels``, ``interactive``, ``pbmask``, ``smoothfactor``,
+    ``cutthreshold``, ``dogrowprune``, ``minpercentchange``, ``verbose``,
+    ``fastnoise``, ``calcres``, ``calcpsf``.
     """
     return _call_casa(tclean, locals())
 

@@ -94,6 +94,14 @@ pub(super) fn selected(
         if !rows.observations().holds(i64::from(entry.observation.0)) {
             continue;
         }
+        if !rows.baselines().is_all()
+            && !entry.baselines.iter().any(|baseline| {
+                rows.baselines()
+                    .holds(baseline.antenna1.0, baseline.antenna2.0)
+            })
+        {
+            continue;
+        }
         if !rows.scans().is_all()
             && !entry.scans.iter().any(|scan| {
                 catalogue.scans[scan.0 as usize]
@@ -247,6 +255,8 @@ pub(crate) fn resolve_partitions(
         partitions,
         fields: field_selection(catalogue, rows.fields()),
         scans: rows.scans().clone(),
+        baselines: rows.baselines().clone(),
+        times: rows.times().clone(),
         uv: rows.uv_distances().clone(),
     })
 }

@@ -10568,6 +10568,57 @@
         ]
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 2,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA antenna (baseline) selection, exact text",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's antenna grammar (MSAntennaGram): IDs, names, stations, patterns, regular expressions, &/&&/&&& baseline forms, ! negation, ; terms, @station and baseline-length forms. Whitespace-only text and literal none are invalid, as in CASA.",
+        "examples": [
+          "",
+          "ea05",
+          "ea01&ea02",
+          "!ea01",
+          "ea0*&&"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 2,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA time selection, exact text",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's time grammar (MSTimeGram): absolute and partial dates, ranges, >, <, T+dT durations and comma lists, with CASA's defaults from the first logical row.",
+        "examples": [
+          "",
+          "09:00:00~09:30:00",
+          ">2017/03/01/09:00:00",
+          "2017/03/01/09:00:00+10m"
+        ]
+      },
+      "persistence_class": "profile"
     }
   ]
 }

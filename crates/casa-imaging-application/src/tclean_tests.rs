@@ -125,8 +125,8 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for overrides in [
-        // CASA selects these whatever selectdata is.
-        json!({ "selectdata": false, "timerange": "10:00:00~11:00:00" }),
+        // CASA projects with any projection in every mode.
+        json!({ "projection": "NCP" }),
         // CASA parses reffreq in every mode ("Error in converting garbage
         // to a Quantity" in a cube).
         json!({ "specmode": "cube", "nchan": 4, "reffreq": "1.4GHz" }),

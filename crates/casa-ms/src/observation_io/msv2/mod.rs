@@ -7,6 +7,7 @@ pub(super) mod catalogue;
 mod cursor;
 pub(super) mod held;
 mod index;
+mod main_rows;
 mod metadata;
 mod pointing;
 pub(super) mod update;
@@ -36,6 +37,7 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 use super::{OpenOptions, heap};
 use crate::{MeasurementSet, MsError};
 use index::{Grid, Index, ROWS_PER_CHUNK};
+pub use main_rows::MainRowKeys;
 
 /// The most rows [`Msv2Observation::grid`] reads at once.
 pub(crate) const GRID_READ_ROWS: usize = ROWS_PER_CHUNK;

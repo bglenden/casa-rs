@@ -332,16 +332,17 @@ impl<'a> Tclean<'a> {
         self.copy(&["vis", "imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
-        self.ignore(&["selectdata", "timerange", "antenna"])?;
+        self.ignore(&["selectdata"])?;
         let field = self.text("field")?;
         self.set("field", field);
         for name in ["spw", "uvrange", "intent"] {
             let value = self.text(name)?;
             self.set(name, value);
         }
-        // Scan and observation selectors keep their exact text: CASA's tclean
-        // refuses whitespace-only text and `none`, and accepts padded IDs.
-        for name in ["scan", "observation"] {
+        // Scan, observation, antenna and time selectors keep their exact text:
+        // CASA's tclean refuses whitespace-only text and `none`, and its
+        // grammars give padding and case their own meanings.
+        for name in ["scan", "observation", "antenna", "timerange"] {
             let value = self.value(name)?;
             let text = value
                 .as_str()

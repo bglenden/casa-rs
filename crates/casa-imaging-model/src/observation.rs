@@ -118,10 +118,180 @@ pub enum IntentSelection {
     Only(Vec<String>),
 }
 
+/// Exact resolved baseline selection: CASA's `antenna` expression evaluated
+/// over the observation's antennas.
+///
+/// The table answers, for each ordered `(antenna1, antenna2)` pair of
+/// antenna identifiers, whether a sample on that baseline is selected. CASA's
+/// expressions are not symmetric in general (`/A&B/` matches only that
+/// order), and whether autocorrelations are selected depends on the form, so
+/// the table holds every ordered pair, autocorrelations included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineSelection {
+    /// Select every baseline.
+    All,
+    /// Select the ordered pairs marked in a row-major `antennas × antennas`
+    /// table indexed by `antenna1 * antennas + antenna2`.
+    Pairs {
+        /// Antennas along each side of the table.
+        antennas: usize,
+        /// Whether each ordered pair is selected.
+        selected: Vec<bool>,
+    },
+}
+
+impl BaselineSelection {
+    /// The selection `holds` states for every ordered pair of `antennas`
+    /// antennas.
+    #[must_use]
+    pub fn from_pairs(antennas: usize, holds: impl Fn(usize, usize) -> bool) -> Self {
+        let mut selected = Vec::with_capacity(antennas * antennas);
+        for antenna1 in 0..antennas {
+            selected.extend((0..antennas).map(|antenna2| holds(antenna1, antenna2)));
+        }
+        Self::Pairs { antennas, selected }
+    }
+
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample on the ordered baseline `(antenna1, antenna2)` is
+    /// selected. An antenna outside the table selects nothing.
+    #[must_use]
+    pub fn holds(&self, antenna1: u32, antenna2: u32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Pairs { antennas, selected } => {
+                let (antenna1, antenna2) = (antenna1 as usize, antenna2 as usize);
+                antenna1 < *antennas
+                    && antenna2 < *antennas
+                    && selected[antenna1 * antennas + antenna2]
+            }
+        }
+    }
+
+    /// Heap bytes the selection owns.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::Pairs { selected, .. } => selected.capacity() * size_of::<bool>(),
+        }
+    }
+}
+
+/// One condition CASA's `timerange` puts on a sample's `TIME`, in seconds
+/// in the `TIME` column's scale, evaluated with the same double-precision
+/// operations as CASA's TaQL (`MSTimeParse`, casacore `aaf72eb7`). The
+/// MeasurementSet owner's port of CASA's time grammar
+/// (`casa_ms::TimeCondition`) resolves them; this is its data, so imaging
+/// tests each time as CASA does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimeCondition {
+    /// `abs(TIME - time_s) <= tolerance_s`: a single time.
+    Near {
+        /// The time.
+        time_s: f64,
+        /// Half the default row's `EXPOSURE`.
+        tolerance_s: f64,
+    },
+    /// `TIME >= time_s`, from `>T`.
+    AtOrAfter {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME <= time_s`, from `<T`.
+    AtOrBefore {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME >= lower_s && TIME <= upper_s`, from `T0~T1` or `T0+dT`.
+    Within {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+    },
+    /// `(TIME > lower_s || abs(TIME - lower_s) < edge_s) && (TIME < upper_s
+    /// || abs(TIME - upper_s) < edge_s)`, from a bracketed range.
+    EdgeInclusive {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+        /// The edge width, a C `Float` in CASA.
+        edge_s: f32,
+    },
+}
+
+impl TimeCondition {
+    /// Whether a sample whose `TIME` is `time_s` meets the condition.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match *self {
+            Self::Near {
+                time_s: centre,
+                tolerance_s,
+            } => (time_s - centre).abs() <= tolerance_s,
+            Self::AtOrAfter { time_s: bound } => time_s >= bound,
+            Self::AtOrBefore { time_s: bound } => time_s <= bound,
+            Self::Within { lower_s, upper_s } => time_s >= lower_s && time_s <= upper_s,
+            Self::EdgeInclusive {
+                lower_s,
+                upper_s,
+                edge_s,
+            } => {
+                let edge = f64::from(edge_s);
+                (time_s > lower_s || (time_s - lower_s).abs() < edge)
+                    && (time_s < upper_s || (time_s - upper_s).abs() < edge)
+            }
+        }
+    }
+}
+
+/// Exact resolved time selection: CASA's `timerange`, the OR of its terms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimeSelection {
+    /// Select every time.
+    All,
+    /// Select a time that meets any of these conditions.
+    AnyOf(Vec<TimeCondition>),
+}
+
+impl TimeSelection {
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample whose `TIME` is `time_s` is selected.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match self {
+            Self::All => true,
+            Self::AnyOf(conditions) => conditions.iter().any(|condition| condition.holds(time_s)),
+        }
+    }
+
+    /// Heap bytes the selection owns.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::AnyOf(conditions) => conditions.capacity() * size_of::<TimeCondition>(),
+        }
+    }
+}
+
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
 ///
 /// These are the MeasurementSet selections the imager exposes: field, UV
-/// distance, scan intent, scan number and observation identifier.
+/// distance, scan intent, scan number, observation identifier, baseline and
+/// time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
@@ -129,6 +299,8 @@ pub struct RowSelection {
     observations: IdSelection,
     uv_distances: UvSelection,
     intents: IntentSelection,
+    baselines: BaselineSelection,
+    times: TimeSelection,
 }
 
 impl RowSelection {
@@ -145,7 +317,35 @@ impl RowSelection {
             observations: IdSelection::All,
             uv_distances,
             intents,
+            baselines: BaselineSelection::All,
+            times: TimeSelection::All,
         }
+    }
+
+    /// Constrain times, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_times(mut self, times: TimeSelection) -> Self {
+        self.times = times;
+        self
+    }
+
+    /// Return the resolved time selection.
+    #[must_use]
+    pub const fn times(&self) -> &TimeSelection {
+        &self.times
+    }
+
+    /// Constrain baselines, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_baselines(mut self, baselines: BaselineSelection) -> Self {
+        self.baselines = baselines;
+        self
+    }
+
+    /// Return the resolved baseline selection.
+    #[must_use]
+    pub const fn baselines(&self) -> &BaselineSelection {
+        &self.baselines
     }
 
     /// Constrain scan numbers and observation identifiers, conjunctively with

@@ -26,6 +26,7 @@ mod specification;
 mod spectral;
 mod start_model;
 mod survey;
+mod time_selection;
 
 pub(crate) use opening::{OpenedStore, open_observation};
 pub(crate) use start_model::StartModel;
@@ -320,6 +321,8 @@ fn survey_observation(
     let catalogue = store.catalogue();
     let windows = selection::window_choice(request, store)?;
     let (row_selection, states) = selection::row_selection(request, catalogue)?;
+    let times = time_selection::resolve_times(request, store, &windows, (&row_selection, &states))?;
+    let row_selection = row_selection.with_times(times);
     let selected = partitions::selected(store, &windows, (&row_selection, &states))?;
     let holds = |column| selection::holds(store, &selected, column);
     let columns = Columns {

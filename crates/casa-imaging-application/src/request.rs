@@ -10,8 +10,8 @@
 //! default and a missing field is an error. Most fields are tclean's
 //! parameters by name; the reader fills the few casa-rs holds in its own
 //! form. An unset optional value is spelled `"none"` or left blank, except
-//! for the scan and observation selectors, which only an empty string
-//! leaves unset.
+//! for the scan, observation, antenna and timerange selectors, which only
+//! an empty string leaves unset.
 //! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
@@ -101,6 +101,14 @@ pub struct ImagingRequest {
     /// CASA numeric observation-ID selection, read as `scan` is.
     #[serde(deserialize_with = "exact_selector")]
     pub observation: Option<String>,
+    /// CASA baseline selection by antenna (`antenna`), read as `scan` is;
+    /// resolved against the observation's antennas during compilation.
+    #[serde(deserialize_with = "exact_selector")]
+    pub antenna: Option<String>,
+    /// CASA time selection (`timerange`), read as `scan` is; resolved
+    /// against the observation's times during compilation.
+    #[serde(deserialize_with = "exact_selector")]
+    pub timerange: Option<String>,
     /// CASA observing-intent selection.
     #[serde(deserialize_with = "optional")]
     pub intent: Option<String>,

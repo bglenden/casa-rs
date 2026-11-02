@@ -22,7 +22,8 @@ use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admi
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, Observation,
-    PartitionEntry, ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
+    OrderedBaseline, PartitionEntry, ReadEvent, Roles, TimeSelection, VisibilityBatch,
+    WeightRequest,
 };
 use casa_types::measures::MjdHighPrec;
 
@@ -174,11 +175,42 @@ struct Facts {
 impl SurveyPlan<'_> {
     /// Whether the survey reads UVW: for the W range, a UV-distance
     /// interval's test, or to tell the MSv2 adapter's padding (NaN UVW)
-    /// from the samples a scan selection counts per time.
+    /// from the samples a scan or baseline selection counts.
     fn reads_uvw(&self) -> bool {
         self.w_range
             || !matches!(self.row_selection.uv_distances(), UvSelection::All)
             || self.scans_tested()
+            || self.baselines_tested()
+            || self.times_tested()
+    }
+
+    /// Whether each time is tested against a `timerange`.
+    fn times_tested(&self) -> bool {
+        !self.row_selection.times().is_all()
+    }
+
+    /// Whether the scan and the time of time `time` of `batch` are
+    /// selected. A time is tested as CASA's TaQL tests `TIME`: seconds since
+    /// MJD 0 in the column's scale, which an MSv2's batches hold exactly.
+    fn time_holds(&self, batch: &VisibilityBatch<'_>, time: usize) -> Result<bool, PrepareError> {
+        Ok(self.scan_holds(batch, time)?
+            && self
+                .row_selection
+                .times()
+                .holds(batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0))))
+    }
+
+    /// Whether each sample's baseline is tested: an antenna selection holds
+    /// some of a partition's baselines.
+    fn baselines_tested(&self) -> bool {
+        !self.row_selection.baselines().is_all()
+    }
+
+    /// Whether the antenna selection holds `baseline`.
+    fn baseline_holds(&self, baseline: OrderedBaseline) -> bool {
+        self.row_selection
+            .baselines()
+            .holds(baseline.antenna1.0, baseline.antenna2.0)
     }
 
     /// Whether each time's scan is tested: a scan selection holds some of a
@@ -444,7 +476,10 @@ fn survey_partition(
     facts: &mut Facts,
 ) -> Result<u64, PrepareError> {
     let uv = plan.row_selection.uv_distances();
-    let tested = !matches!(uv, UvSelection::All) || plan.scans_tested();
+    let tested = !matches!(uv, UvSelection::All)
+        || plan.scans_tested()
+        || plan.baselines_tested()
+        || plan.times_tested();
     // A partition of several arrays reads each selected time's rows.
     let array = plan.partition_array(candidate);
     let per_sample = plan.reads_uvw() || plan.stored_padding() || array.is_none();
@@ -464,7 +499,7 @@ fn survey_partition(
             continue;
         };
         for time in 0..batch.times() {
-            if !plan.scan_holds(&batch, time)? {
+            if !plan.time_holds(&batch, time)? {
                 continue;
             }
             let selected = if per_sample {
@@ -530,9 +565,10 @@ fn survey_partition(
 }
 
 /// The selected samples of time `time` of `batch`, observed into `w` when
-/// the batch holds UVW: those that are not the store's own padding when
-/// `stored` ([`stored_padding`]) and, with UVW, those whose UVW is finite
-/// and that `uv`, when tested, holds for its candidate's wavelength.
+/// the batch holds UVW: those on a baseline the antenna selection holds that
+/// are not the store's own padding when `stored` ([`stored_padding`]) and,
+/// with UVW, those whose UVW is finite and that `uv`, when tested, holds for
+/// its candidate's wavelength.
 /// Returns how many, with their MSv2 MAIN rows into `rows` when given.
 fn observe_time(
     plan: &SurveyPlan<'_>,
@@ -545,6 +581,9 @@ fn observe_time(
     let per_time = batch.samples_per_time();
     let mut held = 0;
     for sample in time * per_time..(time + 1) * per_time {
+        if !plan.baseline_holds(batch.baselines[sample % per_time]) {
+            continue;
+        }
         if plan.stored_padding() && stored_padding(batch, sample) {
             continue;
         }
@@ -662,11 +701,11 @@ fn first_cross_sample(
         };
         for sample in 0..batch.samples() {
             let baseline = batch.baselines[sample % batch.samples_per_time()];
-            if baseline.is_auto() {
+            if baseline.is_auto() || !plan.baseline_holds(baseline) {
                 continue;
             }
             let time = sample / batch.samples_per_time();
-            if !plan.scan_holds(&batch, time)? {
+            if !plan.time_holds(&batch, time)? {
                 continue;
             }
             if let Some(uvw) = batch.group.uvw

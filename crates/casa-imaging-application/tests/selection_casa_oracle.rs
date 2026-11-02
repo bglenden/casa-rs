@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The MAIN rows imaging reads under a field, scan or observation
-//! selection, against the rows CASA 6.7.6.14's MeasurementSet selection
-//! names on the same MeasurementSet
+//! The MAIN rows imaging reads under a field, antenna, scan, time or
+//! observation selection, against the rows CASA 6.7.6.14's MeasurementSet
+//! selection names on the same MeasurementSet
 //! (`resources/casa-compat/evidence/tclean-selection-casa-20261031.json`).
+//! A selection CASA resolves to no rows (`DA41&DA56`: no such baseline) has
+//! nothing to image, which imaging refuses.
 //!
 //! The rows are those of compile's partitions and the run's fields that
 //! the run's per-time scan test keeps, gathered by the store law
@@ -25,9 +27,8 @@ mod imaging;
 const ORACLE: &str =
     include_str!("../../../resources/casa-compat/evidence/tclean-selection-casa-20261031.json");
 
-/// The CASA cases this law covers: what imaging selects by. Antenna and
-/// time selection, which tclean's provider refuses, are not among them.
-const CASES: [&str; 10] = [
+/// The CASA cases this law covers: every recorded selection.
+const CASES: [&str; 16] = [
     "all",
     "field_id",
     "field_name",
@@ -35,9 +36,15 @@ const CASES: [&str; 10] = [
     "field_id_and_name",
     "field_both_names",
     "field_range",
+    "antenna_id",
+    "antenna_name",
+    "baseline",
     "scan1",
     "scan3",
+    "time_before",
+    "time_after",
     "observation0",
+    "combined",
 ];
 
 /// Field names CASA's selection rejects, which imaging refuses.
@@ -73,7 +80,7 @@ fn request(ms: &Path, imagename: PathBuf, selectors: &Value) -> ImagingRequest {
 }
 
 #[test]
-fn field_scan_and_observation_read_casas_main_rows() {
+fn every_selector_reads_casas_main_rows() {
     let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
     assert_eq!(oracle["casa_tasks"], "6.7.6.14");
     assert_eq!(oracle["casa_tools"], "6.7.6-14");
@@ -89,8 +96,12 @@ fn field_scan_and_observation_read_casas_main_rows() {
             .collect::<Vec<_>>();
         expected.sort_unstable();
         let request = request(&ms, root.path().join(name), &case["selectors"]);
-        let rows = row_pointing(&request, &imaging::context(request.resource_policy()))
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let rows = row_pointing(&request, &imaging::context(request.resource_policy()));
+        if expected.is_empty() {
+            assert!(rows.is_err(), "{name}: an empty selection is refused");
+            continue;
+        }
+        let rows = rows.unwrap_or_else(|error| panic!("{name}: {error}"));
         let actual = rows.into_keys().collect::<Vec<_>>();
         assert_eq!(
             actual.len(),

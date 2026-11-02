@@ -64,12 +64,13 @@ pub use model_state::{
 /// [`PartitionSelection`] names.
 pub use casa_observation::PartitionId;
 pub use observation::{
-    CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
-    MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, PartitionSelection,
-    RowSelection, SelectedColumns, SelectionBound, SpectralWindowCoordinateCatalog,
-    SpectralWindowSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    BaselineSelection, CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection,
+    IntentSelection, MsColumnKind, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, PartitionSelection, RowSelection, SelectedColumns, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeCondition, TimeSelection,
+    UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 pub use native_aw::{

@@ -8,9 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    IdSelection, IntentSelection, ObservationSelection, RowSelection, SelectionBound,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn as OwnerVisibilityColumn,
+    BaselineSelection, IdSelection, IntentSelection, ObservationSelection, RowSelection,
+    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
     UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
@@ -36,9 +36,9 @@ pub(super) struct SourceSpectralWindow {
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
 /// The request's per-sample predicates: its fields, UV-distance intervals,
-/// scan numbers, observation identifiers and the observing modes its
-/// `intent` selector names ([`intents::resolve`]), with the states a state
-/// number named.
+/// scan numbers, observation identifiers, baselines and the observing modes
+/// its `intent` selector names ([`intents::resolve`]), with the states a
+/// state number named.
 ///
 /// The field selector resolves against the catalogue's fields
 /// ([`resolve_fields`]); scan and observation text against CASA's strict
@@ -70,9 +70,42 @@ pub(super) fn row_selection(
         }
         None => (IntentSelection::All, BTreeSet::new()),
     };
+    let baselines = match request.antenna.as_deref() {
+        Some(text) => resolve_baselines(text, catalogue)?,
+        None => BaselineSelection::All,
+    };
     Ok((
-        RowSelection::new(fields, uv_distances, intents).with_scan_observation(scans, observations),
+        RowSelection::new(fields, uv_distances, intents)
+            .with_scan_observation(scans, observations)
+            .with_baselines(baselines),
         states,
+    ))
+}
+
+/// The baselines CASA's antenna expression `text` selects among
+/// `catalogue`'s antennas, through the shared port of CASA's antenna grammar
+/// ([`casa_ms::resolve_antenna_selector`]): names, stations and positions
+/// in catalogue order, an antenna's identifier being its place.
+fn resolve_baselines(text: &str, catalogue: &Catalogue) -> Result<BaselineSelection, PrepareError> {
+    let positions = catalogue
+        .antennas
+        .iter()
+        .map(|antenna| antenna.position.as_itrf())
+        .collect::<Vec<_>>();
+    let rows = catalogue
+        .antennas
+        .iter()
+        .zip(&positions)
+        .map(|(antenna, position_m)| casa_ms::AntennaRow {
+            name: &antenna.name,
+            station: &antenna.station,
+            position_m: *position_m,
+        })
+        .collect::<Vec<_>>();
+    let selected = casa_ms::resolve_antenna_selector(&rows, text)?;
+    Ok(BaselineSelection::from_pairs(
+        rows.len(),
+        |antenna1, antenna2| selected.holds(antenna1, antenna2),
     ))
 }
 

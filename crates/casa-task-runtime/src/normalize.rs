@@ -1162,7 +1162,10 @@ mod tests {
             concept.semantic_revision.0 == 2
                 && matches!(
                     concept.id.as_str(),
-                    "ms.selection.scan" | "ms.selection.observation"
+                    "ms.selection.scan"
+                        | "ms.selection.observation"
+                        | "ms.selection.antenna"
+                        | "ms.selection.timerange"
                 )
         }) {
             for text in ["", "  ", "none", "None", " none ", " 1 ", "1~2", ">1"] {

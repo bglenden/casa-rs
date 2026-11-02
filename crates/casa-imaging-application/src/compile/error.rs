@@ -107,6 +107,14 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// A `timerange` selects an MSv4 processing set's times: CASA's time
+    /// grammar takes a partial time's defaults from the first MAIN row the
+    /// other selections select, which an MSv4 has no counterpart of.
+    #[error(
+        "timerange is not implemented for an MSv4 processing set (#980): CASA's time \
+         selection takes its defaults from MeasurementSet MAIN rows"
+    )]
+    TimeRangeWithoutMainRows,
     /// A `ddid` selection names a data description of an observation that
     /// has none: an MSv4 processing set.
     #[error("DATA_DESC_ID {ddid} is selected, but the observation has no data descriptions")]

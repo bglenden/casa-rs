@@ -31,7 +31,7 @@ use std::path::Path;
 
 use casa_observation::{Observation, ObservationError};
 
-pub use msv2::{Msv2Cursor, Msv2Observation};
+pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
 pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
