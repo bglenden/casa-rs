@@ -760,6 +760,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "casars-msconvert"
+version = "0.27.0"
+dependencies = [
+ "casa-ms",
+ "casa-observation",
+ "casa-provider-contracts",
+ "casa-task-runtime",
+ "casa-types",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "casars-python"
 version = "0.27.0"
 dependencies = [
@@ -775,6 +793,7 @@ dependencies = [
  "casa-types",
  "casa-vla",
  "casars-imager",
+ "casars-msconvert",
  "casars-simulation",
  "ndarray",
  "num-complex",

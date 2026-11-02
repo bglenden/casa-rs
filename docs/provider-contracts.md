@@ -285,7 +285,7 @@ calls (#931): the image binaries and `imexplore`; the MeasurementSet binaries
 (`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
 `flagmanager` and `importvla`); `calibrate`, which hosts `calibrate`,
 `applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`;
-`casars-imager`; and `simobserve`. A
+`casars-imager`; `msconvert`; and `simobserve`. A
 surface's choices take their canonical names (`--preset amplitude_vs_time`),
 and every flag it declares, short ones such as msexplore's `-o` included,
 reaches its parameter. The front end is generic over the

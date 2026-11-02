@@ -143,6 +143,24 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
 }
 
 #[test]
+fn uvw_measinfo_carries_casacore_default_itrf_reference() {
+    let temp = tempfile::tempdir().unwrap();
+    let request = request(temp.path());
+    generate_synthetic_observation_ms(&request).unwrap();
+
+    // casacore's MS definition gives UVW Muvw's default reference, ITRF
+    // (`MSTableImpl::addMeasColumn`), and CASA's simulator keeps it.
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    let keywords = ms.main_table().column_keywords("UVW").unwrap();
+    let Some(Value::Record(measinfo)) = keywords.get("MEASINFO") else {
+        panic!("UVW has no MEASINFO record: {keywords:?}");
+    };
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+    assert_eq!(measinfo.get("type"), Some(&string("uvw")));
+    assert_eq!(measinfo.get("Ref"), Some(&string("ITRF")));
+}
+
+#[test]
 fn analytic_component_model_generates_predicted_ms_data() {
     let temp = tempfile::tempdir().unwrap();
     let mut request = SyntheticObservationRequest::vla_ppdisk(
@@ -388,6 +406,58 @@ fn requested_four_correlations_drive_ms_metadata_and_main_shapes() {
         }
         other => panic!("expected Float32 WEIGHT array, got {other:?}"),
     }
+}
+
+#[test]
+fn an_unpolarized_model_predicts_zero_cross_hands() {
+    // CASA predicts a model with no polarization as RR = LL = I (XX = YY =
+    // I) and RL = LR = 0 (XY = YX = 0). A cell reads as [correlation,
+    // channel], so with four channels value `index` is of correlation
+    // `index / 4`.
+    for basis in [
+        SyntheticPolarizationBasis::Circular,
+        SyntheticPolarizationBasis::Linear,
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut request = request(temp.path());
+        request.polarization_setup = SyntheticPolarizationSetup::new(basis, 4).unwrap();
+        generate_synthetic_observation_ms(&request).unwrap();
+        let rows = MeasurementSet::open(&request.output_ms)
+            .unwrap()
+            .row_count();
+        assert!(rows > 0);
+        for row in 0..rows {
+            let data = row_data(&request.output_ms, row);
+            let [first, cross_1, cross_2, second] =
+                [0, 1, 2, 3].map(|corr| &data[corr * 4..corr * 4 + 4]);
+            let context = format!("{basis:?}, row {row}: {data:?}");
+            assert!(
+                first.iter().all(|&(re, im)| re.hypot(im) > 0.0),
+                "{context}"
+            );
+            assert_eq!(first, second, "{context}");
+            assert!(
+                cross_1
+                    .iter()
+                    .chain(cross_2)
+                    .all(|&value| value == (0.0, 0.0)),
+                "{context}"
+            );
+        }
+    }
+
+    // A polarized model's cross hands are its polarization.
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 4).unwrap();
+    request.polarization_setup.source_stokes_fractional_quv = [0.1, 0.2, 0.0];
+    generate_synthetic_observation_ms(&request).unwrap();
+    let data = first_row_data(&request.output_ms);
+    assert!(
+        data[4..12].iter().all(|&(re, im)| re.hypot(im) > 0.0),
+        "{data:?}"
+    );
 }
 
 #[test]
@@ -935,6 +1005,8 @@ tb = table()
 tb.open(path)
 try:
     data = tb.getcell("DATA", 0)
+    uvw_info = tb.getcolkeyword("UVW", "MEASINFO")
+    assert uvw_info["type"] == "uvw" and uvw_info["Ref"] == "ITRF", uvw_info
     result = {
         "rows": tb.nrows(),
         "nonzero": int((abs(data) > 0).sum()),

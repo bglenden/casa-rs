@@ -22,7 +22,7 @@ use super::memory::{
 use super::msv2_pointing::{self, Pointed};
 use super::msv2_rows::{MainRows, Occupancy, RowStates, StateIds};
 use super::pointing_plan::{self, PointingPlan};
-use super::replace::{Replacing, Stage};
+use super::replace::{Replacement, Stage};
 use super::{
     CreationInput, CreationOptions, CreationReport, Destination, HistoryRow, Loss, PaddingRows,
     lockstep, losses, msv2_ephemeris, msv2_tables, occupancy, writing,
@@ -91,7 +91,7 @@ enum Publication {
     New(PathBuf),
     /// Exchanged with the MeasurementSet it replaces, whose lock the plan
     /// holds.
-    Replace(Replacing),
+    Replace(Replacement),
 }
 
 impl CreationPlan {
@@ -150,7 +150,14 @@ impl CreationPlan {
                 }
                 Publication::New(path)
             }
-            Destination::Replace(path) => Publication::Replace(Replacing::hold(&path)?),
+            // A plan writes an MSv2, so it replaces only an MSv2.
+            Destination::Replace(path) if crate::observation_io::is_msv4_store(&path) => {
+                return Err(request_error(format!(
+                    "{} is an MSv4, which a MeasurementSet v2 cannot replace",
+                    path.display()
+                )));
+            }
+            Destination::Replace(path) => Publication::Replace(Replacement::hold(&path)?),
         };
         let mut ledger = Ledger::new(options.memory_bytes);
         // The plan keeps a copy of the HISTORY rows to write.
@@ -358,7 +365,7 @@ impl CreationPlan {
         let stage = match &self.publication {
             Publication::New(path) => Stage::reserve(path, "casa-rs-creating")?,
             Publication::Replace(replacing) => {
-                Stage::reserve(&replacing.destination, "casa-rs-replacing")?
+                Stage::reserve(replacing.path(), "casa-rs-replacing")?
             }
         };
         let created = self.create(stage.path());
@@ -374,7 +381,7 @@ impl CreationPlan {
         let published = created.and_then(|report| match publication {
             Publication::New(path) => stage.publish_new(&path).map(|()| report),
             Publication::Replace(replacing) => replacing
-                .publish(&stage)
+                .publish(stage.path())
                 .map(|leftover| CreationReport { leftover, ..report }),
         });
         match published {

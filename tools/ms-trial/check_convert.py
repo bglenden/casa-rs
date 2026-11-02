@@ -4,10 +4,13 @@
 oracle.
 
     check_convert.py xradio-convert --ms MS --out XRADIO.ps.zarr
+            [--partition-scheme KEY ...] [--with-pointing]
         Time XRADIO's own conversion of an MSv2 (one dataset per partition,
-        no pointing), for comparison with `ms_trial_convert to-msv4`.
+        no pointing unless asked, XRADIO's default chunks), for comparison
+        with `ms_trial_convert to-msv4` or `msconvert`.
 
     check_convert.py compare --ours RUST.ps.zarr --theirs XRADIO.ps.zarr
+            [--chunks]
         Open the converter's processing set with XRADIO, run XRADIO's schema
         check, and compare every dataset with XRADIO's conversion of the
         same MSv2: datasets matched by spectral window, polarization, fields
@@ -16,9 +19,17 @@ oracle.
         group's fields' and sources'. Where XRADIO found no SOURCE row for a
         field in a window it names the source "Unknown" (or "Unknown_ID")
         and the converter may name it from the field; those are counted,
-        not mismatches.
+        not mismatches. Each dataset must hold pointing exactly when
+        XRADIO's does; with --chunks, its payload variables must be chunked
+        as XRADIO's are.
 
 Each prints a JSON report and exits non-zero on any mismatch.
+
+Both channel orders are allowed (#1014): casa-rs keeps an MSv2 window's
+stored order, where XRADIO writes every window in ascending frequency. A
+dataset whose frequencies are XRADIO's reversed (a window whose channels
+descend in the MSv2) is compared with its frequency axis reversed, and the
+report lists it under "frequency_reversed".
 """
 
 import argparse
@@ -44,15 +55,15 @@ COORDINATES = [
 ]
 
 
-def xradio_convert(ms, out):
+def xradio_convert(ms, out, partition_scheme=(), with_pointing=False):
     from xradio.measurement_set import convert_msv2_to_processing_set
 
     started = time.perf_counter()
     convert_msv2_to_processing_set(
         in_file=str(ms),
         out_file=str(out),
-        partition_scheme=[],
-        with_pointing=False,
+        partition_scheme=list(partition_scheme),
+        with_pointing=with_pointing,
         persistence_mode="w",
     )
     seconds = time.perf_counter() - started
@@ -68,6 +79,13 @@ def key(node):
         tuple(np.unique(ds.field_name.values)),
         float(ds.time.values[0]),
     )
+
+
+def reversed_frequency(ds, expected):
+    """Whether `ds` holds `expected`'s channels in the opposite order: its
+    frequencies are `expected`'s reversed and not the same."""
+    a, b = ds.frequency.values, expected.frequency.values
+    return a.size > 1 and a.shape == b.shape and np.array_equal(a[::-1], b) and not np.array_equal(a, b)
 
 
 def names(node):
@@ -99,7 +117,14 @@ def compare_names(name, node, expected_name, expected, mismatches):
     return unknown
 
 
-def compare(ours, theirs):
+def chunk_shape(store, dataset, variable):
+    """The chunk shape of `variable` in `dataset` of the processing set at
+    `store`, as its zarr.json declares it."""
+    metadata = json.loads((Path(store) / dataset / variable / "zarr.json").read_text())
+    return metadata["chunk_grid"]["configuration"]["chunk_shape"]
+
+
+def compare(ours, theirs, chunks=False):
     results = []
 
     def record(check, ok, detail=None):
@@ -112,20 +137,38 @@ def compare(ours, theirs):
     by_key = {}
     for name in sorted(reference.children):
         by_key.setdefault(key(reference[name]), []).append(name)
-    record("XRADIO's datasets are told apart by the key", all(len(v) == 1 for v in by_key.values()))
+    shared = {name for names in by_key.values() if len(names) > 1 for name in names}
+    record("XRADIO's datasets told apart by the key, or by name where they share one",
+           not shared or shared <= set(mine.children),
+           {"sharing a key": sorted(shared)} if shared else None)
     record("the same number of datasets", len(mine.children) == len(reference.children),
            {"ours": len(mine.children), "theirs": len(reference.children)})
     mismatches = []
     unknown = 0
+    reversed_windows = []
     for name in sorted(mine.children):
         node = mine[name]
         match = by_key.get(key(node))
         if not match:
             mismatches.append({"dataset": name, "problem": "no XRADIO dataset with its key"})
             continue
+        # XRADIO's datasets can share a key (partitions that differ by what
+        # the key leaves out); the one of the same name is then the match.
+        if name in match:
+            match = [name]
         unknown += compare_names(name, node, match[0], reference[match[0]], mismatches)
+        if ("pointing_xds" in node.children) != ("pointing_xds" in reference[match[0]].children):
+            mismatches.append({"dataset": name, "problem": "pointing_xds where XRADIO's has none, or none where it has one"})
+        if chunks:
+            for var in VARIABLES:
+                a, b = chunk_shape(ours, name, var), chunk_shape(theirs, match[0], var)
+                if a != b:
+                    mismatches.append({"dataset": name, "chunks": var, "ours": a, "theirs": b})
         ds = node.ds.load()
         expected = reference[match[0]].ds.load()
+        if reversed_frequency(ds, expected):
+            ds = ds.isel(frequency=slice(None, None, -1))
+            reversed_windows.append(name)
         for coord in COORDINATES:
             if not np.array_equal(ds[coord].values, expected[coord].values):
                 mismatches.append({"dataset": name, "coordinate": coord})
@@ -135,7 +178,8 @@ def compare(ours, theirs):
             if not same or ds[var].dims != expected[var].dims or ds[var].dtype != expected[var].dtype:
                 mismatches.append({"dataset": name, "variable": var})
     record("every dataset equals XRADIO's, names and variables", not mismatches, {"mismatches": mismatches[:20]} if mismatches else None)
-    print(json.dumps({"datasets": len(mine.children), "sources_xradio_calls_unknown": unknown, "results": results}, indent=1))
+    print(json.dumps({"datasets": len(mine.children), "sources_xradio_calls_unknown": unknown,
+                      "frequency_reversed": reversed_windows, "results": results}, indent=1))
     return all(r["ok"] for r in results)
 
 
@@ -145,11 +189,17 @@ def main():
     convert = sub.add_parser("xradio-convert")
     convert.add_argument("--ms", type=Path, required=True)
     convert.add_argument("--out", type=Path, required=True)
+    convert.add_argument("--partition-scheme", nargs="*", default=[])
+    convert.add_argument("--with-pointing", action="store_true")
     comparison = sub.add_parser("compare")
     comparison.add_argument("--ours", type=Path, required=True)
     comparison.add_argument("--theirs", type=Path, required=True)
+    comparison.add_argument("--chunks", action="store_true")
     args = parser.parse_args()
-    ok = xradio_convert(args.ms, args.out) if args.mode == "xradio-convert" else compare(args.ours, args.theirs)
+    if args.mode == "xradio-convert":
+        ok = xradio_convert(args.ms, args.out, args.partition_scheme, args.with_pointing)
+    else:
+        ok = compare(args.ours, args.theirs, args.chunks)
     sys.exit(0 if ok else 1)
 
 

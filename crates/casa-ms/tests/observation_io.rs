@@ -7,6 +7,9 @@
 #[path = "observation_io/arrays.rs"]
 mod arrays;
 #[cfg(unix)]
+#[path = "observation_io/channel_order.rs"]
+mod channel_order;
+#[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]

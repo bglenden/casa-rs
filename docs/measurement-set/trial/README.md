@@ -285,6 +285,25 @@ through their adapters: one source with a record per window, the same
 direction, transitions, rest frequencies and velocities (XRADIO's without a
 frame), and the MSv2 binds to its conversion.
 
+A third pair takes a window whose channels descend (#1014):
+
+- **MSv2 `mssel_test_small.ms`.** CASA's ALMA test MeasurementSet
+  (`crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz`): spectral
+  window 1 holds 64 channels from 86.29 GHz down at −31.25 MHz, window 2
+  one channel.
+- **MSv4 `mssel_test_small.ps.zarr`.** XRADIO's conversion with its default
+  partitioning (six datasets), without pointing (663 KB compressed), which
+  writes window 1 ascending.
+
+Regenerate it with `tools/ms-trial/make_descending_fixture.sh`. The law
+`a_descending_window_binds_to_xradios_ascending_conversion` binds the two
+catalogues both ways: window 1's three partitions bind reversed
+(`ChannelOrder::Reversed` in `Binding::channel_orders`), window 2's in the
+same order. Every partition delivers the same samples from either store,
+over the whole band and over channel windows mapped through the order
+(`ChannelOrder::channels`), once a reversed batch's channels are put back in
+the MSv2's order.
+
 ### Fixture findings
 
 - casa-rs's synthetic writer leaves `UVW`'s MEASINFO without `Ref`; XRADIO
@@ -336,8 +355,15 @@ frame), and the MSv2 binds to its conversion.
   and where both kinds stand together it reads the rows for every window
   that XRADIO and `MSIter` ignore (`docs/CASA (C++) bugs.md`).
 - XRADIO writes a window whose channels descend (negative width) in
-  ascending order, so its partition does not bind to the MSv2's, whose
-  channels are in stored order (#1014). The lines fixture's windows ascend.
+  ascending order, with positive widths; the MSv2 adapter and casa-rs's own
+  converter keep the stored order, CASA's channel numbering. The owner
+  allowed both orders (#1014): `PartitionEntry::channel_order` matches a
+  partition to the same channels reversed (frequencies reversed, widths of
+  the same magnitudes, bit for bit), `Catalogue::bind_to` binds it and
+  `Binding::channel_orders` states the order, so a consumer carrying
+  per-channel values between the stores maps channel `c` through
+  `ChannelOrder::channel`. `check_convert.py compare` compares such a dataset
+  with its channels reversed and lists it.
 - XRADIO relabels MSv2's `UVW` ITRF as the phase centre's frame (`fk5`),
   following CASA `fixvis`'s note that the label is usually wrong; names
   antennas `NAME_STATION` and fields `NAME_FIELDID`; and declares the
@@ -356,9 +382,10 @@ frame), and the MSv2 binds to its conversion.
 | Fixtures | `tools/ms-trial/make_fixtures.sh` | cargo, uv, network for the first `uv sync` |
 | Scale check on a real store | `/usr/bin/time -l cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only]` | Rust only; a MeasurementSet or MSv4 store |
 | Convert either store | `cargo run --release -p casa-ms --features msv4 --example ms_trial_convert -- to-msv4\|to-msv2 SOURCE DEST [--workers N] [--chunk-times T] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--accept sigma,tables,…]` (chunks of 10 times unless `T` is given) | Rust only |
+| Convert either store, as a task | `msconvert --vis SOURCE [--outputvis DEST] [--outformat msv2\|msv4] [--datagroups G ...] [--partitionscheme FIELD_ID\|SCAN_NUMBER ...] [--no-withpointing] [--chunks '[T, B, F, P]'] [--codec blosc\|zstd\|none] [--padding flagged\|omitted] [--nthreads N] [--overwrite]` (`casars-msconvert`; also `casars.tasks.msconvert`). The supported surface over the same converter, with XRADIO's names (`obs.ms` ↔ `obs.ps.zarr`), its `partition_scheme` and `with_pointing`, each MSv4 dataset chunked as XRADIO chunks it, every loss taken and reported | Rust only |
 | Read passes (retention, threads) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_read_passes -- STORE [--passes N] [--workers W]` | Rust only |
 | Update pass (replacement and synchronization cost) | `cargo run --release -p casa-ms --features msv4 --example ms_trial_update_pass -- COPY_OF_STORE` | Rust only; changes the store |
-| Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS`; `… compare --ours PS --theirs PS` | the pinned XRADIO environment |
+| Converter against XRADIO | `tools/ms-trial/check_convert.py xradio-convert --ms MS --out PS [--partition-scheme KEY ...] [--with-pointing]`; `… compare --ours PS --theirs PS [--chunks]` (pointing held where XRADIO holds it; with `--chunks`, XRADIO's chunk shapes) | the pinned XRADIO environment |
 | Ephemeris fixtures | `tools/ms-trial/make_ephemeris_fixtures.sh` | cargo, uv |
 | Ephemerides, Rust writes, XRADIO reads | `tools/ms-trial/check_ephemeris.sh` | cargo, uv |
 | Converted MSv2 against its original | `python tools/ms-trial/check_v2_readback.py ORIGINAL CONVERTED` | a CASA install's Python (casatools) |

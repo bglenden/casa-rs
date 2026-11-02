@@ -1,0 +1,37 @@
+[package]
+name = "casars-msconvert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "casa-rs task msconvert: convert between MeasurementSet v2 and MSv4"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The MSv4 adapter and the converter are behind casa-ms's msv4 feature.
+casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-observation = { path = "../casa-observation" }
+casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-task-runtime = { path = "../casa-task-runtime" }
+casa-types = { path = "../casa-types" }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing.workspace = true
+
+[dev-dependencies]
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
+
+[[bin]]
+name = "msconvert"
+path = "src/main.rs"
+
+[[test]]
+name = "msconvert_cli"
+path = "tests/msconvert_cli.rs"

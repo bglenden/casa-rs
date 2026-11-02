@@ -57,6 +57,16 @@
                "str": null
               }
              },
+             "dict[choice](kind,values)": {
+              "kind": {
+               "str": null
+              },
+              "values": {
+               "list": {
+                "str": null
+               }
+              }
+             },
              "dict[float](kind)": {
               "kind": {
                "str": null
@@ -911,6 +921,16 @@
              "dict[bool](kind)": {
               "kind": {
                "str": null
+              }
+             },
+             "dict[choice](kind,values)": {
+              "kind": {
+               "str": null
+              },
+              "values": {
+               "list": {
+                "str": null
+               }
               }
              },
              "dict[float](kind)": {
