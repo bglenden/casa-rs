@@ -44,8 +44,8 @@
   },
   {
    "family": "facets-beyond-single-term-mfs",
-   "reason": "facets with AW projection, Taylor terms or cubes: no simulation task issues it and it is not common use",
-   "cases": 1
+   "reason": "facets with W or AW projection, Taylor terms or cubes: no simulation task issues it and it is not common use",
+   "cases": 2
   },
   {
    "family": "projection",
@@ -115,11 +115,11 @@
  ],
  "totals": {
   "cases": 354,
-  "NOW": 260,
-  "LATER": 94,
+  "NOW": 259,
+  "LATER": 95,
   "matrix_cases": 339,
-  "matrix_NOW": 252,
-  "matrix_LATER": 87
+  "matrix_NOW": 251,
+  "matrix_LATER": 88
  },
  "cases": {
   "test_cube.test_cube_0.1": {
@@ -1503,7 +1503,10 @@
    "scope": "NOW"
   },
   "test_wproject.test_wterm_wproject_facets.1": {
-   "scope": "NOW"
+   "scope": "LATER",
+   "families": [
+    "facets-beyond-single-term-mfs"
+   ]
   }
  }
 }

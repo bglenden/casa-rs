@@ -109,8 +109,11 @@ def awproject_imported_mosaic(vis, params, case):
 
 def facets_beyond(_vis, params, _case):
     facets = params.get("facets", 1)
+    w_planes = params.get("wprojplanes", 1)
+    w_projection = params.get("gridder") in ("wproject", "widefield") and w_planes != 1
     return isinstance(facets, int) and facets > 1 and (
         params.get("gridder") == "awproject"
+        or w_projection
         or params.get("deconvolver") == "mtmfs"
         or params.get("specmode", "mfs") != "mfs"
     )
@@ -186,7 +189,7 @@ LATER = [
     (
         "facets-beyond-single-term-mfs",
         facets_beyond,
-        "facets with AW projection, Taylor terms or cubes: " + NOT_SIMULATION,
+        "facets with W or AW projection, Taylor terms or cubes: " + NOT_SIMULATION,
     ),
     (
         "projection",
