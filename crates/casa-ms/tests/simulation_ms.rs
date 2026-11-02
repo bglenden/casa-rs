@@ -766,6 +766,43 @@ fn invalid_corruption_parameters_fail_clearly() {
 }
 
 #[test]
+fn one_correlation_refuses_leakage() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 1).unwrap();
+    let leakage = |amplitude| {
+        Some(SyntheticCorruptionConfig {
+            seed: 7,
+            noise: None,
+            gain: None,
+            bandpass: None,
+            leakage: Some(SyntheticPolarizationLeakageCorruption {
+                mode: SyntheticPolarizationLeakageMode::Constant,
+                amplitude,
+                offset: [0.0, 0.0],
+            }),
+            pointing: None,
+        })
+    };
+
+    // One correlation has no other hand to leak into.
+    request.corruption = leakage([0.02, 0.01]);
+    let error = generate_synthetic_observation_ms(&request)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("setleakage needs two or four correlations"),
+        "{error}"
+    );
+
+    // A leakage that changes nothing is still accepted, and not reported.
+    request.corruption = leakage([0.0, 0.0]);
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+    assert!(report.applied_corruptions.is_empty());
+}
+
+#[test]
 fn missing_model_image_fails_clearly() {
     let temp = tempfile::tempdir().unwrap();
     let request = SyntheticObservationRequest::vla_ppdisk(

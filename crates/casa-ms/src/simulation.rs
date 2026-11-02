@@ -836,7 +836,8 @@ pub struct SyntheticCorruptionConfig {
     /// Polarization leakage, parameterized like CASA `setleakage`: CASA's
     /// linearised leakage of the cross hands with four correlations, applied
     /// before the gains; with two, an approximation on the parallel hands,
-    /// applied after the gains and the noise.
+    /// applied after the gains and the noise. One correlation has no other
+    /// hand to leak into, so a leakage that changes the data is refused.
     #[serde(default)]
     pub leakage: Option<SyntheticPolarizationLeakageCorruption>,
     /// Global primary-beam pointing offset applied during model prediction, using CASA `setpointingerror` names where CASA has them.
@@ -1633,7 +1634,7 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
         }
     }
     if let Some(corruption) = &request.corruption {
-        validate_corruption(corruption)?;
+        validate_corruption(corruption, request.polarization_setup.correlation_count)?;
     }
     if let Some(model_peak_jy_per_pixel) = request.model_peak_jy_per_pixel
         && !(model_peak_jy_per_pixel.is_finite() && model_peak_jy_per_pixel > 0.0)
@@ -1645,7 +1646,10 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
     Ok(())
 }
 
-fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
+fn validate_corruption(
+    corruption: &SyntheticCorruptionConfig,
+    correlation_count: usize,
+) -> MsResult<()> {
     if let Some(noise) = &corruption.noise {
         if noise.mode != SyntheticNoiseMode::SimpleNoise {
             return Err(MsError::SyntheticObservation(
@@ -1715,6 +1719,15 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
                 "setleakage offset values must be finite".to_string(),
             ));
         }
+        // Leakage moves signal between hands, and one correlation has only
+        // the first receptor's parallel hand: it would be reported as
+        // applied while changing nothing. CASA's `corrupt` likewise refuses
+        // leakage on data without the cross hands.
+        if correlation_count == 1 && leakage_applies(leakage) {
+            return Err(MsError::SyntheticObservation(
+                "setleakage needs two or four correlations; this observation has one".to_string(),
+            ));
+        }
     }
     if let Some(pointing) = &corruption.pointing {
         if let Some(epjtablename) = &pointing.epjtablename {
@@ -1730,6 +1743,12 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
         }
     }
     Ok(())
+}
+
+/// Whether `leakage` changes the data: a nonzero amplitude or offset.
+fn leakage_applies(leakage: &SyntheticPolarizationLeakageCorruption) -> bool {
+    leakage.amplitude.iter().any(|value| *value > 0.0)
+        || leakage.offset.iter().any(|value| *value != 0.0)
 }
 
 fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> Vec<String> {
@@ -1755,8 +1774,7 @@ fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> V
         names.push("bandpass".to_string());
     }
     if let Some(leakage) = &corruption.leakage
-        && (leakage.amplitude.iter().any(|value| *value > 0.0)
-            || leakage.offset.iter().any(|value| *value != 0.0))
+        && leakage_applies(leakage)
     {
         names.push("leakage".to_string());
     }
