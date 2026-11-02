@@ -200,15 +200,51 @@ combined works under [GNU GPL v3.0 or later](COPYING). See
 
 ## UI Experiments
 
-Before settling on Python, we built a terminal user interface (TUI), a native
-Swift GUI and an experimental notebook with an integrated AI assistant, all
-sharing the same Rust computational code and task schemas. They worked, but
-Python became the focus, and they were removed in October 2026
-([ADR-0017](docs/adr/0017-python-first-surface.md)). Their last state is
+We explored several user interfaces for casa-rs: Python bindings, a terminal
+user interface (TUI), and a native Swift GUI. These experiments demonstrated
+that multiple interfaces can share the same computational codebase and
+task schemas, without reimplementing the scientific algorithms.
+
+The TUI worked well in Ghostty using the kitty graphics protocol. This
+approach is potentially portable across macOS, Windows, and Linux with a
+compatible terminal, although only macOS was tested. In 2026, I am unsure
+how much value a TUI adds when the cost of creating a native GUI is no longer
+particularly high.
+
+The Swift GUI also worked well and had no difficulty interoperating with
+the main Rust computational codebase. The comparisons below show the TUI
+on the left and the Swift GUI on the right.
+
+*Visibility-amplitude spectra from the same G37.40+1.52 MeasurementSet and
+selection. These are visibility amplitudes, not image-integrated flux.*
+
+![G37.40+1.52 visibility spectrum in the TUI and Swift GUI](docs/images/ui-experiments/spectrum-comparison.png)
+
+*The same plane of a synthetic image cube, with its linked spectrum.
+This is synthetic test data.*
+
+![Synthetic cube plane in the TUI and Swift GUI](docs/images/ui-experiments/cube-comparison.png)
+
+*Imaging parameter controls in the two interfaces.*
+
+![Imaging parameters in the TUI and Swift GUI](docs/images/ui-experiments/parameters-comparison.png)
+
+I also created an experimental notebook system with an integrated AI
+assistant. Keeping discussion, analysis results, and plots together seemed
+very promising. The screenshot below shows a genuine assistant conversation
+that inspected the dataset through tools, with its response and a spectrum
+saved in the notebook. I am still unsure how much this adds over using a
+coding agent with the Python bindings, or a notebook environment such as
+Jupyter AI.
+
+![Experimental Swift notebook with a genuine AI conversation, results table, and spectrum](docs/images/ui-experiments/ai-notebook.png)
+
+Python is the focus for continued work. The TUI, the Swift GUI, the notebook
+and assistant, the interactive image and table browsers, and Rust-side plot
+rasterisation were removed in October 2026 (issue #833; see
+[ADR-0017](docs/adr/0017-python-first-surface.md)). Their last state is
 preserved at the tag
-[`ui-experiments-2026-10-20`](https://github.com/bglenden/casa-rs/tree/ui-experiments-2026-10-20),
-whose [README](https://github.com/bglenden/casa-rs/blob/ui-experiments-2026-10-20/README.md#ui-experiments)
-shows them side by side.
+[`ui-experiments-2026-10-20`](https://github.com/bglenden/casa-rs/tree/ui-experiments-2026-10-20).
 
 ## Installation
 
