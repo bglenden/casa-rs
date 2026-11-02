@@ -672,9 +672,19 @@
       "fingerprint": "7058fa91483e33c7b6e3e857e44614b805bf5aa999b500471c17c13c17c066a9"
     },
     {
+      "id": "ms.selection.observation",
+      "semantic_revision": 2,
+      "fingerprint": "b10536620e98bcd86a0756d44d1d6be20d9fb43b869a571e9b9f5f60e9dd6c8d"
+    },
+    {
       "id": "ms.selection.scan",
       "semantic_revision": 1,
       "fingerprint": "7afdd21e9d481e138ea83abbe66911d2a4fae68b257ea687d050b7e1b97b294c"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 2,
+      "fingerprint": "6a849a39d3e1181739ddd927f0191b466f0ef25892bbc277973315cc8e6c74f0"
     },
     {
       "id": "ms.selection.spw",
@@ -4592,6 +4602,11 @@
       "id": "tclean",
       "contract_version": 32,
       "fingerprint": "5302c18f367a9c2d971c2d8cf4ab074f5beadbe12238c2201e38f5b6b4445a19"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 33,
+      "fingerprint": "20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9"
     },
     {
       "id": "uvcontsub",

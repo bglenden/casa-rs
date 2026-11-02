@@ -193,7 +193,18 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                if binding.unimplemented.is_none() && default == absence {
+                // A revision-2 numeric selector (tclean's scan and
+                // observation) keeps its exact text, so `none` is a value
+                // the native parser refuses: the provider passes it as is.
+                if binding.concept.semantic_revision.0 > 1 {
+                    assert_eq!(
+                        adapter,
+                        Some(&crate::ValueAdapter::Identity),
+                        "{}.{}",
+                        surface.id(),
+                        binding.name
+                    );
+                } else if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
                         adapter,
                         Some(&crate::ValueAdapter::OmitNone),
@@ -346,8 +357,31 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 32);
+        assert_eq!(surface.contract_version(), 33);
         assert_eq!(surface.bindings().len(), 114);
+        for name in ["scan", "observation"] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap();
+            assert!(binding.unimplemented.is_none(), "{name}");
+            assert_eq!(binding.concept.semantic_revision.0, 2);
+            assert_eq!(
+                binding.default,
+                crate::DefaultSpec::Literal {
+                    value: ParameterValue::String(String::new()),
+                }
+            );
+            assert_eq!(
+                catalog
+                    .catalog
+                    .concept(&binding.concept)
+                    .unwrap()
+                    .normalization,
+                crate::NormalizationRule::Identity
+            );
+        }
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -460,7 +494,7 @@ mod tests {
                 .iter()
                 .map(|migration| (migration.from_contract, migration.to_contract))
                 .collect::<Vec<_>>(),
-            [(28, 29), (29, 30), (30, 31), (31, 32)]
+            [(28, 29), (29, 30), (30, 31), (31, 32), (32, 33)]
         );
     }
 

@@ -9,7 +9,9 @@
 //! CASA's modes read them (`crate::tclean`); so nothing here restates a
 //! default and a missing field is an error. Most fields are tclean's
 //! parameters by name; the reader fills the few casa-rs holds in its own
-//! form. An unset optional value is spelled `"none"` or left blank.
+//! form. An unset optional value is spelled `"none"` or left blank, except
+//! for the scan and observation selectors, which only an empty string
+//! leaves unset.
 //! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
@@ -90,11 +92,14 @@ pub struct ImagingRequest {
     /// CASA baseline-length selection.
     #[serde(deserialize_with = "optional")]
     pub uvrange: Option<String>,
-    /// CASA numeric scan-number selection, resolved by the MeasurementSet owner.
-    #[serde(default, deserialize_with = "optional")]
+    /// CASA numeric scan-number selection, as given; resolved against the
+    /// observation during compilation. Only an exactly empty selector is
+    /// unset, so whitespace-only text and `none` reach the selector's
+    /// refusal, as CASA's tclean refuses them.
+    #[serde(deserialize_with = "exact_selector")]
     pub scan: Option<String>,
-    /// CASA numeric observation-ID selection, resolved by the MeasurementSet owner.
-    #[serde(default, deserialize_with = "optional")]
+    /// CASA numeric observation-ID selection, read as `scan` is.
+    #[serde(deserialize_with = "exact_selector")]
     pub observation: Option<String>,
     /// CASA observing-intent selection.
     #[serde(deserialize_with = "optional")]
@@ -661,6 +666,15 @@ const NONE: &str = "none";
 /// blank optional parameter always has.
 fn unset(text: &str) -> bool {
     text == NONE || text.trim().is_empty()
+}
+
+/// A selector's exact text, `None` only when it is exactly empty.
+fn exact_selector<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if text.is_empty() => Ok(None),
+        Value::String(text) => Ok(Some(text)),
+        value => Err(unexpected(&value, "text")),
+    }
 }
 
 /// Error on `value` for a field of type `expected`.

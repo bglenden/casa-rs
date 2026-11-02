@@ -58,6 +58,8 @@ impl TcleanRefusal {
 impl ImagingRequest {
     /// The request tclean's resolved parameters `values` make: every
     /// parameter of the catalog's `tclean` surface, active or not, by name.
+    /// The scan and observation selectors' catalog concepts (revision 2)
+    /// keep their exact text; only an exactly empty string is unset.
     ///
     /// # Errors
     ///
@@ -333,9 +335,18 @@ impl<'a> Tclean<'a> {
         self.ignore(&["selectdata", "timerange", "antenna"])?;
         let field = self.text("field")?;
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent", "scan", "observation"] {
+        for name in ["spw", "uvrange", "intent"] {
             let value = self.text(name)?;
             self.set(name, value);
+        }
+        // Scan and observation selectors keep their exact text: CASA's tclean
+        // refuses whitespace-only text and `none`, and accepts padded IDs.
+        for name in ["scan", "observation"] {
+            let value = self.value(name)?;
+            let text = value
+                .as_str()
+                .ok_or_else(|| Self::mismatch(name, "text", value))?;
+            self.set(name, text);
         }
         let column = match self.text("datacolumn")?.to_ascii_lowercase().as_str() {
             // CASA images DATA when CORRECTED_DATA is absent.

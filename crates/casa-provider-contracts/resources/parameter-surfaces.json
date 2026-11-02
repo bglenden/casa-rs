@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 32,
+      "contract_version": 33,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -8123,7 +8123,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "False ignores the selection parameters, as CASA's tclean does.",
+          "surface_note": "Selections apply with either selectdata value, as CASA's tclean does; unsupported selectors are still refused.",
           "projections": {
             "cli": {"flags": ["--selectdata"], "false_flags": ["--no-selectdata"]},
             "provider": {"field": "selectdata"},
@@ -8208,7 +8208,8 @@
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8219,11 +8220,12 @@
             "python": {"name": "scan"},
             "presentation": {"label": "Scan", "group": "Context", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8234,7 +8236,7 @@
             "python": {"name": "observation"},
             "presentation": {"label": "Observation", "group": "Context", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
         },
         {
           "name": "intent",
@@ -9842,6 +9844,15 @@
           "from_contract": 31,
           "to_contract": 32,
           "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 32,
+          "to_contract": 33,
+          "steps": [
+            {"kind": "replace_value", "parameter": "scan", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
+            {"kind": "replace_value", "parameter": "observation", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
+          ],
           "changed_defaults": []
         }
       ]

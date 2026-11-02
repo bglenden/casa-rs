@@ -2,7 +2,7 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 32
+contract = 33
 
 [parameters]
 vis = ["representative-cube.ms"]

@@ -10518,6 +10518,56 @@
       "semantic_role": "algorithm",
       "documentation": {"summary": "Compute the PSF image.", "details": null, "examples": ["true"]},
       "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.observation",
+      "semantic_revision": 2,
+      "casa_name": "observation",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric observation selection",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Selector grammar beyond this numeric subset remains unfinished (#980); unsupported input is not thereby classified as CASA-invalid. Preserve the original string for native grammar validation.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 2,
+      "casa_name": "scan",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric scan selection",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Richer CASA-valid expressions such as >1 remain unfinished (#980), rather than CASA-invalid. Preserve the original string for native grammar validation.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
     }
   ]
 }

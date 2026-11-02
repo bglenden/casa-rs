@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Unactivated scan/observation preview: only catalog refusal is bypassed.
+//! Scan and observation selection through the production catalog (tclean
+//! contract 33): selected rows image as the equivalent FIELD selection, and
+//! the selectors CASA's tclean refuses write no images.
 use std::path::Path;
 
 use casa_imaging_application::{ImagingRequest, product_law};
@@ -63,7 +65,9 @@ fn numeric_fixture() -> Observation {
     observation
 }
 
-fn preview(
+/// The production request for `scan` and `obs`, resolved through the
+/// catalog with every other parameter at the fixture's values.
+fn numeric_request(
     observation: &Observation,
     name: &str,
     scan: &str,
@@ -73,17 +77,12 @@ fn preview(
     let mut values = json!({
         "vis": observation.measurement_set(), "imagename": observation.scratch(name),
         "backend": "cpu", "niter": 0, "write_pb": true, "selectdata": selectdata,
+        "scan": scan, "observation": obs,
     });
     for (name, value) in observation.geometry().parameters() {
         values[name] = value;
     }
-    let (mut parameters, _) =
-        resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
-    // Preview only: retain the production catalog's two unimplemented markers.
-    parameters.0.insert("scan".to_string(), json!(scan));
-    parameters.0.insert("observation".to_string(), json!(obs));
-    let request = ImagingRequest::from_tclean(&parameters.0).unwrap();
-    (parameters, request)
+    resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap()
 }
 
 fn compare_products(result: &ImagerRunTaskResult, prefix: &Path, reference: &Path) {
@@ -98,7 +97,7 @@ fn compare_products(result: &ImagerRunTaskResult, prefix: &Path, reference: &Pat
 }
 
 #[test]
-fn preview_scan_observation_reaches_survey_and_imaging() {
+fn scan_and_observation_image_as_the_equivalent_field_selection() {
     let observation = numeric_fixture();
     for (index, scan, obs, fields) in [
         (0, "2", "", "1,3"),
@@ -113,8 +112,8 @@ fn preview_scan_observation_reaches_survey_and_imaging() {
             json!({"field": fields, "niter": 0, "write_pb": true}),
         );
         for selectdata in [false, true] {
-            let name = format!("numeric-preview-{index}-{selectdata}");
-            let (parameters, request) = preview(&observation, &name, scan, obs, selectdata);
+            let name = format!("numeric-{index}-{selectdata}");
+            let (parameters, request) = numeric_request(&observation, &name, scan, obs, selectdata);
             let result = run(parameters, &request).unwrap();
             assert_eq!(result.run.gridded_samples, reference.gridded_samples);
             assert_eq!(
@@ -132,6 +131,14 @@ fn preview_scan_observation_reaches_survey_and_imaging() {
             );
         }
     }
+}
+
+/// CASA's tclean refuses each of these but two: scan `>1` is CASA grammar
+/// casa-rs has yet to implement (#980), and scan 99 selects no rows, which
+/// casa-rs refuses rather than imaging nothing.
+#[test]
+fn refused_selectors_write_no_images() {
+    let observation = numeric_fixture();
     for (index, scan, obs) in [
         (0, "99", ""),
         (1, ">1", ""),
@@ -139,11 +146,41 @@ fn preview_scan_observation_reaches_survey_and_imaging() {
         (3, "2~1", ""),
         (4, "", "0~0"),
         (5, "", "1~0"),
+        (6, ",1", ""),
+        (7, "1,", ""),
+        (8, "1,,2", ""),
+        (9, ",", ""),
+        (10, "+1", ""),
+        (11, "  ", ""),
+        (12, "none", ""),
+        (13, "None", ""),
+        (14, "", ",0"),
+        (15, "", "0,"),
+        (16, "", "0,,1"),
+        (17, "", "+0"),
+        (18, "", "  "),
+        (19, "", "none"),
+        (20, "", "None"),
     ] {
         let name = format!("numeric-refused-{index}");
-        let (parameters, request) = preview(&observation, &name, scan, obs, true);
-        assert!(run(parameters, &request).is_err());
-        assert!(!observation.scratch(&format!("{name}.psf")).exists());
+        let (parameters, request) = numeric_request(&observation, &name, scan, obs, true);
+        assert!(run(parameters, &request).is_err(), "{scan:?} {obs:?}");
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "image.pbcor",
+            "model",
+            "sumwt",
+            "pb",
+            "weight",
+            "mask",
+        ] {
+            assert!(
+                !observation.scratch(&format!("{name}.{suffix}")).exists(),
+                "{name}.{suffix}"
+            );
+        }
     }
 }
 
